@@ -1,0 +1,1006 @@
+{
+  "phase": "exchange-existing",
+  "lifecycle": {
+    "providerHome": {
+      "owner": "agent-environment",
+      "agentEnvironment": "wsl"
+    },
+    "lifecycle": {
+      "requirement": "required",
+      "state": "installed",
+      "consent": "granted",
+      "trust": "trusted",
+      "installedVersion": "0.2.3-hotfix.1",
+      "currentVersion": "0.2.3-hotfix.1"
+    },
+    "skill": {
+      "requirement": "optional",
+      "state": "unchecked",
+      "consent": "unchecked",
+      "trust": "unchecked"
+    },
+    "health": {
+      "state": "healthy"
+    }
+  },
+  "url": "http://localhost:32124/chat",
+  "exchange": {
+    "output": "\u001b[?2026h\u001b[23;2H\u001b[0m\u001b[49m\u001b[K\u001b[24;2H\u001b[0m\u001b[49m\u001b[K\u001b[25;56H\u001b[0m\u001b[49m\u001b[K\u001b[26;2H\u001b[0m\u001b[49m\u001b[K\u001b[27;90H\u001b[0m\u001b[49m\u001b[K\u001b[25;3HReply with exactly T364_RESPONSE_OK\u001b[25;39Hand\u001b[25;43Hnothing\u001b[25;51Helse.\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[25;56H\u001b[?2026l\u001b[?2026h\u001b[23;35r\u001b[23;1H\u001bM\u001bM\u001bM\u001bM\u001b[r\u001b[1;26r\u001b[22;1H\r\n\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\r\n\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\r\n\u001b[39;49m\u001b[K\u001b[1m\u001b[2m› \u001b[22m\u001b[22mReply with exactly T364_RESPONSE_OK and nothing else.\u001b[39m\u001b[49m\u001b[0m\r\n\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[r\u001b[25;56H\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;2H\u001b[0m\u001b[49m\u001b[K\u001b[29;37H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;90H\u001b[0m\u001b[49m\u001b[K\u001b[29;3H\u001b[2mImprove documentation in @filename\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[29;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;2H\u001b[0m\u001b[49m\u001b[K\u001b[29;37H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[29;3H\u001b[?2026l\u001b]0;⠹ 0813-t364\u0007\u001b[?2026h\u001b[27;1H\u001b[J\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;128;128;128;49m•\u001b[28;3HWorkin\u001b[38;2;138;138;138;49mg\u001b[28;11H\u001b[22m\u001b[2m\u001b[2m\u001b[39;49m(0s • esc to interrupt)\u001b[31;1H\u001b[22m\u001b[1m›\u001b[31;3H\u001b[22m\u001b[2m\u001b[2mImprove documentation in @filename\u001b[33;3H\u001b[22m\u001b[38;2;246;226;183;49mgpt-5.6-sol low\u001b[2m\u001b[39;49m · \u001b[22m\u001b[38;2;171;223;167;49m/home/work/.tessera/worktrees_from_elec/tessera-dev/feature/0813-t364\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠸ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;9H\u001b[1m\u001b[38;2;128;128;128;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠼ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠴ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠦ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠧ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠇ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠏ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠋ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠙ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;138;138;138;49mW\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠹ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;167;167;167;49mW\u001b[38;2;138;138;138;49mo\u001b[28;12H\u001b[22m\u001b[2m\u001b[2m\u001b[39;49m1\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠸ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;138;138;138;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;202;202;202;49mW\u001b[38;2;167;167;167;49mo\u001b[38;2;138;138;138;49mr\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠼ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;167;167;167;49m•\u001b[28;3H\u001b[38;2;231;231;231;49mW\u001b[38;2;202;202;202;49mo\u001b[38;2;167;167;167;49mr\u001b[38;2;138;138;138;49mk\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;242;242;242;49mW\u001b[38;2;231;231;231;49mo\u001b[38;2;202;202;202;49mr\u001b[38;2;167;167;167;49mk\u001b[38;2;138;138;138;49mi\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠴ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;202;202;202;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;231;231;231;49mW\u001b[38;2;242;242;242;49mo\u001b[38;2;231;231;231;49mr\u001b[38;2;202;202;202;49mk\u001b[38;2;167;167;167;49mi\u001b[38;2;138;138;138;49mn\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠦ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;231;231;231;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;202;202;202;49mW\u001b[38;2;231;231;231;49mo\u001b[38;2;242;242;242;49mr\u001b[38;2;231;231;231;49mk\u001b[38;2;202;202;202;49mi\u001b[38;2;167;167;167;49mn\u001b[38;2;138;138;138;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠧ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;242;242;242;49m•\u001b[28;3H\u001b[38;2;167;167;167;49mW\u001b[38;2;202;202;202;49mo\u001b[38;2;231;231;231;49mr\u001b[38;2;242;242;242;49mk\u001b[38;2;231;231;231;49mi\u001b[38;2;202;202;202;49mn\u001b[38;2;167;167;167;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;138;138;138;49mW\u001b[38;2;167;167;167;49mo\u001b[38;2;202;202;202;49mr\u001b[38;2;231;231;231;49mk\u001b[38;2;242;242;242;49mi\u001b[38;2;231;231;231;49mn\u001b[38;2;202;202;202;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠇ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;231;231;231;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;128;128;128;49mW\u001b[38;2;138;138;138;49mo\u001b[38;2;167;167;167;49mr\u001b[38;2;202;202;202;49mk\u001b[38;2;231;231;231;49mi\u001b[38;2;242;242;242;49mn\u001b[38;2;231;231;231;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠏ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;202;202;202;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;4H\u001b[1m\u001b[38;2;128;128;128;49mo\u001b[38;2;138;138;138;49mr\u001b[38;2;167;167;167;49mk\u001b[38;2;202;202;202;49mi\u001b[38;2;231;231;231;49mn\u001b[38;2;242;242;242;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;167;167;167;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠋ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;5H\u001b[1m\u001b[38;2;128;128;128;49mr\u001b[38;2;138;138;138;49mk\u001b[38;2;167;167;167;49mi\u001b[38;2;202;202;202;49mn\u001b[38;2;231;231;231;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;138;138;138;49m•\u001b[28;6H\u001b[38;2;128;128;128;49mk\u001b[38;2;138;138;138;49mi\u001b[38;2;167;167;167;49mn\u001b[38;2;202;202;202;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠙ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;128;128;128;49m•\u001b[28;7Hi\u001b[38;2;138;138;138;49mn\u001b[38;2;167;167;167;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠹ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;8H\u001b[1m\u001b[38;2;128;128;128;49mn\u001b[38;2;138;138;138;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;12H\u001b[2m2\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠸ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;9H\u001b[1m\u001b[38;2;128;128;128;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠼ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠴ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠦ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b]0;⠧ 0813-t364\u0007\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[27;1H\u001b[J\u001b[27;35r\u001b[27;1H\u001bM\u001bM\u001b[r\u001b[1;28r\u001b[26;1H\r\n\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\r\n\u001b[39;49m\u001b[K\u001b[2m• \u001b[22mT364_RESPONSE_OK\u001b[39m\u001b[49m\u001b[0m\u001b[r\u001b[31;3H\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[31;1H\u001b[1m›\u001b[31;3H\u001b[22m\u001b[2m\u001b[2mImprove documentation in @filename\u001b[33;3H\u001b[22m\u001b[38;2;246;226;183;49mgpt-5.6-sol low\u001b[2m\u001b[39;49m · \u001b[22m\u001b[38;2;171;223;167;49m/home/work/.tessera/worktrees_from_elec/tessera-dev/feature/0813-t364\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l\u001b[?2026h\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l",
+    "messages": [
+      {
+        "type": "session_list",
+        "sessions": [],
+        "titleGeneratingSessionIds": []
+      },
+      {
+        "type": "terminal_session_runtime_snapshot",
+        "activeSessionIds": [
+          "0f3ec15e-0c16-45f7-a02a-821f16d06ba7"
+        ],
+        "reboundSessions": []
+      },
+      {
+        "type": "session_state",
+        "sessionId": "0f3ec15e-0c16-45f7-a02a-821f16d06ba7",
+        "terminalId": "issue364-1786556658671",
+        "status": "completed",
+        "hookEvent": "Stop",
+        "stateAt": 1786556670165,
+        "preview": "64_RESPONSE_OK",
+        "interruptInputPolicy": "single-escape"
+      },
+      {
+        "type": "rate_limit_update",
+        "providerId": "codex",
+        "windows": [
+          {
+            "key": "primary",
+            "usedPercent": 12,
+            "resetsAt": "2026-08-19T14:56:18.000Z",
+            "windowDurationMins": 10080
+          }
+        ],
+        "limitId": "codex",
+        "limitName": null,
+        "planType": "pro",
+        "updatedAt": "2026-08-12T17:46:53.293Z"
+      },
+      {
+        "type": "terminal_started",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "cwd": "/home/work/.tessera/worktrees_from_elec/tessera-dev/feature/0813-t364",
+        "shell": "wsl.exe",
+        "reattached": true,
+        "interruptInputPolicy": "single-escape"
+      },
+      {
+        "type": "terminal_grid",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "cols": 120,
+        "rows": 35,
+        "accepted": true
+      },
+      {
+        "type": "terminal_snapshot",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 234,
+        "data": "\r\n\u001b[2m╭───────────────────────────────────────────────────────────────╮\r\n│ \u001b[36;1;22m✨ Update available!\u001b[0m \u001b[1m0.146.0 -> 0.147.0\u001b[22;2m                       │\r\n│ \u001b[0mSee \u001b[36;4:5mhttps://github.com/openai/codex\u001b[0m for installation options.\u001b[2m │\r\n│                                                               │\r\n│ \u001b[0mSee full release notes:\u001b[2m                                       │\r\n│ \u001b[36;4:5;22mhttps://github.com/openai/codex/releases/latest\u001b[39;24;2m               │\r\n╰───────────────────────────────────────────────────────────────╯\r\n\r\n╭────────────────────────────────────────────────────╮\r\n│ >_ \u001b[1;22mOpenAI Codex\u001b[22;2m (v0.146.0)                         │\r\n│                                                    │\r\n│ model:     \u001b[0mgpt-5.6-sol low\u001b[2m   \u001b[36;22m/model\u001b[39;2m to change      │\r\n│ directory: \u001b[0m/home/work/.tessera/…/feature/0813-t364\u001b[2m │\r\n╰────────────────────────────────────────────────────╯\r\n\r\n\u001b[0m  \u001b[1mTip:\u001b[0m \u001b[3mNew\u001b[0m Use \u001b[1m/fast\u001b[0m to enable our fastest inference with increased plan usage.\r\n\r\n\r\n\u001b[1;2m› \u001b[0m64_RESPONSE_OK and nothing else.\r\n\r\n\r\n\u001b[2m• \u001b[0m64_RESPONSE_OK\r\n\r\n\r\n\u001b[1m›\u001b[1C\u001b[22;2mImprove documentation in @filename\r\n\r\n\u001b[2C\u001b[38;2;246;226;183;22mgpt-5.6-sol low\u001b[39;2m · \u001b[38;2;171;223;167;22m/home/work/.tessera/worktrees_from_elec/tessera-dev/feature/0813-t364\r\n\r\n\r\n\r\n\r\n\r\n\r\n\r\n\u001b[10A\u001b[2C\u001b[0m\u001b[?2004h\u001b[?1004h\u001b[25;3H",
+        "cols": 120,
+        "rows": 35,
+        "alternateScreen": false
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 235,
+        "data": "\u001b[?2026h\u001b[23;2H\u001b[0m\u001b[49m\u001b[K\u001b[24;2H\u001b[0m\u001b[49m\u001b[K\u001b[25;56H\u001b[0m\u001b[49m\u001b[K\u001b[26;2H\u001b[0m\u001b[49m\u001b[K\u001b[27;90H\u001b[0m\u001b[49m\u001b[K\u001b[25;3HReply with exactly T364_RESPONSE_OK\u001b[25;39Hand\u001b[25;43Hnothing\u001b[25;51Helse.\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[25;56H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 236,
+        "data": "\u001b[?2026h\u001b[23;35r\u001b[23;1H\u001bM\u001bM\u001bM\u001bM\u001b[r\u001b[1;26r\u001b[22;1H\r\n\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\r\n\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\r\n\u001b[39;49m\u001b[K\u001b[1m\u001b[2m› \u001b[22m\u001b[22mReply with exactly T364_RESPONSE_OK and nothing else.\u001b[39m\u001b[49m\u001b[0m\r\n"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 237,
+        "data": "\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[r\u001b[25;56H\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;2H\u001b[0m\u001b[49m\u001b[K\u001b[29;37H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;90H\u001b[0m\u001b[49m\u001b[K\u001b[29;3H\u001b[2mImprove documentation in @filename\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[29;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 238,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;2H\u001b[0m\u001b[49m\u001b[K\u001b[29;37H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[29;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 239,
+        "data": "\u001b]0;⠹ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 240,
+        "data": "\u001b[?2026h\u001b[27;1H\u001b[J"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 241,
+        "data": "\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;128;128;128;49m•\u001b[28;3HWorkin\u001b[38;2;138;138;138;49mg\u001b[28;11H\u001b[22m\u001b[2m\u001b[2m\u001b[39;49m(0s • esc to interrupt)\u001b[31;1H\u001b[22m\u001b[1m›\u001b[31;3H\u001b[22m\u001b[2m\u001b[2mImprove documentation in @filename\u001b[33;3H\u001b[22m\u001b[38;2;246;226;183;49mgpt-5.6-sol low\u001b[2m\u001b[39;49m · \u001b[22m\u001b[38;2;171;223;167;49m/home/work/.tessera/worktrees_from_elec/tessera-dev/feature/0813-t364\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 242,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 243,
+        "data": "\u001b]0;⠸ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 244,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;9H\u001b[1m\u001b[38;2;128;128;128;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "session_state",
+        "sessionId": "0f3ec15e-0c16-45f7-a02a-821f16d06ba7",
+        "terminalId": "issue364-1786556658671",
+        "status": "running",
+        "hookEvent": "UserPromptSubmit",
+        "stateAt": 1786556855088,
+        "interruptInputPolicy": "single-escape"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 245,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 246,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 247,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 248,
+        "data": "\u001b]0;⠼ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 249,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 250,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 251,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 252,
+        "data": "\u001b]0;⠴ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 253,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 254,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 255,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 256,
+        "data": "\u001b]0;⠦ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 257,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 258,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 259,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 260,
+        "data": "\u001b]0;⠧ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 261,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 262,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 263,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 264,
+        "data": "\u001b]0;⠇ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 265,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 266,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 267,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 268,
+        "data": "\u001b]0;⠏ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 269,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 270,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 271,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 272,
+        "data": "\u001b]0;⠋ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 273,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 274,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 275,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 276,
+        "data": "\u001b]0;⠙ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 277,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 278,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 279,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;138;138;138;49mW\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 280,
+        "data": "\u001b]0;⠹ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 281,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 282,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 283,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;167;167;167;49mW\u001b[38;2;138;138;138;49mo\u001b[28;12H\u001b[22m\u001b[2m\u001b[2m\u001b[39;49m1\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 284,
+        "data": "\u001b]0;⠸ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 285,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;138;138;138;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 286,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;202;202;202;49mW\u001b[38;2;167;167;167;49mo\u001b[38;2;138;138;138;49mr\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 287,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 288,
+        "data": "\u001b]0;⠼ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 289,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;167;167;167;49m•\u001b[28;3H\u001b[38;2;231;231;231;49mW\u001b[38;2;202;202;202;49mo\u001b[38;2;167;167;167;49mr\u001b[38;2;138;138;138;49mk\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 290,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 291,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;242;242;242;49mW\u001b[38;2;231;231;231;49mo\u001b[38;2;202;202;202;49mr\u001b[38;2;167;167;167;49mk\u001b[38;2;138;138;138;49mi\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 292,
+        "data": "\u001b]0;⠴ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 293,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;202;202;202;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 294,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 295,
+        "data": "\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 296,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;231;231;231;49mW\u001b[38;2;242;242;242;49mo\u001b[38;2;231;231;231;49mr\u001b[38;2;202;202;202;49mk\u001b[38;2;167;167;167;49mi\u001b[38;2;138;138;138;49mn\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 297,
+        "data": "\u001b]0;⠦ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 298,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;231;231;231;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 299,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;202;202;202;49mW\u001b[38;2;231;231;231;49mo\u001b[38;2;242;242;242;49mr\u001b[38;2;231;231;231;49mk\u001b[38;2;202;202;202;49mi\u001b[38;2;167;167;167;49mn\u001b[38;2;138;138;138;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 300,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 301,
+        "data": "\u001b]0;⠧ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 302,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;242;242;242;49m•\u001b[28;3H\u001b[38;2;167;167;167;49mW\u001b[38;2;202;202;202;49mo\u001b[38;2;231;231;231;49mr\u001b[38;2;242;242;242;49mk\u001b[38;2;231;231;231;49mi\u001b[38;2;202;202;202;49mn\u001b[38;2;167;167;167;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 303,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 304,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;138;138;138;49mW\u001b[38;2;167;167;167;49mo\u001b[38;2;202;202;202;49mr\u001b[38;2;231;231;231;49mk\u001b[38;2;242;242;242;49mi\u001b[38;2;231;231;231;49mn\u001b[38;2;202;202;202;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 305,
+        "data": "\u001b]0;⠇ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 306,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;231;231;231;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 307,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 308,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;3H\u001b[1m\u001b[38;2;128;128;128;49mW\u001b[38;2;138;138;138;49mo\u001b[38;2;167;167;167;49mr\u001b[38;2;202;202;202;49mk\u001b[38;2;231;231;231;49mi\u001b[38;2;242;242;242;49mn\u001b[38;2;231;231;231;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 309,
+        "data": "\u001b]0;⠏ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 310,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;202;202;202;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 311,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;4H\u001b[1m\u001b[38;2;128;128;128;49mo\u001b[38;2;138;138;138;49mr\u001b[38;2;167;167;167;49mk\u001b[38;2;202;202;202;49mi\u001b[38;2;231;231;231;49mn\u001b[38;2;242;242;242;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 312,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;167;167;167;49m•\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 313,
+        "data": "\u001b]0;⠋ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 314,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;5H\u001b[1m\u001b[38;2;128;128;128;49mr\u001b[38;2;138;138;138;49mk\u001b[38;2;167;167;167;49mi\u001b[38;2;202;202;202;49mn\u001b[38;2;231;231;231;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 315,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 316,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;138;138;138;49m•\u001b[28;6H\u001b[38;2;128;128;128;49mk\u001b[38;2;138;138;138;49mi\u001b[38;2;167;167;167;49mn\u001b[38;2;202;202;202;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 317,
+        "data": "\u001b]0;⠙ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 318,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 319,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 320,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;1H\u001b[1m\u001b[38;2;128;128;128;49m•\u001b[28;7Hi\u001b[38;2;138;138;138;49mn\u001b[38;2;167;167;167;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 321,
+        "data": "\u001b]0;⠹ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 322,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 323,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;8H\u001b[1m\u001b[38;2;128;128;128;49mn\u001b[38;2;138;138;138;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 324,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;12H\u001b[2m2\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 325,
+        "data": "\u001b]0;⠸ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 326,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[28;9H\u001b[1m\u001b[38;2;128;128;128;49mg\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 327,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 328,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 329,
+        "data": "\u001b]0;⠼ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 330,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 331,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 332,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 333,
+        "data": "\u001b]0;⠴ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 334,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 335,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 336,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 337,
+        "data": "\u001b]0;⠦ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 338,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 339,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 340,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 341,
+        "data": "\u001b]0;⠧ 0813-t364\u0007"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 342,
+        "data": "\u001b[?2026h\u001b[27;2H\u001b[0m\u001b[49m\u001b[K\u001b[28;34H\u001b[0m\u001b[49m\u001b[K\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 343,
+        "data": "\u001b[?2026h\u001b[27;1H\u001b[J\u001b[27;35r\u001b[27;1H\u001bM\u001bM\u001b[r\u001b[1;28r\u001b[26;1H\r\n\u001b[39;49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\r\n"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 344,
+        "data": "\u001b[39;49m\u001b[K\u001b[2m• \u001b[22mT364_RESPONSE_OK\u001b[39m\u001b[49m\u001b[0m\u001b[r\u001b[31;3H\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[31;1H\u001b[1m›\u001b[31;3H\u001b[22m\u001b[2m\u001b[2mImprove documentation in @filename\u001b[33;3H\u001b[22m\u001b[38;2;246;226;183;49mgpt-5.6-sol low\u001b[2m\u001b[39;49m · \u001b[22m\u001b[38;2;171;223;167;49m/home/work/.tessera/worktrees_from_elec/tessera-dev/feature/0813-t364\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "terminal_output",
+        "terminalId": "issue364-1786556658671",
+        "surfaceId": "surface-1786556849466",
+        "generation": 1,
+        "seq": 345,
+        "data": "\u001b[?2026h\u001b[29;2H\u001b[0m\u001b[49m\u001b[K\u001b[30;2H\u001b[0m\u001b[49m\u001b[K\u001b[31;37H\u001b[0m\u001b[49m\u001b[K\u001b[32;2H\u001b[0m\u001b[49m\u001b[K\u001b[33;90H\u001b[0m\u001b[49m\u001b[K\u001b[39m\u001b[49m\u001b[0m\u001b[0 q\u001b[?25h\u001b[31;3H\u001b[?2026l"
+      },
+      {
+        "type": "session_state",
+        "sessionId": "0f3ec15e-0c16-45f7-a02a-821f16d06ba7",
+        "terminalId": "issue364-1786556658671",
+        "status": "completed",
+        "hookEvent": "Stop",
+        "stateAt": 1786556857522,
+        "preview": "T364_RESPONSE_OK",
+        "interruptInputPolicy": "single-escape"
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+[
+    {
+        "Hash":  "AC274094C4BED8CF70F016CED1FE833C6234EE19ADEF737BA4ACE3453A18EFD3",
+        "Path":  "C:\\Users\\work\\.codex\\auth.json"
+    },
+    {
+        "Hash":  "D66EBA54EA8F75BFA0A57D443927FA3A901AC9EB833CBFA789340FFD6BAF2B52",
+        "Path":  "C:\\Users\\work\\.codex\\config.toml"
+    },
+    {
+        "Hash":  "CBC511DEC14E26D7BA4E99A4571136A64C4AB1CEE70F61AEBD09E1F9ED93A4E7",
+        "Path":  "C:\\Users\\work\\.codex\\hooks.json"
+    }
+]

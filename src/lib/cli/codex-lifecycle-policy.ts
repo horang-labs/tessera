@@ -24,6 +24,7 @@ export async function manageCodexLifecycleForUser(
     status: () => providerIntegration.inspectLifecycle(request),
     install: () => providerIntegration.installLifecycle({ ...request, consent: 'granted' }),
     update: () => providerIntegration.updateLifecycle(request),
+    reconcile: () => providerIntegration.reconcileLifecycle(request),
     remove: () => providerIntegration.removeLifecycle(request),
   });
 }

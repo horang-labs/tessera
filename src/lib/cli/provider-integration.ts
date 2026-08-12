@@ -26,7 +26,7 @@ import {
 } from './provider-session-resume';
 import type { ProviderHomeIdentity } from './providers/provider-home-identity';
 import type { SessionHistoryEvent } from '@/lib/session-replay-types';
-import { isProviderSkillId, type ProviderSkillId } from './provider-skill-id';
+import type { ProviderSkillId } from './provider-skill-id';
 
 export {
   ProviderSessionResumeUnavailableError,
@@ -134,6 +134,8 @@ export interface ProviderIntegrationLaunchRequest {
   compatibility?: 'exact-legacy-overlay-resume';
   requiredProviderHomeIdentity?: ProviderHomeIdentity;
   resumeProviderSessionId?: string;
+  /** Defaults to enabled. Disabled hooks are inspected but never reinstalled. */
+  lifecycleHooksEnabled?: boolean;
 }
 
 export interface ProviderIntegrationLifecycleRequest extends ProviderIntegrationLaunchRequest {
@@ -211,6 +213,9 @@ export interface ProviderIntegration {
     request: ProviderIntegrationLifecycleInstallRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
   updateLifecycle(
+    request: ProviderIntegrationLifecycleRequest,
+  ): Promise<ProviderIntegrationLaunchDecision>;
+  reconcileLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
   /**
@@ -701,49 +706,10 @@ export function createProviderIntegration(
       const agentEnvironment = await resolveEnvironment(request);
       const requirements = request.provider.getProviderIntegrationRequirements();
       const lifecycle = resolveArtifactPolicy(requirements.lifecycle);
-      let skill = resolveArtifactPolicy(requirements.skill);
-      let health: ProviderIntegrationHealth = { state: 'unchecked' };
-      if (requirements.skill !== 'not-applicable') {
-        try {
-          const maintained = await skillManager.maintain(
-            request.agentEnvironmentOwner,
-            normalizeProviderSkillId(request.provider.getProviderId()),
-            agentEnvironment,
-          );
-          skill = {
-            requirement: requirements.skill,
-            state: maintained.status.state === 'unavailable'
-              ? 'conflict'
-              : maintained.status.state,
-            consent: maintained.status.consent === 'not-granted'
-              ? 'declined'
-              : maintained.status.consent,
-            trust: 'not-required',
-          };
-          health = maintained.status.state === 'ready'
-            ? { state: 'healthy' }
-            : maintained.status.state === 'conflict' || maintained.status.state === 'unavailable'
-              ? { state: 'degraded' }
-              : { state: 'unchecked' };
-        } catch {
-          // Provider skills are optional. Environment, ownership, and filesystem
-          // failures are surfaced by management commands but never block launch.
-          skill = {
-            requirement: requirements.skill,
-            state: 'conflict',
-            consent: 'unchecked',
-            trust: 'not-required',
-          };
-          health = { state: 'degraded' };
-        }
-      }
-      if (
-        lifecycle.requirement === 'required'
-        && lifecycle.state === 'unchecked'
-        && health.state === 'healthy'
-      ) {
-        health = { state: 'unchecked' };
-      }
+      const skill = resolveArtifactPolicy(requirements.skill);
+      const health: ProviderIntegrationHealth = { state: 'unchecked' };
+      // The tessera-cli skill is optional and user-managed through the standard
+      // `npx skills` flow. Provider launch must neither mutate nor wait on it.
       let decision: ProviderIntegrationLaunchDecision = {
         providerHome: {
           owner: 'agent-environment',
@@ -818,7 +784,9 @@ export function createProviderIntegration(
         let result: ProviderLifecycleResult;
         try {
           result = lifecycleIntegration
-            ? await (lifecycleIntegration.maintain ?? lifecycleIntegration.inspect)(lifecycleContext)
+            ? await (request.lifecycleHooksEnabled === false
+                ? lifecycleIntegration.inspect(lifecycleContext)
+                : (lifecycleIntegration.maintain ?? lifecycleIntegration.inspect)(lifecycleContext))
             : {
                 state: 'unavailable',
                 trust: 'unavailable',
@@ -977,6 +945,13 @@ export function createProviderIntegration(
       updateManagedScopeHealth(request, decision, result.scopeId);
       return decision;
     },
+    async reconcileLifecycle(request) {
+      const operation = await resolveLifecycleOperation(request);
+      const result = operation.lifecycle
+        ? await (operation.lifecycle.maintain ?? operation.lifecycle.inspect)(operation.context)
+        : { state: 'unavailable' as const, trust: 'unavailable' as const };
+      return lifecycleDecision(operation.agentEnvironment, operation.requirements, result, 'required');
+    },
     async removeLifecycle(request) {
       const { agentEnvironment, requirements, lifecycle, context } =
         await resolveLifecycleOperation(request);
@@ -1015,11 +990,6 @@ export function createProviderIntegration(
       return () => managedSessionHealthListeners.delete(listener);
     },
   };
-}
-
-function normalizeProviderSkillId(providerId: string): ProviderSkillId {
-  if (isProviderSkillId(providerId)) return providerId;
-  throw new Error(`Provider ${providerId} does not support the tessera-cli skill.`);
 }
 
 // The WebSocket terminal host and Next route handlers can load this module through

@@ -16,7 +16,7 @@ import { CompactStatusBar } from "./compact-status-bar";
 import { TodoStatusBar } from "./todo/todo-status-bar";
 import { TerminalChatComposer } from "./terminal-chat-composer";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
-import { MessageSquare, AlertCircle, LoaderCircle, X as XIcon } from "lucide-react";
+import { MessageSquare, AlertCircle, CircleAlert, LoaderCircle, RotateCcw, X as XIcon } from "lucide-react";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
 import { Button } from "@/components/ui/button";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
@@ -35,6 +35,7 @@ import {
 } from "@/stores/terminal-session-store";
 import { sendTerminalChatInterrupt } from '@/lib/terminal/terminal-chat-send';
 import { toast } from '@/stores/notification-store';
+import { wsClient } from '@/lib/ws/client';
 
 interface ChatAreaProps {
   sessionId: string;
@@ -91,7 +92,9 @@ export const ChatArea = memo(function ChatArea({
   const isPendingCreation = sessionId.startsWith('temp-');
   const messages = useChatStore((state) => state.messages.get(sessionId));
   const error = useChatStore((state) => state.errors.get(sessionId));
+  const integrationRecovery = useChatStore((state) => state.providerIntegrationRecovery.get(sessionId));
   const clearError = useChatStore((state) => state.clearError);
+  const setIntegrationRecovery = useChatStore((state) => state.setProviderIntegrationRecovery);
   const isLoading = useChatStore((state) => state.isLoading);
   const isTurnInFlight = useChatStore(selectIsTurnInFlight(sessionId));
   const connectionStatus = useChatStore((state) => state.connectionStatus);
@@ -212,6 +215,43 @@ export const ChatArea = memo(function ChatArea({
 
   if (!session) {
     return <SessionNotFound sessionId={sessionId} />;
+  }
+
+  if (integrationRecovery) {
+    return (
+      <div className="flex flex-1 items-center justify-center bg-(--chat-bg) p-6">
+        <section
+          role="alert"
+          data-testid="provider-integration-recovery"
+          data-reason={integrationRecovery.reason}
+          className="w-full max-w-lg rounded-2xl border border-amber-500/30 bg-(--chat-header-bg) p-5 shadow-xl"
+        >
+          <div className="flex items-start gap-3">
+            <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" aria-hidden="true" />
+            <div className="min-w-0">
+              <h3 className="font-semibold text-(--text-primary)">{integrationRecovery.title}</h3>
+              <p className="mt-1 text-sm leading-6 text-(--text-secondary)">{integrationRecovery.message}</p>
+              {integrationRecovery.updateCommand ? (
+                <code className="mt-3 block overflow-x-auto rounded-lg bg-black/10 px-3 py-2 text-xs dark:bg-white/8">
+                  {integrationRecovery.updateCommand}
+                </code>
+              ) : null}
+              <Button
+                className="mt-4"
+                size="sm"
+                onClick={() => {
+                  setIntegrationRecovery(sessionId, null);
+                  wsClient.retrySession(sessionId);
+                }}
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                {integrationRecovery.retryLabel}
+              </Button>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   if (error) {

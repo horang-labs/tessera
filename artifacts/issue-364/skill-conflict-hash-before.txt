@@ -1,0 +1,1 @@
+bb307a3970787a6cd1ce1085c1300e51a8c840b22f22a726622ef51375a61cf0  /home/work/.tessera/test-fixtures/t364-0813-real1/home/.agents/skills/tessera-cli/SKILL.md

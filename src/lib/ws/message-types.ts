@@ -450,6 +450,18 @@ export type AppServerMessage =
       message: string;
     }
   | {
+      type: 'provider_integration_launch_blocked';
+      terminalId?: string;
+      surfaceId?: string;
+      sessionId?: string;
+      providerId: string;
+      reason: 'conflict' | 'unsupported' | 'trust' | 'write' | 'disabled' | 'unavailable';
+      title: string;
+      message: string;
+      retryLabel: string;
+      updateCommand?: string;
+    }
+  | {
       type: 'interactive_prompt';
       sessionId: string;
       promptType: 'select' | 'input' | 'ask_user_question' | 'permission_request' | 'plan_approval';

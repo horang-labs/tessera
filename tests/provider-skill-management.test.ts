@@ -202,7 +202,7 @@ test('changing Agent Environments requires fresh consent and leaves the prior in
   }
 });
 
-test('a newly detected provider stays absent until a fresh explicit install grants consent', async () => {
+test('a newly detected provider is not inspected or installed during provider launch', async () => {
   const harness = createHarness();
   try {
     const initialIntegration = harness.createIntegration('native', TEST_SKILL, ['codex']);
@@ -233,8 +233,8 @@ test('a newly detected provider stays absent until a fresh explicit install gran
       provider: skillOnlyProvider('claude-code'),
       agentEnvironmentOwner: { kind: 'user', userId: 'new-provider-user' },
     });
-    assert.equal(launch.skill.state, 'absent');
-    assert.equal(launch.skill.consent, 'declined');
+    assert.equal(launch.skill.state, 'unchecked');
+    assert.equal(launch.skill.consent, 'unchecked');
     assert.equal(
       fs.existsSync(path.join(harness.homes['native:claude-code'], 'skills', 'tessera-cli')),
       false,
@@ -364,7 +364,7 @@ test('external modification stops automatic management and is reported without o
   }
 });
 
-test('external deletion stops automatic management instead of recreating a consented skill', async () => {
+test('external deletion is left untouched by provider launch and reported by explicit status', async () => {
   const harness = createHarness();
   const skillDir = path.join(harness.homes['native:codex'], 'skills', 'tessera-cli');
   try {
@@ -382,9 +382,9 @@ test('external deletion stops automatic management instead of recreating a conse
 
     assert.deepEqual(launch.skill, {
       requirement: 'optional',
-      state: 'conflict',
-      consent: 'granted',
-      trust: 'not-required',
+      state: 'unchecked',
+      consent: 'unchecked',
+      trust: 'unchecked',
     });
     assert.equal(launch.providerHome.agentEnvironment, 'native');
     assert.equal(fs.existsSync(skillDir), false);
@@ -444,7 +444,7 @@ test('remove is all-or-nothing when one selected provider has an ownership confl
   }
 });
 
-test('Session launch refreshes a consented stale skill through Provider Integration', async () => {
+test('Session launch never refreshes a consented stale legacy skill', async () => {
   const harness = createHarness();
   const updatedSkill = `${TEST_SKILL}\nLaunch version.\n`;
   try {
@@ -459,21 +459,21 @@ test('Session launch refreshes a consented stale skill through Provider Integrat
       agentEnvironmentOwner: { kind: 'user', userId: 'launch-refresh-user' },
     });
 
-    assert.equal(launch.skill.state, 'ready');
-    assert.equal(launch.skill.consent, 'granted');
+    assert.equal(launch.skill.state, 'unchecked');
+    assert.equal(launch.skill.consent, 'unchecked');
     assert.equal(
       fs.readFileSync(
         path.join(harness.homes['native:opencode'], 'skills', 'tessera-cli', 'SKILL.md'),
         'utf8',
       ),
-      updatedSkill,
+      TEST_SKILL,
     );
   } finally {
     harness.cleanup();
   }
 });
 
-test('Session launch reports an externally modified skill but remains nonblocking', async () => {
+test('Session launch leaves an externally modified skill untouched and remains nonblocking', async () => {
   const harness = createHarness();
   const skillPath = path.join(
     harness.homes['native:codex'],
@@ -494,8 +494,8 @@ test('Session launch reports an externally modified skill but remains nonblockin
       agentEnvironmentOwner: { kind: 'user', userId: 'launch-conflict-user' },
     });
 
-    assert.equal(launch.skill.state, 'conflict');
-    assert.equal(launch.skill.consent, 'granted');
+    assert.equal(launch.skill.state, 'unchecked');
+    assert.equal(launch.skill.consent, 'unchecked');
     assert.notEqual(launch.health.state, 'blocked');
     assert.match(fs.readFileSync(skillPath, 'utf8'), /external launch edit/);
   } finally {
@@ -503,7 +503,7 @@ test('Session launch reports an externally modified skill but remains nonblockin
   }
 });
 
-test('Session launch reports a user-owned collision before consent without changing it', async () => {
+test('Session launch ignores a user-owned skill collision without changing it', async () => {
   const harness = createHarness();
   const skillPath = path.join(
     harness.homes['native:claude-code'],
@@ -519,16 +519,16 @@ test('Session launch reports a user-owned collision before consent without chang
       agentEnvironmentOwner: { kind: 'user', userId: 'pre-consent-conflict-user' },
     });
 
-    assert.equal(launch.skill.state, 'conflict');
-    assert.equal(launch.skill.consent, 'declined');
-    assert.equal(launch.health.state, 'degraded');
+    assert.equal(launch.skill.state, 'unchecked');
+    assert.equal(launch.skill.consent, 'unchecked');
+    assert.equal(launch.health.state, 'unchecked');
     assert.equal(fs.readFileSync(skillPath, 'utf8'), 'user-owned before consent\n');
   } finally {
     harness.cleanup();
   }
 });
 
-test('Session launch remains nonblocking when its provider home cannot be inspected', async () => {
+test('Session launch does not inspect the optional skill provider home', async () => {
   const harness = createHarness();
   try {
     const integration = createProviderIntegration({
@@ -547,15 +547,15 @@ test('Session launch remains nonblocking when its provider home cannot be inspec
     });
 
     assert.equal(launch.providerHome.agentEnvironment, 'wsl');
-    assert.equal(launch.skill.state, 'conflict');
-    assert.equal(launch.skill.consent, 'declined');
-    assert.equal(launch.health.state, 'degraded');
+    assert.equal(launch.skill.state, 'unchecked');
+    assert.equal(launch.skill.consent, 'unchecked');
+    assert.equal(launch.health.state, 'unchecked');
   } finally {
     harness.cleanup();
   }
 });
 
-test('Session maintenance remains pinned to the launch Agent Environment during a settings race', async () => {
+test('Session launch resolves its environment once without maintaining optional skills', async () => {
   const harness = createHarness();
   const updatedSkill = `${TEST_SKILL}\nPinned update.\n`;
   try {
@@ -589,7 +589,7 @@ test('Session maintenance remains pinned to the launch Agent Environment during 
         path.join(harness.homes['native:codex'], 'skills', 'tessera-cli', 'SKILL.md'),
         'utf8',
       ),
-      updatedSkill,
+      TEST_SKILL,
     );
     assert.equal(
       fs.existsSync(path.join(harness.homes['wsl:codex'], 'skills', 'tessera-cli')),
@@ -600,7 +600,7 @@ test('Session maintenance remains pinned to the launch Agent Environment during 
   }
 });
 
-test('Session launch does not reinstall a skill after explicit removal revoked consent', async () => {
+test('Session launch does not inspect or reinstall a skill after explicit removal', async () => {
   const harness = createHarness();
   const skillDir = path.join(harness.homes['native:claude-code'], 'skills', 'tessera-cli');
   try {
@@ -620,8 +620,8 @@ test('Session launch does not reinstall a skill after explicit removal revoked c
       agentEnvironmentOwner: { kind: 'user', userId: 'launch-revoked-user' },
     });
 
-    assert.equal(launch.skill.state, 'absent');
-    assert.equal(launch.skill.consent, 'revoked');
+    assert.equal(launch.skill.state, 'unchecked');
+    assert.equal(launch.skill.consent, 'unchecked');
     assert.equal(fs.existsSync(skillDir), false);
   } finally {
     harness.cleanup();

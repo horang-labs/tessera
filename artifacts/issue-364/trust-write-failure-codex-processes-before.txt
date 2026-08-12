@@ -1,0 +1,1 @@
+1038754 1038751 Thu Aug 13 03:50:01 2026 /mnt/c/Users/work/.codex/bin/wsl/codex --model gpt-5.6-sol --config model_reasoning_effort="low"

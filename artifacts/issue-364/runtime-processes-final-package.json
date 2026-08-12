@@ -1,0 +1,53 @@
+{
+    "processes":  [
+                      {
+                          "ProcessId":  48140,
+                          "ParentProcessId":  3888,
+                          "Name":  "Tessera.exe",
+                          "CommandLine":  "\"C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\Tessera.exe\" --remote-debugging-port=9337 --tessera-test-owner=e87d7889fe524865a3e67d8e63dbe15b "
+                      },
+                      {
+                          "ProcessId":  13524,
+                          "ParentProcessId":  48140,
+                          "Name":  "Tessera.exe",
+                          "CommandLine":  "\"C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\Tessera.exe\" --type=gpu-process --user-data-dir=\"C:\\Users\\work\\AppData\\Local\\TesseraTestInstances\\t364-0813-real1\\user-data\" --gpu-preferences=UAAAAAAAAADgAAAEAAAAAAAAAAAAAAAAAABgAAEAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAIAAAAAAAAAAgAAAAAAAAA --field-trial-handle=1736,i,11954053797870284939,2684481108192555016,262144 --disable-features=SpareRendererForSitePerProcess,WinDelaySpellcheckServiceInit,WinRetrieveSuggestionsOnlyOnDemand --variations-seed-version --mojo-platform-channel-handle=1716 /prefetch:2"
+                      },
+                      {
+                          "ProcessId":  50428,
+                          "ParentProcessId":  48140,
+                          "Name":  "Tessera.exe",
+                          "CommandLine":  "C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\Tessera.exe C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\resources\\app.asar\\dist-electron\\electron\\server-child.js"
+                      },
+                      {
+                          "ProcessId":  46064,
+                          "ParentProcessId":  48140,
+                          "Name":  "Tessera.exe",
+                          "CommandLine":  "\"C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\Tessera.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=ko --service-sandbox-type=none --host-resolver-rules=\"MAP localhost 127.0.0.1\" --user-data-dir=\"C:\\Users\\work\\AppData\\Local\\TesseraTestInstances\\t364-0813-real1\\user-data\" --field-trial-handle=2152,i,11954053797870284939,2684481108192555016,262144 --disable-features=SpareRendererForSitePerProcess,WinDelaySpellcheckServiceInit,WinRetrieveSuggestionsOnlyOnDemand --variations-seed-version --mojo-platform-channel-handle=2180 /prefetch:11"
+                      },
+                      {
+                          "ProcessId":  46808,
+                          "ParentProcessId":  48140,
+                          "Name":  "Tessera.exe",
+                          "CommandLine":  "\"C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\Tessera.exe\" --type=renderer --user-data-dir=\"C:\\Users\\work\\AppData\\Local\\TesseraTestInstances\\t364-0813-real1\\user-data\" --app-path=\"C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\resources\\app.asar\" --enable-sandbox --max-active-webgl-contexts=128 --remote-debugging-port=9337 --video-capture-use-gpu-memory-buffer --lang=ko --device-scale-factor=1.5 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=4 --time-ticks-at-unix-epoch=-1786408285911485 --launch-time-ticks=150420986067 --field-trial-handle=2972,i,11954053797870284939,2684481108192555016,262144 --disable-features=SpareRendererForSitePerProcess,WinDelaySpellcheckServiceInit,WinRetrieveSuggestionsOnlyOnDemand --variations-seed-version --mojo-platform-channel-handle=3032 /prefetch:1"
+                      },
+                      {
+                          "ProcessId":  45824,
+                          "ParentProcessId":  48140,
+                          "Name":  "Tessera.exe",
+                          "CommandLine":  "\"C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\Tessera.exe\" --type=utility --utility-sub-type=audio.mojom.AudioService --lang=ko --service-sandbox-type=audio --host-resolver-rules=\"MAP localhost 127.0.0.1\" --video-capture-use-gpu-memory-buffer --user-data-dir=\"C:\\Users\\work\\AppData\\Local\\TesseraTestInstances\\t364-0813-real1\\user-data\" --field-trial-handle=3780,i,11954053797870284939,2684481108192555016,262144 --disable-features=SpareRendererForSitePerProcess,WinDelaySpellcheckServiceInit,WinRetrieveSuggestionsOnlyOnDemand --variations-seed-version --mojo-platform-channel-handle=3852 /prefetch:12"
+                      }
+                  ],
+    "listeners":  [
+                      {
+                          "LocalAddress":  "127.0.0.1",
+                          "LocalPort":  32124,
+                          "OwningProcess":  50428
+                      },
+                      {
+                          "LocalAddress":  "127.0.0.1",
+                          "LocalPort":  9337,
+                          "OwningProcess":  48140
+                      }
+                  ],
+    "TESSERA_DEV_PORT":  null
+}

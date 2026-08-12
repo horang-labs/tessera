@@ -266,6 +266,7 @@ export async function resumeSessionWithLifecycle({
       sandboxMode: options.sandboxMode,
       serviceTier: runtimeDefaults.serviceTier,
       fastMode: options.fastMode,
+      lifecycleHooksEnabled: options.lifecycleHooksEnabled,
       ...(session.origin_provider_home_identity
         ? { originProviderHomeIdentity: session.origin_provider_home_identity }
         : {}),

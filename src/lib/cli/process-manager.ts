@@ -28,6 +28,7 @@ import {
 } from './process-manager-runtime';
 import { gracefulKillProcess } from './process-termination';
 import { isSessionHandedOffToTerminal } from '../terminal/terminal-handoff-lock';
+import { ProviderIntegrationLaunchBlockedError } from './provider-integration';
 
 type SessionLifecycle = 'spawned' | 'resumed';
 type ControlResponsePayload =
@@ -233,7 +234,10 @@ export class ProcessManager {
         error: err as Error,
       }, `Failed to ${lifecycle === 'spawned' ? 'spawn' : 'resume'} process`);
       this.clearSessionRuntimeState(sessionId);
-      if (isProviderSessionResumeUnavailableError(err)) throw err;
+      if (
+        isProviderSessionResumeUnavailableError(err)
+        || err instanceof ProviderIntegrationLaunchBlockedError
+      ) throw err;
       return false;
     }
   }

@@ -1,0 +1,25 @@
+{
+  "label": "skill-removed",
+  "action": "remove",
+  "before": {
+    "status": 200,
+    "body": {
+      "state": "installed",
+      "agentEnvironment": "wsl",
+      "agents": [
+        "Codex",
+        "OpenCode"
+      ],
+      "command": "npx skills add https://github.com/horang-labs/tessera --skill tessera-cli --global"
+    }
+  },
+  "after": {
+    "status": 200,
+    "body": {
+      "state": "not-installed",
+      "agentEnvironment": "wsl",
+      "agents": [],
+      "command": "npx skills add https://github.com/horang-labs/tessera --skill tessera-cli --global"
+    }
+  }
+}

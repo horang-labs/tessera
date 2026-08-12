@@ -81,6 +81,7 @@ export interface SessionBaseOptions extends ProviderRuntimeControls {
   permissionMode?: string;
   model?: string;
   reasoningEffort?: string | null;
+  lifecycleHooksEnabled?: boolean;
 }
 
 /**

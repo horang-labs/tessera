@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GripVertical, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react';
+import { CircleAlert, GripVertical, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollToBottomButton } from '@/components/ui/scroll-to-bottom-button';
 import { TabIdContext, usePanelStore } from '@/stores/panel-store';
@@ -151,6 +151,7 @@ export function TerminalPanel({
     appearanceMode,
     themeRestartRequired,
     themeRestartAllowed,
+    integrationRecovery,
   } = useSyncExternalStore(
     surface.subscribe,
     surface.getSnapshot,
@@ -217,7 +218,7 @@ export function TerminalPanel({
   }, [panelId, tabId]);
 
   const handleTerminalAction = useCallback(() => {
-    if (status === 'exited' || status === 'error') {
+    if (status === 'exited' || status === 'error' || status === 'blocked') {
       if (sessionOwned) handleTerminalInput();
       void surface.restart();
       return;
@@ -291,7 +292,7 @@ export function TerminalPanel({
     connect();
   }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, offerSkillOnboarding, launchProviderId, surface]);
 
-  const canRestart = status === 'exited' || status === 'error';
+  const canRestart = status === 'exited' || status === 'error' || status === 'blocked';
   const handleThemeRestart = useCallback(() => {
     surface.restartForTheme();
   }, [surface]);
@@ -349,6 +350,33 @@ export function TerminalPanel({
         {status === 'starting' && startupOverlay ? (
           <div className="absolute inset-0 z-10">{startupOverlay}</div>
         ) : null}
+        {status === 'blocked' && integrationRecovery ? (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-(--chat-bg)/95 p-6">
+            <section
+              role="alert"
+              data-testid="provider-integration-recovery"
+              data-reason={integrationRecovery.reason}
+              className="w-full max-w-lg rounded-2xl border border-amber-500/30 bg-(--chat-header-bg) p-5 shadow-xl"
+            >
+              <div className="flex items-start gap-3">
+                <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" aria-hidden="true" />
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-(--text-primary)">{integrationRecovery.title}</h3>
+                  <p className="mt-1 text-sm leading-6 text-(--text-secondary)">{integrationRecovery.message}</p>
+                  {integrationRecovery.updateCommand ? (
+                    <code className="mt-3 block overflow-x-auto rounded-lg bg-black/10 px-3 py-2 text-xs dark:bg-white/8">
+                      {integrationRecovery.updateCommand}
+                    </code>
+                  ) : null}
+                  <Button className="mt-4" size="sm" onClick={handleTerminalAction}>
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {integrationRecovery.retryLabel}
+                  </Button>
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : null}
         {!isAtBottom && (
           <ScrollToBottomButton
             onClick={() => surface.scrollToBottom()}
@@ -356,7 +384,7 @@ export function TerminalPanel({
             testId="terminal-scroll-to-bottom-button"
           />
         )}
-        {(themeRestartRequired || (sessionOwned && status !== 'running')) && (
+        {(themeRestartRequired || (sessionOwned && status !== 'running' && status !== 'blocked')) && (
           <div
             role="status"
             data-testid={themeRestartRequired

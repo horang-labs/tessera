@@ -75,6 +75,28 @@ test('Codex app-server launch preserves explicit server-default ownership withou
   assert.deepEqual(ownership, [{ kind: 'server-default' }]);
 });
 
+test('Codex app-server launch threads the disabled lifecycle-hook setting into shared preflight', async () => {
+  const { CodexAdapter } = await import('@/lib/cli/providers/codex/adapter');
+  const requests: Array<{ lifecycleHooksEnabled?: boolean }> = [];
+  const adapter = new CodexAdapter({
+    providerIntegration: {
+      resolveLaunch: async (request) => {
+        requests.push(request);
+        throw new Error('stop after policy capture');
+      },
+      buildLaunchEnvironment: () => undefined,
+      inspectLifecycle: async () => { throw new Error('not used'); },
+      installLifecycle: async () => { throw new Error('not used'); },
+    },
+  });
+
+  await assert.rejects(
+    adapter.spawn(workspace, { sessionId: '__provider__', lifecycleHooksEnabled: false }),
+    /stop after policy capture/,
+  );
+  assert.equal(requests[0]?.lifecycleHooksEnabled, false);
+});
+
 test('Provider Integration exposes path-free, provider-specific integration state', async () => {
   const [{ CodexAdapter }, { createProviderIntegration }] = await Promise.all([
     import('@/lib/cli/providers/codex/adapter'),
@@ -112,9 +134,9 @@ test('Provider Integration exposes path-free, provider-specific integration stat
   });
   assert.deepEqual(codex.skill, {
     requirement: 'optional',
-    state: 'absent',
-    consent: 'declined',
-    trust: 'not-required',
+    state: 'unchecked',
+    consent: 'unchecked',
+    trust: 'unchecked',
   });
   assert.deepEqual(codex.health, { state: 'healthy' });
   assert.equal('launchEnvironment' in codex, false);
@@ -128,7 +150,7 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     provider: new CodexAdapter(),
     agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
   });
-  assert.equal(codexWithReadyOptionalSkill.skill.state, 'ready');
+  assert.equal(codexWithReadyOptionalSkill.skill.state, 'unchecked');
   assert.equal(codexWithReadyOptionalSkill.health.state, 'healthy');
 
   const providerWithoutRequiredLifecycle = await providerIntegration.resolveLaunch({

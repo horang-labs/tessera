@@ -39,6 +39,7 @@ import type {
 } from './message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import { isProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
+import { buildProviderIntegrationBlockMessage } from './provider-integration-recovery-message';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 type SessionHistoryMessage = Extract<ServerTransportMessage, { type: 'session_history' }>;
@@ -627,6 +628,7 @@ async function ensureSessionProcess({
   }
   const effectiveWorkDir = dbSessions.getSessionWorktreeContext(sessionId)?.workDir;
   const workDir = effectiveWorkDir || process.cwd();
+  const settings = await SettingsManager.load(userId, { silent: true });
 
   // A CLI reads its instruction files once, at startup. Starting it before the
   // worktree has them means this session never sees them, so the spawn waits —
@@ -656,8 +658,14 @@ async function ensureSessionProcess({
       collaborationMode: spawnConfig?.collaborationMode,
       approvalPolicy: spawnConfig?.approvalPolicy,
       sandboxMode: spawnConfig?.sandboxMode,
+      lifecycleHooksEnabled: settings.codexLifecycleHooksEnabled,
     });
   } catch (error) {
+    const blocked = buildProviderIntegrationBlockMessage(error, { sessionId, providerId });
+    if (blocked) {
+      sendToUser(userId, blocked);
+      return false;
+    }
     if (!isProviderSessionResumeUnavailableError(error)) throw error;
     sendToUser(userId, {
       type: 'error',

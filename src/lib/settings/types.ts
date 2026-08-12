@@ -107,6 +107,8 @@ export interface UserSettings {
   geminiApiKey: string;
   favoriteSkills: string[];
   agentEnvironment: AgentEnvironment;
+  /** Orca-style Agent status hooks. Enabled by default; Codex launch requires them. */
+  codexLifecycleHooksEnabled: boolean;
   cliCommandOverrides: CliCommandOverrides;
   windowsCloseBehavior: WindowsCloseBehavior;
   setup: SetupState;

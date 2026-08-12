@@ -776,6 +776,12 @@ test('consented lifecycle refreshes before launch, degrades on conflict, and rev
   });
   assert.equal(otherProvider.lifecycle.state, 'not-applicable');
 
+  const refusedOverwrite = await integration.updateLifecycle(request);
+  assert.equal(refusedOverwrite.lifecycle.state, 'conflict');
+  assert.equal(fs.readFileSync(path.join(home, 'hooks.json'), 'utf8'), modifiedText);
+
+  document.hooks.SessionStart.at(-1).hooks[0].timeout = 10;
+  fs.writeFileSync(path.join(home, 'hooks.json'), `${JSON.stringify(document, null, 2)}\n`);
   const repaired = await integration.updateLifecycle(request);
   assert.equal(repaired.lifecycle.state, 'installed');
   assert.equal(repaired.lifecycle.consent, 'granted');
@@ -796,10 +802,106 @@ test('consented lifecycle refreshes before launch, degrades on conflict, and rev
     false,
   );
   assert.deepEqual(readHookDocument(home).hooks.Stop, [userStopHook]);
-  await assert.rejects(integration.resolveLaunch(request), ProviderIntegrationLaunchBlockedError);
+  await assert.rejects(
+    integration.resolveLaunch({ ...request, lifecycleHooksEnabled: false }),
+    ProviderIntegrationLaunchBlockedError,
+  );
+  const reenabled = await integration.resolveLaunch(request);
+  assert.equal(reenabled.lifecycle.state, 'installed');
+  assert.equal(reenabled.lifecycle.consent, 'granted');
+  assert.equal(reenabled.health.state, 'healthy');
+  const reenabledDocument = readHookDocument(home);
+  assert.deepEqual(reenabledDocument.hooks.Stop[0], userStopHook);
+  assert.equal(
+    Object.values(reenabledDocument.hooks).some((groups) => (
+      Array.isArray(groups) && groups.some(groupLooksTesseraOwnedForTest)
+    )),
+    true,
+  );
   assert.equal(integration.getManagedSessionHealth(managedSessionId), 'degraded');
   integration.releaseManagedSession(managedSessionId);
   assert.equal(integration.getManagedSessionHealth(managedSessionId), undefined);
+});
+
+test('first Codex launch installs and trusts an ordinary absent lifecycle hook without prior consent', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-provider-lifecycle-first-launch-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, 'codex-home');
+  fs.mkdirSync(home, { recursive: true });
+  const fakeCodex = createFakeCodexApi(home);
+
+  const { createProviderIntegration } = await import('@/lib/cli/provider-integration');
+  const integration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'native',
+    lifecycle: createCodexLifecycleHookIntegration({
+      resolveProviderHome: async () => home,
+      readVersion: async () => '0.146.0',
+      request: fakeCodex.request,
+      stateDirectory: path.join(root, 'state'),
+    }),
+  });
+  const request = {
+    provider: {
+      ...codexProvider,
+      getProviderIntegrationRequirements: () => ({
+        lifecycle: 'required' as const,
+        skill: 'not-applicable' as const,
+        launchEnvironment: 'not-applicable' as const,
+      }),
+    },
+    agentEnvironmentOwner: { kind: 'user' as const, userId: 'first-launch-owner' },
+    workDir: root,
+  };
+
+  const launched = await integration.resolveLaunch(request);
+
+  assert.equal(launched.lifecycle.state, 'installed');
+  assert.equal(launched.lifecycle.consent, 'granted');
+  assert.equal(launched.lifecycle.trust, 'trusted');
+  assert.equal(launched.health.state, 'healthy');
+  assert.equal(
+    Object.values(readHookDocument(home).hooks).filter(Array.isArray).length,
+    CODEX_EVENTS.length,
+  );
+  assert.equal(fakeCodex.calls.some((call) => call.method === 'config/batchWrite'), true);
+});
+
+test('disabled Agent status hooks block Codex without reconciling and do not affect other providers', async () => {
+  const { createProviderIntegration, ProviderIntegrationLaunchBlockedError } = await import(
+    '@/lib/cli/provider-integration'
+  );
+  let inspectCalls = 0;
+  let maintainCalls = 0;
+  const integration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'wsl',
+    lifecycle: {
+      inspect: async () => {
+        inspectCalls += 1;
+        return { state: 'absent', trust: 'unchecked', consent: 'revoked' };
+      },
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
+      maintain: async () => {
+        maintainCalls += 1;
+        return { state: 'installed', trust: 'trusted' };
+      },
+    },
+  });
+
+  await assert.rejects(
+    integration.resolveLaunch({
+      provider: codexProvider,
+      agentEnvironmentOwner: { kind: 'user', userId: 'hooks-disabled' },
+      lifecycleHooksEnabled: false,
+    }),
+    ProviderIntegrationLaunchBlockedError,
+  );
+  assert.equal(inspectCalls, 1);
+  assert.equal(maintainCalls, 0);
+  assert.notEqual((await integration.resolveLaunch({
+    provider: claudeProvider,
+    agentEnvironmentOwner: { kind: 'user', userId: 'hooks-disabled' },
+    lifecycleHooksEnabled: false,
+  })).health.state, 'blocked');
 });
 
 test('running Session health remains independent across Agent Environments', async (t) => {

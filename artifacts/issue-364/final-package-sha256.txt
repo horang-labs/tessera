@@ -1,0 +1,2 @@
+d437f9bd548e25aa5fe513f88479861b452c00875199b17c305ef4b02f6de8fb  Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041.exe
+fa8e0ca2ee871fe71b714691475b1dfaba22f62bf913362b8ce632302e830c24  Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked/Tessera.exe

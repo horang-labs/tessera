@@ -1,0 +1,88 @@
+{
+  "phase": "blocked",
+  "lifecycle": {
+    "providerHome": {
+      "owner": "agent-environment",
+      "agentEnvironment": "wsl"
+    },
+    "lifecycle": {
+      "requirement": "required",
+      "state": "unavailable",
+      "consent": "granted",
+      "trust": "unavailable",
+      "installedVersion": "0.2.3-hotfix.1",
+      "currentVersion": "0.2.3-hotfix.1",
+      "message": "Codex 0.146.0 or newer is required for supported hook trust. Run `codex update` and retry. Installed version: 0.100.0."
+    },
+    "skill": {
+      "requirement": "optional",
+      "state": "unchecked",
+      "consent": "unchecked",
+      "trust": "unchecked"
+    },
+    "health": {
+      "state": "blocked"
+    },
+    "guidance": {
+      "minimumVersion": "0.146.0",
+      "updateCommand": "codex update",
+      "message": "Codex 0.146.0 or newer is required for supported hook trust. Run `codex update` and retry. Installed version: 0.100.0."
+    }
+  },
+  "url": "http://localhost:32124/chat",
+  "launch": {
+    "blocked": {
+      "type": "provider_integration_launch_blocked",
+      "terminalId": "issue364-1786559049342",
+      "surfaceId": "surface-1786559049342",
+      "providerId": "codex",
+      "reason": "unsupported",
+      "title": "Codex setup needs attention",
+      "message": "Codex 0.146.0 or newer is required for supported hook trust. Run `codex update` and retry. Installed version: 0.100.0.",
+      "retryLabel": "Retry setup",
+      "updateCommand": "codex update"
+    },
+    "output": "",
+    "messages": [
+      {
+        "type": "session_list",
+        "sessions": [],
+        "titleGeneratingSessionIds": []
+      },
+      {
+        "type": "terminal_session_runtime_snapshot",
+        "activeSessionIds": [
+          "0081057e-8e64-40d8-9e29-dd34c289a4c3"
+        ],
+        "reboundSessions": []
+      },
+      {
+        "type": "rate_limit_update",
+        "providerId": "codex",
+        "windows": [
+          {
+            "key": "primary",
+            "usedPercent": 14,
+            "resetsAt": "2026-08-19T14:56:18.000Z",
+            "windowDurationMins": 10080
+          }
+        ],
+        "limitId": "codex",
+        "limitName": null,
+        "planType": "pro",
+        "updatedAt": "2026-08-12T18:23:29.538Z"
+      },
+      {
+        "type": "provider_integration_launch_blocked",
+        "terminalId": "issue364-1786559049342",
+        "surfaceId": "surface-1786559049342",
+        "providerId": "codex",
+        "reason": "unsupported",
+        "title": "Codex setup needs attention",
+        "message": "Codex 0.146.0 or newer is required for supported hook trust. Run `codex update` and retry. Installed version: 0.100.0.",
+        "retryLabel": "Retry setup",
+        "updateCommand": "codex update"
+      }
+    ]
+  }
+}

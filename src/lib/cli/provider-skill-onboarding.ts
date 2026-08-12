@@ -1,9 +1,8 @@
-import { i18n } from '@/lib/i18n';
-import { useNotificationStore } from '@/stores/notification-store';
 import { isProviderSkillId, type ProviderSkillId } from './provider-skill-id';
 import type { ProviderSkillIntegrationResult } from './provider-integration';
-import { inspectProviderSkills, mutateProviderSkill } from './provider-skill-client';
 import { PROVIDER_SKILL_DISPLAY_NAMES } from './provider-skill-view-policy';
+import { inspectTesseraCliSkill } from './tessera-cli-skill-client';
+import { useProviderSkillOnboardingStore } from '@/stores/provider-skill-onboarding-store';
 
 export interface ProviderSkillOnboardingOffer {
   providerId: ProviderSkillId;
@@ -69,46 +68,27 @@ export function createProviderSkillOnboarding(
   };
 }
 
-const providerSkillOnboarding = createProviderSkillOnboarding({
-  readStatus: async (providerId) => inspectProviderSkills({ providerId }),
-  install: async (providerId, expectedAgentEnvironment) => {
-    const result = await mutateProviderSkill({
-      operation: 'install',
-      providerId,
-      expectedAgentEnvironment,
-    });
-    if (!result.success) throw new Error(result.error?.message ?? 'Provider skill installation failed.');
-    return result;
+const offeredStandardSkillScopes = new Set<string>();
+const providerSkillOnboarding: ProviderSkillOnboarding = {
+  async offer(providerId) {
+    const normalizedProviderId = providerSkillId(providerId);
+    if (!normalizedProviderId) return 'not-needed';
+    try {
+      const status = await inspectTesseraCliSkill();
+      if (status.state === 'installed' && status.agents.includes(PROVIDER_SKILL_DISPLAY_NAMES[normalizedProviderId])) {
+        return 'not-needed';
+      }
+      const scope = `${status.agentEnvironment}:${normalizedProviderId}`;
+      if (offeredStandardSkillScopes.has(scope)) return 'already-offered';
+      offeredStandardSkillScopes.add(scope);
+      const provider = PROVIDER_SKILL_DISPLAY_NAMES[normalizedProviderId];
+      useProviderSkillOnboardingStore.getState().open(provider, status.agentEnvironment);
+      return 'offered';
+    } catch {
+      return 'unavailable';
+    }
   },
-  showOffer: (offer) => {
-    useNotificationStore.getState().showToastWithAction(
-      i18n.t('settings.providerSkills.onboardingPrompt', {
-        provider: PROVIDER_SKILL_DISPLAY_NAMES[offer.providerId],
-        environment: offer.agentEnvironment === 'wsl' ? 'WSL' : 'Native',
-      }),
-      'info',
-      {
-        label: i18n.t('settings.providerSkills.install'),
-        onClick: () => {
-          void offer.install().then(
-            () => useNotificationStore.getState().showToast(
-              i18n.t('settings.providerSkills.installSuccess', {
-                provider: PROVIDER_SKILL_DISPLAY_NAMES[offer.providerId],
-              }),
-              'success',
-            ),
-            () => useNotificationStore.getState().showToast(
-              i18n.t('settings.providerSkills.installFailed', {
-                provider: PROVIDER_SKILL_DISPLAY_NAMES[offer.providerId],
-              }),
-              'error',
-            ),
-          );
-        },
-      },
-    );
-  },
-});
+};
 
 export function notifyProviderSessionStarted(
   providerId: string,

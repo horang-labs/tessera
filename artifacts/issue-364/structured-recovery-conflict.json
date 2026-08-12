@@ -1,0 +1,32 @@
+{
+  "label": "structured-recovery-conflict",
+  "action": "recovery",
+  "lifecycle": {
+    "status": 200,
+    "body": {
+      "providerHome": {
+        "owner": "agent-environment",
+        "agentEnvironment": "wsl"
+      },
+      "lifecycle": {
+        "requirement": "required",
+        "state": "conflict",
+        "consent": "granted",
+        "trust": "unavailable",
+        "installedVersion": "0.2.3-hotfix.1",
+        "currentVersion": "0.2.3-hotfix.1",
+        "message": "The Tessera SessionStart hook differs from the managed definition."
+      },
+      "skill": {
+        "requirement": "optional",
+        "state": "unchecked",
+        "consent": "unchecked",
+        "trust": "unchecked"
+      },
+      "health": {
+        "state": "blocked"
+      }
+    }
+  },
+  "recoveryText": "Codex setup needs attention\n\nThe Tessera SessionStart hook differs from the managed definition.\n\nRetry setup"
+}

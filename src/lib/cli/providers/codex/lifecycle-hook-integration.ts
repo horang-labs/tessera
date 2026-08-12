@@ -856,11 +856,11 @@ export function createCodexLifecycleHookIntegration(
   ): Promise<CodexLifecycleResult> {
     const resolved = await resolveScope(context);
     if ('state' in resolved) return resolved;
-    if (operation !== 'install' && resolved.entry?.consent !== 'granted') {
+    if (operation === 'update' && resolved.entry?.consent === 'revoked') {
       return lifecycleResult(resolved, {
         state: 'absent',
         trust: 'unchecked',
-        message: 'Explicit consent is required before Tessera can manage this Codex lifecycle hook.',
+        message: 'Tessera Agent status hooks are disabled for this Codex home.',
       });
     }
 
@@ -872,17 +872,11 @@ export function createCodexLifecycleHookIntegration(
     );
     let materialized = false;
     if (document.state === 'conflict') {
-      const mayResolve = operation !== 'maintain'
-        && resolved.entry !== undefined
-        && document.document !== undefined
-        && document.originalText !== undefined;
-      if (!mayResolve) {
-        return lifecycleResult(resolved, {
-          state: 'conflict', trust: 'unavailable', message: document.message,
-        });
-      }
+      return lifecycleResult(resolved, {
+        state: 'conflict', trust: 'unavailable', message: document.message,
+      });
     }
-    if (operation === 'install') {
+    if (operation === 'install' || (operation === 'maintain' && !resolved.entry)) {
       const preexistingEventKeys = document.state === 'absent'
         ? managedEventKeysPresent(document.document)
         : resolved.entry?.preexistingEventKeys;
@@ -936,7 +930,7 @@ export function createCodexLifecycleHookIntegration(
           document,
           resolved.style,
           buildHookSettings,
-          document.state === 'conflict' ? 'update' : 'install',
+          'install',
         );
         materialized = true;
       } catch (error) {

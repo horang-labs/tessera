@@ -1,0 +1,16 @@
+{
+  "label": "skill-retry-recheck",
+  "action": "recheck",
+  "skill": {
+    "status": 200,
+    "body": {
+      "state": "installed",
+      "agentEnvironment": "wsl",
+      "agents": [
+        "Codex",
+        "OpenCode"
+      ],
+      "command": "npx skills add https://github.com/horang-labs/tessera --skill tessera-cli --global"
+    }
+  }
+}

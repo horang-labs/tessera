@@ -1,0 +1,43 @@
+{
+  "label": "skill-conflict",
+  "action": "capture",
+  "lifecycle": {
+    "status": 200,
+    "body": {
+      "providerHome": {
+        "owner": "agent-environment",
+        "agentEnvironment": "wsl"
+      },
+      "lifecycle": {
+        "requirement": "required",
+        "state": "installed",
+        "consent": "granted",
+        "trust": "trusted",
+        "installedVersion": "0.2.3-hotfix.1",
+        "currentVersion": "0.2.3-hotfix.1"
+      },
+      "skill": {
+        "requirement": "optional",
+        "state": "unchecked",
+        "consent": "unchecked",
+        "trust": "unchecked"
+      },
+      "health": {
+        "state": "healthy"
+      }
+    }
+  },
+  "skill": {
+    "status": 200,
+    "body": {
+      "state": "conflict",
+      "agentEnvironment": "wsl",
+      "agents": [
+        "Codex",
+        "OpenCode"
+      ],
+      "command": "npx skills add https://github.com/horang-labs/tessera --skill tessera-cli --global",
+      "message": "The managed tessera-cli skill was modified outside the Skills CLI. Tessera did not overwrite it."
+    }
+  }
+}

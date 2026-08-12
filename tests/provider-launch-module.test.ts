@@ -1731,8 +1731,8 @@ test('Claude avoids WSL skill overlays while a deterministic Codex overlay failu
     );
     assert.equal(
       wslCallCount(),
-      providerResolutionCalls + 2,
-      'Codex provider resolution plus one deterministic overlay failure must not be retried',
+      providerResolutionCalls + 1,
+      'Codex performs one deterministic overlay failure without probing or mutating the optional skill',
     );
   } finally {
     if (platformDescriptor) Object.defineProperty(process, 'platform', platformDescriptor);

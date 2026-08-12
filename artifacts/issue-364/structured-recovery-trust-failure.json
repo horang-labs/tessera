@@ -1,0 +1,32 @@
+{
+  "label": "structured-recovery-trust-failure",
+  "action": "retry-recovery",
+  "lifecycle": {
+    "status": 200,
+    "body": {
+      "providerHome": {
+        "owner": "agent-environment",
+        "agentEnvironment": "wsl"
+      },
+      "lifecycle": {
+        "requirement": "required",
+        "state": "unavailable",
+        "consent": "granted",
+        "trust": "unavailable",
+        "installedVersion": "0.2.3-hotfix.1",
+        "currentVersion": "0.2.3-hotfix.1",
+        "message": "Codex hook status could not be read: issue-364 forced hook trust failure"
+      },
+      "skill": {
+        "requirement": "optional",
+        "state": "unchecked",
+        "consent": "unchecked",
+        "trust": "unchecked"
+      },
+      "health": {
+        "state": "blocked"
+      }
+    }
+  },
+  "recoveryText": "Codex setup needs attention\n\nCodex hook status could not be read: issue-364 forced hook trust failure\n\nRetry setup"
+}

@@ -76,7 +76,12 @@ import {
   type TerminalKeyboardOwner,
 } from './terminal-input-policy';
 
-export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
+export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error' | 'blocked';
+
+export type ProviderIntegrationRecovery = Omit<
+  Extract<ServerTransportMessage, { type: 'provider_integration_launch_blocked' }>,
+  'type' | 'terminalId' | 'surfaceId'
+>;
 
 export interface TerminalSurfaceSnapshot {
   status: TerminalSurfaceStatus;
@@ -85,6 +90,7 @@ export interface TerminalSurfaceSnapshot {
   appearanceMode: TerminalColorSchemeMode;
   themeRestartRequired: boolean;
   themeRestartAllowed: boolean;
+  integrationRecovery?: ProviderIntegrationRecovery;
 }
 
 export interface TerminalSurfaceOptions {
@@ -1291,6 +1297,26 @@ export class TerminalSurface {
       return;
     }
 
+    if (
+      message.type === 'provider_integration_launch_blocked'
+      && message.surfaceId === this.surfaceId
+    ) {
+      this.autoConnect = false;
+      this.attachedConnectionGeneration = 0;
+      this.cancelSnapshotReplay();
+      clearClientTerminalHandoff(this.options.terminalId);
+      const { type: _type, terminalId: _terminalId, surfaceId: _surfaceId, ...recovery } = message;
+      this.state = {
+        ...this.state,
+        status: 'blocked',
+        subtitle: recovery.title,
+        integrationRecovery: recovery,
+      };
+      this.notifyListeners();
+      this.finishPendingLaunch('error', recovery.message);
+      return;
+    }
+
     if (!('surfaceId' in message) || message.surfaceId !== this.surfaceId) return;
 
     if (message.type === 'terminal_started') {
@@ -1900,8 +1926,12 @@ export class TerminalSurface {
   }
 
   private updateState(status: TerminalSurfaceStatus, subtitle: string): void {
-    if (this.state.status === status && this.state.subtitle === subtitle) return;
-    this.state = { ...this.state, status, subtitle };
+    if (
+      this.state.status === status
+      && this.state.subtitle === subtitle
+      && this.state.integrationRecovery === undefined
+    ) return;
+    this.state = { ...this.state, status, subtitle, integrationRecovery: undefined };
     this.notifyListeners();
   }
 
@@ -2029,6 +2059,15 @@ export function pasteInputToTerminal(terminalId: string, data: string): boolean 
     if (surface.getSnapshot().status === 'running' && surface.pasteInput(data)) return true;
   }
   return candidates.some((surface) => surface.pasteInput(data));
+}
+
+/** Paste only after the surface is live, so callers can safely retry during connection setup. */
+export function pasteInputToRunningTerminal(terminalId: string, data: string): boolean {
+  return [...surfaces.values()].some(
+    (surface) => surface.matchesTerminal(terminalId)
+      && surface.getSnapshot().status === 'running'
+      && surface.pasteInput(data),
+  );
 }
 
 export function getSessionTerminalId(sessionId: string): string {

@@ -20,6 +20,7 @@ import {
 import { directListeners } from '@/lib/http/direct-listeners';
 import logger from '@/lib/logger';
 import { inspectProviderHomeChange } from '@/lib/settings/provider-home-change';
+import { reconcileCodexLifecycleForUserSoon } from '@/lib/cli/codex-lifecycle-reconciliation';
 
 export async function GET(request: NextRequest) {
   try {
@@ -132,6 +133,12 @@ export async function PUT(request: NextRequest) {
     if (agentEnvironmentChanged) {
       // PTY 감지 캐시는 환경(native/wsl)별 PATH 세계라 환경 전환 시 재프로브.
       invalidateTerminalProviderDetection();
+    }
+    if (
+      agentEnvironmentChanged
+      || previousSettings.codexLifecycleHooksEnabled !== settings.codexLifecycleHooksEnabled
+    ) {
+      reconcileCodexLifecycleForUserSoon(userId, settings.codexLifecycleHooksEnabled);
     }
     return NextResponse.json({ success: true, settings, machineSettings });
   } catch (error) {

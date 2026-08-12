@@ -295,7 +295,7 @@ export const en: I18nMessages = {
       },
     },
     codexLifecycle: {
-      title: 'Codex lifecycle hook',
+      title: 'Agent status hooks',
       required: 'Required',
       description: 'Manage the required Tessera hook in the Authoritative Provider Home for this Agent Environment.',
       refresh: 'Refresh',

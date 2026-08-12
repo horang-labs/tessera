@@ -1,0 +1,2 @@
+555 /home/work/.tessera/test-fixtures/t364-0813-real1/codex-home
+444 /home/work/.tessera/test-fixtures/t364-0813-real1/codex-home/hooks.json

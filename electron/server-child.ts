@@ -40,6 +40,7 @@ import { loadMachineSettings } from '../src/lib/settings/machine-settings';
 import { SettingsManager } from '../src/lib/settings/manager';
 import { registerCurrentProjectAtStartup } from '../src/lib/projects/current-project-registration';
 import { createPairingPresentation } from '../src/lib/auth/pairing-presentation';
+import { reconcileCodexLifecycleForUserSoon } from '../src/lib/cli/codex-lifecycle-reconciliation';
 import {
   LOOPBACK_SERVER_HOST,
   resolveDirectListenerTarget,
@@ -144,6 +145,7 @@ initDatabase().then(async () => {
     const userId = await resolveServerDefaultUserId();
     if (userId) {
       const settings = await SettingsManager.load(userId, { silent: true, strict: true });
+      reconcileCodexLifecycleForUserSoon(userId, settings.codexLifecycleHooksEnabled);
       const bootstrap = await bootstrapCanonicalWorktreeRegistry(settings.agentEnvironment);
       if (bootstrap.status === 'completed') {
         logger.info({ bootstrap }, 'Canonical Worktree registry bootstrapped');

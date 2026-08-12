@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   getTerminalSurface,
+  pasteInputToRunningTerminal,
   type TerminalSurface,
+  type TerminalSurfaceSnapshot,
 } from '@/lib/terminal/terminal-surface-registry';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { wsClient } from '@/lib/ws/client';
@@ -80,5 +82,24 @@ test('user paste uses the exact surface paste path and notifies only after deliv
     Reflect.set(first, 'terminal', null);
     first.dispose({ detach: false });
     second.dispose({ detach: false });
+  }
+});
+
+test('preloaded setup input waits for a running terminal surface', () => {
+  const surface = createSurface('preloaded-setup-input');
+  const pasted: string[] = [];
+  const internals = surface as unknown as { state: TerminalSurfaceSnapshot };
+  Reflect.set(surface, 'terminal', { paste: (data: string) => pasted.push(data) });
+
+  try {
+    assert.equal(pasteInputToRunningTerminal('shared-user-input-test-terminal', 'npx skills add'), false);
+    assert.deepEqual(pasted, []);
+
+    internals.state = { ...internals.state, status: 'running' };
+    assert.equal(pasteInputToRunningTerminal('shared-user-input-test-terminal', 'npx skills add'), true);
+    assert.deepEqual(pasted, ['npx skills add']);
+  } finally {
+    Reflect.set(surface, 'terminal', null);
+    surface.dispose({ detach: false });
   }
 });

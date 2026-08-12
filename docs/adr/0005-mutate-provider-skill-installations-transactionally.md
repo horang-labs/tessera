@@ -1,0 +1,3 @@
+# Mutate provider skill installations transactionally
+
+The standard Skills CLI owns `tessera-cli` installation and update transactions. Tessera launches one interactive global command in the active Agent Environment and does not reproduce per-provider file mutations. The Skills CLI picker selects the exact target set for each setup run, including multiple targets when the user chooses them. Tessera-specific removal invokes the standard CLI only after source and lock-backed content ownership are verified; failed or unavailable ownership inspection blocks removal, and an external modification is reported as a conflict rather than partially removed.

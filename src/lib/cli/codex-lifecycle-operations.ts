@@ -1,4 +1,4 @@
-export const CODEX_LIFECYCLE_MUTATIONS = ['install', 'update', 'remove'] as const;
+export const CODEX_LIFECYCLE_MUTATIONS = ['install', 'update', 'reconcile', 'remove'] as const;
 
 export type CodexLifecycleMutation = typeof CODEX_LIFECYCLE_MUTATIONS[number];
 export type CodexLifecycleOperation = 'status' | CodexLifecycleMutation;
@@ -12,7 +12,7 @@ export function parseCodexLifecycleMutation(
 ): CodexLifecycleMutationParseResult {
   const operation = body.operation;
   if (!CODEX_LIFECYCLE_MUTATIONS.includes(operation as CodexLifecycleMutation)) {
-    return { error: 'Lifecycle operation must be install, update, or remove.' };
+    return { error: 'Lifecycle operation must be install, update, reconcile, or remove.' };
   }
   if (operation === 'install' && body.consent !== 'granted') {
     return { error: 'Explicit Codex lifecycle hook consent is required.' };

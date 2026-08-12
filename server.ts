@@ -37,6 +37,7 @@ import {
 } from './src/lib/control/runtime-host';
 import { attachRemoteAddressHeader } from './src/lib/http/remote-address-header';
 import { registerCurrentProjectAtStartup } from './src/lib/projects/current-project-registration';
+import { reconcileCodexLifecycleForUserSoon } from './src/lib/cli/codex-lifecycle-reconciliation';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = process.env.TESSERA_HOST || process.env.HOST || '127.0.0.1';
@@ -61,6 +62,7 @@ async function startServer() {
     const userId = await resolveServerDefaultUserId();
     if (userId) {
       const settings = await SettingsManager.load(userId, { strict: true });
+      reconcileCodexLifecycleForUserSoon(userId, settings.codexLifecycleHooksEnabled);
       const bootstrap = await bootstrapCanonicalWorktreeRegistry(settings.agentEnvironment);
       if (bootstrap.status === 'completed') {
         logger.info({ bootstrap }, 'Canonical Worktree registry bootstrapped');

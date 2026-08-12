@@ -18,6 +18,8 @@ export type CliRawLogSink = (event: CliRawLogEvent) => void;
 export interface SpawnOptions extends ProviderRuntimeControls {
   /** Optional user id for settings-aware spawn behavior such as WSL/native selection. */
   userId?: string;
+  /** Whether the user's Codex lifecycle-hook policy permits reconciliation. */
+  lifecycleHooksEnabled?: boolean;
   /** Permission mode for tool execution (CLI-specific interpretation). */
   permissionMode?: string;
   /** Model identifier to use for this session. */

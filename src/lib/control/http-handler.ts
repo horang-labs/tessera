@@ -128,6 +128,7 @@ export function createControlHttpHandler(options: {
           status: () => service.inspectCodexLifecycle(context),
           install: () => service.installCodexLifecycle({ consent: 'granted' }, context),
           update: () => service.updateCodexLifecycle(context),
+          reconcile: () => service.inspectCodexLifecycle(context),
           remove: () => service.removeCodexLifecycle(context),
         }));
         return true;

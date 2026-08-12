@@ -19,6 +19,7 @@ import { switchToSessionProject } from '@/lib/session/switch-session-project';
 import { getSessionOriginProjectId } from '@/lib/projects/origin-project-representation';
 import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { TesseraCliSkillOnboardingDialog } from '@/components/settings/provider-skill-settings';
 
 const MAX_VISIBLE_TOASTS = 5;
 const ACTION_TOAST_DURATION = 3000;
@@ -158,6 +159,7 @@ export function ToastContainer() {
   return (
     <>
       <NotificationSound />
+      <TesseraCliSkillOnboardingDialog />
       <div
         data-testid="toast-container"
         className={cn(

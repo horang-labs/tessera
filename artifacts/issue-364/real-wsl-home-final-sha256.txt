@@ -1,0 +1,3 @@
+fa76d05652f6efe19e67f49f8c2e787a67b6824c71795faa900cb36eb8559e7c  /home/work/.codex/auth.json
+e3aa98f5128b6de04c8bdf27989cc164081b8c7fb998c1da005f842d55da0654  /home/work/.codex/config.toml
+bcaa2d68f908bb4033d524b8f75c8407c9c30ee135d7614bdd834a7610b54c52  /home/work/.codex/hooks.json

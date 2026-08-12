@@ -291,6 +291,20 @@ export function handleIncomingServerMessage({
       chatStore.setAwaitingPreparation(msg.sessionId, false);
       return { wasReconnect };
 
+    case 'provider_integration_launch_blocked': {
+      if (!msg.sessionId) return { wasReconnect };
+      const {
+        type: _type,
+        sessionId: _sessionId,
+        terminalId: _terminalId,
+        surfaceId: _surfaceId,
+        ...recovery
+      } = msg;
+      chatStore.setProviderIntegrationRecovery(msg.sessionId, recovery);
+      stopTurnInFlight(msg.sessionId);
+      return { wasReconnect };
+    }
+
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
       if (errRequestId && providersListCallbacks.has(errRequestId)) {

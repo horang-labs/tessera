@@ -1,0 +1,105 @@
+{
+  "label": "skill-shared-onboarding-final",
+  "action": "onboarding",
+  "sessionId": "032e5f82-ab8c-4cf5-98f7-f89c5ded035c",
+  "onboardingText": "Set up tessera-cli for Codex\n\nCodex is running in WSL. The optional skill does not affect this Session.\n\ntessera-cli skill\nChecking\n\nOptional Tessera controls for the agents you choose in the standard Skills CLI picker.\n\nSetup runs in WSL only. It never installs into the opposite environment.\n\nnpx skills add https://github.com/horang-labs/tessera --skill tessera-cli --global\nCopy\nRetry",
+  "settings": {
+    "status": 200,
+    "body": {
+      "settings": {
+        "language": "en",
+        "agentExecutionMode": "pty",
+        "terminalSessionDefaultView": "terminal",
+        "defaultNewSessionKind": "task",
+        "profile": {
+          "displayName": "User",
+          "avatarDataUrl": "data:image/svg+xml;charset=utf-8,%0A%20%20%20%20%20%20%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20160%20160%22%3E%0A%20%20%20%20%20%20%20%20%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%2218%22%20y1%3D%2216%22%20x2%3D%22140%22%20y2%3D%22146%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20stop-color%3D%22%23F97316%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%237C2D12%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%0A%20%20%20%20%20%20%20%20%3Crect%20width%3D%22160%22%20height%3D%22160%22%20rx%3D%2234%22%20fill%3D%22url(%23g)%22%2F%3E%3Ccircle%20cx%3D%22116%22%20cy%3D%2238%22%20r%3D%2224%22%20fill%3D%22%23FED7AA%22%20opacity%3D%22.28%22%2F%3E%3Ccircle%20cx%3D%2272%22%20cy%3D%2272%22%20r%3D%2236%22%20fill%3D%22%23FFF7ED%22%20opacity%3D%22.92%22%2F%3E%3Cpath%20d%3D%22M31%20132c7-26%2025-42%2049-42s43%2016%2049%2042%22%20fill%3D%22%23431407%22%20opacity%3D%22.42%22%2F%3E%3Cpath%20d%3D%22M49%2059c10-19%2045-23%2063-3-8-5-20-7-35-6-13%201-23%204-28%209Z%22%20fill%3D%22%23431407%22%20opacity%3D%22.32%22%2F%3E%0A%20%20%20%20%20%20%3C%2Fsvg%3E%0A%20%20%20%20"
+        },
+        "notifications": {
+          "soundEnabled": true,
+          "showToast": true,
+          "aiTitleRefinement": true
+        },
+        "translate": {
+          "enabled": false,
+          "sourceLanguage": "ko",
+          "targetLanguage": "en",
+          "input": {
+            "provider": "claude-code",
+            "model": "",
+            "promptTemplate": ""
+          },
+          "output": {
+            "provider": "claude-code",
+            "model": "",
+            "promptTemplate": ""
+          },
+          "sendShortcut": "meta+enter"
+        },
+        "theme": "dark",
+        "terminalThemeLightPreset": "lifted-neutral",
+        "terminalThemeDarkPreset": "neutral-charcoal",
+        "fontSize": 1,
+        "enterKeyBehavior": "send",
+        "defaultPermissionMode": "default",
+        "defaultModel": "",
+        "providerDefaults": {
+          "claude-code": {
+            "model": "",
+            "reasoningEffort": null,
+            "sessionMode": "work",
+            "accessMode": "default",
+            "fastMode": false
+          },
+          "codex": {
+            "sessionMode": "work",
+            "accessMode": "ask"
+          },
+          "opencode": {
+            "sessionMode": "build",
+            "accessMode": "opencodeDefault"
+          }
+        },
+        "providerCustomModels": {},
+        "inactivePanelDimming": 30,
+        "showProviderIcons": true,
+        "showRecentWork": true,
+        "kanbanSessionOpenMode": "peek",
+        "sttEngine": "webSpeech",
+        "geminiApiKey": "",
+        "favoriteSkills": [],
+        "agentEnvironment": "wsl",
+        "codexLifecycleHooksEnabled": true,
+        "cliCommandOverrides": {},
+        "windowsCloseBehavior": "ask",
+        "setup": {
+          "dismissedAt": null,
+          "completedAt": "2026-08-12T17:23:19.511Z"
+        },
+        "telemetry": {
+          "enabled": true
+        },
+        "autoDeleteArchivedWorktrees": true,
+        "archivedWorktreeRetentionDays": 7,
+        "managedWorktreePathTemplate": "",
+        "shortcutOverrides": {},
+        "gitConfig": {
+          "branchPrefix": ""
+        },
+        "version": "1.0.0",
+        "lastModified": "2026-08-12T19:09:16.894Z"
+      },
+      "machineSettings": {
+        "advertisedAddress": null
+      },
+      "serverHostInfo": {
+        "platform": "win32",
+        "arch": "x64",
+        "appVersion": "0.2.3-hotfix.1",
+        "channel": "github-release",
+        "telemetryDisabledByEnv": false,
+        "isWindowsEcosystem": true
+      }
+    }
+  }
+}

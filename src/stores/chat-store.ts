@@ -5,6 +5,12 @@ import type { AgentContextEvent } from '@/types/agent-context';
 import type { ToolCallKind } from '@/types/tool-call-kind';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import type { TodoItem } from '@/types/cli-jsonl-schemas';
+import type { ServerTransportMessage } from '@/lib/ws/message-types';
+
+export type ChatProviderIntegrationRecovery = Omit<
+  Extract<ServerTransportMessage, { type: 'provider_integration_launch_blocked' }>,
+  'type' | 'terminalId' | 'surfaceId' | 'sessionId'
+>;
 
 const STREAM_FLUSH_BASE_MS = 60;
 const STREAM_FLUSH_MEDIUM_MS = 110;
@@ -144,6 +150,7 @@ export interface ChatState {
 
   // 에러 상태 (NEW)
   errors: Map<string, string>; // sessionId → error message
+  providerIntegrationRecovery: Map<string, ChatProviderIntegrationRecovery>;
 
   // Tool output cache (lazy loading)
   /** Cache for lazily-loaded tool outputs: toolUseId -> { output, toolUseResult } */
@@ -208,6 +215,7 @@ export interface ChatState {
   setTurnsInFlight: (sessionIds: readonly string[]) => void;
   setError: (sessionId: string, message: string) => void;
   clearError: (sessionId: string) => void;
+  setProviderIntegrationRecovery: (sessionId: string, recovery: ChatProviderIntegrationRecovery | null) => void;
   addMessage: (sessionId: string, message: EnhancedMessage) => void;
   queueAssistantTextChunk: (sessionId: string, content: string) => void;
   flushAndClearAssistantText: (sessionId: string) => void;
@@ -334,6 +342,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   turnInFlightBySession: {},
   awaitingPreparationBySession: {},
   errors: new Map(),
+  providerIntegrationRecovery: new Map(),
   toolOutputCache: new Map(),
   activeInteractivePrompt: new Map(),
   promptHistory: new Map(),
@@ -560,6 +569,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const newErrors = new Map(state.errors);
       newErrors.delete(sessionId);
       return { errors: newErrors };
+    }),
+
+  setProviderIntegrationRecovery: (sessionId, recovery) =>
+    set((state) => {
+      const next = new Map(state.providerIntegrationRecovery);
+      if (recovery) next.set(sessionId, recovery);
+      else next.delete(sessionId);
+      return { providerIntegrationRecovery: next };
     }),
 
   addMessage: (sessionId, message) =>
@@ -838,6 +855,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const clearedCompacting = new Map(state.compactingStartedAt);
       clearedCompacting.delete(sessionId);
+      const clearedProviderIntegrationRecovery = new Map(state.providerIntegrationRecovery);
+      clearedProviderIntegrationRecovery.delete(sessionId);
 
       return {
         messages: updatedMessages,
@@ -863,6 +882,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         scrollPositions: clearedScrollPositions,
         todoSnapshots: clearedTodoSnapshots,
         compactingStartedAt: clearedCompacting,
+        providerIntegrationRecovery: clearedProviderIntegrationRecovery,
       };
     }),
 

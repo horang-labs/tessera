@@ -1,0 +1,9 @@
+/home/work/.tessera/test-fixtures/t364-0813-real1/.tessera-owner 33 bytes
+/home/work/.tessera/test-fixtures/t364-0813-real1/bin/codex 268 bytes
+/home/work/.tessera/test-fixtures/t364-0813-real1/codex-home/auth.json 3923 bytes
+/home/work/.tessera/test-fixtures/t364-0813-real1/home/.claude.json 309 bytes
+/home/work/.tessera/test-fixtures/t364-0813-real1/modes/codex-mode 7 bytes
+/home/work/.tessera/test-fixtures/t364-0813-real1/shell/.zcompdump 50545 bytes
+/home/work/.tessera/test-fixtures/t364-0813-real1/shell/.zshenv 281 bytes
+/home/work/.tessera/test-fixtures/t364-0813-real1/tessera-data/tessera.db 0 bytes
+/home/work/.tessera/test-instances/t364-0813-real1/.tessera-owner 33 bytes

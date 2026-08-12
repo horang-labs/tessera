@@ -1,0 +1,31 @@
+{
+  "capturedAt": "2026-08-13T04:18:06.0123075+09:00",
+  "tesseraDevPort": null,
+  "sessionId": "t364-0813-real1",
+  "ownerToken": "e87d7889fe524865a3e67d8e63dbe15b",
+  "electron": {
+    "pid": 17736,
+    "cdp": "http://127.0.0.1:9337",
+    "executable": "C:\\Users\\work\\Downloads\\Tessera-0.2.3-hotfix.1-feature-0813-t364-electron-dev-debuglog-20260813-021041-unpacked\\Tessera.exe",
+    "commandLine": "Tessera.exe --remote-debugging-port=9337 --tessera-test-owner=e87d7889fe524865a3e67d8e63dbe15b"
+  },
+  "backend": {
+    "pid": 10468,
+    "parentPid": 17736,
+    "platform": "win32",
+    "listener": "127.0.0.1:32124",
+    "entrypoint": "resources/app.asar/dist-electron/electron/server-child.js"
+  },
+  "agent": {
+    "environment": "wsl",
+    "distro": "Ubuntu-24.04",
+    "fixtureRoot": "/home/work/.tessera/test-fixtures/t364-0813-real1",
+    "authoritativeCodexHome": "/home/work/.tessera/test-fixtures/t364-0813-real1/codex-home",
+    "stateRoot": "/home/work/.tessera/test-instances/t364-0813-real1"
+  },
+  "isolation": {
+    "windowsData": "C:\\Users\\work\\AppData\\Local\\TesseraTestInstances\\t364-0813-real1\\data",
+    "windowsUserData": "C:\\Users\\work\\AppData\\Local\\TesseraTestInstances\\t364-0813-real1\\user-data",
+    "databaseSha256": "0db3d16cdb01d024780e7ff4df9a836c5c5183167856b27c3b2d4274e802975b"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "label": "hooks-disabled-before-write-failure",
+  "action": "toggle",
+  "lifecycle": {
+    "status": 200,
+    "body": {
+      "providerHome": {
+        "owner": "agent-environment",
+        "agentEnvironment": "wsl"
+      },
+      "lifecycle": {
+        "requirement": "required",
+        "state": "absent",
+        "consent": "revoked",
+        "trust": "unchecked",
+        "currentVersion": "0.2.3-hotfix.1"
+      },
+      "skill": {
+        "requirement": "optional",
+        "state": "unchecked",
+        "consent": "unchecked",
+        "trust": "unchecked"
+      },
+      "health": {
+        "state": "blocked"
+      }
+    }
+  }
+}

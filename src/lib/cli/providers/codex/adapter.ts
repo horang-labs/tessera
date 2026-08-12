@@ -587,6 +587,7 @@ export class CodexAdapter implements CliProvider {
       ...(options.resume && options.threadId
         ? { resumeProviderSessionId: options.threadId }
         : {}),
+      lifecycleHooksEnabled: options.lifecycleHooksEnabled,
     });
     const agentEnv = integration.providerHome.agentEnvironment;
     const launchEnvironment = this._providerIntegration.buildLaunchEnvironment(

@@ -1,0 +1,1 @@
+Raw preflight process snapshot excluded from the commit because it included unrelated command lines. Ticket-scoped process evidence is in `final-runtime-topology.json` and the failure-specific before/after files.

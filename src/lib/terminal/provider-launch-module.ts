@@ -44,6 +44,7 @@ import type {
   PreparedControlCliBridge,
 } from '@/lib/control/cli-bridge';
 import { isExactLegacyCodexOverlayResume } from '@/lib/codex-home';
+import { SettingsManager } from '@/lib/settings/manager';
 import {
   isProviderSessionResumeUnavailableError,
   ProviderSessionResumeUnavailableError,
@@ -554,11 +555,13 @@ export function createProviderLaunchModule(
             codexResumeTranscriptPath,
             requestedTerminalId,
           );
+        const launchSettings = await SettingsManager.load(request.userId, { silent: true });
         const integration = await providerIntegration.resolveLaunch({
           provider: persisted.provider,
           agentEnvironmentOwner: { kind: 'user', userId: request.userId },
           workDir,
           managedSessionId: request.sessionId,
+          lifecycleHooksEnabled: launchSettings.codexLifecycleHooksEnabled,
           ...(!exactLegacyCodexOverlayResume && persisted.originProviderHomeIdentity
             ? { requiredProviderHomeIdentity: persisted.originProviderHomeIdentity }
             : {}),

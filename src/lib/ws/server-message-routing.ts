@@ -29,6 +29,7 @@ import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { CliProvider, ProviderMeta } from '../cli/providers/types';
 import { resolveSessionWorkspaceRoot } from '../session/session-workspace-root';
 import { providerLaunchModule } from '../terminal/shared-provider-launch-module';
+import { buildProviderIntegrationBlockMessage } from './provider-integration-recovery-message';
 import {
   clearUnreadFromWebSocket,
   closeSessionFromWebSocket,
@@ -561,12 +562,21 @@ export async function routeClientTransportMessage({
             },
           });
         } catch (error) {
-          sendToConnection(connectionId, {
-            type: 'terminal_error',
-            terminalId: message.terminalId,
-            surfaceId: message.surfaceId,
-            message: error instanceof Error ? error.message : 'Failed to create terminal',
+          const blockedMessage = buildProviderIntegrationBlockMessage(error, {
+              terminalId: message.terminalId,
+              surfaceId: message.surfaceId,
+              providerId: structured.providerId,
           });
+          if (blockedMessage) {
+            sendToConnection(connectionId, blockedMessage);
+          } else {
+            sendToConnection(connectionId, {
+              type: 'terminal_error',
+              terminalId: message.terminalId,
+              surfaceId: message.surfaceId,
+              message: error instanceof Error ? error.message : 'Failed to create terminal',
+            });
+          }
         }
         return;
       }

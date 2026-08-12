@@ -599,6 +599,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     geminiApiKey: '',
     favoriteSkills: [],
     agentEnvironment: 'native',
+    codexLifecycleHooksEnabled: true,
     cliCommandOverrides: {},
     windowsCloseBehavior: 'ask',
     setup: {
@@ -670,6 +671,8 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     fontSize: normalizeFontScale(raw?.fontSize),
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,
+    codexLifecycleHooksEnabled:
+      raw?.codexLifecycleHooksEnabled ?? defaults.codexLifecycleHooksEnabled,
     kanbanSessionOpenMode: normalizeKanbanSessionOpenMode(raw?.kanbanSessionOpenMode),
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
