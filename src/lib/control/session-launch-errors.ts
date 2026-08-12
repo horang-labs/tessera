@@ -70,6 +70,11 @@ const PUBLIC_LAUNCH_FAILURES: Record<ProviderLaunchErrorCode, PublicLaunchFailur
     message: 'Worktree preparation did not finish before the timeout.',
     httpStatus: 504,
   },
+  SESSION_RESUME_UNAVAILABLE: {
+    code: 'INSTANCE_UNAVAILABLE',
+    message: 'The managed provider conversation is unavailable in the current Agent Environment.',
+    httpStatus: 409,
+  },
   LAUNCH_FAILED: {
     code: 'INSTANCE_UNAVAILABLE',
     message: 'The Session runtime could not be started.',

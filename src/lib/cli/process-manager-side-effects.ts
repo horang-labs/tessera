@@ -1,6 +1,8 @@
 import * as dbSessions from '../db/sessions';
 import logger from '../logger';
 import type { PendingPermissionRequest, PendingToolCall, ProcessInfo } from './types';
+import type { ProviderHomeIdentity } from './providers/provider-home-identity';
+import { isDatabaseInitialized } from '../db/database';
 
 type ProcessMap = Map<string, ProcessInfo>;
 
@@ -39,6 +41,30 @@ export function updateProviderStateWithRetry(
   };
 
   doUpdate(false);
+}
+
+export async function bindProviderHomeOrThrow(
+  sessionId: string,
+  identity: ProviderHomeIdentity,
+): Promise<void> {
+  // Adapter harnesses and provider probes do not necessarily own a Tessera
+  // database record. A managed runtime does, and is bound exactly once.
+  if (!isDatabaseInitialized()) return;
+  const bind = () => {
+    if (!dbSessions.getSession(sessionId)) {
+      throw new Error(`Managed Session ${sessionId} is unavailable for provider-home binding`);
+    }
+    dbSessions.bindSessionOriginProviderHome(sessionId, identity);
+  };
+  try {
+    bind();
+  } catch (firstError) {
+    logger.warn({ sessionId, error: firstError }, 'Provider home binding failed; retrying');
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    // The handshake must fail when authority cannot be persisted. Continuing
+    // would leave a provider conversation that Tessera cannot safely resume.
+    bind();
+  }
 }
 
 function parseProviderState(providerState: string | null): Record<string, unknown> {

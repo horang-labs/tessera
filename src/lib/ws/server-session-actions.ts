@@ -38,6 +38,7 @@ import type {
   TextContentBlock,
 } from './message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import { isProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 type SessionHistoryMessage = Extract<ServerTransportMessage, { type: 'session_history' }>;
@@ -641,19 +642,31 @@ async function ensureSessionProcess({
     sendToUser(userId, { type: 'session_preparation_settled', sessionId });
   }
 
-  const result = await sessionOrchestrator.resumeSession(userId, sessionId, {
-    workDir,
-    permissionMode: spawnConfig?.permissionMode,
-    model: spawnConfig?.model,
-    reasoningEffort: spawnConfig?.reasoningEffort,
-    serviceTier: spawnConfig?.serviceTier,
-    fastMode: spawnConfig?.fastMode,
-    sessionMode: spawnConfig?.sessionMode,
-    accessMode: spawnConfig?.accessMode,
-    collaborationMode: spawnConfig?.collaborationMode,
-    approvalPolicy: spawnConfig?.approvalPolicy,
-    sandboxMode: spawnConfig?.sandboxMode,
-  });
+  let result;
+  try {
+    result = await sessionOrchestrator.resumeSession(userId, sessionId, {
+      workDir,
+      permissionMode: spawnConfig?.permissionMode,
+      model: spawnConfig?.model,
+      reasoningEffort: spawnConfig?.reasoningEffort,
+      serviceTier: spawnConfig?.serviceTier,
+      fastMode: spawnConfig?.fastMode,
+      sessionMode: spawnConfig?.sessionMode,
+      accessMode: spawnConfig?.accessMode,
+      collaborationMode: spawnConfig?.collaborationMode,
+      approvalPolicy: spawnConfig?.approvalPolicy,
+      sandboxMode: spawnConfig?.sandboxMode,
+    });
+  } catch (error) {
+    if (!isProviderSessionResumeUnavailableError(error)) throw error;
+    sendToUser(userId, {
+      type: 'error',
+      sessionId,
+      code: error.code,
+      message: error.message,
+    });
+    return false;
+  }
 
   if (result.status === 'read_only') {
     sendSessionHistoryToUser({
@@ -780,7 +793,7 @@ export async function resumeSessionFromWebSocket({
     sendToUser(userId, {
       type: 'error',
       sessionId,
-      code: 'resume_failed',
+      code: isProviderSessionResumeUnavailableError(err) ? err.code : 'resume_failed',
       message: `Failed to resume session: ${(err as Error).message}`,
     });
   }

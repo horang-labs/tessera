@@ -2,6 +2,7 @@ import path from 'path';
 import * as dbProjects from '../db/projects';
 import * as dbSessions from '../db/sessions';
 import type { AgentExecutionMode } from './agent-execution-mode';
+import type { ProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 
 interface PersistCreatedSessionRecordOptions {
   collectionId?: string;
@@ -19,6 +20,7 @@ interface PersistCreatedSessionRecordOptions {
   reasoningEffort?: string | null;
   serviceTier?: string | null;
   providerState?: string | null;
+  originProviderHomeIdentity?: ProviderHomeIdentity | null;
 }
 
 interface PersistedSessionProject {
@@ -69,6 +71,7 @@ export function persistCreatedSessionRecord(
       reasoningEffort: options.reasoningEffort,
       serviceTier: options.serviceTier,
       providerState: options.providerState,
+      originProviderHomeIdentity: options.originProviderHomeIdentity,
     },
   );
 

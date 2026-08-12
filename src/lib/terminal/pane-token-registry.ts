@@ -1,10 +1,12 @@
 import { randomBytes, timingSafeEqual } from 'crypto';
+import type { ProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 
 export interface PaneTokenEntry {
   terminalId: string;
   userId: string;
   sessionId: string | null;
   providerId: string; // invocation-scoped PTY provider id
+  providerHomeIdentity?: ProviderHomeIdentity;
 }
 
 // token(base64url) → entry. 서버 프로세스 수명과 함께 살아있는 in-memory 싱글턴.

@@ -7,6 +7,8 @@ import type { TerminalProviderSessionIdentity } from './provider-session-identit
 export interface TerminalProviderSessionObservation {
   activation: 'active' | 'background';
   identity: TerminalProviderSessionIdentity;
+  /** The provider proved this identity descends from the managed conversation. */
+  allowCreate: true;
   /** Where the observed conversation runs, as a path this server can open. */
   workDir?: string;
 }
@@ -49,6 +51,7 @@ export function createTerminalProviderSessionObserver(options: {
       : '';
     options.onObservation({
       activation: observation.activation,
+      allowCreate: true,
       identity: {
         providerId: options.provider.getProviderId(),
         providerSessionId: observation.providerSessionId,

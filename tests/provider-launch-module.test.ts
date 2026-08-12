@@ -58,6 +58,7 @@ function withTestTerminalSessionObserver(
         && !preserveLaunchPreparation
       ) {
         return async () => ({
+          providerHomeIdentity: 'codex-home:test',
           buildEnvironment: (baseEnvironment: NodeJS.ProcessEnv) => ({
             ...baseEnvironment,
             CODEX_HOME: process.platform === 'win32'
@@ -65,6 +66,7 @@ function withTestTerminalSessionObserver(
               : process.env.CODEX_HOME,
             TESSERA_CODEX_HOME: undefined,
           }),
+          inspectResume: async () => ({ state: 'available' as const }),
         });
       }
       const value = Reflect.get(target, property, target) as unknown;
@@ -179,6 +181,7 @@ interface CapturedSpawn {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   pty: FakePty;
+  paneTokenEntry?: ReturnType<Modules['resolvePaneToken']>;
 }
 
 function createPtyFactory(
@@ -194,6 +197,9 @@ function createPtyFactory(
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
         pty,
+        ...(spawnOptions.env?.TESSERA_PANE_TOKEN
+          ? { paneTokenEntry: modules.resolvePaneToken(spawnOptions.env.TESSERA_PANE_TOKEN) }
+          : {}),
       });
       if (factoryOptions.exitImmediately) queueMicrotask(() => pty.emitExit(17));
       return pty;
@@ -302,8 +308,78 @@ test('new direct TUI Codex launch uses the authoritative provider home without a
   assert.deepEqual(resolvedUsers, ['provider-launch-user']);
   assert.equal(captured[0]?.env?.CODEX_HOME, process.env.CODEX_HOME);
   assert.equal(captured[0]?.env?.TESSERA_CODEX_HOME, undefined);
+  assert.deepEqual(captured[0]?.paneTokenEntry, {
+    terminalId: 'session-shared-policy-direct-codex',
+    userId: 'provider-launch-user',
+    sessionId: 'shared-policy-direct-codex',
+    providerId: 'codex',
+    providerHomeIdentity: 'codex-home:test',
+  }, 'the initial SessionStart hook must carry the exact launch home authority');
 
   await manager.closeSession('shared-policy-direct-codex', 'provider-launch-user');
+});
+
+test('provider home-binding capability supplies the managed resume reference', async () => {
+  const originalProvider = modules.registry.cliProviderRegistry.getProvider('opencode');
+  const capabilityProvider = new Proxy(originalProvider, {
+    get(target, property) {
+      if (property === 'bindsManagedSessionsToProviderHome') return () => true;
+      if (property === 'getProviderIntegrationRequirements') {
+        return () => ({
+          lifecycle: 'not-applicable' as const,
+          skill: 'optional' as const,
+          launchEnvironment: 'required' as const,
+        });
+      }
+      if (property === 'prepareLaunchIntegration') {
+        return async () => ({
+          providerHomeIdentity: 'provider-home:test',
+          buildEnvironment: (environment: NodeJS.ProcessEnv) => environment,
+          inspectResume: async () => ({ state: 'available' as const }),
+        });
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  modules.registry.cliProviderRegistry.register('opencode', capabilityProvider);
+
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const providerIntegration = createTestProviderIntegration('native');
+  const resolveLaunch = providerIntegration.resolveLaunch.bind(providerIntegration);
+  let resumeProviderSessionId: string | undefined;
+  providerIntegration.resolveLaunch = async (request) => {
+    resumeProviderSessionId = request.resumeProviderSessionId;
+    return resolveLaunch(request);
+  };
+  const launcher = modules.createProviderLaunchModule({
+    terminalManager: manager,
+    providerIntegration,
+  });
+  const sessionId = 'capability-home-bound-provider';
+  createTerminalSession(sessionId, 'opencode', {
+    kind: 'terminal',
+    launched: true,
+    opencodeTerminalSessionId: 'provider-owned-conversation',
+  });
+  modules.terminalProviderSessions.bindTerminalProviderSession({
+    providerId: 'opencode',
+    providerSessionId: 'provider-owned-conversation',
+    tesseraSessionId: sessionId,
+  });
+
+  try {
+    await launcher.launch({
+      sessionId,
+      userId: 'provider-launch-user',
+      mode: 'detached',
+    });
+    assert.equal(resumeProviderSessionId, 'provider-owned-conversation');
+  } finally {
+    await manager.closeSession(sessionId, 'provider-launch-user');
+    modules.registry.cliProviderRegistry.register('opencode', originalProvider);
+  }
 });
 
 test('direct TUI uses exact custom native and Windows-backend-to-WSL Codex homes', async () => {

@@ -13,6 +13,9 @@ import type {
   TranslatedText,
 } from './session-types';
 import type { SkillSource } from './skill-types';
+import type { ProviderHomeIdentity } from './provider-home-identity';
+
+export type { ProviderHomeIdentity } from './provider-home-identity';
 
 /**
  * Three-state connection status for a given CLI × environment combination.
@@ -99,10 +102,31 @@ export interface ProviderLifecycleIntegration {
 
 export type ProviderLaunchEnvironmentContext = ProviderLifecycleContext;
 
+export interface ProviderSessionRuntimeGuard {
+  /** Repeat the provider-owned preflight immediately before process spawn. */
+  reinspect(): Promise<ProviderSessionResumeInspection>;
+  /** Monitor ownership from spawn until the returned disposer is called. */
+  start(onConflict: (message: string) => void): Promise<() => void>;
+}
+
+export type ProviderSessionResumeInspection =
+  | { state: 'available'; runtimeGuard?: ProviderSessionRuntimeGuard }
+  | {
+      state: 'unavailable';
+      reason: 'provider-history-missing' | 'provider-session-already-running';
+      message: string;
+    };
+
 /** Provider-owned launch authority resolved once for lifecycle and process environment. */
 export interface ProviderLaunchPreparation {
+  /** Opaque stable identity; callers can compare it but cannot recover the home path. */
+  providerHomeIdentity?: ProviderHomeIdentity;
   lifecycle?: ProviderLifecycleIntegration;
   buildEnvironment(baseEnvironment: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+  /** Read-only existence/liveness check pinned to the exact prepared home. */
+  inspectResume?(providerSessionId: string): Promise<ProviderSessionResumeInspection>;
+  /** Read provider-owned history from the exact prepared home before resume. */
+  readResumeHistory?(providerSessionId: string): Promise<SessionHistoryEvent[] | null>;
 }
 
 export interface ProviderTerminalSessionObservation {
@@ -200,6 +224,9 @@ export interface CliProvider {
 
   /** Declares provider-specific integration requirements without filesystem details. */
   getProviderIntegrationRequirements(): ProviderIntegrationRequirements;
+
+  /** Whether managed sessions remain bound to the provider home that created them. */
+  bindsManagedSessionsToProviderHome?(): boolean;
 
   /** Implements provider-owned lifecycle artifact management behind this provider seam. */
   getLifecycleIntegration?(): ProviderLifecycleIntegration;

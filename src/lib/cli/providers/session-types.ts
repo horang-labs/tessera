@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'child_process';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import type { ProviderHomeIdentity } from './provider-home-identity';
 
 export type CliRawLogDirection = 'stdin' | 'stdout' | 'stderr' | 'event';
 
@@ -43,6 +44,8 @@ export interface SpawnOptions extends ProviderRuntimeControls {
    * sessions.provider_state as {"threadId": "..."}.
    */
   threadId?: string;
+  /** Opaque origin-home binding for a managed provider session. */
+  originProviderHomeIdentity?: ProviderHomeIdentity;
   /**
    * OpenCode: ACP sessionId from session/new, stored in sessions.provider_state
    * as {"opencodeSessionId": "..."}.

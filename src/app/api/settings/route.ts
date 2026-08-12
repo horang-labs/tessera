@@ -19,6 +19,7 @@ import {
 } from '@/lib/settings/machine-settings';
 import { directListeners } from '@/lib/http/direct-listeners';
 import logger from '@/lib/logger';
+import { inspectProviderHomeChange } from '@/lib/settings/provider-home-change';
 
 export async function GET(request: NextRequest) {
   try {
@@ -52,9 +53,13 @@ export async function PUT(request: NextRequest) {
     const { userId } = auth;
 
     const previousSettings = await SettingsManager.load(userId, { silent: true });
-    const body = await request.json() as Partial<UserSettings> & { machineSettings?: unknown };
+    const body = await request.json() as Partial<UserSettings> & {
+      machineSettings?: unknown;
+      confirmProviderHomeChange?: unknown;
+    };
     const {
       machineSettings: requestedMachineSettingsUpdate,
+      confirmProviderHomeChange,
       ...settingsBody
     } = body;
     // A paired device keeps full access to ordinary settings, but it must not
@@ -87,6 +92,23 @@ export async function PUT(request: NextRequest) {
       ...settingsBody,
       lastModified: new Date().toISOString(),
     });
+
+    if (previousSettings.agentEnvironment !== settings.agentEnvironment) {
+      const impact = await inspectProviderHomeChange(
+        userId,
+        previousSettings.agentEnvironment,
+        settings.agentEnvironment,
+      );
+      if (impact.unavailableManagedSessionCount > 0 && confirmProviderHomeChange !== true) {
+        return NextResponse.json({
+          error: 'Changing Agent Environment makes managed Codex sessions unavailable until you switch back.',
+          code: 'provider_home_change_confirmation_required',
+          unavailableManagedSessionCount: impact.unavailableManagedSessionCount,
+          from: previousSettings.agentEnvironment,
+          to: settings.agentEnvironment,
+        }, { status: 409 });
+      }
+    }
 
     await SettingsManager.save(userId, settings);
     if (hasAdvertisedAddressUpdate) {

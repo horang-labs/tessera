@@ -15,6 +15,7 @@ import {
   type TerminalProviderSessionActivation,
   type TerminalProviderSessionIdentity,
 } from './provider-session-identity';
+import type { ProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 
 /** How the provider's new session came to exist. */
 export type TerminalProviderSessionOrigin = 'fork' | 'reset';
@@ -58,6 +59,7 @@ function createChildSession(
   providerState: string,
   workDir?: string,
   onCreated?: (sessionId: string) => void,
+  providerHomeIdentity?: ProviderHomeIdentity,
 ): string {
   const sessionId = randomUUID();
   const title = childTitle(source, origin);
@@ -83,6 +85,8 @@ function createChildSession(
       reasoningEffort: source.reasoning_effort,
       serviceTier: source.service_tier,
       providerState,
+      originProviderHomeIdentity: providerHomeIdentity
+        ?? source.origin_provider_home_identity,
     });
     dbSessions.updateSession(sessionId, {
       worktree_branch: inheritsCheckout ? effectiveCheckout?.worktreeBranch ?? null : null,
@@ -163,6 +167,8 @@ export function reconcileTerminalProviderSession(options: {
   sourceSessionId: string;
   identity: TerminalProviderSessionIdentity;
   activation?: TerminalProviderSessionActivation;
+  /** Provider-owned evidence that an unknown identity descends from the source. */
+  allowCreate?: boolean;
   /** Whether the CLI branched the current conversation or started an empty one. */
   origin?: TerminalProviderSessionOrigin;
   /**
@@ -170,8 +176,17 @@ export function reconcileTerminalProviderSession(options: {
    * its own. Already translated to a path this server can open.
    */
   workDir?: string;
+  providerHomeIdentity?: ProviderHomeIdentity;
 }): TerminalProviderSessionReconciliationResult {
-  const { activation, identity, origin = 'fork', sourceSessionId, workDir } = options;
+  const {
+    activation,
+    allowCreate = false,
+    identity,
+    origin = 'fork',
+    sourceSessionId,
+    workDir,
+    providerHomeIdentity,
+  } = options;
   const source = dbSessions.getSession(sourceSessionId);
   if (
     !source
@@ -186,8 +201,11 @@ export function reconcileTerminalProviderSession(options: {
   if (!sourceBinding && isPendingTerminalProviderSessionState(source.provider_state)) {
     return reconcilePendingTerminalProviderSession(source, identity, activation);
   }
+  const persistedProviderSessionId = readPersistedTerminalProviderSessionId(source);
+  const mayEstablishOriginBinding = !source.origin_provider_home_identity
+    && !sourceBinding
+    && !persistedProviderSessionId;
   if (!sourceBinding) {
-    const persistedProviderSessionId = readPersistedTerminalProviderSessionId(source);
     const sourceProviderSessionId = persistedProviderSessionId ?? identity.providerSessionId;
     registerIdentity(sourceSessionId, {
       providerId: identity.providerId,
@@ -200,6 +218,12 @@ export function reconcileTerminalProviderSession(options: {
   }
 
   if (sourceBinding?.provider_session_id === identity.providerSessionId) {
+    if (
+      providerHomeIdentity
+      && (Boolean(source.origin_provider_home_identity) || mayEstablishOriginBinding)
+    ) {
+      dbSessions.bindSessionOriginProviderHome(sourceSessionId, providerHomeIdentity);
+    }
     registerIdentity(sourceSessionId, identity);
     return { kind: 'unchanged', sessionId: sourceSessionId, previousSessionId: sourceSessionId };
   }
@@ -216,12 +240,17 @@ export function reconcileTerminalProviderSession(options: {
     };
   }
 
+  if (!allowCreate) {
+    return { kind: 'ignored', sessionId: sourceSessionId, previousSessionId: sourceSessionId };
+  }
+
   const sessionId = createChildSession(
     source,
     origin,
     buildTerminalProviderState(identity, activation),
     workDir,
     (created) => registerIdentity(created, identity),
+    providerHomeIdentity,
   );
   return {
     kind: 'created',

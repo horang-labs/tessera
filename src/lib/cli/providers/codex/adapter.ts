@@ -68,7 +68,12 @@ import {
   type ProviderIntegration,
 } from '../../provider-integration';
 import { createCodexLifecycleHookIntegration } from './lifecycle-hook-integration';
-import { resolveCodexHomeForEnvironment } from './provider-home';
+import {
+  resolveCodexHomeForEnvironment,
+  resolveCodexProviderHomeIdentity,
+} from './provider-home';
+import type { ProviderHomeIdentity } from '../provider-home-identity';
+import { inspectCodexManagedSessionResume } from './managed-session';
 import { buildCodexAppServerRequestEnvironment } from './app-server-request-client';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
 import {
@@ -82,13 +87,19 @@ import {
   synthesizeRunnableStatus,
   summarizeExecProbe,
 } from '../../status-detection';
-import { updateProviderStateWithRetry } from '../../process-manager-side-effects';
+import {
+  bindProviderHomeOrThrow,
+  updateProviderStateWithRetry,
+} from '../../process-manager-side-effects';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
+import { ProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
+import { mergeProviderResumeHistory } from '@/lib/session/provider-resume-history';
+import { selectCodexResumeHistorySuffix } from './resume-history';
 
 const CLI_TIMEOUT_MS = 120_000;
 const SKILLS_REQUEST_TIMEOUT_MS = 10_000;
@@ -97,6 +108,43 @@ const TITLE_REASONING_EFFORT = 'low';
 const PROVIDER_ID = 'codex';
 const DEFAULT_COMMAND = 'codex';
 const CODEX_ATTACHMENTS_DIR = getTesseraDataPath('attachments', 'codex');
+
+async function readCodexTranscriptEvents(options: {
+  sessionId: string;
+  providerSessionId: string;
+  transcriptPath?: string | null;
+  environment: AgentEnvironment;
+  sessionsDir?: string;
+}): Promise<SessionHistoryEvent[] | null> {
+  const filePath = await resolveCodexTranscriptPath({
+    providerSessionId: options.providerSessionId,
+    transcriptPath: options.transcriptPath ?? null,
+    environment: options.environment,
+    ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
+  });
+  if (!filePath) return null;
+
+  const decoderState = createCodexTranscriptDecoderState();
+  const events: SessionHistoryEvent[] = [];
+  const stream = createReadStream(filePath, { encoding: 'utf-8' });
+  try {
+    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    for await (const line of lines) {
+      events.push(...decodeCodexTranscriptLine(line, decoderState));
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    logger.warn({
+      sessionId: options.sessionId,
+      filePath,
+      error: (error as Error).message,
+    }, 'Failed to read Codex transcript');
+    return null;
+  } finally {
+    stream.destroy();
+  }
+  return events;
+}
 
 type CodexInputItem =
   | { type: 'text'; text: string }
@@ -177,6 +225,8 @@ interface CodexRuntimeConfig {
   collaborationMode?: CodexCollaborationMode;
   approvalPolicy?: CodexApprovalPolicy;
   sandboxMode?: CodexSandboxMode;
+  providerHomeIdentity?: ProviderHomeIdentity;
+  bindProviderHomeOnHandshake: boolean;
 }
 
 function resolveCodexAccessConfig(runtimeConfig?: CodexRuntimeConfig): {
@@ -316,6 +366,10 @@ export class CodexAdapter implements CliProvider {
     };
   }
 
+  bindsManagedSessionsToProviderHome(): boolean {
+    return true;
+  }
+
   getLifecycleIntegration(): ProviderLifecycleIntegration {
     return this._createLifecycleIntegration();
   }
@@ -324,7 +378,12 @@ export class CodexAdapter implements CliProvider {
     context: ProviderLaunchEnvironmentContext,
   ): Promise<ProviderLaunchPreparation> {
     const providerHome = await this._resolveProviderHome(context.environment);
+    const providerHomeIdentity = await resolveCodexProviderHomeIdentity(
+      context.environment,
+      providerHome,
+    );
     return {
+      providerHomeIdentity,
       lifecycle: this._createLifecycleIntegration({
         resolveProviderHome: async () => providerHome,
       }),
@@ -333,6 +392,18 @@ export class CodexAdapter implements CliProvider {
         context.environment,
         providerHome,
       ),
+      inspectResume: (providerSessionId) => inspectCodexManagedSessionResume({
+        environment: context.environment,
+        userId: context.userId,
+        workDir: context.workDir,
+        providerHomeFilesystemPath: providerHome,
+      }, providerSessionId),
+      readResumeHistory: (providerSessionId) => readCodexTranscriptEvents({
+        sessionId: '__resume__',
+        providerSessionId,
+        environment: context.environment,
+        sessionsDir: path.join(providerHome, 'sessions'),
+      }),
     };
   }
 
@@ -380,37 +451,10 @@ export class CodexAdapter implements CliProvider {
     transcriptPath?: string | null;
     userId?: string;
   }): Promise<SessionHistoryEvent[] | null> {
-    const filePath = await resolveCodexTranscriptPath({
-      providerSessionId: options.providerSessionId,
-      transcriptPath: options.transcriptPath ?? null,
+    return readCodexTranscriptEvents({
+      ...options,
       environment: await getAgentEnvironment(options.userId),
     });
-    if (!filePath) return null;
-
-    const decoderState = createCodexTranscriptDecoderState();
-    const events: SessionHistoryEvent[] = [];
-    const stream = createReadStream(filePath, { encoding: 'utf-8' });
-
-    try {
-      const lines = createInterface({ input: stream, crlfDelay: Infinity });
-      for await (const line of lines) {
-        events.push(...decodeCodexTranscriptLine(line, decoderState));
-      }
-    } catch (error) {
-      // A rollout that vanished mid-read (overlay cleaned up) is the same
-      // "nothing to show" case as never finding one.
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
-      logger.warn({
-        sessionId: options.sessionId,
-        filePath,
-        error: (error as Error).message,
-      }, 'Failed to read Codex terminal transcript');
-      return null;
-    } finally {
-      stream.destroy();
-    }
-
-    return events;
   }
 
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
@@ -533,6 +577,12 @@ export class CodexAdapter implements CliProvider {
         : { kind: 'server-default' },
       workDir,
       ...(options.sessionId ? { managedSessionId: options.sessionId } : {}),
+      ...(options.originProviderHomeIdentity
+        ? { requiredProviderHomeIdentity: options.originProviderHomeIdentity }
+        : {}),
+      ...(options.resume && options.threadId
+        ? { resumeProviderSessionId: options.threadId }
+        : {}),
     });
     const agentEnv = integration.providerHome.agentEnvironment;
     const launchEnvironment = this._providerIntegration.buildLaunchEnvironment(
@@ -544,6 +594,42 @@ export class CodexAdapter implements CliProvider {
     }
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
+    const resumeRuntimeGuard = this._providerIntegration.getResumeRuntimeGuard?.(integration);
+    if (resumeRuntimeGuard) {
+      const inspection = await resumeRuntimeGuard.reinspect();
+      if (inspection.state === 'unavailable') {
+        throw new ProviderSessionResumeUnavailableError(
+          inspection.reason,
+          inspection.message,
+        );
+      }
+    }
+
+    if (options.resume && options.threadId && options.sessionId) {
+      const providerEvents = await this._providerIntegration.readResumeHistory?.(
+        integration,
+        options.threadId,
+      );
+      if (providerEvents === null) {
+        throw new ProviderSessionResumeUnavailableError(
+          'provider-history-missing',
+          'The provider conversation disappeared before its history could be synchronized.',
+        );
+      }
+      if (providerEvents) {
+        const merged = await mergeProviderResumeHistory(
+          options.sessionId,
+          providerEvents,
+          selectCodexResumeHistorySuffix,
+        );
+        if (merged.state === 'diverged') {
+          logger.warn(
+            { sessionId: options.sessionId },
+            'Provider resume history did not match canonical Tessera history; external suffix was not imported',
+          );
+        }
+      }
+    }
 
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
@@ -591,6 +677,11 @@ export class CodexAdapter implements CliProvider {
       collaborationMode: options.collaborationMode as CodexCollaborationMode | undefined,
       approvalPolicy: options.approvalPolicy as CodexApprovalPolicy | undefined,
       sandboxMode: options.sandboxMode as CodexSandboxMode | undefined,
+      providerHomeIdentity: integration.providerHome.identity,
+      // A successful resume has already proven that this exact prepared home
+      // owns the provider history, so legacy unbound GUI rows can be bound now
+      // without guessing, copying, or rerouting provider state.
+      bindProviderHomeOnHandshake: Boolean(integration.providerHome.identity),
     });
 
     codexProtocolParser.setSessionModel(options.sessionId ?? '__provider__', options.model);
@@ -616,6 +707,27 @@ export class CodexAdapter implements CliProvider {
       cliProcess.once('exit', () => {
         this._providerIntegration.releaseManagedSession(options.sessionId!);
       });
+    }
+
+    if (resumeRuntimeGuard) {
+      try {
+        const dispose = await resumeRuntimeGuard.start((message) => {
+          logger.warn({ sessionId: options.sessionId }, message);
+          cliProcess.kill('SIGTERM');
+        });
+        let disposed = false;
+        const disposeOnce = () => {
+          if (disposed) return;
+          disposed = true;
+          dispose();
+        };
+        cliProcess.once('exit', disposeOnce);
+        cliProcess.once('error', disposeOnce);
+        if (cliProcess.exitCode !== null) disposeOnce();
+      } catch (error) {
+        cliProcess.kill('SIGTERM');
+        throw error;
+      }
     }
 
     return { process: cliProcess, ok: true };
@@ -1247,6 +1359,11 @@ export class CodexAdapter implements CliProvider {
       this._processThreadIds.set(proc, tid);
       if (sessionId !== '__provider__') {
         updateProviderStateWithRetry(sessionId, { threadId: tid });
+        const runtimeConfig = this._processRuntimeConfig.get(proc);
+        const providerHomeIdentity = runtimeConfig?.providerHomeIdentity;
+        if (runtimeConfig?.bindProviderHomeOnHandshake && providerHomeIdentity) {
+          await bindProviderHomeOrThrow(sessionId, providerHomeIdentity);
+        }
       }
       logger.info(`CodexAdapter: ${threadMethod} handshake complete`, {
         sessionId,

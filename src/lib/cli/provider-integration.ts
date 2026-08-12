@@ -3,6 +3,7 @@ import type {
   CliProvider,
   ProviderIntegrationRequirements,
   ProviderLaunchPreparation,
+  ProviderSessionRuntimeGuard,
 } from './providers/provider-contract';
 import { getAgentEnvironmentStrict, resolveDefaultAgentEnvironment } from './spawn-cli';
 import type {
@@ -19,6 +20,17 @@ import {
   type ProviderSkillManagementResult,
   type ProviderSkillManagerOptions,
 } from './provider-skill-management';
+import {
+  assertProviderHomeAuthority,
+  ProviderSessionResumeUnavailableError,
+} from './provider-session-resume';
+import type { ProviderHomeIdentity } from './providers/provider-home-identity';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
+
+export {
+  ProviderSessionResumeUnavailableError,
+  isProviderSessionResumeUnavailableError,
+} from './provider-session-resume';
 
 export type {
   ProviderSkillId,
@@ -75,6 +87,7 @@ export interface ProviderIntegrationLaunchDecision {
   providerHome: {
     owner: 'agent-environment';
     agentEnvironment: AgentEnvironment;
+    identity?: ProviderHomeIdentity;
   };
   lifecycle: ProviderIntegrationArtifactPolicy;
   skill: ProviderIntegrationArtifactPolicy;
@@ -102,6 +115,8 @@ export interface ProviderIntegrationLaunchRequest {
   /** Managed Session that will own this runtime after a successful provider spawn. */
   managedSessionId?: string;
   compatibility?: 'exact-legacy-overlay-resume';
+  requiredProviderHomeIdentity?: ProviderHomeIdentity;
+  resumeProviderSessionId?: string;
 }
 
 export interface ProviderIntegrationLifecycleRequest extends ProviderIntegrationLaunchRequest {
@@ -113,7 +128,20 @@ export interface ProviderIntegrationLifecycleInstallRequest
   consent: 'granted' | 'declined';
 }
 
+export interface ProviderHomeResolutionRequest {
+  provider: Pick<
+    CliProvider,
+    'getProviderId' | 'getProviderIntegrationRequirements' | 'prepareLaunchIntegration'
+  >;
+  agentEnvironment: AgentEnvironment;
+  userId?: string;
+  workDir?: string | null;
+}
+
 export interface ProviderIntegration {
+  resolveProviderHome(
+    request: ProviderHomeResolutionRequest,
+  ): Promise<ProviderIntegrationLaunchDecision['providerHome']>;
   resolveLaunch(
     request: ProviderIntegrationLaunchRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
@@ -121,6 +149,15 @@ export interface ProviderIntegration {
     decision: ProviderIntegrationLaunchDecision,
     baseEnvironment: NodeJS.ProcessEnv,
   ): NodeJS.ProcessEnv | undefined;
+  /** Opaque provider guard retained only for the lifetime of this launch decision. */
+  getResumeRuntimeGuard?(
+    decision: ProviderIntegrationLaunchDecision,
+  ): ProviderSessionRuntimeGuard | undefined;
+  /** Read history from the provider home captured by this launch decision. */
+  readResumeHistory?(
+    decision: ProviderIntegrationLaunchDecision,
+    providerSessionId: string,
+  ): Promise<SessionHistoryEvent[] | null | undefined>;
   inspectLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
@@ -216,6 +253,10 @@ export function createProviderIntegration(
   const launchPreparations = new WeakMap<
     ProviderIntegrationLaunchDecision,
     ProviderLaunchPreparation
+  >();
+  const resumeRuntimeGuards = new WeakMap<
+    ProviderIntegrationLaunchDecision,
+    ProviderSessionRuntimeGuard
   >();
   const resolveAgentEnvironment = options.resolveAgentEnvironment ?? getAgentEnvironmentStrict;
   const resolveDefaultEnvironment = options.resolveDefaultEnvironment
@@ -433,6 +474,21 @@ export function createProviderIntegration(
 
   return {
     manageSkills: (request) => skillManager.manage(request),
+    async resolveProviderHome(request) {
+      const preparation = await request.provider.prepareLaunchIntegration?.({
+        environment: request.agentEnvironment,
+        userId: request.userId,
+        workDir: request.workDir,
+      });
+      if (!preparation?.providerHomeIdentity) {
+        throw new Error(`${request.provider.getProviderId()} did not provide an Authoritative Provider Home identity.`);
+      }
+      return {
+        owner: 'agent-environment',
+        agentEnvironment: request.agentEnvironment,
+        identity: preparation.providerHomeIdentity,
+      };
+    },
     async resolveLaunch(request) {
       const agentEnvironment = await resolveEnvironment(request);
       const requirements = request.provider.getProviderIntegrationRequirements();
@@ -527,6 +583,19 @@ export function createProviderIntegration(
           );
         }
       }
+      if (launchPreparation?.providerHomeIdentity) {
+        decision = {
+          ...decision,
+          providerHome: {
+            ...decision.providerHome,
+            identity: launchPreparation.providerHomeIdentity,
+          },
+        };
+      }
+      assertProviderHomeAuthority(
+        request.requiredProviderHomeIdentity,
+        launchPreparation?.providerHomeIdentity,
+      );
       if (requirements.lifecycle === 'required') {
         const lifecycleIntegration = options.lifecycle
           ?? launchPreparation?.lifecycle
@@ -581,6 +650,25 @@ export function createProviderIntegration(
         activeLifecycleScopeId = result.scopeId;
       }
 
+      if (request.resumeProviderSessionId) {
+        const inspection = launchPreparation?.inspectResume
+          ? await launchPreparation.inspectResume(request.resumeProviderSessionId)
+          : {
+              state: 'unavailable' as const,
+              reason: 'provider-history-missing' as const,
+              message: 'The provider cannot inspect this conversation in its authoritative home.',
+            };
+        if (inspection.state === 'unavailable') {
+          throw new ProviderSessionResumeUnavailableError(
+            inspection.reason,
+            inspection.message,
+          );
+        }
+        if (inspection.runtimeGuard) {
+          resumeRuntimeGuards.set(decision, inspection.runtimeGuard);
+        }
+      }
+
       if (launchPreparation) launchPreparations.set(decision, launchPreparation);
       if (activeLifecycle && activeLifecycleContext) {
         const refresh = async (): Promise<ProviderIntegrationLaunchDecision> => {
@@ -611,6 +699,12 @@ export function createProviderIntegration(
     },
     buildLaunchEnvironment(decision, baseEnvironment) {
       return launchPreparations.get(decision)?.buildEnvironment(baseEnvironment);
+    },
+    getResumeRuntimeGuard(decision) {
+      return resumeRuntimeGuards.get(decision);
+    },
+    async readResumeHistory(decision, providerSessionId) {
+      return await launchPreparations.get(decision)?.readResumeHistory?.(providerSessionId);
     },
     async inspectLifecycle(request) {
       const { agentEnvironment, requirements, lifecycle, context } =

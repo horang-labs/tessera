@@ -726,6 +726,7 @@ export class TerminalManager {
         ?? (options.launchEnvFactory ? await options.launchEnvFactory() : undefined);
       assertOpeningActive();
       const extraEnv: Record<string, string | undefined> = {
+        ...(launchEnv ?? {}),
         ...(options.paneToken
           ? {
               TESSERA_PANE_TOKEN: options.paneToken,
@@ -733,7 +734,6 @@ export class TerminalManager {
               TESSERA_HOOK_PORT: String(getServerPort()),
             }
           : {}),
-        ...(launchEnv ?? {}),
       };
       const terminalEnv = buildTerminalEnv(
         process.env,
@@ -864,6 +864,24 @@ export class TerminalManager {
           options.appearance,
           (reply) => processHandle.write(reply),
         );
+      }
+      if (options.runtimeGuard) {
+        const disposeRuntimeGuard = await options.runtimeGuard.start((message) => {
+          logger.warn(
+            { terminalId: runtime.terminalId, sessionId: runtime.sessionId },
+            'Provider runtime ownership conflict detected',
+          );
+          for (const subscriber of runtime.subscribers.values()) {
+            this.sendToConnection(subscriber.connectionId, {
+              type: 'terminal_error',
+              terminalId: runtime.terminalId,
+              surfaceId: subscriber.surfaceId,
+              message,
+            });
+          }
+          this.closeRuntime(runtime);
+        });
+        runtime.disposeSessionObservers.push(disposeRuntimeGuard);
       }
       this.terminals.set(key, runtime);
       if (runtime.sessionId) {

@@ -8,21 +8,24 @@ process.env.TESSERA_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'tessera-provider
 process.env.NODE_ENV = 'test';
 
 let dbSessions: typeof import('@/lib/db/sessions');
+let terminalProviderSessions: typeof import('@/lib/db/terminal-provider-sessions');
 let reconcileTerminalProviderSession: typeof import('@/lib/terminal/provider-session-reconciliation').reconcileTerminalProviderSession;
 let createPendingTerminalProviderSessionFork: typeof import('@/lib/terminal/provider-session-reconciliation').createPendingTerminalProviderSessionFork;
 let extractTerminalProviderSessionIdentity: typeof import('@/lib/terminal/provider-session-identity').extractTerminalProviderSessionIdentity;
 
 before(async () => {
-  const [{ initDatabase }, projects, sessions, reconciliation, identity] = await Promise.all([
+  const [{ initDatabase }, projects, sessions, terminalSessions, reconciliation, identity] = await Promise.all([
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
     import('@/lib/db/sessions'),
+    import('@/lib/db/terminal-provider-sessions'),
     import('@/lib/terminal/provider-session-reconciliation'),
     import('@/lib/terminal/provider-session-identity'),
   ]);
   await initDatabase();
   projects.registerProject('project-1', '/tmp/project-1', 'Project 1');
   dbSessions = sessions;
+  terminalProviderSessions = terminalSessions;
   reconcileTerminalProviderSession = reconciliation.reconcileTerminalProviderSession;
   createPendingTerminalProviderSessionFork = reconciliation.createPendingTerminalProviderSessionFork;
   extractTerminalProviderSessionIdentity = identity.extractTerminalProviderSessionIdentity;
@@ -54,6 +57,7 @@ test('the first provider observation binds the existing PTY session without fork
   const result = reconcileTerminalProviderSession({
     sourceSessionId: 'unbound-parent',
     identity: { providerId: 'codex', providerSessionId: 'provider-initial' },
+    providerHomeIdentity: 'codex-home:fresh',
   });
 
   assert.deepEqual(result, {
@@ -61,6 +65,32 @@ test('the first provider observation binds the existing PTY session without fork
     sessionId: 'unbound-parent',
     previousSessionId: 'unbound-parent',
   });
+  assert.equal(
+    dbSessions.getSession('unbound-parent')?.origin_provider_home_identity,
+    'codex-home:fresh',
+  );
+});
+
+test('a migrated provider conversation is never rebound to the currently selected home', () => {
+  dbSessions.createSession('legacy-unbound-parent', 'project-1', 'Legacy PTY', 'codex', {
+    providerState: JSON.stringify({
+      kind: 'terminal',
+      launched: true,
+      codexSessionId: 'legacy-provider-session',
+    }),
+  });
+
+  const result = reconcileTerminalProviderSession({
+    sourceSessionId: 'legacy-unbound-parent',
+    identity: { providerId: 'codex', providerSessionId: 'legacy-provider-session' },
+    providerHomeIdentity: 'codex-home:current',
+  });
+
+  assert.equal(result.kind, 'unchanged');
+  assert.equal(
+    dbSessions.getSession('legacy-unbound-parent')?.origin_provider_home_identity,
+    null,
+  );
 });
 
 test('a new provider session creates one durable PTY child and preserves the parent', () => {
@@ -90,6 +120,7 @@ test('a new provider session creates one durable PTY child and preserves the par
       providerSessionId: 'provider-child',
       transcriptPath: '/tmp/provider-child.jsonl',
     },
+    allowCreate: true,
   });
 
   assert.equal(result.kind, 'created');
@@ -143,6 +174,7 @@ test('a fork that runs outside the parent checkout leaves its worktree behind', 
     sourceSessionId: 'worktree-parent',
     identity: { providerId: 'claude-code', providerSessionId: 'claude-fork' },
     activation: 'background',
+    allowCreate: true,
     workDir: '/tmp/origin-checkout',
   });
 
@@ -170,6 +202,7 @@ test('duplicate and stale-pane observations resolve to the existing child', () =
     sourceSessionId: 'dedup-parent',
     identity: { providerId: 'claude-code', providerSessionId: 'claude-child' },
     activation: 'background',
+    allowCreate: true,
   });
   assert.equal(first.kind, 'created');
   assert.deepEqual(JSON.parse(dbSessions.getSession(first.sessionId)?.provider_state ?? '{}'), {
@@ -303,6 +336,7 @@ test('a hook-reported reset is titled as a new session, a fork keeps the parent 
     sourceSessionId: 'origin-parent',
     identity: { providerId: 'claude-code', providerSessionId: 'cleared-child' },
     origin: 'reset',
+    allowCreate: true,
   });
   assert.equal(reset.kind, 'created');
   assert.match(dbSessions.getSession(reset.sessionId)?.title ?? '', /^Session \d+$/u);
@@ -310,9 +344,40 @@ test('a hook-reported reset is titled as a new session, a fork keeps the parent 
   const forked = reconcileTerminalProviderSession({
     sourceSessionId: 'origin-parent',
     identity: { providerId: 'claude-code', providerSessionId: 'branched-child' },
+    allowCreate: true,
   });
   assert.equal(forked.kind, 'created');
   assert.equal(dbSessions.getSession(forked.sessionId)?.title, 'Investigate login (Fork)');
+});
+
+test('an unknown provider history selection is not adopted without managed lineage', () => {
+  dbSessions.createSession('managed-source', 'project-1', 'Managed source', 'codex', {
+    providerState: JSON.stringify({
+      kind: 'terminal',
+      launched: true,
+      codexSessionId: 'managed-provider-id',
+    }),
+  });
+
+  const result = reconcileTerminalProviderSession({
+    sourceSessionId: 'managed-source',
+    identity: { providerId: 'codex', providerSessionId: 'external-provider-id' },
+  });
+
+  assert.deepEqual(result, {
+    kind: 'ignored',
+    sessionId: 'managed-source',
+    previousSessionId: 'managed-source',
+  });
+  assert.equal(
+    terminalProviderSessions.getTerminalProviderSession('codex', 'external-provider-id'),
+    undefined,
+  );
+  assert.deepEqual(JSON.parse(dbSessions.getSession('managed-source')?.provider_state ?? '{}'), {
+    kind: 'terminal',
+    launched: true,
+    codexSessionId: 'managed-provider-id',
+  });
 });
 
 test('GUI sessions are ignored by the PTY provider-session reconciler', () => {

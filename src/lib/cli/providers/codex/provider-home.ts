@@ -1,12 +1,115 @@
 import path from 'node:path';
+import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { execCli, isRunningInWsl, type CliEnvironment } from '@/lib/cli/cli-exec';
 import { buildWslFilesystemPathProbe } from '@/lib/filesystem/wsl-path-probe';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
+import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
+import {
+  asProviderHomeIdentity,
+  type ProviderHomeIdentity,
+} from '../provider-home-identity';
 
 interface CodexProviderHomeDependencies {
   exec?: typeof execCli;
   runtimePlatform?: () => NodeJS.Platform;
   runningInWsl?: () => boolean;
+}
+
+interface CodexProviderHomeFingerprintDependencies {
+  realpath?: (filesystemPath: string) => string;
+  formatForAgent?: typeof formatPathForAgentDisplay;
+  wslDistroName?: () => string | undefined;
+}
+
+interface CodexProviderHomeIdentityDependencies
+  extends CodexProviderHomeFingerprintDependencies {
+  exec?: typeof execCli;
+}
+
+function extractWslDistroName(filesystemPath: string): string | undefined {
+  return filesystemPath
+    .replace(/\//gu, '\\')
+    .match(/^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)/iu)?.[1];
+}
+
+/** Stable, path-free identity for one Codex home in one Agent Environment. */
+export function fingerprintCodexProviderHome(
+  environment: CliEnvironment,
+  providerHomeFilesystemPath: string,
+  dependencies: CodexProviderHomeFingerprintDependencies = {},
+): ProviderHomeIdentity {
+  let canonicalFilesystemPath = providerHomeFilesystemPath.trim();
+  try {
+    canonicalFilesystemPath = (dependencies.realpath ?? fs.realpathSync.native)(
+      canonicalFilesystemPath,
+    );
+  } catch {
+    // A prospective home may not exist yet. Its absolute Agent-visible spelling
+    // is still stable enough to compare before lifecycle installation creates it.
+  }
+  const agentPath = (dependencies.formatForAgent ?? formatPathForAgentDisplay)(
+    canonicalFilesystemPath,
+    environment,
+  );
+  const windowsStyle = /^[A-Za-z]:[\\/]/u.test(agentPath) || agentPath.startsWith('\\\\');
+  const pathModule = windowsStyle ? path.win32 : path.posix;
+  const normalized = pathModule.normalize(agentPath).replace(/[\\/]+$/u, '');
+  const canonicalKey = windowsStyle ? normalized.toLowerCase() : normalized;
+  const wslDistro = environment === 'wsl'
+    ? (
+        extractWslDistroName(canonicalFilesystemPath)
+        ?? dependencies.wslDistroName?.()
+        ?? process.env.WSL_DISTRO_NAME
+        ?? ''
+      ).trim().toLowerCase()
+    : '';
+  return asProviderHomeIdentity(`codex-home:v1:${createHash('sha256')
+    .update(`${environment}\0${wslDistro}\0${canonicalKey}`)
+    .digest('hex')}`);
+}
+
+/**
+ * Resolve the complete ownership key before hashing a home. A WSL-owned home
+ * can live on a Windows-mounted drive, where its path alone carries no distro
+ * name, so the active Agent Environment must supply that missing owner.
+ */
+export async function resolveCodexProviderHomeIdentity(
+  environment: CliEnvironment,
+  providerHomeFilesystemPath: string,
+  dependencies: CodexProviderHomeIdentityDependencies = {},
+): Promise<ProviderHomeIdentity> {
+  if (environment !== 'wsl') {
+    return fingerprintCodexProviderHome(
+      environment,
+      providerHomeFilesystemPath,
+      dependencies,
+    );
+  }
+
+  let wslDistroName = extractWslDistroName(providerHomeFilesystemPath)
+    ?? dependencies.wslDistroName?.();
+  if (!wslDistroName) {
+    const result = await (dependencies.exec ?? execCli)(
+      'sh',
+      ['-c', 'printf \'%s\\n\' "${WSL_DISTRO_NAME:-}"'],
+      'wsl',
+      5_000,
+    );
+    wslDistroName = result.ok ? lastNonEmptyLine(result.stdout) ?? undefined : undefined;
+  }
+  if (!wslDistroName?.trim()) {
+    throw new Error('The WSL distribution owning the Codex home could not be resolved.');
+  }
+
+  return fingerprintCodexProviderHome(
+    environment,
+    providerHomeFilesystemPath,
+    {
+      ...dependencies,
+      wslDistroName: () => wslDistroName,
+    },
+  );
 }
 
 function lastNonEmptyLine(value: string): string | null {

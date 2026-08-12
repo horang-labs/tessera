@@ -20,6 +20,7 @@ type ProjectSidebarWidths = Record<string, Partial<SidebarWidths>>;
 
 export interface UpdateSettingsOptions {
   confirmArchivedWorktreePrune?: boolean;
+  confirmProviderHomeChange?: boolean;
 }
 
 function normalizeSidebarWidth(
@@ -301,9 +302,15 @@ export const useSettingsStore = create<SettingsState>()(
 
         let saved = false;
         try {
-          const requestBody = options?.confirmArchivedWorktreePrune
-            ? { ...updated, confirmArchivedWorktreePrune: true }
-            : updated;
+          const requestBody = {
+            ...updated,
+            ...(options?.confirmArchivedWorktreePrune
+              ? { confirmArchivedWorktreePrune: true }
+              : {}),
+            ...(options?.confirmProviderHomeChange
+              ? { confirmProviderHomeChange: true }
+              : {}),
+          };
           const response = await fetch('/api/settings', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },

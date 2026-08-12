@@ -11,7 +11,12 @@ import {
   normalizeCwdForCliEnvironment,
   spawnCli,
 } from '@/lib/cli/spawn-cli';
-import { resolveCodexHomeForEnvironment } from './provider-home';
+import {
+  resolveCodexHomeForEnvironment,
+  resolveCodexProviderHomeIdentity,
+} from './provider-home';
+import { assertProviderHomeAuthority } from '@/lib/cli/provider-session-resume';
+import type { ProviderHomeIdentity } from '../provider-home-identity';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -35,6 +40,10 @@ export interface CodexAppServerRequestContext {
   environment?: CliEnvironment;
   /** Host-openable spelling of the authoritative home this request must use. */
   providerHomeFilesystemPath?: string;
+  /** Opaque immutable binding for a managed conversation mutation. */
+  requiredProviderHomeIdentity?: ProviderHomeIdentity;
+  /** Internal handoff for callers that create a new provider conversation. */
+  onProviderHomeIdentityResolved?: (identity: ProviderHomeIdentity) => void;
 }
 
 export type CodexAppServerRequestExecutor = (
@@ -158,6 +167,12 @@ export async function runCodexAppServerRequest<T>(
   const agentEnvironment = context.environment ?? await getAgentEnvironment(context.userId);
   const providerHomeFilesystemPath = context.providerHomeFilesystemPath
     ?? await resolveCodexHomeForEnvironment(agentEnvironment);
+  const providerHomeIdentity = await resolveCodexProviderHomeIdentity(
+    agentEnvironment,
+    providerHomeFilesystemPath,
+  );
+  assertProviderHomeAuthority(context.requiredProviderHomeIdentity, providerHomeIdentity);
+  context.onProviderHomeIdentityResolved?.(providerHomeIdentity);
   const command = await resolveProviderCliCommand(
     'codex',
     'codex',

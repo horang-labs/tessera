@@ -40,7 +40,7 @@ lines.on('line', (line) => {
   const request = JSON.parse(line);
   if (request.id === undefined) return;
   if (request.method === 'thread/start' && statePath) fs.writeFileSync(statePath, 'provider-owned\\n');
-  const result = request.method === 'thread/start'
+  const result = request.method === 'thread/start' || request.method === 'thread/resume'
     ? { thread: { id: 'shared-policy-thread' } }
     : {};
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
@@ -96,10 +96,14 @@ test('Provider Integration exposes path-free, provider-specific integration stat
     provider,
     agentEnvironmentOwner: { kind: 'user', userId: 'provider-integration-user' },
   });
-  assert.deepEqual(codex.providerHome, {
+  assert.deepEqual({
+    owner: codex.providerHome.owner,
+    agentEnvironment: codex.providerHome.agentEnvironment,
+  }, {
     owner: 'agent-environment',
     agentEnvironment: 'wsl',
   });
+  assert.match(codex.providerHome.identity ?? '', /^codex-home:v1:[a-f0-9]{64}$/);
   assert.deepEqual(codex.lifecycle, {
     requirement: 'required',
     state: 'installed',
@@ -311,6 +315,167 @@ test('Codex app-server launch uses the shared Provider Integration policy and au
   const closed = once(result.process, 'close');
   result.process.kill('SIGTERM');
   await closed;
+});
+
+test('app-server resume rechecks ownership and binds a verified legacy row', async () => {
+  const [
+    { CodexAdapter },
+    { createProviderIntegration },
+    { SettingsManager },
+    database,
+    projects,
+    dbSessions,
+    { sessionHistory },
+  ] = await Promise.all([
+    import('@/lib/cli/providers/codex/adapter'),
+    import('@/lib/cli/provider-integration'),
+    import('@/lib/settings/manager'),
+    import('@/lib/db/database'),
+    import('@/lib/db/projects'),
+    import('@/lib/db/sessions'),
+    import('@/lib/session-history'),
+  ]);
+  await database.initDatabase();
+  projects.registerProject('app-server-ownership-project', workspace, 'Ownership');
+
+  const userId = 'app-server-runtime-owner-user';
+  const settings = await SettingsManager.load(userId, { silent: true });
+  await SettingsManager.save(userId, {
+    ...settings,
+    agentEnvironment: 'wsl',
+    cliCommandOverrides: {
+      ...settings.cliCommandOverrides,
+      codex: {
+        ...settings.cliCommandOverrides.codex,
+        wsl: fakeCodex,
+      },
+    },
+  });
+
+  const lifecycle: string[] = [];
+  let reportConflict!: (message: string) => void;
+  let disposeCount = 0;
+  const runtimeGuard = {
+    reinspect: async () => {
+      lifecycle.push('reinspect');
+      return { state: 'available' as const };
+    },
+    start: async (onConflict: (message: string) => void) => {
+      lifecycle.push('start');
+      reportConflict = onConflict;
+      return () => { disposeCount += 1; };
+    },
+  };
+  const providerIntegration = createProviderIntegration({
+    resolveAgentEnvironment: async () => 'wsl',
+    lifecycle: {
+      inspect: async () => ({ state: 'installed', trust: 'trusted' }),
+      install: async () => ({ state: 'installed', trust: 'trusted' }),
+    },
+  });
+  const adapter = new CodexAdapter({ providerIntegration });
+  adapter.prepareLaunchIntegration = async () => ({
+    providerHomeIdentity: 'codex-home:app-server',
+    buildEnvironment: (environment) => ({
+      ...environment,
+      CODEX_HOME: authoritativeCodexHome,
+      TESSERA_CODEX_HOME: undefined,
+    }),
+    inspectResume: async () => {
+      lifecycle.push('inspect');
+      return { state: 'available', runtimeGuard };
+    },
+    readResumeHistory: async () => [
+      {
+        v: 1,
+        type: 'user_message' as const,
+        timestamp: '2026-08-12T00:00:00.000Z',
+        content: 'inside question',
+      },
+      {
+        v: 1,
+        type: 'assistant_message' as const,
+        timestamp: '2026-08-12T00:00:01.000Z',
+        content: 'inside answer',
+      },
+      {
+        v: 1,
+        type: 'user_message' as const,
+        timestamp: '2026-08-12T00:01:00.000Z',
+        content: 'outside follow-up',
+      },
+      {
+        v: 1,
+        type: 'assistant_message' as const,
+        timestamp: '2026-08-12T00:01:01.000Z',
+        content: 'outside answer',
+      },
+    ],
+  });
+
+  dbSessions.createSession(
+    'app-server-legacy-row',
+    'app-server-ownership-project',
+    'Legacy',
+    'codex',
+    { providerState: JSON.stringify({ threadId: 'legacy-thread' }) },
+  );
+  sessionHistory.recordUserMessage(
+    'app-server-legacy-row',
+    'inside question',
+    '2026-08-12T00:00:00.000Z',
+  );
+  sessionHistory.recordServerMessage('app-server-legacy-row', {
+    type: 'message',
+    role: 'assistant',
+    content: 'inside answer',
+    timestamp: '2026-08-12T00:00:01.000Z',
+  });
+  sessionHistory.flushSession('app-server-legacy-row');
+  const resumed = await adapter.spawn(workspace, {
+    userId,
+    sessionId: 'app-server-legacy-row',
+    resume: true,
+    threadId: 'legacy-thread',
+    startupTimeoutMs: 2_000,
+  });
+  assert.equal(resumed.ok, true, resumed.error?.message);
+  assert.deepEqual(lifecycle, ['inspect', 'reinspect', 'start']);
+  assert.equal(
+    dbSessions.getSession('app-server-legacy-row')?.origin_provider_home_identity,
+    'codex-home:app-server',
+  );
+  assert.deepEqual(
+    (await sessionHistory.readEvents('app-server-legacy-row'))
+      .filter((event) => event.type === 'user_message' || event.type === 'assistant_message')
+      .map((event) => event.content),
+    ['inside question', 'inside answer', 'outside follow-up', 'outside answer'],
+  );
+
+  const closed = once(resumed.process, 'close');
+  reportConflict('Provider conversation opened elsewhere.');
+  await closed;
+  assert.equal(disposeCount, 1);
+
+  dbSessions.createSession(
+    'app-server-fresh-row',
+    'app-server-ownership-project',
+    'Fresh',
+    'codex',
+  );
+  const fresh = await adapter.spawn(workspace, {
+    userId,
+    sessionId: 'app-server-fresh-row',
+    startupTimeoutMs: 2_000,
+  });
+  assert.equal(fresh.ok, true, fresh.error?.message);
+  assert.equal(
+    dbSessions.getSession('app-server-fresh-row')?.origin_provider_home_identity,
+    'codex-home:app-server',
+  );
+  const freshClosed = once(fresh.process, 'close');
+  fresh.process.kill('SIGTERM');
+  await freshClosed;
 });
 
 test('Codex-owned state persists across separate Tessera process lifecycles like ordinary Codex', () => {

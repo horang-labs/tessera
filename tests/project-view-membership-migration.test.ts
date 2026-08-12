@@ -21,7 +21,7 @@ test('a v37 database reaches the current schema and bootstraps canonical Worktre
 
     await runDatabaseStartup(dataDir);
     const beforeBootstrap = await readMembership(dataDir);
-    assert.equal(beforeBootstrap.schemaVersion, '40');
+    assert.equal(beforeBootstrap.schemaVersion, '41');
     assert.equal(beforeBootstrap.bootstrapState, 'pending');
     assert.equal(beforeBootstrap.poisonedWorktreeCount, 0);
     assert.equal(beforeBootstrap.projectWorktreeId, null);
@@ -91,7 +91,7 @@ test('a feature v38 database gains dev PR columns without resetting completed Wo
     `)[0];
     assert.equal(
       rows(db, `SELECT value FROM _meta WHERE key = 'schema_version'`)[0]?.value,
-      '40',
+      '41',
     );
     assert.equal(
       rows(db, `SELECT value FROM _meta WHERE key = 'canonical_worktree_bootstrap_v38'`)[0]?.value,

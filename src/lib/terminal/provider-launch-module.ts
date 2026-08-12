@@ -1,5 +1,6 @@
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { CliProvider } from '@/lib/cli/providers/types';
+import type { ProviderHomeIdentity } from '@/lib/cli/providers/provider-home-identity';
 import {
   providerIntegration as sharedProviderIntegration,
   type ProviderIntegration,
@@ -43,6 +44,10 @@ import type {
   PreparedControlCliBridge,
 } from '@/lib/control/cli-bridge';
 import { isExactLegacyCodexOverlayResume } from '@/lib/codex-home';
+import {
+  isProviderSessionResumeUnavailableError,
+  ProviderSessionResumeUnavailableError,
+} from '@/lib/cli/provider-session-resume';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -60,6 +65,7 @@ export type ProviderLaunchErrorCode =
   | 'INITIAL_PROMPT_TOO_LARGE'
   | 'PREPARATION_FAILED'
   | 'PREPARATION_TIMEOUT'
+  | 'SESSION_RESUME_UNAVAILABLE'
   | 'LAUNCH_FAILED';
 
 export type ProviderLaunchRuntimeState = TerminalLaunchRuntimeState;
@@ -151,6 +157,9 @@ interface ProviderLaunchModuleOptions {
     };
     identity: TerminalProviderSessionIdentity;
     activation: 'active' | 'background';
+    allowCreate?: boolean;
+    workDir?: string;
+    providerHomeIdentity?: ProviderHomeIdentity;
   }) => void;
   prepareControlCliBridge?: (
     context: ControlCliBridgeContext,
@@ -231,6 +240,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
   model?: string;
   reasoningEffort: string | null;
   serviceTier: string | null;
+  originProviderHomeIdentity: ProviderHomeIdentity | null;
 } {
   const session = dbSessions.getSession(request.sessionId);
   if (!session || session.deleted === 1) {
@@ -264,6 +274,7 @@ function getPersistedProvider(request: ProviderLaunchRequest): {
       provider: cliProviderRegistry.getProvider(session.provider),
       providerId: session.provider,
       providerState: session.provider_state,
+      originProviderHomeIdentity: session.origin_provider_home_identity,
       model: session.model ?? undefined,
       reasoningEffort: session.reasoning_effort,
       serviceTier: session.service_tier,
@@ -532,11 +543,12 @@ export function createProviderLaunchModule(
         // as the check that the Session still exists, and a wait long enough to
         // matter is long enough for the Session to be deleted inside it — so it
         // is read after the gate, where the answer is still true.
-        const codexProviderSession = persisted.providerId === 'codex'
-          && dbSessions.extractCodexTerminalSessionId(persisted.providerState)
+        const homeBoundProviderSession = persisted.provider.bindsManagedSessionsToProviderHome?.()
           ? getTerminalProviderSessionForTesseraSession(request.sessionId)
           : undefined;
-        const codexResumeTranscriptPath = codexProviderSession?.transcript_path;
+        const codexResumeTranscriptPath = persisted.providerId === 'codex'
+          ? homeBoundProviderSession?.transcript_path
+          : undefined;
         const exactLegacyCodexOverlayResume = persisted.providerId === 'codex'
           && isExactLegacyCodexOverlayResume(
             codexResumeTranscriptPath,
@@ -547,6 +559,13 @@ export function createProviderLaunchModule(
           agentEnvironmentOwner: { kind: 'user', userId: request.userId },
           workDir,
           managedSessionId: request.sessionId,
+          ...(!exactLegacyCodexOverlayResume && persisted.originProviderHomeIdentity
+            ? { requiredProviderHomeIdentity: persisted.originProviderHomeIdentity }
+            : {}),
+          ...(!exactLegacyCodexOverlayResume
+            && homeBoundProviderSession?.provider_session_id
+            ? { resumeProviderSessionId: homeBoundProviderSession.provider_session_id }
+            : {}),
           ...(exactLegacyCodexOverlayResume
             ? { compatibility: 'exact-legacy-overlay-resume' as const }
             : {}),
@@ -779,11 +798,16 @@ export function createProviderLaunchModule(
             }
           : undefined;
 
+        const resumeRuntimeGuard = providerIntegration.getResumeRuntimeGuard?.(integration);
+
         paneToken = mintPaneToken({
           terminalId,
           userId: request.userId,
           sessionId: request.sessionId,
           providerId: decision.providerId,
+          ...(integration.providerHome.identity
+            ? { providerHomeIdentity: integration.providerHome.identity }
+            : {}),
         });
         const providerSessionObserver = createTerminalProviderSessionObserver({
           provider: decision.provider,
@@ -807,7 +831,11 @@ export function createProviderLaunchModule(
                 },
                 identity,
                 activation,
+                allowCreate: true,
                 ...(observedWorkDir ? { workDir: observedWorkDir } : {}),
+                ...(integration.providerHome.identity
+                  ? { providerHomeIdentity: integration.providerHome.identity }
+                  : {}),
               });
             } catch (error) {
               logger.warn(
@@ -835,6 +863,18 @@ export function createProviderLaunchModule(
               }
             : {}),
           launchSpec: decision.launchSpec,
+          prepareLaunch: resumeRuntimeGuard
+            ? async () => {
+                const inspection = await resumeRuntimeGuard.reinspect();
+                if (inspection.state === 'unavailable') {
+                  throw new ProviderSessionResumeUnavailableError(
+                    inspection.reason,
+                    inspection.message,
+                  );
+                }
+              }
+            : undefined,
+          runtimeGuard: resumeRuntimeGuard,
           paneToken,
           providerId: decision.providerId,
           detectConversationReset: decision.provider.detectTerminalConversationReset
@@ -900,7 +940,9 @@ export function createProviderLaunchModule(
           );
         }
         throw providerLaunchError(
-          'LAUNCH_FAILED',
+          isProviderSessionResumeUnavailableError(error)
+            ? 'SESSION_RESUME_UNAVAILABLE'
+            : 'LAUNCH_FAILED',
           error instanceof Error ? error.message : 'Failed to launch the provider terminal.',
           terminalId,
           error,

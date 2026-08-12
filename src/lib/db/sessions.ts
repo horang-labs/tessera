@@ -12,6 +12,10 @@ import {
 } from './worktree-identity';
 import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
 import { getWorktree, resolveCanonicalWorktree } from './worktrees';
+import {
+  asProviderHomeIdentity,
+  type ProviderHomeIdentity,
+} from '@/lib/cli/providers/provider-home-identity';
 
 export interface SessionRow {
   id: string;
@@ -20,6 +24,7 @@ export interface SessionRow {
   has_custom_title: number; // 0 | 1
   provider: string;
   provider_state: string | null;
+  origin_provider_home_identity: ProviderHomeIdentity | null;
   model: string | null;
   reasoning_effort: string | null;
   service_tier: string | null;
@@ -234,6 +239,7 @@ export function createSession(
     reasoningEffort?: string | null;
     serviceTier?: string | null;
     providerState?: string | null;
+    originProviderHomeIdentity?: ProviderHomeIdentity | null;
   } = {}
 ): void {
   const db = getDb();
@@ -284,17 +290,18 @@ export function createSession(
   }
   db.prepare(`
     INSERT INTO sessions (
-      id, project_id, title, provider, provider_state, model, reasoning_effort, service_tier, work_dir, worktree_branch, worktree_managed,
+      id, project_id, title, provider, provider_state, origin_provider_home_identity, model, reasoning_effort, service_tier, work_dir, worktree_branch, worktree_managed,
       worktree_id, scope_branch,
       task_id, collection_id, sort_order, created_at, updated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).run(
     id,
     projectId,
     title,
     provider,
     options.providerState ?? null,
+    options.originProviderHomeIdentity ?? null,
     options.model ?? null,
     options.reasoningEffort ?? null,
     options.serviceTier ?? null,
@@ -308,6 +315,47 @@ export function createSession(
     now,
     now
   );
+}
+
+/** Bind a managed provider session once, after the provider confirms creation. */
+export function bindSessionOriginProviderHome(
+  id: string,
+  identity: ProviderHomeIdentity,
+): boolean {
+  const normalizedIdentity = asProviderHomeIdentity(identity);
+
+  const row = getDb().prepare(`
+    SELECT provider, origin_provider_home_identity
+    FROM sessions
+    WHERE id = ? AND deleted = 0
+  `).get(id) as Pick<SessionRow, 'provider' | 'origin_provider_home_identity'> | undefined;
+  if (!row) return false;
+  if (row.origin_provider_home_identity === normalizedIdentity) return true;
+  if (row.origin_provider_home_identity) {
+    throw new Error('Managed provider session is already bound to a different provider home');
+  }
+  getDb().prepare(`
+    UPDATE sessions
+    SET origin_provider_home_identity = ?, updated_at = ?
+    WHERE id = ? AND origin_provider_home_identity IS NULL
+  `).run(normalizedIdentity, new Date().toISOString(), id);
+  return true;
+}
+
+export function countManagedSessionsTransitioningUnavailable(
+  providerId: string,
+  currentIdentity: ProviderHomeIdentity,
+  targetIdentity: ProviderHomeIdentity,
+): number {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) AS count
+    FROM sessions
+    WHERE provider = ?
+      AND deleted = 0
+      AND origin_provider_home_identity = ?
+      AND origin_provider_home_identity != ?
+  `).get(providerId, currentIdentity, targetIdentity) as { count: number } | undefined;
+  return row?.count ?? 0;
 }
 
 /**

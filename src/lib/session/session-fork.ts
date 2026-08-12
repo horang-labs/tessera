@@ -96,9 +96,18 @@ export async function forkCodexSession(
     let historyCloned = false;
     let sessionPersisted = false;
 
+    let providerHomeIdentity = source.origin_provider_home_identity ?? undefined;
+
     try {
       remoteFork = await forkCodexThread(
-        { userId, workDir: resolvedWorkDir },
+        {
+          userId,
+          workDir: resolvedWorkDir,
+          requiredProviderHomeIdentity: source.origin_provider_home_identity ?? undefined,
+          onProviderHomeIdentityResolved: (identity) => {
+            providerHomeIdentity = identity;
+          },
+        },
         sourceThreadId,
       );
 
@@ -122,6 +131,7 @@ export async function forkCodexSession(
           ? 'pty'
           : 'gui',
         providerState: JSON.stringify({ threadId: remoteFork.threadId }),
+        originProviderHomeIdentity: providerHomeIdentity,
       });
       sessionPersisted = true;
       const persisted = dbSessions.getSession(destinationSessionId);

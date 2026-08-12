@@ -58,6 +58,7 @@ test('native fork persists a new thread and clones independent Tessera history',
     reasoningEffort: 'high',
     serviceTier: 'fast',
     providerState: JSON.stringify({ threadId: 'thread-source', goal: { stale: true } }),
+    originProviderHomeIdentity: 'codex-home:source',
   });
   dbSessions.updateSession('source-session', { worktree_branch: 'feature/source' });
   sessionHistory.recordUserMessage('source-session', 'before fork');
@@ -102,6 +103,7 @@ test('native fork persists a new thread and clones independent Tessera history',
   assert.equal(child?.model, 'gpt-5.4');
   assert.equal(child?.reasoning_effort, 'high');
   assert.equal(child?.service_tier, 'fast');
+  assert.equal(child?.origin_provider_home_identity, 'codex-home:source');
   assert.equal(child?.has_custom_title, 1);
 
   const sourceBefore = await sessionHistory.readEvents('source-session');
