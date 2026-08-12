@@ -11,7 +11,10 @@ import {
   normalizeCwdForCliEnvironment,
   spawnCli,
 } from '@/lib/cli/spawn-cli';
-import { fingerprintCodexProviderHome, resolveCodexHomeForEnvironment } from './provider-home';
+import {
+  resolveCodexHomeForEnvironment,
+  resolveCodexProviderHomeIdentity,
+} from './provider-home';
 import { ProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -163,7 +166,7 @@ export async function runCodexAppServerRequest<T>(
   const agentEnvironment = context.environment ?? await getAgentEnvironment(context.userId);
   const providerHomeFilesystemPath = context.providerHomeFilesystemPath
     ?? await resolveCodexHomeForEnvironment(agentEnvironment);
-  const providerHomeIdentity = fingerprintCodexProviderHome(
+  const providerHomeIdentity = await resolveCodexProviderHomeIdentity(
     agentEnvironment,
     providerHomeFilesystemPath,
   );

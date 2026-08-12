@@ -3,6 +3,7 @@ import type {
   CliProvider,
   ProviderIntegrationRequirements,
   ProviderLaunchPreparation,
+  ProviderSessionRuntimeGuard,
 } from './providers/provider-contract';
 import { getAgentEnvironmentStrict, resolveDefaultAgentEnvironment } from './spawn-cli';
 import type {
@@ -135,6 +136,10 @@ export interface ProviderIntegration {
     decision: ProviderIntegrationLaunchDecision,
     baseEnvironment: NodeJS.ProcessEnv,
   ): NodeJS.ProcessEnv | undefined;
+  /** Opaque provider guard retained only for the lifetime of this launch decision. */
+  getResumeRuntimeGuard?(
+    decision: ProviderIntegrationLaunchDecision,
+  ): ProviderSessionRuntimeGuard | undefined;
   inspectLifecycle(
     request: ProviderIntegrationLifecycleRequest,
   ): Promise<ProviderIntegrationLaunchDecision>;
@@ -213,6 +218,10 @@ export function createProviderIntegration(
   const launchPreparations = new WeakMap<
     ProviderIntegrationLaunchDecision,
     ProviderLaunchPreparation
+  >();
+  const resumeRuntimeGuards = new WeakMap<
+    ProviderIntegrationLaunchDecision,
+    ProviderSessionRuntimeGuard
   >();
   const resolveAgentEnvironment = options.resolveAgentEnvironment ?? getAgentEnvironmentStrict;
   const resolveDefaultEnvironment = options.resolveDefaultEnvironment
@@ -401,7 +410,7 @@ export function createProviderIntegration(
       ) {
         throw new ProviderSessionResumeUnavailableError(
           'origin-home-not-authoritative',
-          'This managed session belongs to a different Codex home. Switch back to its origin Agent Environment to resume it.',
+          'This managed session belongs to a different provider home. Switch back to its origin Agent Environment to resume it.',
         );
       }
       if (requirements.lifecycle === 'required') {
@@ -455,18 +464,19 @@ export function createProviderIntegration(
       if (request.resumeProviderSessionId) {
         const inspection = launchPreparation?.inspectResume
           ? await launchPreparation.inspectResume(request.resumeProviderSessionId)
-          : { state: 'missing' as const };
-        if (inspection.state === 'missing') {
+          : {
+              state: 'unavailable' as const,
+              reason: 'provider-history-missing' as const,
+              message: 'The provider cannot inspect this conversation in its authoritative home.',
+            };
+        if (inspection.state === 'unavailable') {
           throw new ProviderSessionResumeUnavailableError(
-            'provider-history-missing',
-            'The Codex conversation is missing from its origin home. Tessera kept the management record but cannot resume it.',
+            inspection.reason,
+            inspection.message,
           );
         }
-        if (inspection.state === 'already-loaded') {
-          throw new ProviderSessionResumeUnavailableError(
-            'provider-session-already-running',
-            'This Codex conversation is already loaded by another runtime. Fork it to work in parallel.',
-          );
+        if (inspection.runtimeGuard) {
+          resumeRuntimeGuards.set(decision, inspection.runtimeGuard);
         }
       }
 
@@ -476,6 +486,9 @@ export function createProviderIntegration(
     },
     buildLaunchEnvironment(decision, baseEnvironment) {
       return launchPreparations.get(decision)?.buildEnvironment(baseEnvironment);
+    },
+    getResumeRuntimeGuard(decision) {
+      return resumeRuntimeGuards.get(decision);
     },
     async inspectLifecycle(request) {
       const agentEnvironment = await resolveEnvironment(request);

@@ -86,6 +86,10 @@ export interface TerminalCreateOptions {
   appearance?: TerminalAppearance;
   /** Disposes provider resources created before PTY spawn. */
   launchObserverDisposer?: () => void;
+  /** Provider-owned guard that remains active for the PTY runtime lifetime. */
+  runtimeGuard?: {
+    start(onConflict: (message: string) => void): Promise<() => void>;
+  };
   /**
    * Called once the runtime's process ends, with the output still held for
    * replay. Only the server may supply it: it exists so work the server started

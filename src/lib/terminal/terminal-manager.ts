@@ -864,6 +864,24 @@ export class TerminalManager {
           (reply) => processHandle.write(reply),
         );
       }
+      if (options.runtimeGuard) {
+        const disposeRuntimeGuard = await options.runtimeGuard.start((message) => {
+          logger.warn(
+            { terminalId: runtime.terminalId, sessionId: runtime.sessionId },
+            'Provider runtime ownership conflict detected',
+          );
+          for (const subscriber of runtime.subscribers.values()) {
+            this.sendToConnection(subscriber.connectionId, {
+              type: 'terminal_error',
+              terminalId: runtime.terminalId,
+              surfaceId: subscriber.surfaceId,
+              message,
+            });
+          }
+          this.closeRuntime(runtime);
+        });
+        runtime.disposeSessionObservers.push(disposeRuntimeGuard);
+      }
       this.terminals.set(key, runtime);
       if (runtime.sessionId) {
         this.clearTerminalReservation(runtime.userId, runtime.sessionId, runtime.terminalId);

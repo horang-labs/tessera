@@ -43,7 +43,10 @@ import type {
   PreparedControlCliBridge,
 } from '@/lib/control/cli-bridge';
 import { isExactLegacyCodexOverlayResume } from '@/lib/codex-home';
-import { isProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
+import {
+  isProviderSessionResumeUnavailableError,
+  ProviderSessionResumeUnavailableError,
+} from '@/lib/cli/provider-session-resume';
 
 const MAX_INITIAL_PROMPT_BYTES = 16_384;
 const DEFAULT_PREPARATION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -787,6 +790,8 @@ export function createProviderLaunchModule(
             }
           : undefined;
 
+        const resumeRuntimeGuard = providerIntegration.getResumeRuntimeGuard?.(integration);
+
         paneToken = mintPaneToken({
           terminalId,
           userId: request.userId,
@@ -846,6 +851,18 @@ export function createProviderLaunchModule(
               }
             : {}),
           launchSpec: decision.launchSpec,
+          prepareLaunch: resumeRuntimeGuard
+            ? async () => {
+                const inspection = await resumeRuntimeGuard.reinspect();
+                if (inspection.state === 'unavailable') {
+                  throw new ProviderSessionResumeUnavailableError(
+                    inspection.reason,
+                    inspection.message,
+                  );
+                }
+              }
+            : undefined,
+          runtimeGuard: resumeRuntimeGuard,
           paneToken,
           providerId: decision.providerId,
           detectConversationReset: decision.provider.detectTerminalConversationReset

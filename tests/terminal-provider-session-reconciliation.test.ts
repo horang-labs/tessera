@@ -54,6 +54,7 @@ test('the first provider observation binds the existing PTY session without fork
   const result = reconcileTerminalProviderSession({
     sourceSessionId: 'unbound-parent',
     identity: { providerId: 'codex', providerSessionId: 'provider-initial' },
+    providerHomeIdentity: 'codex-home:fresh',
   });
 
   assert.deepEqual(result, {
@@ -61,6 +62,32 @@ test('the first provider observation binds the existing PTY session without fork
     sessionId: 'unbound-parent',
     previousSessionId: 'unbound-parent',
   });
+  assert.equal(
+    dbSessions.getSession('unbound-parent')?.origin_provider_home_identity,
+    'codex-home:fresh',
+  );
+});
+
+test('a migrated provider conversation is never rebound to the currently selected home', () => {
+  dbSessions.createSession('legacy-unbound-parent', 'project-1', 'Legacy PTY', 'codex', {
+    providerState: JSON.stringify({
+      kind: 'terminal',
+      launched: true,
+      codexSessionId: 'legacy-provider-session',
+    }),
+  });
+
+  const result = reconcileTerminalProviderSession({
+    sourceSessionId: 'legacy-unbound-parent',
+    identity: { providerId: 'codex', providerSessionId: 'legacy-provider-session' },
+    providerHomeIdentity: 'codex-home:current',
+  });
+
+  assert.equal(result.kind, 'unchanged');
+  assert.equal(
+    dbSessions.getSession('legacy-unbound-parent')?.origin_provider_home_identity,
+    null,
+  );
 });
 
 test('a new provider session creates one durable PTY child and preserves the parent', () => {

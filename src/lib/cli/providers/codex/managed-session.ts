@@ -1,40 +1,62 @@
+import path from 'node:path';
+import type { CodexAppServerRequestContext } from './app-server-request-client';
+import type {
+  ProviderSessionResumeInspection,
+  ProviderSessionRuntimeGuard,
+} from '../provider-contract';
+import { resolveCodexTranscriptPath } from './transcript-path';
 import {
-  CodexAppServerRequestError,
-  executeCodexAppServerRequest,
-  type CodexAppServerRequestContext,
-} from './app-server-request-client';
-import type { ProviderSessionResumeInspection } from '../provider-contract';
+  isCodexRolloutOpenByAnotherRuntime,
+  watchCodexRolloutRuntimeOwners,
+} from './provider-runtime-ownership';
 
-interface ThreadReadResult {
-  thread?: {
-    id?: unknown;
-    status?: { type?: unknown };
+function unavailableHistory(): ProviderSessionResumeInspection {
+  return {
+    state: 'unavailable',
+    reason: 'provider-history-missing',
+    message: 'The provider conversation is missing from its origin home. Tessera kept the management record but cannot resume it.',
   };
 }
 
-function isMissingThreadError(error: unknown): boolean {
-  if (!(error instanceof CodexAppServerRequestError)) return false;
-  const message = error.message.toLowerCase();
-  return message.includes('not found') || message.includes('does not exist');
+function unavailableConcurrentRuntime(): ProviderSessionResumeInspection {
+  return {
+    state: 'unavailable',
+    reason: 'provider-session-already-running',
+    message: 'This provider conversation is already open in another runtime. Fork it to work in parallel.',
+  };
 }
 
-/** Inspect without subscribing; only a not-loaded provider thread is safe to resume. */
+/** Inspect durable provider history and the OS handle ordinary Codex holds while active. */
 export async function inspectCodexManagedSessionResume(
   context: CodexAppServerRequestContext,
   providerSessionId: string,
 ): Promise<ProviderSessionResumeInspection> {
-  try {
-    const result = await executeCodexAppServerRequest<ThreadReadResult>(
-      context,
-      'thread/read',
-      { threadId: providerSessionId, includeTurns: false },
-    );
-    if (result.thread?.id !== providerSessionId) return { state: 'missing' };
-    return result.thread.status?.type === 'notLoaded'
-      ? { state: 'available' }
-      : { state: 'already-loaded' };
-  } catch (error) {
-    if (isMissingThreadError(error)) return { state: 'missing' };
-    throw error;
+  if (!context.providerHomeFilesystemPath || !context.environment) {
+    throw new Error('Codex resume inspection requires a prepared provider home and Agent Environment.');
   }
+  const rolloutPath = await resolveCodexTranscriptPath({
+    providerSessionId,
+    environment: context.environment,
+    sessionsDir: path.join(context.providerHomeFilesystemPath, 'sessions'),
+  });
+  if (!rolloutPath) {
+    return unavailableHistory();
+  }
+  if (await isCodexRolloutOpenByAnotherRuntime(rolloutPath, context.environment)) {
+    return unavailableConcurrentRuntime();
+  }
+  const runtimeGuard: ProviderSessionRuntimeGuard = {
+    reinspect: async () => await isCodexRolloutOpenByAnotherRuntime(
+      rolloutPath,
+      context.environment!,
+    )
+      ? unavailableConcurrentRuntime()
+      : { state: 'available' },
+    start: (onConflict) => watchCodexRolloutRuntimeOwners(
+      rolloutPath,
+      context.environment!,
+      onConflict,
+    ),
+  };
+  return { state: 'available', runtimeGuard };
 }

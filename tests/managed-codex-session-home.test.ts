@@ -73,7 +73,15 @@ test('Provider Integration rejects a different origin home and unavailable provi
       buildEnvironment: (environment: NodeJS.ProcessEnv) => environment,
       inspectResume: async () => {
         inspections += 1;
-        return { state: inspectionState };
+        return inspectionState === 'available'
+          ? { state: 'available' as const }
+          : {
+              state: 'unavailable' as const,
+              reason: inspectionState === 'missing'
+                ? 'provider-history-missing' as const
+                : 'provider-session-already-running' as const,
+              message: inspectionState,
+            };
       },
     }),
   } as Pick<
@@ -127,6 +135,84 @@ test('Provider Integration rejects a different origin home and unavailable provi
       assert.equal(error.reason, 'provider-session-already-running');
       return true;
     },
+  );
+});
+
+test('provider home fingerprints canonicalize aliases and agent-visible path spelling', async () => {
+  const {
+    fingerprintCodexProviderHome,
+    resolveCodexProviderHomeIdentity,
+  } = await import(
+    '@/lib/cli/providers/codex/provider-home'
+  );
+  const actualHome = path.join(dataDir, 'fingerprint-home');
+  const aliasHome = path.join(dataDir, 'fingerprint-alias');
+  fs.mkdirSync(actualHome, { recursive: true });
+  fs.symlinkSync(actualHome, aliasHome, 'dir');
+  assert.equal(
+    fingerprintCodexProviderHome('wsl', actualHome),
+    fingerprintCodexProviderHome('wsl', aliasHome),
+  );
+
+  const identity = (providerHome: string) => fingerprintCodexProviderHome(
+    'native',
+    providerHome,
+    {
+      realpath: (value) => value,
+      formatForAgent: (value) => value,
+    },
+  );
+  assert.equal(
+    identity('C:\\Users\\Work\\.codex'),
+    identity('c:/users/work/.CODEX/'),
+  );
+
+  const bridgedIdentity = (providerHome: string) => fingerprintCodexProviderHome(
+    'wsl',
+    providerHome,
+    {
+      realpath: (value) => value,
+      wslDistroName: () => 'Ubuntu-24.04',
+    },
+  );
+  assert.equal(
+    bridgedIdentity('\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\.codex'),
+    bridgedIdentity('/home/work/.codex'),
+  );
+  assert.notEqual(
+    bridgedIdentity('/home/work/.codex'),
+    fingerprintCodexProviderHome(
+      'wsl',
+      '\\\\wsl.localhost\\Debian\\home\\work\\.codex',
+      {
+        realpath: (value) => value,
+        wslDistroName: () => 'Ubuntu-24.04',
+      },
+    ),
+  );
+
+  const mountedHomeIdentity = async (distro: string) => (
+    await resolveCodexProviderHomeIdentity(
+      'wsl',
+      'C:\\Users\\work\\shared-codex-home',
+      {
+        realpath: (value) => value,
+        formatForAgent: () => '/mnt/c/Users/work/shared-codex-home',
+        exec: async () => ({
+          ok: true,
+          exitCode: 0,
+          stdout: `${distro}\n`,
+          stderr: '',
+          timedOut: false,
+          durationMs: 1,
+        }),
+      },
+    )
+  );
+  assert.notEqual(
+    await mountedHomeIdentity('Ubuntu-24.04'),
+    await mountedHomeIdentity('Debian'),
+    'a shared Windows path is still owned by one specific WSL distribution',
   );
 });
 

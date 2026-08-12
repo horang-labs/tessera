@@ -164,6 +164,38 @@ test('concurrent session opens spawn once and disconnect only detaches its surfa
   assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 0, sessionCount: 0 });
 });
 
+test('provider runtime guard terminates and disposes a managed PTY on ownership conflict', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const spawned: FakePty[] = [];
+  let reportConflict!: (message: string) => void;
+  let disposeCount = 0;
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => createFactory(spawned),
+  );
+
+  await manager.create(createOptions({
+    terminalId: 'terminal-runtime-guard',
+    runtimeGuard: {
+      start: async (onConflict) => {
+        reportConflict = onConflict;
+        return () => { disposeCount += 1; };
+      },
+    },
+  }));
+  assert.equal(spawned.length, 1);
+
+  reportConflict('Provider conversation opened elsewhere.');
+  assert.equal(spawned[0].killCount, 1);
+  assert.equal(disposeCount, 1);
+  assert.ok(delivered.some((message) => (
+    message.type === 'terminal_error'
+    && message.terminalId === 'terminal-runtime-guard'
+    && message.message === 'Provider conversation opened elsewhere.'
+  )));
+  assert.deepEqual(manager.getRuntimeSummary(), { activeCount: 0, sessionCount: 0 });
+});
+
 test('terminal reservations isolate concurrent sessions before either PTY starts', async () => {
   const delivered: ServerTransportMessage[] = [];
   const spawned: FakePty[] = [];

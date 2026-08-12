@@ -82,10 +82,20 @@ export interface ProviderLifecycleIntegration {
 
 export type ProviderLaunchEnvironmentContext = ProviderLifecycleContext;
 
+export interface ProviderSessionRuntimeGuard {
+  /** Repeat the provider-owned preflight immediately before process spawn. */
+  reinspect(): Promise<ProviderSessionResumeInspection>;
+  /** Monitor ownership from spawn until the returned disposer is called. */
+  start(onConflict: (message: string) => void): Promise<() => void>;
+}
+
 export type ProviderSessionResumeInspection =
-  | { state: 'available' }
-  | { state: 'missing' }
-  | { state: 'already-loaded' };
+  | { state: 'available'; runtimeGuard?: ProviderSessionRuntimeGuard }
+  | {
+      state: 'unavailable';
+      reason: 'provider-history-missing' | 'provider-session-already-running';
+      message: string;
+    };
 
 /** Provider-owned launch authority resolved once for lifecycle and process environment. */
 export interface ProviderLaunchPreparation {

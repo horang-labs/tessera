@@ -68,8 +68,10 @@ import {
   type ProviderIntegration,
 } from '../../provider-integration';
 import { createCodexLifecycleHookIntegration } from './lifecycle-hook-integration';
-import { resolveCodexHomeForEnvironment } from './provider-home';
-import { fingerprintCodexProviderHome } from './provider-home';
+import {
+  resolveCodexHomeForEnvironment,
+  resolveCodexProviderHomeIdentity,
+} from './provider-home';
 import { inspectCodexManagedSessionResume } from './managed-session';
 import { buildCodexAppServerRequestEnvironment } from './app-server-request-client';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
@@ -94,6 +96,7 @@ import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 import { resolveProviderOwnedSkillHome } from '../provider-skill-home';
+import { ProviderSessionResumeUnavailableError } from '@/lib/cli/provider-session-resume';
 
 const CLI_TIMEOUT_MS = 120_000;
 const SKILLS_REQUEST_TIMEOUT_MS = 10_000;
@@ -183,6 +186,7 @@ interface CodexRuntimeConfig {
   approvalPolicy?: CodexApprovalPolicy;
   sandboxMode?: CodexSandboxMode;
   providerHomeIdentity?: string;
+  bindProviderHomeOnHandshake: boolean;
 }
 
 function resolveCodexAccessConfig(runtimeConfig?: CodexRuntimeConfig): {
@@ -330,7 +334,10 @@ export class CodexAdapter implements CliProvider {
     context: ProviderLaunchEnvironmentContext,
   ): Promise<ProviderLaunchPreparation> {
     const providerHome = await this._resolveProviderHome(context.environment);
-    const providerHomeIdentity = fingerprintCodexProviderHome(context.environment, providerHome);
+    const providerHomeIdentity = await resolveCodexProviderHomeIdentity(
+      context.environment,
+      providerHome,
+    );
     return {
       providerHomeIdentity,
       lifecycle: this._createLifecycleIntegration({
@@ -563,6 +570,16 @@ export class CodexAdapter implements CliProvider {
     }
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
+    const resumeRuntimeGuard = this._providerIntegration.getResumeRuntimeGuard?.(integration);
+    if (resumeRuntimeGuard) {
+      const inspection = await resumeRuntimeGuard.reinspect();
+      if (inspection.state === 'unavailable') {
+        throw new ProviderSessionResumeUnavailableError(
+          inspection.reason,
+          inspection.message,
+        );
+      }
+    }
 
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
@@ -610,6 +627,12 @@ export class CodexAdapter implements CliProvider {
       approvalPolicy: options.approvalPolicy as CodexApprovalPolicy | undefined,
       sandboxMode: options.sandboxMode as CodexSandboxMode | undefined,
       providerHomeIdentity: integration.providerHome.identity,
+      // A migrated row with a provider thread but no origin identity is not
+      // evidence that the currently selected home created it. Keep that legacy
+      // record unbound; only fresh conversations establish a new binding.
+      bindProviderHomeOnHandshake: !options.resume
+        || !options.threadId
+        || Boolean(options.originProviderHomeIdentity),
     });
 
     codexProtocolParser.setSessionModel(options.sessionId ?? '__provider__', options.model);
@@ -628,6 +651,27 @@ export class CodexAdapter implements CliProvider {
         ok: false,
         error: err instanceof Error ? err : new Error(String(err)),
       };
+    }
+
+    if (resumeRuntimeGuard) {
+      try {
+        const dispose = await resumeRuntimeGuard.start((message) => {
+          logger.warn({ sessionId: options.sessionId }, message);
+          cliProcess.kill('SIGTERM');
+        });
+        let disposed = false;
+        const disposeOnce = () => {
+          if (disposed) return;
+          disposed = true;
+          dispose();
+        };
+        cliProcess.once('exit', disposeOnce);
+        cliProcess.once('error', disposeOnce);
+        if (cliProcess.exitCode !== null) disposeOnce();
+      } catch (error) {
+        cliProcess.kill('SIGTERM');
+        throw error;
+      }
     }
 
     return { process: cliProcess, ok: true };
@@ -1259,8 +1303,9 @@ export class CodexAdapter implements CliProvider {
       this._processThreadIds.set(proc, tid);
       if (sessionId !== '__provider__') {
         updateProviderStateWithRetry(sessionId, { threadId: tid });
-        const providerHomeIdentity = this._processRuntimeConfig.get(proc)?.providerHomeIdentity;
-        if (providerHomeIdentity) {
+        const runtimeConfig = this._processRuntimeConfig.get(proc);
+        const providerHomeIdentity = runtimeConfig?.providerHomeIdentity;
+        if (runtimeConfig?.bindProviderHomeOnHandshake && providerHomeIdentity) {
           bindProviderHomeWithRetry(sessionId, providerHomeIdentity);
         }
       }

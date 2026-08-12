@@ -212,6 +212,7 @@ export class ProcessManager {
           userId,
           error: error || undefined,
         }, `CLI process failed to ${lifecycle === 'spawned' ? 'spawn' : 'resume'}`);
+        if (isProviderSessionResumeUnavailableError(error)) throw error;
         return false;
       }
 

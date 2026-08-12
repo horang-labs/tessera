@@ -197,8 +197,11 @@ export function reconcileTerminalProviderSession(options: {
   if (!sourceBinding && isPendingTerminalProviderSessionState(source.provider_state)) {
     return reconcilePendingTerminalProviderSession(source, identity, activation);
   }
+  const persistedProviderSessionId = readPersistedTerminalProviderSessionId(source);
+  const mayEstablishOriginBinding = !source.origin_provider_home_identity
+    && !sourceBinding
+    && !persistedProviderSessionId;
   if (!sourceBinding) {
-    const persistedProviderSessionId = readPersistedTerminalProviderSessionId(source);
     const sourceProviderSessionId = persistedProviderSessionId ?? identity.providerSessionId;
     registerIdentity(sourceSessionId, {
       providerId: identity.providerId,
@@ -211,7 +214,11 @@ export function reconcileTerminalProviderSession(options: {
   }
 
   if (sourceBinding?.provider_session_id === identity.providerSessionId) {
-    if (identity.providerId === 'codex' && providerHomeIdentity) {
+    if (
+      identity.providerId === 'codex'
+      && providerHomeIdentity
+      && (Boolean(source.origin_provider_home_identity) || mayEstablishOriginBinding)
+    ) {
       dbSessions.bindSessionOriginProviderHome(sourceSessionId, providerHomeIdentity);
     }
     registerIdentity(sourceSessionId, identity);
