@@ -223,7 +223,7 @@ function GitDesktopCommitControlView({
     <div
       ref={containerRef}
       data-testid="desktop-commit-control"
-      className="electron-no-drag hidden h-full shrink-0 items-stretch border-l border-(--divider) sm:flex"
+      className="electron-no-drag hidden h-full shrink-0 items-center border-l border-(--divider) sm:flex"
     >
       <button
         ref={triggerRef}
@@ -239,7 +239,7 @@ function GitDesktopCommitControlView({
         data-testid="desktop-commit-primary"
         data-git-action={controller.primaryAction.kind}
         className={cn(
-          "flex h-full shrink-0 items-center gap-1.5 bg-blue-600 px-3 text-xs font-semibold text-white shadow-sm ring-1 ring-inset ring-blue-700/40 transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60 dark:bg-blue-500 dark:ring-blue-300/30 dark:hover:bg-blue-400",
+          "mx-1 flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-blue-600 px-2.5 text-xs font-semibold text-white shadow-sm ring-1 ring-inset ring-blue-700/40 transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60 dark:bg-blue-500 dark:ring-blue-300/30 dark:hover:bg-blue-400",
           composerOpen && "bg-blue-500 dark:bg-blue-400",
         )}
       >

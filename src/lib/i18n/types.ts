@@ -1452,6 +1452,9 @@ export interface I18nMessages {
       continueTaskHint: string;
       continueSubmit: string;
       chatInstantHint: string;
+      chatCreatesHere: string;
+      sessionLocationLabel: string;
+      chatLocationDescription: string;
       taskWorktreeHint: string;
       taskWorktreeDescription: string;
       worktreeSourceLabel: string;

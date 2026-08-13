@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useContext, useEffect, useMemo, useRef, type DragEvent, type MouseEvent } from 'react';
-import { X as XIcon, KeyboardIcon, FolderGit2, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, ChevronDown } from 'lucide-react';
+import { X as XIcon, KeyboardIcon, FolderGit2, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, ChevronDown, GitBranch } from 'lucide-react';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
@@ -97,6 +97,67 @@ export function resolveAllProjectsDefaultProjectId(
 }
 
 const EMPTY_COLLECTIONS: Collection[] = [];
+
+interface SessionLocationIdentityProps {
+  projectName: string;
+  branch: string | null;
+  path: string;
+}
+
+export function CompactSessionLocationIdentity({
+  projectName,
+  branch,
+  path,
+}: SessionLocationIdentityProps) {
+  return (
+    <span className="mt-2 block border-t border-[color-mix(in_srgb,var(--accent)_14%,transparent)] pt-2">
+      <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-(--text-secondary)">
+        <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-(--accent-hover)" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-(--text-primary)">{projectName}</span>
+        {branch ? (
+          <span className="flex max-w-[45%] shrink-0 items-center gap-1 rounded-full border border-(--divider) bg-(--input-bg) px-1.5 py-0.5 font-mono text-[9px] text-(--text-secondary)">
+            <GitBranch className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+            <span className="truncate">{branch}</span>
+          </span>
+        ) : null}
+      </span>
+      <span className="mt-1 block truncate font-mono text-[10px] leading-4 text-(--text-muted)" title={path}>
+        {path}
+      </span>
+    </span>
+  );
+}
+
+export function DetailedSessionLocationIdentity({
+  projectName,
+  branch,
+  path,
+}: SessionLocationIdentityProps) {
+  return (
+    <div
+      className="rounded-xl border border-[color-mix(in_srgb,var(--accent)_18%,var(--divider))] bg-[color-mix(in_srgb,var(--accent)_4%,var(--input-bg))] px-3 py-2.5"
+      data-testid="empty-panel-session-location"
+    >
+      <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center">
+        <span className="flex min-w-0 max-w-full items-center gap-2">
+          <FolderGit2 className="h-4 w-4 shrink-0 text-(--accent-hover)" aria-hidden="true" />
+          <span className="min-w-0 truncate text-xs font-semibold text-(--text-primary)">
+            {projectName}
+          </span>
+        </span>
+        {branch ? (
+          <span className="flex max-w-full shrink-0 items-center gap-1 rounded-full border border-(--divider) bg-(--sidebar-bg) px-2 py-0.5 font-mono text-[10px] text-(--text-secondary) sm:ml-auto sm:max-w-[45%]">
+            <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">{branch}</span>
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 break-all font-mono text-[11px] leading-4 text-(--text-muted) sm:mt-1.5 sm:truncate sm:pl-6" title={path}>
+        {path}
+      </p>
+    </div>
+  );
+}
 
 export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const { t } = useI18n();
@@ -381,6 +442,12 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     ? buildManagedWorktreePreviewPath(activeProject.decodedPath, branchPrefix, branchSlug, pathTemplate)
     : '';
   const normalizedBranchPrefix = normalizeManagedWorktreeBranchPrefix(branchPrefix);
+  const sessionLocationPath = activeProject
+    ? activeProject.projectWorktree?.displayPath
+      ?? activeProject.displayPath
+      ?? activeProject.decodedPath
+    : '';
+  const sessionLocationBranch = activeProject?.projectWorktree?.currentBranch ?? null;
   const panelControls = panelCount >= 2 ? (
     <>
       <button
@@ -565,8 +632,15 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
                   {!activeProject && requiresProjectSelection
                     ? t('task.creation.selectProjectHint')
-                    : t('task.creation.chatInstantHint')}
+                    : t('task.creation.chatCreatesHere')}
                 </span>
+                {activeProject ? (
+                  <CompactSessionLocationIdentity
+                    projectName={activeProject.displayName}
+                    branch={sessionLocationBranch}
+                    path={sessionLocationPath}
+                  />
+                ) : null}
               </button>
 
               <button
@@ -611,6 +685,19 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             </div>
 
             <div className="mt-4 max-w-xl space-y-4 border-l-2 border-[color-mix(in_srgb,var(--accent)_16%,transparent)] pl-4">
+              {mode === 'chat' && activeProject ? (
+                <div className="space-y-1.5">
+                  <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
+                    {t('task.creation.sessionLocationLabel')}
+                  </span>
+                  <DetailedSessionLocationIdentity
+                    projectName={activeProject.displayName}
+                    branch={sessionLocationBranch}
+                    path={sessionLocationPath}
+                  />
+                </div>
+              ) : null}
+
               {mode === 'task' && (
                 <>
                   <div className="space-y-1.5">
@@ -747,9 +834,16 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                     ? t('task.creation.selectProjectHint')
                     : mode === 'task'
                       ? t('task.creation.taskWorktreeDescription')
-                      : mode === 'shell'
+                    : mode === 'shell'
                         ? t('task.creation.shellDescription')
-                        : t('task.creation.chatInstantHint')}
+                        : (
+                          <span>
+                            {t('task.creation.chatLocationDescription')}{' '}
+                            <span className="font-mono text-[12px] text-(--text-primary)" title={sessionLocationPath}>
+                              {sessionLocationPath}
+                            </span>
+                          </span>
+                        )}
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
