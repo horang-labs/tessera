@@ -119,6 +119,9 @@ export function ChatLayout() {
   const viewMode = useBoardStore((state) => state.viewMode);
   const renderedViewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
+  const peekFileSourceSessionId = useBoardStore(
+    (state) => state.peekFileRef?.sourceSessionId ?? null,
+  );
   const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const selectedBoardSession = useProjectViewSession(
@@ -158,15 +161,16 @@ export function ChatLayout() {
     )
   );
   const isKanbanPeekMode = renderedViewMode === 'board' && kanbanSessionOpenMode === 'peek';
-  const activeGitSessionId = isKanbanPeekMode && selectedBoardSessionId
-    ? selectedBoardSessionId
+  const openBoardGitSessionId = peekSessionId ?? peekFileSourceSessionId;
+  const activeGitSessionId = isKanbanPeekMode
+    ? openBoardGitSessionId
     : resolveActiveWorkspaceSessionId({
         activePanelSessionId,
         activeSessionId,
       });
   const activeGitWorktreeId = peekWorktreeId
-    ?? (isKanbanPeekMode && selectedBoardSessionId
-      ? selectedBoardWorktreeId
+    ?? (isKanbanPeekMode
+      ? openBoardGitSessionId ? selectedBoardWorktreeId : null
       : activePanelWorktreeId ?? compositeWorktreeId);
   const activeGitTargetSessionId = resolveCanonicalGitTargetSessionId({
     activeSessionId: activeGitSessionId,

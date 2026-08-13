@@ -71,6 +71,14 @@ test('Board header shows the selected card Git delivery state and panel control'
   assert.match(gitBoardHeaderSource, /data-testid="kanban-git-panel-toggle"/);
 });
 
+test('Board Git ignores the remembered card after Peek closes', () => {
+  assert.match(chatLayoutSource, /const openBoardGitSessionId = peekSessionId \?\? peekFileSourceSessionId/);
+  assert.match(chatLayoutSource, /const activeGitSessionId = isKanbanPeekMode\s*\? openBoardGitSessionId/);
+  assert.match(gitBoardHeaderSource, /state\.peekSessionId \|\| state\.peekFileRef/);
+  assert.match(gitBoardHeaderSource, /data-testid="kanban-git-no-selection"/);
+  assert.match(gitBoardHeaderSource, /disabled=\{!hasOpenBoardTarget\}/);
+});
+
 test('normal Kanban clicks open Peek without replacing the active tab session', () => {
   assert.match(boardSource, /onOpenSession:\s*kanbanSessionOpenMode === 'peek'/);
   assert.match(boardSource, /openSessionPeek\(session\.id\)/);
