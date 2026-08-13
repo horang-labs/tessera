@@ -307,7 +307,11 @@ export interface CliProvider {
    * Optional — providers without a headless path may omit it; callers must
    * handle its absence.
    */
-  generateText?(prompt: string, userId?: string): Promise<GeneratedText | null>;
+  generateText?(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<GeneratedText | null>;
 
   /**
    * Translates the given (pre-built) prompt's text via a one-shot CLI call.

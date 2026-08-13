@@ -9,6 +9,7 @@ import * as dbSessions from "@/lib/db/sessions";
 import * as dbTasks from "@/lib/db/tasks";
 import * as dbWorktrees from '@/lib/db/worktrees';
 import { getCachedSessionPr } from "@/lib/github/session-pr-sync";
+import { getCachedWorktreePr } from '@/lib/github/worktree-pr-sync';
 import {
   computeWorktreeFileDiffStats,
   computeWorktreeFileDiffStatsFromRaw,
@@ -357,6 +358,24 @@ export async function resolveSessionGitTarget(
   const workDir = await resolveSessionWorkDir(sessionId);
   return {
     workDir,
+    agentEnvironment: await resolveGitEnvironment({ userId }),
+  };
+}
+
+/** Resolve a canonical Worktree id to the server-owned checkout and topology. */
+export async function resolveWorktreeGitTarget(
+  worktreeId: string,
+  userId: string,
+): Promise<GitActionTarget> {
+  const worktree = dbWorktrees.getWorktree(worktreeId);
+  if (!worktree) {
+    throw new GitPanelError('session_not_found', 'Worktree not found', 404);
+  }
+  if (!worktree.filesystemPath) {
+    throw new GitPanelError('missing_work_dir', 'Worktree has no checkout path', 422);
+  }
+  return {
+    workDir: worktree.filesystemPath,
     agentEnvironment: await resolveGitEnvironment({ userId }),
   };
 }
@@ -1053,12 +1072,6 @@ export async function getWorktreeGitPanelData(
   worktreeId: string,
   userId?: string,
 ): Promise<GitPanelData> {
-  const initialWorktree = dbWorktrees.getWorktree(worktreeId);
-  const agentEnvironment = await resolveGitEnvironment(
-    userId
-      ? { userId }
-      : { inferFromPaths: initialWorktree?.filesystemPath ? [initialWorktree.filesystemPath] : [] },
-  );
   const worktree = dbWorktrees.getWorktree(worktreeId);
   if (!worktree) {
     throw new GitPanelError('session_not_found', 'Worktree not found', 404);
@@ -1066,6 +1079,9 @@ export async function getWorktreeGitPanelData(
   if (!worktree.filesystemPath) {
     throw new GitPanelError('missing_work_dir', 'Worktree has no checkout path', 422);
   }
+  const agentEnvironment = userId
+    ? (await resolveWorktreeGitTarget(worktreeId, userId)).agentEnvironment
+    : await resolveGitEnvironment({ inferFromPaths: [worktree.filesystemPath] });
   return buildGitPanelData(
     worktreeId,
     {
@@ -1114,6 +1130,13 @@ async function buildGitPanelData(
   const bareSessionPr = sessionContext.taskId || worktreeId
     ? null
     : getCachedSessionPr(targetId) ?? null;
+  const worktreePr = worktreeId
+    ? getCachedWorktreePr(worktreeId, {
+        userId,
+        branch: branchRaw || null,
+        agentEnvironment,
+      }) ?? null
+    : null;
   // §9: a filesystem probe rather than a Git command, so it adds no process to
   // this read. `repoRoot` rather than `workDir` because the marker files live
   // beside the worktree's own git directory, and `workDir` is allowed to be a
@@ -1134,17 +1157,14 @@ async function buildGitPanelData(
         prStatusKnown: prContext.prStatusKnown,
         prStatus: prContext.prStatus,
       }
-    : bareSessionPr
+    : (bareSessionPr ?? worktreePr)
       ? {
-          wasUnsupported: bareSessionPr.prUnsupported,
-          prStatusKnown: bareSessionPr.prStatusKnown,
-          prStatus: bareSessionPr.prStatus,
+          wasUnsupported: (bareSessionPr ?? worktreePr)!.prUnsupported,
+          prStatusKnown: (bareSessionPr ?? worktreePr)!.prStatusKnown,
+          prStatus: (bareSessionPr ?? worktreePr)!.prStatus,
         }
       : null;
   const github = resolveGitHubPanelState(remoteUrl, prSummary);
-  if (worktreeId && github.reasonCode === 'unknown') {
-    github.reason = 'Start a session in this worktree to check pull request status.';
-  }
 
   return {
     sessionId: targetId,
@@ -1186,13 +1206,21 @@ async function buildGitPanelData(
         ? getCachedDiffStatsRevalidating(workDir, userId)
         : getCachedDiffStats(workDir)) ?? undefined
       : undefined,
-    prStatus: prContext?.prStatus ?? bareSessionPr?.prStatus,
+    prStatus: prContext?.prStatus ?? bareSessionPr?.prStatus ?? worktreePr?.prStatus,
     prStatusKnown:
-      prContext?.prStatusKnown ?? bareSessionPr?.prStatusKnown ?? false,
+      prContext?.prStatusKnown
+      ?? bareSessionPr?.prStatusKnown
+      ?? worktreePr?.prStatusKnown
+      ?? false,
     prUnsupported:
-      prContext?.wasUnsupported ?? bareSessionPr?.prUnsupported ?? false,
+      prContext?.wasUnsupported
+      ?? bareSessionPr?.prUnsupported
+      ?? worktreePr?.prUnsupported
+      ?? false,
     remoteBranchExists:
-      prContext?.remoteBranchExists ?? bareSessionPr?.remoteBranchExists,
+      prContext?.remoteBranchExists
+      ?? bareSessionPr?.remoteBranchExists
+      ?? worktreePr?.remoteBranchExists,
     headSha: headShaRaw && /^[0-9a-f]{40}$/i.test(headShaRaw) ? headShaRaw : null,
     conflictOperation,
   };

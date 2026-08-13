@@ -163,14 +163,14 @@ try {
   await page.getByText("Changed files", { exact: true }).waitFor({ timeout: 30_000 });
   await page.getByText(gitFixtureName, { exact: true }).waitFor();
   assert.equal(await page.getByText("No worktree selected", { exact: true }).count(), 0);
-  assert.equal(await page.getByTestId("git-commit-generate-button").isDisabled(), true);
+  assert.equal(await page.getByTestId("git-commit-generate-button").isDisabled(), false);
   const gitMenu = page.getByTestId("git-panel").getByTestId("git-action-menu");
   await page.getByTestId("git-panel").getByTestId("git-action-menu-trigger").click();
   await gitMenu.waitFor();
   assert.doesNotMatch(await gitMenu.innerText(), /Reading git state/i);
-  assert.match(
-    await page.getByTestId(`git-action-menu-item-commit`).innerText(),
-    /Start a session/i,
+  assert.equal(
+    await page.getByTestId(`git-action-menu-item-commit`).isDisabled(),
+    false,
   );
   await page.keyboard.press("Escape");
   await gitMenu.waitFor({ state: "detached" });

@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUserId } from "@/lib/auth/api-auth";
 import {
   GitActionRejection,
-  type GitAction,
-  type GitActionRejectionCode,
 } from "@/lib/git/git-actions";
+import {
+  describeGitActionRejection,
+  parseGitActionBody,
+} from '@/lib/git/git-action-request';
 import { GitPanelError } from "@/lib/git/git-panel";
 import { runSessionGitAction } from "@/lib/git/session-git-action";
 import { jsonError } from "@/lib/http/json-error";
@@ -44,7 +46,7 @@ export async function POST(
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof GitActionRejection) {
-      const { code, status } = describeRejection(error.code);
+      const { code, status } = describeGitActionRejection(error.code);
       return jsonError(code, error.message, status);
     }
     if (error instanceof GitPanelError) {
@@ -54,70 +56,4 @@ export async function POST(
     logger.error({ error, sessionId: id }, "Failed to run git action");
     return jsonError("internal_error", "Failed to run git action", 500);
   }
-}
-
-function describeRejection(
-  code: GitActionRejectionCode,
-): { code: string; status: number } {
-  // A path that is not in the change set answers the way the single-file diff
-  // route already answers the same situation.
-  if (code === "file_not_in_change_set") {
-    return { code: "invalid_file_path", status: 404 };
-  }
-  // The request was well formed and the repository is what refuses it — the
-  // ladder already declines to offer these, so this only catches a click that
-  // raced the state it was derived from.
-  if (
-    code === "detached_head"
-    || code === "no_remote"
-    || code === "no_upstream"
-    || code === "not_github_remote"
-    || code === "no_conflict_in_progress"
-  ) {
-    return { code, status: 409 };
-  }
-  return { code: "invalid_request", status: 400 };
-}
-
-/**
- * Shape-checks the request body. The execution module re-checks the parts that
- * matter — an empty message is refused there too, which is the second guard
- * `docs/design/git-delivery.md` §5 asks for.
- */
-function parseGitActionBody(
-  body: unknown,
-): { action: GitAction } | { message: string } {
-  if (typeof body !== "object" || body === null) {
-    return { message: "A git action body is required" };
-  }
-
-  const { action, message, files } = body as {
-    action?: unknown;
-    message?: unknown;
-    files?: unknown;
-  };
-
-  // Push, pull, create_pr and abort take no parameters at all: which branch
-  // moves, to or from where — and for a pull request, which repository and which
-  // base; for an abort, which operation is unwound — is read where the action
-  // runs, never asked for by the client.
-  if (
-    action === "push"
-    || action === "pull"
-    || action === "create_pr"
-    || action === "abort"
-  ) {
-    return { action: { action } };
-  }
-  if (action !== "commit") {
-    return { message: `Unsupported git action: ${String(action)}` };
-  }
-  if (typeof message !== "string") {
-    return { message: "A commit message is required" };
-  }
-  if (!Array.isArray(files) || files.some((file) => typeof file !== "string")) {
-    return { message: "A list of file paths is required" };
-  }
-
-  return { action: { action: "commit", message, files: files as string[] } };
 }

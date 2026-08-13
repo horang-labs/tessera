@@ -465,6 +465,12 @@ export const zh: I18nMessages = {
       branchPrefix: '分支前缀',
       branchPrefixPlaceholder: '例如: feature/',
       branchPrefixDesc: '创建新分支时使用的前缀。',
+      sourceControlAi: '源代码管理 AI 默认值',
+      sourceControlAiDesc: '用于生成 Git 提交消息的提供商和模型。',
+      provider: '提供商',
+      model: '模型',
+      modelDefault: '提供商默认值',
+      opencodeModelNote: 'OpenCode 的一次性生成使用 CLI 默认模型。',
     },
   },
   electronClose: {
@@ -1216,7 +1222,6 @@ export const zh: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: '正在读取 git 状态…',
-      sessionRequired: '要运行 Git 操作，请先在此工作树中启动会话',
       detachedHead: 'HEAD 处于分离状态 — 请先检出分支再推送',
       noRemote: '此仓库没有可推送的远程',
       upToDate: '已是最新',

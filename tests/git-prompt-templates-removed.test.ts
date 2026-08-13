@@ -65,6 +65,20 @@ test('git settings keep the branch prefix', () => {
   assert.equal(settings.gitConfig.branchPrefix, 'feature/');
 });
 
+test('git settings keep Source Control AI provider and model defaults', () => {
+  const settings = normalizeUserSettings({
+    gitConfig: {
+      branchPrefix: '',
+      sourceControlAi: { provider: 'codex', model: 'gpt-5.6-codex' },
+    },
+  });
+
+  assert.deepEqual(settings.gitConfig.sourceControlAi, {
+    provider: 'codex',
+    model: 'gpt-5.6-codex',
+  });
+});
+
 test('a stored record still carrying prompt templates loads without error', () => {
   // Written the way an older settings.json actually looks on disk: the removed
   // fields are no longer part of GitConfig, so the cast is the point of the test.
@@ -84,7 +98,10 @@ test('a stored record still carrying prompt templates loads without error', () =
 
   const settings = normalizeUserSettings(stored);
 
-  assert.deepEqual(settings.gitConfig, { branchPrefix: 'wip/' });
+  assert.deepEqual(settings.gitConfig, {
+    branchPrefix: 'wip/',
+    sourceControlAi: { provider: 'claude-code', model: '' },
+  });
 });
 
 test('the prompt-template module and builder are gone', () => {

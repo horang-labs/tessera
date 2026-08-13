@@ -458,7 +458,13 @@ export class OpenCodeAdapter implements CliProvider {
    *
    * Returns null on any error/timeout/empty (fail-open).
    */
-  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+  async generateText(
+    prompt: string,
+    userId?: string,
+    // OpenCode's one-shot run cannot inject a model. The settings UI keeps
+    // this empty and the CLI's own default remains authoritative.
+    _model?: string,
+  ): Promise<GeneratedText | null> {
     try {
       const text = await this._runOneShot(prompt, userId);
       const t = text.trim();
