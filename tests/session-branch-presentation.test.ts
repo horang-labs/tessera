@@ -19,7 +19,11 @@ test('a direct Session names stored scope separately from the live Worktree bran
 
 test('task Worktree branches keep the existing checkout-branch treatment', () => {
   assert.deepEqual(
-    resolveSessionBranchPresentation({ worktreeBranch: 'feature/task' }),
+    resolveSessionBranchPresentation({
+      worktreeBranch: 'feature/task',
+      scopeBranch: 'feature/task',
+      liveBranch: 'feature/task',
+    }),
     {
       branch: 'feature/task',
       labelKind: 'branch',

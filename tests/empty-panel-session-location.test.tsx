@@ -3,24 +3,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import test from 'node:test';
 
-import {
-  CompactSessionLocationIdentity,
-  DetailedSessionLocationIdentity,
-} from '@/components/panel/empty-panel-state';
+import { DetailedSessionLocationIdentity } from '@/components/panel/empty-panel-state';
 
 const location = {
   projectName: 'content-lab',
   branch: 'main',
   path: '/home/work/Source/content-lab',
 };
-
-test('New Session card repeats the visible project destination identity', () => {
-  const markup = renderToStaticMarkup(createElement(CompactSessionLocationIdentity, location));
-
-  assert.match(markup, /content-lab/);
-  assert.match(markup, /main/);
-  assert.match(markup, /\/home\/work\/Source\/content-lab/);
-});
 
 test('New Session form exposes the exact read-only session location', () => {
   const markup = renderToStaticMarkup(createElement(DetailedSessionLocationIdentity, location));

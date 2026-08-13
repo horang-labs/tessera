@@ -23,8 +23,6 @@ and path already shown in the project header.
 │ ┃ ▣  New Session                  ┃ │
 │ ┃                                 ┃ │
 │ ┃ Creates here                    ┃ │
-│ ┃ 📁 content-lab          main    ┃ │
-│ ┃ /home/work/Source/content-lab   ┃ │
 │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
 │                                     │
 │ ┌─────────────────────────────────┐ │
@@ -67,9 +65,6 @@ and path already shown in the project header.
 │ ┃ ▣  New Session           ┃ │ ⚿  New Worktree         │ │ >_ Shell                 │       │
 │ ┃                          ┃ │                          │ │                          │       │
 │ ┃ Creates here             ┃ │ Create a branch and     │ │ Open a shell here        │       │
-│ ┃ 📁 content-lab    main   ┃ │ Worktree, then start a  │ │ without an agent.        │       │
-│ ┃ /home/work/Source/       ┃ │ session there.          │ │                          │       │
-│ ┃ content-lab              ┃ │                          │ │                          │       │
 │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛ └──────────────────────────┘ └──────────────────────────┘       │
 │                                                                                            │
 │ ┃ SESSION LOCATION                                                                         │
@@ -94,9 +89,9 @@ and path already shown in the project header.
 │ ┌──────────────────────────┐ ┏━━━━━━━━━━━━━━━━━━━━━━━━━━┓ ┌──────────────────────────┐       │
 │ │ ▣  New Session           │ ┃ ⚿  New Worktree         ┃ │ >_ Shell                 │       │
 │ │ Creates here             │ ┃                          ┃ │ Open a shell here        │       │
-│ │ 📁 content-lab    main   │ ┃ Creates a new branch +  ┃ │ without an agent.        │       │
-│ │ /home/work/Source/...    │ ┃ Worktree, then starts   ┃ │                          │       │
-│ └──────────────────────────┘ ┃ the session there.       ┃ └──────────────────────────┘       │
+│ └──────────────────────────┘ ┃ Creates a new branch +  ┃ │ without an agent.        │       │
+│                              ┃ Worktree, then starts   ┃ └──────────────────────────┘       │
+│                              ┃ the session there.       ┃                                    │
 │                              ┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                    │
 │                                                                                            │
 │ ┃ TITLE        [ Optional — AI generates if blank                                      ]  │
@@ -112,10 +107,9 @@ and path already shown in the project header.
 ## Interaction and copy rules
 
 - **New Session** always says `Creates here`; never expose “Project Worktree” in user-facing copy.
-- The compact destination inside the card repeats the project header identity:
-  `FolderGit2 icon + project name + branch`, followed by the full path.
+- The New Session card stays compact and does not repeat destination details.
 - Selecting **New Session** shows a read-only `SESSION LOCATION` block before `TITLE`.
 - Selecting **New Worktree** labels its computed path `NEW LOCATION`, making the contrast explicit.
 - The sticky footer repeats the exact destination for New Session.
-- Long paths truncate visually in the card, but the read-only location block exposes the full path and a tooltip/copy affordance.
+- The read-only location block exposes the full path and a tooltip/copy affordance.
 - The selected card uses the existing accent border/background; destination identity must remain readable without relying on color.
