@@ -593,9 +593,6 @@ export interface I18nMessages {
     dropSessionReference: string;
     closeSession: string;
     branchLabel: string;
-    sessionScopeLabel: string;
-    currentBranchLabel: string;
-    presentationScopeHint: string;
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
