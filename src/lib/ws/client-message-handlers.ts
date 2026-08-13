@@ -261,7 +261,10 @@ export function handleIncomingServerMessage({
         if (isActive) continue;
         useTerminalSessionStore.getState().markRuntimeStopped(session.id);
         if (isPendingTerminalReboundSource(session.id)) continue;
-        retireStoppedTerminalSessionSurface(session.id);
+        // This is also the first snapshot after an Electron/server cold start.
+        // Keep persisted PTY surfaces so their retained TerminalPanel can
+        // recreate and resume the runtime. A live exit still retires through
+        // terminal_session_runtime.
       }
       return { wasReconnect };
     }
@@ -619,6 +622,9 @@ function addCreatedSession(
   sessionStore: ReturnType<typeof useSessionStore.getState>,
 ): void {
   const totalSessions = projectViewWorkspaceState.getCanonicalSessions().length;
+  const isRestoringExistingSurface = Boolean(
+    useTabStore.getState().findSessionSurface(msg.sessionId),
+  );
   // Session exists in DB but has no backing runtime yet. GUI sessions start on
   // first input; PTY sessions start when their terminal view is first opened.
   sessionStore.addSession({
@@ -642,7 +648,7 @@ function addCreatedSession(
     sessionMode: msg.sessionMode,
     accessMode: msg.accessMode,
     sortOrder: 0,
-  });
+  }, { activate: !isRestoringExistingSurface });
 }
 
 function handleNotificationMessage(

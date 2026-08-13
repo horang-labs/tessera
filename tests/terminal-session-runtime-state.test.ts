@@ -392,6 +392,43 @@ test('PTY runtime exit closes a retained single-panel session tab', () => {
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
 });
 
+test('restoring a retained PTY runtime does not steal focus from the active tab', () => {
+  const restoredTabId = 'restored-terminal-tab';
+  const activeTabId = 'restored-empty-tab';
+  const panelId = 'restored-terminal-panel';
+  useTabStore.setState({
+    tabs: [
+      { id: restoredTabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: activeTabId, projectDir: null, title: null, isPreview: false },
+    ],
+    activeTabId,
+    lruTabIds: [activeTabId, restoredTabId],
+  });
+  usePanelStore.setState({
+    activeTabId,
+    tabPanels: {
+      [restoredTabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+  useSessionStore.setState({ activeSessionId: null });
+
+  receive({
+    type: 'session_created',
+    sessionId: SESSION_ID,
+    projectId: '/workspace',
+    workDir: '/workspace',
+    provider: 'codex',
+    kind: 'terminal',
+  } as ServerTransportMessage);
+
+  assert.equal(useSessionStore.getState().activeSessionId, null);
+  assert.equal(useTabStore.getState().activeTabId, activeTabId);
+});
+
 test('stopping a GUI session closes its retained single-panel tab', () => {
   const guiSessionId = 'gui-session-a';
   const tabId = 'retained-gui-tab';

@@ -275,11 +275,12 @@ export function TerminalPanel({
   }, [detachOnUnmount, panelId, sessionOwned, surface, tabId, terminalId, terminalSessionId]);
 
   useEffect(() => {
-    if (connectionStatus !== 'connected' || !isTabActive) return;
+    const shouldRestoreRetainedSession = runtimeOwnership === 'session-retained';
+    if (connectionStatus !== 'connected' || (!isTabActive && !shouldRestoreRetainedSession)) return;
     void surface.ensureConnected().then((connected) => {
       if (connected && isPanelActive) surface.activate();
     });
-  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, surface]);
+  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, runtimeOwnership, surface]);
 
   const canRestart = status === 'exited' || status === 'error';
   const handleThemeRestart = useCallback(() => {

@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '@/lib/settings/defaults';
 import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { i18n } from '@/lib/i18n';
 import { useBoardStore, type ViewMode } from '@/stores/board-store';
+import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
 
 export const SETTINGS_STORAGE_KEY = 'tessera:settings';
 export const SETTINGS_SYNC_CHANNEL = 'tessera:settings-sync';
@@ -190,6 +191,11 @@ interface SettingsState {
   load: () => Promise<void>;
   applyExternalSettings: (settings: UserSettings) => void;
 }
+
+type PersistedSettingsState = Pick<
+  SettingsState,
+  'settings' | 'sidebarCollapsed' | 'sidebarWidth' | 'sidebarWidths' | 'projectSidebarWidths'
+>;
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
@@ -402,6 +408,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'tessera:settings',
+      storage: createUiJsonStorage<PersistedSettingsState>(),
       partialize: (state) => ({
         settings: state.settings,
         sidebarCollapsed: state.sidebarCollapsed,

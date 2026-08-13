@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage'
 
 /** Which of the right-hand panel's tabs is showing. */
 export type GitPanelTab = 'git' | 'files' | 'scripts' | 'memory'
@@ -32,6 +33,11 @@ interface GitPanelUIState {
   openConflictRecovery: () => void
 }
 
+type PersistedGitPanelUIState = Pick<
+  GitPanelUIState,
+  'isOpen' | 'panelWidth' | 'drawerHeight' | 'panelTab'
+>
+
 export const useGitStore = create<GitPanelUIState>()(
   persist(
     (set, get) => ({
@@ -59,6 +65,7 @@ export const useGitStore = create<GitPanelUIState>()(
     }),
     {
       name: 'tessera:git-panel',
+      storage: createUiJsonStorage<PersistedGitPanelUIState>(),
       partialize: (state) => ({
         isOpen: state.isOpen,
         panelWidth: state.panelWidth,

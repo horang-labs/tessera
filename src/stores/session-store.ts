@@ -4,11 +4,16 @@ import type { WorkflowStatus } from '@/types/task-entity';
 import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
+import { useTabStore } from './tab-store';
 import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
 import { toast } from './notification-store';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
-import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
+import {
+  readUiStorageItem,
+  removeUiStorageItem,
+  writeUiStorageItem,
+} from '@/lib/persistence/ui-storage';
 import {
   findSessionProjectDir,
   LAST_ACTIVE_PROJECT_DIR_KEY,
@@ -29,6 +34,24 @@ import {
   type SessionRuntimeLiveness,
 } from '@/lib/session/session-runtime-liveness';
 import { resolveStoredSessionAppearance } from '@/lib/projects/stored-session-resolution';
+
+const ACTIVE_SESSION_STORAGE_KEY = 'tessera:active-session';
+
+function readPersistedActiveSessionId(): string | null {
+  const persisted = readUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
+  if (persisted) return persisted;
+
+  // Migrate the pre-Electron-bridge refresh key. sessionStorage does not
+  // survive a native window restart, but an in-place browser upgrade can still
+  // carry it long enough for us to move it into durable UI storage.
+  try {
+    const legacy = sessionStorage.getItem('activeSessionId');
+    if (legacy) writeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY, legacy);
+    return legacy;
+  } catch {
+    return null;
+  }
+}
 
 function findStoredSession(
   state: Pick<SessionState, 'projects' | 'retainedSessions'>,
@@ -65,7 +88,10 @@ export interface SessionState {
   beginRuntimeConnection: () => void;
 
   // Actions - Project loading
-  loadProjects: () => Promise<void>;
+  loadProjects: (options?: {
+    restoredActiveSessionId?: string | null;
+    restoredActiveTabId?: string;
+  }) => Promise<void>;
   updateProjectWorktreeBranch: (worktreeId: string, branch: string | null) => void;
   dismissBranchRenameWarning: (projectId: string) => void;
   loadMoreSessions: (encodedDir: string) => Promise<void>;
@@ -420,7 +446,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ runtimeLiveness: beginSessionRuntimeConnection() }),
 
   // Project loading
-  loadProjects: async () => {
+  loadProjects: async (options) => {
     const requestId = ++latestProjectLoadRequest;
     try {
       const res = await fetch('/api/sessions/projects');
@@ -510,21 +536,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // it completes, null is a deliberate board-only selection that passive
         // mutation refreshes must preserve.
         let autoActiveId: string | null = null;
-        try {
-          const savedId = sessionStorage.getItem('activeSessionId');
-          // Verify saved session still exists in loaded projects
-          if (savedId) {
-            const exists = loadedProjects.some((p) =>
-              p.sessions.some((s) => s.id === savedId)
-            );
-            if (exists) autoActiveId = savedId;
+        const hasRestoredWorkspaceSelection = options
+          && Object.prototype.hasOwnProperty.call(options, 'restoredActiveSessionId');
+        if (hasRestoredWorkspaceSelection) {
+          const restoredId = options.restoredActiveSessionId;
+          if (restoredId && loadedProjects.some((project) =>
+            project.sessions.some((session) => session.id === restoredId)
+          )) {
+            autoActiveId = restoredId;
           }
-        } catch {
-          // Ignore storage errors
+        } else {
+          try {
+            const savedId = readPersistedActiveSessionId();
+            // Verify saved session still exists in loaded projects
+            if (savedId) {
+              const exists = loadedProjects.some((p) =>
+                p.sessions.some((s) => s.id === savedId)
+              );
+              if (exists) autoActiveId = savedId;
+            }
+          } catch {
+            // Ignore storage errors
+          }
         }
 
-        // Fallback: prefer the last conversation project, then the current project.
-        if (!autoActiveId) {
+        // Fallback only when there was no explicit restored tab selection.
+        if (!autoActiveId && !hasRestoredWorkspaceSelection) {
           const lastActiveProject = loadedProjects.find(
             (project) => project.encodedDir === lastActiveProjectDir,
           );
@@ -537,8 +574,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }
         }
 
-        if (autoActiveId && !get().activeSessionId) {
+        if (hasRestoredWorkspaceSelection) {
+          // Runtime startup events can temporarily select a background PTY.
+          // The persisted active panel is authoritative for cold restoration,
+          // including an intentionally empty tab.
           get().setActiveSession(autoActiveId);
+        } else if (autoActiveId && !get().activeSessionId) {
+          get().setActiveSession(autoActiveId);
+        }
+        if (options?.restoredActiveTabId) {
+          const tabStore = useTabStore.getState();
+          if (tabStore.tabs.some((tab) => tab.id === options.restoredActiveTabId)) {
+            tabStore.setActiveTab(options.restoredActiveTabId);
+          }
         }
         set({ didHydrateActiveSession: true });
       }
@@ -697,12 +745,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       activeSessionId: sessionId,
       lastActiveProjectDir: activatedProjectDir ?? state.lastActiveProjectDir,
     });
-    // Persist to sessionStorage for restoration after page refresh
+    // Persist outside the renderer origin so an Electron restart restores the
+    // same focused Session even when Chromium's sessionStorage is gone.
     try {
       if (sessionId !== null) {
-        sessionStorage.setItem('activeSessionId', sessionId);
+        writeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY, sessionId);
       } else {
-        sessionStorage.removeItem('activeSessionId');
+        removeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
       }
     } catch {
       // Ignore storage errors (SSR, private browsing, etc.)
@@ -793,10 +842,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         newActiveId = null; // 빈 상태 표시 (자동 전환 안 함)
       }
 
-      // Clear activeSessionId from sessionStorage if it's the deleted session
+      // Clear the persisted focus if it points at the deleted Session.
       if (state.activeSessionId === sessionId) {
         try {
-          sessionStorage.removeItem('activeSessionId');
+          removeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
         } catch {
           // Ignore storage errors
         }
@@ -921,7 +970,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (project && project.sessions.some((s) => s.id === state.activeSessionId)) {
         newActiveId = null;
         try {
-          sessionStorage.removeItem('activeSessionId');
+          removeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
         } catch {
           // Ignore
         }

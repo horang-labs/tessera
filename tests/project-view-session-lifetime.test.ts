@@ -181,7 +181,7 @@ for (const lifecycle of ['stop', 'archive', 'delete'] as const) {
   });
 }
 
-test('reconnect retires a stopped retained terminal snapshot', async (t) => {
+test('a cold runtime snapshot preserves a retained terminal tab for automatic resume', async (t) => {
   openThenSnapshot(session('terminal'));
   await refreshWithoutSession(t);
 
@@ -191,7 +191,8 @@ test('reconnect retires a stopped retained terminal snapshot', async (t) => {
     reboundSessions: [],
   });
 
-  assert.equal(useTabStore.getState().findSessionSurface(SESSION_ID), null);
+  assert.ok(useTabStore.getState().findSessionSurface(SESSION_ID));
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, false);
 });
 
 test('reconnect preserves a retained terminal snapshot reserved for rebound', async (t) => {
