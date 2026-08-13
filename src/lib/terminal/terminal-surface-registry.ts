@@ -1587,6 +1587,7 @@ export class TerminalSurface {
   ): () => void {
     let pointerScrollActive = false;
     let touchScrollActive = false;
+    let previousTouchY: number | null = null;
     const isScrollbarTarget = (target: EventTarget | null): boolean => (
       target instanceof Element
       && target.closest('.xterm-viewport, .xterm-scrollbar, .xterm-slider') !== null
@@ -1607,12 +1608,29 @@ export class TerminalSurface {
       pointerScrollActive = false;
       controller.syncFromViewport();
     };
-    const onTouchStart = () => {
+    const onTouchStart = (event: TouchEvent) => {
       touchScrollActive = true;
+      previousTouchY = event.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const currentY = event.touches[0]?.clientY;
+      if (
+        touchScrollActive
+        && previousTouchY !== null
+        && currentY !== undefined
+        && currentY > previousTouchY
+      ) {
+        // A downward finger drag means the reader is moving into history.
+        // Claim that intent before xterm applies the viewport change so a PTY
+        // chunk queued behind this event cannot restore stale follow-output.
+        controller.pinViewport();
+      }
+      previousTouchY = currentY ?? previousTouchY;
     };
     const onTouchDone = () => {
       if (!touchScrollActive) return;
       touchScrollActive = false;
+      previousTouchY = null;
       controller.syncFromViewport();
     };
     const onScroll = () => {
@@ -1623,6 +1641,7 @@ export class TerminalSurface {
     root.addEventListener('wheel', onWheel, { capture: true, passive: true });
     root.addEventListener('pointerdown', onPointerDown, true);
     root.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+    root.addEventListener('touchmove', onTouchMove, { capture: true, passive: true });
     root.addEventListener('scroll', onScroll, true);
     window.addEventListener('pointerup', onPointerDone, true);
     window.addEventListener('pointercancel', onPointerDone, true);
@@ -1632,6 +1651,7 @@ export class TerminalSurface {
       root.removeEventListener('wheel', onWheel, true);
       root.removeEventListener('pointerdown', onPointerDown, true);
       root.removeEventListener('touchstart', onTouchStart, true);
+      root.removeEventListener('touchmove', onTouchMove, true);
       root.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('pointerup', onPointerDone, true);
       window.removeEventListener('pointercancel', onPointerDone, true);

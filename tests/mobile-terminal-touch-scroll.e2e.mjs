@@ -310,12 +310,38 @@ async function testTouchScrolledViewportStaysPinnedDuringLiveOutput(browserInsta
   try {
     await openRepro(page, origin);
     await writeOutput(page, scrollbackFixture(200));
-    await ptyInputDuringTouchDrag(page, { deltaY: 240 });
+    const beforeTouch = await repro(page, 'metrics');
+    assert.ok(
+      beforeTouch && beforeTouch.viewportY === beforeTouch.baseY,
+      `the live-output gesture must start at the bottom, got ${JSON.stringify(beforeTouch)}`,
+    );
+
+    const viewportSamples = await touchDragDuringLiveOutput(page, {
+      deltaY: 240,
+      steps: 12,
+    });
 
     const afterTouch = await repro(page, 'metrics');
     assert.ok(
       afterTouch && afterTouch.viewportY < afterTouch.baseY,
       `touch must leave the viewport in history, got ${JSON.stringify(afterTouch)}`,
+    );
+
+    const firstMovedSample = viewportSamples.findIndex(
+      (sample) => sample.viewportY < sample.baseY,
+    );
+    assert.ok(
+      firstMovedSample >= 0,
+      'the viewport must keep moving into history while live output is arriving, '
+        + `got ${JSON.stringify(viewportSamples)}`,
+    );
+    assert.equal(
+      viewportSamples
+        .slice(firstMovedSample)
+        .some((sample) => sample.viewportY >= sample.baseY),
+      false,
+      'live output must not pull the viewport back to the bottom after the touch moves it, '
+        + `got ${JSON.stringify(viewportSamples)}`,
     );
 
     await writeOutput(page, '\r\nDIRECT_XTERM_OUTPUT\r\n');
@@ -342,6 +368,43 @@ async function testTouchScrolledViewportStaysPinnedDuringLiveOutput(browserInsta
   } finally {
     await context.close();
   }
+}
+
+async function touchDragDuringLiveOutput(page, { deltaY, steps }) {
+  const box = await page.locator('.xterm-screen').boundingBox();
+  assert.ok(box, 'the terminal screen element should be measurable');
+
+  const startX = Math.round(box.x + box.width / 2);
+  const startY = Math.round(box.y + box.height * 0.25);
+  const samples = [];
+  const client = await page.context().newCDPSession(page);
+  try {
+    await client.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: startX, y: startY, id: 1 }],
+    });
+    for (let step = 1; step <= steps; step += 1) {
+      await client.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: startX, y: Math.round(startY + (deltaY * step) / steps), id: 1 }],
+      });
+      const accepted = await page.evaluate(
+        (index) => window.__tesseraTerminalScrollRepro
+          ?.writeLiveOutput(`\r\nLIVE_DRAG_${index}\r\n`) ?? false,
+        step,
+      );
+      assert.equal(accepted, true, `live output ${step} should be accepted during the gesture`);
+      await page.waitForTimeout(16);
+      const metrics = await repro(page, 'metrics');
+      assert.ok(metrics, `viewport metrics ${step} should be available`);
+      samples.push(metrics);
+    }
+    await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(250);
+  } finally {
+    await client.detach().catch(() => undefined);
+  }
+  return samples;
 }
 
 function scrollbackFixture(lineCount) {
