@@ -104,30 +104,6 @@ interface SessionLocationIdentityProps {
   path: string;
 }
 
-export function CompactSessionLocationIdentity({
-  projectName,
-  branch,
-  path,
-}: SessionLocationIdentityProps) {
-  return (
-    <span className="mt-2 block border-t border-[color-mix(in_srgb,var(--accent)_14%,transparent)] pt-2">
-      <span className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-(--text-secondary)">
-        <FolderGit2 className="h-3.5 w-3.5 shrink-0 text-(--accent-hover)" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-(--text-primary)">{projectName}</span>
-        {branch ? (
-          <span className="flex max-w-[45%] shrink-0 items-center gap-1 rounded-full border border-(--divider) bg-(--input-bg) px-1.5 py-0.5 font-mono text-[9px] text-(--text-secondary)">
-            <GitBranch className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">{branch}</span>
-          </span>
-        ) : null}
-      </span>
-      <span className="mt-1 block truncate font-mono text-[10px] leading-4 text-(--text-muted)" title={path}>
-        {path}
-      </span>
-    </span>
-  );
-}
-
 export function DetailedSessionLocationIdentity({
   projectName,
   branch,
@@ -634,13 +610,6 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                     ? t('task.creation.selectProjectHint')
                     : t('task.creation.chatCreatesHere')}
                 </span>
-                {activeProject ? (
-                  <CompactSessionLocationIdentity
-                    projectName={activeProject.displayName}
-                    branch={sessionLocationBranch}
-                    path={sessionLocationPath}
-                  />
-                ) : null}
               </button>
 
               <button

@@ -14,6 +14,17 @@ export function resolveSessionBranchPresentation({
   scopeBranch?: string;
   liveBranch?: string | null;
 }): SessionBranchPresentation | null {
+  // A task-owned Worktree has its own checkout branch. Newer records also
+  // carry scopeBranch for Project-view placement, but that internal scope must
+  // not replace the Worktree's actual branch in the Session header.
+  if (worktreeBranch) {
+    return {
+      branch: worktreeBranch,
+      labelKind: 'branch',
+      liveBranch: null,
+      mismatch: false,
+    };
+  }
   if (scopeBranch) {
     const current = liveBranch ?? null;
     return {
@@ -23,11 +34,5 @@ export function resolveSessionBranchPresentation({
       mismatch: current !== null && current !== scopeBranch,
     };
   }
-  if (!worktreeBranch) return null;
-  return {
-    branch: worktreeBranch,
-    labelKind: 'branch',
-    liveBranch: null,
-    mismatch: false,
-  };
+  return null;
 }
