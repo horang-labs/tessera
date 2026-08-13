@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
 
 /**
  * Per-session rendering mode for terminal (PTY) sessions.
@@ -44,7 +45,10 @@ export const useTerminalViewModeStore = create<TerminalViewModeState>()(
           return { modeBySession: next };
         }),
     }),
-    { name: 'tessera:terminal-view-mode' },
+    {
+      name: 'tessera:terminal-view-mode',
+      storage: createUiJsonStorage<TerminalViewModeState>(),
+    },
   ),
 );
 

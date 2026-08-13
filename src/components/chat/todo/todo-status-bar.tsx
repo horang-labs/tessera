@@ -6,6 +6,7 @@ import { useChatStore } from '@/stores/chat-store';
 import type { TodoItem } from '@/types/cli-jsonl-schemas';
 import { cn } from '@/lib/utils';
 import { SINGLE_PANEL_CONTENT_SHELL } from '../single-panel-shell';
+import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
 
 interface TodoStatusBarProps {
   sessionId: string;
@@ -17,7 +18,7 @@ const COLLAPSED_STORAGE_KEY = 'tessera.todo-status-bar.collapsed';
 function readStoredCollapsed(): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1';
+    return readUiStorageItem(COLLAPSED_STORAGE_KEY) === '1';
   } catch {
     return false;
   }
@@ -25,7 +26,7 @@ function readStoredCollapsed(): boolean {
 
 function writeStoredCollapsed(collapsed: boolean): void {
   try {
-    window.localStorage.setItem(COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0');
+    writeUiStorageItem(COLLAPSED_STORAGE_KEY, collapsed ? '1' : '0');
   } catch {
     // localStorage unavailable (private mode etc.) — collapse still works for the session.
   }
@@ -60,7 +61,7 @@ function statusClass(status: TodoItem['status']): string {
  * message pagination. Completed items remain visible while any task is active;
  * the whole card disappears as soon as the snapshot becomes terminal or empty.
  * The header toggles the item list; the collapsed preference persists across
- * sessions via localStorage (#151).
+ * sessions via the origin-independent UI store (#151).
  */
 export function TodoStatusBar({ sessionId, isSinglePanel }: TodoStatusBarProps) {
   const todos = useChatStore((state) => state.todoSnapshots.get(sessionId));

@@ -132,6 +132,21 @@ test('reload restores each tab through its selected Project projection', () => {
   assert.equal(useTabStore.getState().tabs[0].projectDir, 'project-a');
 });
 
+test('reload restores the mounted-tab LRU so retained PTYs can resume in the background', () => {
+  resetWorkspace();
+  openSharedSession('project-a');
+  const emptyTab = useTabStore.getState().openNewTab();
+  const expectedLru = [...useTabStore.getState().lruTabIds];
+  assert.equal(expectedLru[0], emptyTab);
+  assert.equal(expectedLru.length, 2);
+  useTabStore.getState().persistToLocalStorage();
+
+  resetWorkspace(false);
+  useTabStore.getState().restoreFromLocalStorage();
+
+  assert.deepEqual(useTabStore.getState().lruTabIds, expectedLru);
+});
+
 test('an explicit Project lookup never leaks another Project Collection placement', () => {
   resetWorkspace();
   const sessionInA = {

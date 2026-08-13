@@ -160,6 +160,32 @@ test('initial Project hydration restores a saved active Session before fallback'
   assert.equal(useSessionStore.getState().didHydrateActiveSession, true);
 });
 
+test('initial Project hydration preserves an explicitly restored empty active panel', async () => {
+  const restoredTabId = 'restored-empty-tab';
+  const autoActivatedTabId = 'auto-activated-terminal-tab';
+  useTabStore.setState({
+    tabs: [
+      { id: restoredTabId, projectDir: null, title: null, isPreview: false },
+      { id: autoActivatedTabId, projectDir: null, title: null, isPreview: false },
+    ],
+    activeTabId: autoActivatedTabId,
+    lruTabIds: [autoActivatedTabId, restoredTabId],
+  });
+  useSessionStore.setState({ activeSessionId: 'background-runtime-race' });
+  globalThis.fetch = async () => Response.json({
+    projects: [project('project-c')],
+  });
+
+  await useSessionStore.getState().loadProjects({
+    restoredActiveSessionId: null,
+    restoredActiveTabId: restoredTabId,
+  });
+
+  assert.equal(useSessionStore.getState().activeSessionId, null);
+  assert.equal(useTabStore.getState().activeTabId, restoredTabId);
+  assert.equal(useSessionStore.getState().didHydrateActiveSession, true);
+});
+
 test('a passive Task reload preserves a manually selected board-only Project', async (t) => {
   const oldProjectId = 'project-c';
   const fixtureProjectId = 'fixture-project';

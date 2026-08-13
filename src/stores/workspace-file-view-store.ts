@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
 
 interface WorkspaceFileViewState {
   /** Whether dotfiles/dotfolders (e.g. .github, .env, .claude) are shown in the
@@ -17,6 +18,9 @@ export const useWorkspaceFileViewStore = create<WorkspaceFileViewState>()(
         set((state) => ({ showHiddenFiles: !state.showHiddenFiles })),
       setShowHiddenFiles: (value) => set({ showHiddenFiles: value }),
     }),
-    { name: 'tessera:workspace-file-view' },
+    {
+      name: 'tessera:workspace-file-view',
+      storage: createUiJsonStorage<WorkspaceFileViewState>(),
+    },
   ),
 );
