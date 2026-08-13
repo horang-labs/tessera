@@ -151,8 +151,9 @@ try {
   await projectWorktree.waitFor();
   await projectWorktree.click();
 
-  await page.getByRole("button", { name: "New Session", exact: true }).waitFor();
-  await page.getByRole("button", { name: "New Worktree", exact: true }).waitFor();
+  await page.getByTestId('worktree-peek').waitFor();
+  assert.equal(await page.getByRole("button", { name: "New Session", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "New Worktree", exact: true }).count(), 0);
   const bodyText = await page.locator("body").innerText();
   assert.ok(bodyText.includes(currentBranch));
   assert.ok(bodyText.includes(process.cwd()));
@@ -209,7 +210,7 @@ try {
   assert.equal(await page.getByTestId("worktree-peek").count(), 0);
   await projectWorktree.click();
   await page.getByTestId("worktree-peek").waitFor();
-  await page.getByRole("button", { name: "New Session", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "New Session", exact: true }).count(), 0);
   assert.equal(await projectWorktree.count(), 1);
   console.log("Project Worktree Peek, direct Git/Files routing, and transient reload behavior passed.");
 } finally {

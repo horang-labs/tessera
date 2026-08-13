@@ -413,6 +413,51 @@ test('diff-stat broadcasts include a zero-session Worktree resolved by its paren
   }
 });
 
+test('diff-stat broadcasts reach a canonical Project Worktree with no Task or Session', async () => {
+  const [{ protocolAdapter }, broadcast, diffStats] = await Promise.all([
+    import('@/lib/cli/protocol-adapter'),
+    import('@/lib/git/worktree-diff-stats-broadcast'),
+    import('@/lib/git/worktree-diff-stats-cache'),
+  ]);
+  const worktreePath = path.join(dataDir, 'diff-project-worktree');
+  fs.mkdirSync(worktreePath, { recursive: true });
+  execFileSync('git', ['init'], { cwd: worktreePath, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: worktreePath });
+  execFileSync('git', ['config', 'user.name', 'Tessera Test'], { cwd: worktreePath });
+  fs.writeFileSync(path.join(worktreePath, 'project.txt'), 'base\n');
+  execFileSync('git', ['add', 'project.txt'], { cwd: worktreePath });
+  execFileSync('git', ['commit', '-m', 'base'], { cwd: worktreePath, stdio: 'ignore' });
+  fs.writeFileSync(path.join(worktreePath, 'project.txt'), 'changed\n');
+
+  const messages: Array<{ userId: string; message: unknown }> = [];
+  protocolAdapter.setSendToUser((userId, message) => {
+    messages.push({ userId, message });
+  });
+  broadcast.installDiffStatsBroadcast();
+  try {
+    await diffStats.computeAndCache(worktreePath, 'project-worktree-user');
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]?.userId, 'project-worktree-user');
+    const message = messages[0]?.message as {
+      type?: string;
+      workDir?: string;
+      sessionIds?: string[];
+      taskIds?: string[];
+      stats?: { added?: number; removed?: number; changedFiles?: number } | null;
+    };
+    assert.equal(message.type, 'worktree_diff_stats');
+    assert.equal(message.workDir, worktreePath);
+    assert.deepEqual(message.sessionIds, []);
+    assert.deepEqual(message.taskIds, []);
+    assert.equal(message.stats?.added, 1);
+    assert.equal(message.stats?.removed, 1);
+    assert.equal(message.stats?.changedFiles, 1);
+  } finally {
+    broadcast.uninstallDiffStatsBroadcast();
+    protocolAdapter.setSendToUser(() => undefined);
+  }
+});
+
 test('migrated checkout consumers cannot reintroduce direct child-first SQL', () => {
   const identitySource = fs.readFileSync(
     new URL('../src/lib/db/worktree-identity.ts', import.meta.url),

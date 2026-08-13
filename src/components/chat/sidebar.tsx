@@ -414,8 +414,8 @@ export function Sidebar() {
     void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
-  const handleSessionArchive = useCallback((sessionId: string) => {
-    requestSessionArchive(sessionId);
+  const handleSessionArchive = useCallback((sessionId: string, task?: TaskEntity) => {
+    requestSessionArchive(sessionId, true, task);
   }, []);
 
   const handleTaskRename = useCallback(async (taskId: string, newTitle: string) => {
@@ -803,6 +803,7 @@ export function Sidebar() {
                   active={(peekWorktreeId ?? activePanelWorktreeId)
                     === selectedProject.projectWorktree.id}
                   branch={selectedProject.projectWorktree.currentBranch}
+                  diffStats={selectedProject.projectWorktree.diffStats}
                   name={selectedProject.displayName}
                   displayPath={selectedProject.projectWorktree.displayPath}
                   onSelect={handleProjectWorktreeSelect}

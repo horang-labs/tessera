@@ -38,6 +38,10 @@ const appHeaderSource = fs.readFileSync(
   new URL('../src/components/layout/app-header.tsx', import.meta.url),
   'utf8',
 );
+const gitBoardHeaderSource = fs.readFileSync(
+  new URL('../src/components/git/git-board-header-control.tsx', import.meta.url),
+  'utf8',
+);
 const keyboardShortcutSource = fs.readFileSync(
   new URL('../src/hooks/use-keyboard-shortcuts.ts', import.meta.url),
   'utf8',
@@ -51,14 +55,20 @@ test('Peek mode gives the Kanban panel the workspace instead of mounting the tab
   assert.match(chatLayoutSource, /const isKanbanPeekLayout = isKanbanPeekMode && !sidebarCollapsed/);
   assert.match(chatLayoutSource, /fillAvailable=\{isKanbanPeekLayout\}/);
   assert.match(chatLayoutSource, /\{!isKanbanPeekLayout && \(\s*<div[^>]*>[\s\S]*<TabBar \/>[\s\S]*<TabPanelHost \/>/);
-  assert.match(appHeaderSource, /data-testid="kanban-git-panel-toggle"/);
-  assert.match(appHeaderSource, /toggleGitPanel/);
+  assert.match(appHeaderSource, /<GitBoardHeaderControl \/>/);
+  assert.match(gitBoardHeaderSource, /data-testid="kanban-git-panel-toggle"/);
 });
 
 test('Board Peek keeps the board chrome focused while preserving the right workspace panel toggle', () => {
   assert.match(appHeaderSource, /const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek'/);
   assert.match(appHeaderSource, /\{!isKanbanPeekMode \? \([\s\S]*data-testid="sidebar-collapse-btn"[\s\S]*\) : null\}/);
-  assert.match(appHeaderSource, /\{isKanbanPeekMode \? \([\s\S]*data-testid="kanban-git-panel-toggle"[\s\S]*\) : null\}/);
+  assert.match(appHeaderSource, /\{isKanbanPeekMode \? \([\s\S]*<GitBoardHeaderControl \/>[\s\S]*\) : null\}/);
+});
+
+test('Board header shows the selected card Git delivery state and panel control', () => {
+  assert.match(appHeaderSource, /isKanbanPeekMode[\s\S]*<GitBoardHeaderControl \/>/);
+  assert.match(gitBoardHeaderSource, /<GitDesktopDeliveryControl \/>/);
+  assert.match(gitBoardHeaderSource, /data-testid="kanban-git-panel-toggle"/);
 });
 
 test('normal Kanban clicks open Peek without replacing the active tab session', () => {

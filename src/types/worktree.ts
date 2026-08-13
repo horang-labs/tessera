@@ -3,6 +3,8 @@ export interface ProjectWorktreeSummary {
   path: string;
   displayPath: string;
   currentBranch: string | null;
+  /** Cached working-tree change totals for the canonical checkout. */
+  diffStats?: import('./worktree-diff-stats').WorktreeDiffStats | null;
 }
 
 export type WorkspaceTarget =

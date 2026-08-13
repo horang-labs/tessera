@@ -36,6 +36,14 @@ test('Project Worktree rows render detailed and compact variants', () => {
     branch: 'feature/root-target',
     name: 'tessera-dev',
     displayPath: '/repo/tessera-dev',
+    diffStats: {
+      added: 12,
+      removed: 3,
+      changedFiles: 2,
+      newFiles: 0,
+      deletedFiles: 0,
+      computedAt: '2026-08-13T00:00:00.000Z',
+    },
     onSelect: () => {},
   }));
   assert.match(row, /lucide-folder-git-2/);
@@ -43,6 +51,8 @@ test('Project Worktree rows render detailed and compact variants', () => {
   assert.match(row, /tessera-dev/);
   assert.match(row, /\/repo\/tessera-dev/);
   assert.match(row, /feature\/root-target/);
+  assert.match(row, /\+12/);
+  assert.match(row, /−3/);
   assert.match(row, /aria-current="true"/);
   assert.match(row, /data-variant="detailed"/);
   assert.match(row, /mb-0\.5[^\"]*py-2(?:\s|\")/);
@@ -51,27 +61,35 @@ test('Project Worktree rows render detailed and compact variants', () => {
     active: false,
     branch: 'feature/root-target',
     displayPath: '/repo/tessera-dev',
+    diffStats: {
+      added: 12,
+      removed: 3,
+      changedFiles: 2,
+      newFiles: 0,
+      deletedFiles: 0,
+      computedAt: '2026-08-13T00:00:00.000Z',
+    },
     onSelect: () => {},
   }));
   assert.match(compactRow, /lucide-folder-git-2/);
   assert.match(compactRow, /lucide-git-branch/);
   assert.match(compactRow, /\/repo\/tessera-dev/);
   assert.match(compactRow, /feature\/root-target/);
+  assert.match(compactRow, /\+12/);
+  assert.match(compactRow, /−3/);
   assert.match(compactRow, /data-variant="compact"/);
   assert.match(compactRow, /mb-0\.5[^\"]*py-1(?:\s|\")/);
 });
 
-test('Worktree overview renders branch, path, and creation actions', () => {
+test('Worktree overview renders branch and path without duplicate creation actions', () => {
   const overview = renderToStaticMarkup(createElement(WorktreeOverview, {
     branch: 'feature/root-target',
     displayPath: '/repo/root',
-    onNewSession: () => {},
-    onNewWorktree: () => {},
   }));
   assert.match(overview, /feature\/root-target/);
   assert.match(overview, /\/repo\/root/);
-  assert.match(overview, /New Session/);
-  assert.match(overview, /New Worktree/);
+  assert.doesNotMatch(overview, /New Session/);
+  assert.doesNotMatch(overview, /New Worktree/);
 });
 
 test('selecting a Worktree opens a replaceable Peek without mutating tabs or panels', () => {

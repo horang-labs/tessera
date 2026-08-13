@@ -4,6 +4,7 @@ import { useTaskStore } from './task-store';
 import { toast } from './notification-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { resolveSessionWorktreeLifecycleTarget } from '@/lib/session/session-worktree-lifecycle';
 
 interface SelectionState {
   /** Set of selected session IDs */
@@ -108,23 +109,21 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     const sessionStore = useSessionStore.getState();
     const taskIds = new Set<string>();
-    const chatIds: string[] = [];
+    const sessionIds: string[] = [];
     for (const id of selectedIds) {
-      const session = projectViewWorkspaceState.resolveSession(id);
-      if (session?.taskId) {
-        taskIds.add(session.taskId);
-      } else {
-        chatIds.push(id);
-      }
+      const task = projectViewWorkspaceState.resolveTaskBySessionId(id);
+      const target = resolveSessionWorktreeLifecycleTarget(id, task);
+      if (target.kind === 'worktree') taskIds.add(target.taskId);
+      else sessionIds.push(target.sessionId);
     }
     for (const taskId of taskIds) {
       void useTaskStore.getState().toggleTaskArchive(taskId, true);
     }
-    for (const id of chatIds) {
+    for (const id of sessionIds) {
       sessionStore.toggleArchive(id, true);
     }
     set({ selectedIds: new Set(), lastClickedId: null, barAnchorId: null });
-    toast.success(`${taskIds.size + chatIds.length}개 항목을 아카이브했습니다`);
+    toast.success(`${taskIds.size + sessionIds.length}개 항목을 아카이브했습니다`);
   },
 
   bulkDelete: async () => {
@@ -136,6 +135,14 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     for (const id of ids) {
       try {
+        const task = projectViewWorkspaceState.resolveTaskBySessionId(id);
+        const target = resolveSessionWorktreeLifecycleTarget(id, task);
+        if (target.kind === 'worktree') {
+          if (!await useTaskStore.getState().deleteWorktree(target.taskId)) {
+            failedIds.push(id);
+          }
+          continue;
+        }
         const res = await fetchWithClientId(`/api/sessions/${encodeURIComponent(id)}`, {
           method: 'DELETE',
         });

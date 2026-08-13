@@ -36,8 +36,9 @@ export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
       title={t('chat.cancelButton')}
       aria-label={t('chat.cancelButton')}
       className={cn(
-        'flex shrink-0 items-center justify-center gap-1.5 rounded-md bg-(--error) px-2 py-1',
-        'text-white transition-colors hover:bg-(--destructive-hover)',
+        'flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-(--status-error-border) px-2 py-1',
+        'bg-(--status-error-bg) text-(--status-error-text) transition-colors',
+        'hover:bg-[color-mix(in_srgb,var(--status-error-bg)_78%,var(--status-error-text))]',
         PHONE_TOUCH_TARGET,
       )}
       data-testid="terminal-chat-cancel"

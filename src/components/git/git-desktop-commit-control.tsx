@@ -239,8 +239,8 @@ function GitDesktopCommitControlView({
         data-testid="desktop-commit-primary"
         data-git-action={controller.primaryAction.kind}
         className={cn(
-          "flex h-full shrink-0 items-center gap-1.5 px-3 text-xs font-semibold transition-colors hover:bg-(--sidebar-hover) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent) disabled:cursor-wait disabled:opacity-60",
-          composerOpen && "bg-(--accent)/14 text-(--accent)",
+          "flex h-full shrink-0 items-center gap-1.5 bg-blue-600 px-3 text-xs font-semibold text-white shadow-sm ring-1 ring-inset ring-blue-700/40 transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60 dark:bg-blue-500 dark:ring-blue-300/30 dark:hover:bg-blue-400",
+          composerOpen && "bg-blue-500 dark:bg-blue-400",
         )}
       >
         {pending ? (

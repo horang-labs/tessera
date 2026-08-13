@@ -167,7 +167,11 @@ export interface SessionState {
   hasRunningWorkflow: (sessionId: string) => boolean;
 
   /** Apply updated diff stats to every session whose id is in the set. */
-  applyDiffStatsUpdate: (sessionIds: string[], diffStats: UnifiedSession['diffStats']) => void;
+  applyDiffStatsUpdate: (
+    sessionIds: string[],
+    diffStats: UnifiedSession['diffStats'],
+    workDir?: string,
+  ) => void;
 
 }
 
@@ -1632,8 +1636,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
   hasRunningWorkflow: (sessionId) => get().runningWorkflowSessionIds.has(sessionId),
 
-  applyDiffStatsUpdate: (sessionIds, diffStats) => {
-    if (sessionIds.length === 0) return;
+  applyDiffStatsUpdate: (sessionIds, diffStats, workDir) => {
+    if (sessionIds.length === 0 && !workDir) return;
     const targets = new Set(sessionIds);
     set((state) => {
       let projectsChanged = false;
@@ -1645,9 +1649,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           projectChanged = true;
           return { ...session, diffStats };
         });
+        const nextProjectWorktree = workDir && project.projectWorktree?.path === workDir
+          && project.projectWorktree.diffStats !== diffStats
+          ? { ...project.projectWorktree, diffStats }
+          : project.projectWorktree;
+        if (nextProjectWorktree !== project.projectWorktree) projectChanged = true;
         if (!projectChanged) return project;
         projectsChanged = true;
-        return { ...project, sessions: nextSessions };
+        return { ...project, sessions: nextSessions, projectWorktree: nextProjectWorktree };
       });
       const retainedSessions = mapRetainedSessions(
         state.retainedSessions,

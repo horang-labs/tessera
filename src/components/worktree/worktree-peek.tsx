@@ -3,27 +3,9 @@
 import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
 import { WorktreeOverview } from '@/components/worktree/worktree-overview';
-import { usePanelStore } from '@/stores/panel-store';
 import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
-import { useTabStore } from '@/stores/tab-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
-
-function beginProjectWorktreeCreation(
-  projectDir: string,
-  mode: 'chat' | 'task',
-): void {
-  const tabStore = useTabStore.getState();
-  const tabId = tabStore.openNewTab();
-  tabStore.setTabProject(tabId, projectDir);
-
-  const panelStore = usePanelStore.getState();
-  const panelId = panelStore.tabPanels[tabId]?.activePanelId;
-  if (!panelId) return;
-
-  panelStore.startWorktreeCreation(panelId, mode);
-  useWorkspacePeekStore.getState().close();
-}
 
 export function WorktreePeek() {
   const target = useWorkspacePeekStore((state) => state.target);
@@ -111,12 +93,6 @@ export function WorktreePeek() {
             branch={branch}
             displayPath={displayPath || 'Unknown path'}
             label={label}
-            onNewSession={isProjectWorktree
-              ? () => beginProjectWorktreeCreation(target.projectDir, 'chat')
-              : undefined}
-            onNewWorktree={isProjectWorktree
-              ? () => beginProjectWorktreeCreation(target.projectDir, 'task')
-              : undefined}
           />
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderGit2, MessageSquare, ListTodo, X as XIcon } from 'lucide-react';
+import { FolderGit2, MessageSquare, X as XIcon } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSessionCrud } from '@/hooks/use-session-crud';
@@ -615,7 +615,7 @@ export function CollectionQuickCreateSheet({
                 )}
                 data-testid={`collection-quick-create-task-${resolvedScopeId}`}
               >
-                <ListTodo className="h-3.5 w-3.5 text-(--accent-hover)" />
+                <FolderGit2 className="h-3.5 w-3.5 text-(--accent-hover)" />
                 <span className="mt-1.5 block text-[13px] font-semibold text-(--sidebar-text-active)">
                   {isContinuation ? t('task.creation.continueTaskLabel') : t('task.newChat.newTask')}
                 </span>

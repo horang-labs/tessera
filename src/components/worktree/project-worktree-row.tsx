@@ -1,11 +1,14 @@
 import { FolderGit2, GitBranch } from 'lucide-react';
+import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
 import { cn } from '@/lib/utils';
+import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
-export function ProjectWorktreeRow({ active, branch, name, displayPath, onSelect }: {
+export function ProjectWorktreeRow({ active, branch, name, displayPath, diffStats, onSelect }: {
   active: boolean;
   branch: string | null;
   name: string;
   displayPath: string;
+  diffStats?: WorktreeDiffStats | null;
   onSelect: () => void;
 }) {
   const branchLabel = branch ?? 'unknown';
@@ -34,6 +37,7 @@ export function ProjectWorktreeRow({ active, branch, name, displayPath, onSelect
           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-(--text-primary)">
             {name}
           </span>
+          <DiffStatsBadge stats={diffStats} />
           <span className="inline-flex max-w-[48%] shrink-0 items-center gap-1 rounded-full border border-(--divider) bg-(--input-bg) px-1.5 py-0.5 font-mono text-[10px] text-(--text-secondary)">
             <GitBranch className="h-2.5 w-2.5 shrink-0" />
             <span className="truncate">{branchLabel}</span>
@@ -47,10 +51,11 @@ export function ProjectWorktreeRow({ active, branch, name, displayPath, onSelect
   );
 }
 
-export function CompactProjectWorktreeRow({ active, branch, displayPath, onSelect }: {
+export function CompactProjectWorktreeRow({ active, branch, displayPath, diffStats, onSelect }: {
   active: boolean;
   branch: string | null;
   displayPath: string;
+  diffStats?: WorktreeDiffStats | null;
   onSelect: () => void;
 }) {
   const branchLabel = branch ?? 'unknown';
@@ -75,6 +80,7 @@ export function CompactProjectWorktreeRow({ active, branch, displayPath, onSelec
       <span className="min-w-0 flex-1 truncate font-mono text-[10px]">
         {displayPath}
       </span>
+      <DiffStatsBadge stats={diffStats} />
       <span className="inline-flex max-w-[42%] shrink-0 items-center gap-1 rounded-full border border-(--divider) bg-(--input-bg) px-1.5 py-0.5 font-mono text-[9px] text-(--text-secondary)">
         <GitBranch className="h-2.5 w-2.5 shrink-0" />
         <span className="truncate">{branchLabel}</span>

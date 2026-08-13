@@ -1,7 +1,7 @@
 'use client';
 
 import { memo } from 'react';
-import { PanelLeftClose, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { PanelLeftClose } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
@@ -13,6 +13,7 @@ import { useGitStore } from '@/stores/git-store';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { ProjectViewModeToggle } from '@/components/tab/project-view-mode-toggle';
+import { GitBoardHeaderControl } from '@/components/git/git-board-header-control';
 
 /**
  * AppHeader — project context header for the left panel.
@@ -33,7 +34,6 @@ export const AppHeader = memo(function AppHeader() {
     (state) => state.settings.kanbanSessionOpenMode,
   );
   const gitPanelOpen = useGitStore((state) => state.isOpen);
-  const toggleGitPanel = useGitStore((state) => state.toggle);
   const isPhoneViewport = usePhoneViewport();
   // The list is what a phone renders, so the header's board chrome goes with it.
   const viewMode = useEffectiveViewMode();
@@ -82,26 +82,11 @@ export const AppHeader = memo(function AppHeader() {
           />
 
           {isKanbanPeekMode ? (
-            <button
-              type="button"
-              onClick={toggleGitPanel}
-              className={cn(
-                // Lift above the Session Peek backdrop (z-50) so the panel
-                // toggle stays clickable while a peek is open — otherwise the
-                // backdrop swallows the click and light-dismisses the peek.
-                'relative z-[60] electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
-                gitPanelOpen
-                  ? 'bg-(--accent)/14 text-(--accent)'
-                  : 'bg-(--chat-bg) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
-              )}
-              aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-              aria-pressed={gitPanelOpen}
-              title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-              data-testid="kanban-git-panel-toggle"
-            >
-              {gitPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-            </button>
+            // Lift above the Session Peek backdrop (z-50) so Git controls stay
+            // clickable while a peek is open.
+            <div className="relative z-[60] electron-no-drag">
+              <GitBoardHeaderControl />
+            </div>
           ) : null}
 
           {!isKanbanPeekMode ? (

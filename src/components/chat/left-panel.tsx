@@ -95,7 +95,9 @@ export function LeftPanel({
       {!collapsed && <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <AppHeader />
         <div className="min-h-0 flex-1 overflow-hidden relative">
-          {viewMode === 'board' ? <KanbanBoard /> : <Sidebar />}
+          {viewMode === 'board'
+            ? <KanbanBoard />
+            : <Sidebar />}
           {viewMode === 'board' && isPopoutActive && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-(--board-bg)/80 backdrop-blur-sm"

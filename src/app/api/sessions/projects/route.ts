@@ -73,7 +73,10 @@ export async function GET(req: NextRequest) {
       // Diff badge for any session whose work dir is a git worktree (standalone
       // chats included). Cache-miss workDirs schedule a compute + WS push.
       const diffStatsByWorkDir = getCachedOrScheduleBulk(
-        mapped.map((s) => s.workDir ?? undefined),
+        [
+          ...mapped.map((s) => s.workDir ?? undefined),
+          projectWorktree?.filesystemPath ?? undefined,
+        ],
         userId,
       );
       const sessions = mapped.map((s) => ({
@@ -97,6 +100,7 @@ export async function GET(req: NextRequest) {
               agentEnvironment,
             ),
             currentBranch: projectWorktree.currentBranch,
+            diffStats: diffStatsByWorkDir.get(projectWorktree.filesystemPath) ?? undefined,
           },
         }),
         ...(result.branchRenameWarning && {

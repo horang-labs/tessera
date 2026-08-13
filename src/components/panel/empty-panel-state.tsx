@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useContext, useEffect, useMemo, useRef, type DragEvent, type MouseEvent } from 'react';
-import { X as XIcon, KeyboardIcon, FolderGit2, ListTodo, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, ChevronDown } from 'lucide-react';
+import { X as XIcon, KeyboardIcon, FolderGit2, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, ChevronDown } from 'lucide-react';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
@@ -522,11 +522,11 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
           </section>
 
           <section className="border-t border-(--divider) py-4">
-            <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:gap-3">
-              <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted) sm:w-24">
+            <div className="flex flex-col items-stretch gap-2">
+              <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
                 {t('task.creation.agentUiLabel')}
               </span>
-              <div className="w-full min-w-0 sm:w-fit sm:max-w-full" data-empty-panel-execution-mode>
+              <div className="w-full min-w-0" data-empty-panel-execution-mode>
                 <ExecutionModeSelector
                   value={executionMode}
                   onChange={setExecutionMode}
@@ -580,7 +580,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 )}
                 data-testid="empty-panel-mode-task"
               >
-                <ListTodo className="h-3.5 w-3.5 text-(--accent-hover)" />
+                <FolderGit2 className="h-3.5 w-3.5 text-(--accent-hover)" />
                 <span className="mt-1.5 block text-xs font-semibold text-(--text-primary)">
                   {t('task.newChat.newTask')}
                 </span>

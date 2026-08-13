@@ -405,7 +405,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'worktree_diff_stats':
-      sessionStore.applyDiffStatsUpdate(msg.sessionIds, msg.stats ?? null);
+      sessionStore.applyDiffStatsUpdate(msg.sessionIds, msg.stats ?? null, msg.workDir);
       useTaskStore.getState().applyDiffStatsUpdate(msg.taskIds, msg.stats ?? null);
       if (msg.autoPromotedTaskIds?.length) {
         useTaskStore.getState().applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);

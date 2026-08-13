@@ -34,7 +34,7 @@ export const ViewModeToggle = memo(function ViewModeToggle({
 
   return (
     <div
-      className="flex h-7 shrink-0 items-center rounded-md border border-(--divider) bg-(--chat-bg) p-0.5 shadow-sm shadow-black/5"
+      className="flex h-7 shrink-0 items-center rounded-md border border-[color-mix(in_srgb,var(--accent)_28%,var(--divider))] bg-(--input-bg) p-0.5 shadow-sm shadow-black/10"
       role="group"
       aria-label="View mode"
       data-testid="view-mode-toggle"
@@ -52,8 +52,8 @@ export const ViewModeToggle = memo(function ViewModeToggle({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
             shouldShowText ? 'min-w-[3.625rem] px-2' : 'w-6 px-1',
             viewMode === 'list'
-              ? 'bg-(--sidebar-bg) text-(--text-primary) shadow-sm shadow-black/10'
-              : 'text-(--text-muted) hover:bg-(--sidebar-active) hover:text-(--text-primary)',
+              ? 'bg-(--accent) text-white shadow-sm shadow-black/20'
+              : 'text-(--text-secondary) hover:bg-(--sidebar-active) hover:text-(--text-primary)',
           )}
         >
           <List size={14} strokeWidth={2.2} />
@@ -74,8 +74,8 @@ export const ViewModeToggle = memo(function ViewModeToggle({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
             shouldShowText ? 'min-w-[3.625rem] px-2' : 'w-6 px-1',
             viewMode === 'board'
-              ? 'bg-(--sidebar-bg) text-(--text-primary) shadow-sm shadow-black/10'
-              : 'text-(--text-muted) hover:bg-(--sidebar-active) hover:text-(--text-primary)',
+              ? 'bg-(--accent) text-white shadow-sm shadow-black/20'
+              : 'text-(--text-secondary) hover:bg-(--sidebar-active) hover:text-(--text-primary)',
           )}
         >
           <Columns3 size={14} strokeWidth={2.2} />

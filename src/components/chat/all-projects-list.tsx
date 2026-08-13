@@ -37,7 +37,7 @@ interface AllProjectsListProps {
   isRunningFilterActive: boolean;
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
   onSessionDoubleClick: (session: UnifiedSession) => void;
-  onSessionArchive: (sessionId: string) => void;
+  onSessionArchive: (sessionId: string, task?: TaskEntity) => void;
   onSessionRename: (sessionId: string, newTitle: string) => void;
   onSessionDelete: (sessionId: string) => void;
   onSessionOpenInNewTab: (sessionId: string) => void;
@@ -294,6 +294,7 @@ function AllProjectSection({
             <CompactProjectWorktreeRow
               active={peekWorktreeId === project.projectWorktree.id}
               branch={project.projectWorktree.currentBranch}
+              diffStats={project.projectWorktree.diffStats}
               displayPath={project.projectWorktree.displayPath}
               onSelect={handleProjectWorktreeSelect}
             />

@@ -131,7 +131,7 @@ try {
   await page.setViewportSize({ width: 1280, height: 800 });
 
   await page.getByTestId('project-worktree-row').click();
-  await page.getByRole('button', { name: 'New Session', exact: true }).waitFor();
+  await page.getByTestId('worktree-peek').waitFor();
   await page.getByTestId('branch-rename-warning-dismiss').click();
   assert.equal(await warning.count(), 0);
   await page.reload({ waitUntil: 'domcontentloaded' });

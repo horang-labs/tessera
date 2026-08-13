@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { selectRunningKanbanItems } from '@/lib/kanban/running-filter';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 import { getKanbanScrollPositionKey } from '@/lib/kanban-scroll-position';
 import type { UnifiedSession } from '@/types/chat';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
+
+const boardSource = fs.readFileSync(
+  new URL('../src/components/board/kanban-board.tsx', import.meta.url),
+  'utf8',
+);
 
 function chat(
   id: string,
@@ -104,4 +110,13 @@ test('keeps ALL and RUNNING horizontal scroll positions independent', () => {
     getKanbanScrollPositionKey('project-a', 'collection-a', false),
     getKanbanScrollPositionKey('project-a', 'collection-a', true),
   );
+});
+
+test('Running remains a visibility filter without disabling DnD or quick create', () => {
+  assert.match(boardSource, /const columnInteractionMode = 'editable' as const/);
+  assert.doesNotMatch(
+    boardSource,
+    /isKanbanRunningFilterActive\s*\?\s*'filtered'/,
+  );
+  assert.doesNotMatch(boardSource, /showRunningEmptyState/);
 });

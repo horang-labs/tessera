@@ -31,7 +31,9 @@ export function installDiffStatsBroadcast(): void {
         ...(parentTaskId ? [parentTaskId] : []),
       ]),
     );
-    if (sessionIds.length === 0 && taskIds.length === 0) return;
+    // Project Worktrees are not represented by a Task or Session row. Their
+    // sidebar badge still subscribes by workDir, so an empty identity list is
+    // a valid broadcast target rather than an orphan compute.
     const diffAppeared =
       previousStats?.changedFiles === 0 &&
       stats !== null &&

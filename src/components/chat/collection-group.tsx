@@ -174,7 +174,7 @@ export interface CollectionGroupProps {
   onTaskDelete?: (taskId: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
   onSessionDelete?: (sessionId: string) => void;
-  onSessionArchive?: (sessionId: string) => void;
+  onSessionArchive?: (sessionId: string, task?: TaskEntity) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;

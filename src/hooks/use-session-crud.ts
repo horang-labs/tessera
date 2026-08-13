@@ -23,6 +23,7 @@ import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { resolveSessionWorktreeLifecycleTarget } from '@/lib/session/session-worktree-lifecycle';
 
 interface SessionCreateOptions {
   workDir?: string;
@@ -309,6 +310,16 @@ export function useSessionCrud() {
   const deleteSession = useCallback(
     async (sessionId: string): Promise<boolean> => {
       try {
+        const task = projectViewWorkspaceState.resolveTaskBySessionId(sessionId);
+        const target = resolveSessionWorktreeLifecycleTarget(sessionId, task);
+        if (target.kind === 'worktree') {
+          const deleted = await useTaskStore.getState().deleteWorktree(target.taskId);
+          if (!deleted) return false;
+          removeSessionFromStores(sessionId);
+          toast.success(t('notifications.sessionDeleted'));
+          return true;
+        }
+
         const response = await requestSessionDelete(sessionId);
 
         if (!response.ok) {

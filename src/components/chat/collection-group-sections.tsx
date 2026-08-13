@@ -779,7 +779,7 @@ export function TaskItemRow({
   onRename?: (taskId: string, newTitle: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
   /** Archives a single child session, leaving the task and its worktree alone. */
-  onSessionArchive?: (sessionId: string) => void;
+  onSessionArchive?: (sessionId: string, task?: TaskEntity) => void;
   renamingSessionId?: string | null;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
@@ -879,14 +879,9 @@ export function TaskItemRow({
       }
     : undefined;
 
-  const archivesCompositeSession = density === 'composite' && Boolean(primarySessionId);
   const handleArchive = useCallback(() => {
-    if (archivesCompositeSession && primarySessionId) {
-      onSessionArchive?.(primarySessionId);
-      return;
-    }
     void useTaskStore.getState().toggleTaskArchive(task.id, true);
-  }, [archivesCompositeSession, onSessionArchive, primarySessionId, task.id]);
+  }, [task.id]);
 
   const {
     isConfirmingArchive,
@@ -1187,13 +1182,9 @@ export function TaskItemRow({
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
               )}
-              testId={archivesCompositeSession
-                ? `collection-session-quick-archive-${primarySessionId}`
-                : `collection-task-quick-archive-${task.id}`}
-              confirmTitle={archivesCompositeSession
-                ? 'Click again to archive session'
-                : 'Click again to archive worktree task'}
-              idleTitle={archivesCompositeSession ? 'Archive session' : 'Archive worktree task'}
+              testId={`collection-task-quick-archive-${task.id}`}
+              confirmTitle="Click again to archive worktree task"
+              idleTitle="Archive worktree task"
             />
             <button
               ref={addButtonRef}
@@ -1256,7 +1247,7 @@ export function TaskItemRow({
               onSessionDoubleClick={onSessionDoubleClick}
               onContextMenu={onContextMenu}
               onStopProcess={onStopProcess}
-              onArchive={onSessionArchive}
+              onArchive={(sessionId) => onSessionArchive?.(sessionId, task)}
               onRename={onSessionRename}
               isRenameRequested={renamingSessionId === session.id}
               onRenameComplete={onRenameComplete}

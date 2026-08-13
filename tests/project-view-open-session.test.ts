@@ -83,13 +83,21 @@ test('a branch refresh hides a Session from projection but retains an open tab t
     newFiles: 0,
     deletedFiles: 0,
     computedAt: '2026-08-09T01:00:00.000Z',
-  });
+  }, '/repository');
   const updated = projectViewWorkspaceState.resolveSession(scopedSession.id);
   assert.equal(updated?.title, 'Renamed while hidden');
   assert.equal(updated?.isRunning, true);
   assert.equal(updated?.status, 'running');
   assert.equal(updated?.unreadCount, 1);
   assert.deepEqual(updated?.diffStats, {
+    added: 2,
+    removed: 1,
+    changedFiles: 1,
+    newFiles: 0,
+    deletedFiles: 0,
+    computedAt: '2026-08-09T01:00:00.000Z',
+  });
+  assert.deepEqual(useSessionStore.getState().projects[0].projectWorktree?.diffStats, {
     added: 2,
     removed: 1,
     changedFiles: 1,
