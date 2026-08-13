@@ -614,6 +614,10 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     shortcutOverrides: {},
     gitConfig: {
       branchPrefix: '',
+      sourceControlAi: {
+        provider: 'claude-code',
+        model: '',
+      },
     },
     version: '1.0.0',
     lastModified: new Date().toISOString(),
@@ -753,5 +757,16 @@ function normalizeGitConfig(
       typeof rawGitConfig?.branchPrefix === 'string'
         ? rawGitConfig.branchPrefix
         : defaults.branchPrefix,
+    sourceControlAi: {
+      provider:
+        typeof rawGitConfig?.sourceControlAi?.provider === 'string'
+          && rawGitConfig.sourceControlAi.provider.trim()
+          ? rawGitConfig.sourceControlAi.provider.trim()
+          : defaults.sourceControlAi.provider,
+      model:
+        typeof rawGitConfig?.sourceControlAi?.model === 'string'
+          ? rawGitConfig.sourceControlAi.model.trim()
+          : defaults.sourceControlAi.model,
+    },
   };
 }

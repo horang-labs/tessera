@@ -442,6 +442,12 @@ export interface I18nMessages {
       branchPrefix: string;
       branchPrefixPlaceholder: string;
       branchPrefixDesc: string;
+      sourceControlAi: string;
+      sourceControlAiDesc: string;
+      provider: string;
+      model: string;
+      modelDefault: string;
+      opencodeModelNote: string;
     };
   };
   electronClose: {
@@ -1201,7 +1207,6 @@ export interface I18nMessages {
     primary: {
       loading: string;
       stateUnknown: string;
-      sessionRequired: string;
       detachedHead: string;
       noRemote: string;
       upToDate: string;

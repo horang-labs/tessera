@@ -465,6 +465,12 @@ export const ja: I18nMessages = {
       branchPrefix: 'ブランチ接頭辞',
       branchPrefixPlaceholder: '例: feature/',
       branchPrefixDesc: '新しいブランチ作成時に使用する接頭辞。',
+      sourceControlAi: 'ソース管理 AI のデフォルト',
+      sourceControlAiDesc: 'Git コミットメッセージの生成に使うプロバイダーとモデルです。',
+      provider: 'プロバイダー',
+      model: 'モデル',
+      modelDefault: 'プロバイダーのデフォルト',
+      opencodeModelNote: 'OpenCode の one-shot 生成は CLI のデフォルトモデルを使います。',
     },
   },
   electronClose: {
@@ -1219,7 +1225,6 @@ export const ja: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: 'git の状態を読み込み中…',
-      sessionRequired: 'Git 操作を実行するには、このワークツリーでセッションを開始してください',
       detachedHead: 'HEAD が分離されています — プッシュするにはブランチをチェックアウトしてください',
       noRemote: 'このリポジトリにはプッシュ先のリモートがありません',
       upToDate: '最新',

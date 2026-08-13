@@ -1006,9 +1006,14 @@ export class CodexAdapter implements CliProvider {
    *
    * Returns null on any error/timeout/empty (fail-open).
    */
-  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+  async generateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<GeneratedText | null> {
     try {
-      const text = await this._execOneShot(prompt, userId);
+      const extra = model ? ['-c', `model="${model}"`] : [];
+      const text = await this._execOneShot(prompt, userId, extra);
       const t = text.trim();
       return t ? { text: t } : null;
     } catch (err) {

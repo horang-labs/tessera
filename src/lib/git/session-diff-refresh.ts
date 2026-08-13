@@ -3,6 +3,7 @@ import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import logger from '@/lib/logger';
 import { syncTaskPr } from '@/lib/github/task-pr-sync';
 import { syncSessionPr } from '@/lib/github/session-pr-sync';
+import { syncWorktreePr } from '@/lib/github/worktree-pr-sync';
 import { flushGitPanelRecompute } from './git-panel-cache';
 import { flushRecompute } from './worktree-diff-stats-cache';
 
@@ -113,9 +114,17 @@ export async function refreshWorkDirSessions(
     );
   }
 
+  await refreshSharingSessionPanels(workDir, userId, actingSessionId);
+}
+
+async function refreshSharingSessionPanels(
+  workDir: string,
+  userId: string,
+  excludeSessionId?: string,
+): Promise<void> {
   const bystanders = dbSessions
     .getActiveSessionIdsSharingWorkDir(workDir)
-    .filter((sessionId) => sessionId !== actingSessionId);
+    .filter((sessionId) => sessionId !== excludeSessionId);
 
   let next = 0;
   const worker = async (): Promise<void> => {
@@ -139,6 +148,33 @@ export async function refreshWorkDirSessions(
       () => worker(),
     ),
   );
+}
+
+/** Refresh the sessionless Worktree caches and every Session sharing its tree. */
+export async function refreshWorktreeGitState(
+  worktreeId: string,
+  workDir: string,
+  userId: string,
+): Promise<void> {
+  await Promise.allSettled([
+    flushRecompute(workDir, userId),
+    syncWorktreePr(worktreeId, { userId, force: true }),
+  ]);
+  await refreshSharingSessionPanels(workDir, userId);
+}
+
+export function refreshWorktreeGitStateInBackground(
+  worktreeId: string,
+  workDir: string,
+  userId: string,
+  reason: string,
+): void {
+  void refreshWorktreeGitState(worktreeId, workDir, userId).catch((error) => {
+    logger.warn(
+      { error, worktreeId, workDir, userId, reason },
+      'Failed to refresh Worktree git state',
+    );
+  });
 }
 
 /**

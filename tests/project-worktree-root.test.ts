@@ -16,22 +16,34 @@ type Modules = {
   tasks: typeof import('../src/lib/db/tasks');
   worktrees: typeof import('../src/lib/db/worktrees');
   gitPanel: typeof import('../src/lib/git/git-panel');
+  gitAction: typeof import('../src/lib/git/session-git-action');
+  settings: typeof import('../src/lib/settings/manager');
+  spawnCli: typeof import('../src/lib/cli/spawn-cli');
   workspaceFiles: typeof import('../src/lib/workspace-files/read-workspace-root');
 };
 
 let loaded: Promise<Modules> | null = null;
 function modules(): Promise<Modules> {
   loaded ??= (async () => {
-    const [database, projects, tasks, worktrees, gitPanel, workspaceFiles] = await Promise.all([
+    const [
+      database, projects, tasks, worktrees, gitPanel, gitAction, settings,
+      spawnCli, workspaceFiles,
+    ] = await Promise.all([
       import('../src/lib/db/database'),
       import('../src/lib/db/projects'),
       import('../src/lib/db/tasks'),
       import('../src/lib/db/worktrees'),
       import('../src/lib/git/git-panel'),
+      import('../src/lib/git/session-git-action'),
+      import('../src/lib/settings/manager'),
+      import('../src/lib/cli/spawn-cli'),
       import('../src/lib/workspace-files/read-workspace-root'),
     ]);
     await database.initDatabase();
-    return { database, projects, tasks, worktrees, gitPanel, workspaceFiles };
+    return {
+      database, projects, tasks, worktrees, gitPanel, gitAction, settings,
+      spawnCli, workspaceFiles,
+    };
   })();
   return loaded;
 }
@@ -98,8 +110,10 @@ test('legacy non-Git Projects remain readable without a synthetic Worktree', asy
   assert.equal(projects.getProjectWorktree('legacy-plain-project'), undefined);
 });
 
-test('a zero-Session Project Worktree provides Git status and Files directly', async () => {
-  const { gitPanel, projects, workspaceFiles } = await modules();
+test('a zero-Session Project Worktree provides Git status, Files, and mutations directly', async () => {
+  const {
+    gitPanel, gitAction, projects, settings, spawnCli, workspaceFiles,
+  } = await modules();
   const repository = createRepository('sessionless-routing');
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:example/sessionless.git'], {
     cwd: repository,
@@ -115,7 +129,7 @@ test('a zero-Session Project Worktree provides Git status and Files directly', a
   assert.equal(git.changedFiles.some((file) => file.path === 'uncommitted.txt'), true);
   assert.equal(
     git.github.reason,
-    'Start a session in this worktree to check pull request status.',
+    'GitHub status will update shortly.',
   );
   const diff = await gitPanel.getWorktreeGitDiffData(worktree.id, 'uncommitted.txt');
   assert.equal(diff.sessionId, worktree.id);
@@ -124,4 +138,25 @@ test('a zero-Session Project Worktree provides Git status and Files directly', a
   const files = await workspaceFiles.readWorkspaceRootFiles(worktree.filesystemPath!);
   assert.equal(files.files.includes('README.md'), true);
   assert.equal(files.files.includes('uncommitted.txt'), true);
+
+  const userId = 'sessionless-worktree-user';
+  const currentSettings = await settings.SettingsManager.load(userId);
+  await settings.SettingsManager.save(userId, {
+    ...currentSettings,
+    agentEnvironment: 'wsl',
+  });
+  spawnCli.invalidateAgentEnvironmentCache(userId);
+  const result = await gitAction.runWorktreeGitAction(worktree.id, userId, {
+    action: 'commit',
+    message: 'commit without a session',
+    files: ['uncommitted.txt'],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(
+    execFileSync('git', ['log', '-1', '--pretty=%s'], {
+      cwd: repository,
+      encoding: 'utf8',
+    }).trim(),
+    'commit without a session',
+  );
 });

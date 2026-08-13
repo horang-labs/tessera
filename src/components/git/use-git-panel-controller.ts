@@ -39,10 +39,6 @@ import {
   deriveGitActionMenu,
   type GitMenuActionId,
 } from "@/lib/git/git-action-menu";
-import {
-  restrictGitMenuToSession,
-  restrictPrimaryGitActionToSession,
-} from '@/lib/git/git-target-capabilities';
 import { startGitPanelPolling } from "@/lib/git/git-panel-poll";
 import { gitPanelDiffPath, readGitPanelState } from "@/lib/git/git-panel-read";
 import {
@@ -62,7 +58,7 @@ import {
   extractGitPanelErrorMessage,
   summarizeGitFailure,
 } from "./git-panel-shared";
-import type { WorkspaceTarget } from '@/types/worktree';
+import { workspaceTargetApiPath, type WorkspaceTarget } from '@/types/worktree';
 
 // Optimistic session IDs created by use-session-crud.ts before the server
 // responds with the real id. These never exist in the server DB, so any
@@ -173,8 +169,8 @@ export function useGitPanelController(
   // owner once Git resolves it; the store migrates the provisional draft.
   const worktreeKey = data
     ? gitWorktreeKey(data)
-    : sessionId
-      ? provisionalGitWorktreeKey(sessionId)
+    : targetKey
+      ? provisionalGitWorktreeKey(targetKey)
       : null;
   const delivery = useGitPanelStore((state) =>
     worktreeKey ? state.deliveryByWorktree[worktreeKey] : undefined,
@@ -409,9 +405,9 @@ export function useGitPanelController(
       // Ask the server to re-probe git state + PR status (covers work done
       // outside Tessera — CLI push, external gh pr create, etc.). Don't await:
       // the WS broadcast and the loadPanel re-read below converge the UI.
-      if (sessionId && !isOptimisticSessionId(sessionId)) {
+      if (!isOptimisticSessionId(sessionId)) {
         void fetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}/refresh-git`,
+          `${workspaceTargetApiPath(target)}/refresh-git`,
           { method: "POST" },
         ).catch(() => {
           // Best-effort — staleness recovers on the next focus or poll tick.
@@ -632,7 +628,7 @@ export function useGitPanelController(
   const generateCommitMessage = useCallback(async () => {
     // The button is disabled without a selection, and a poll can empty one out
     // from under a click that is already on its way.
-    if (!sessionId || commitFiles.length === 0 || generatingMessage || pendingHere) {
+    if (!target || commitFiles.length === 0 || generatingMessage || pendingHere) {
       return;
     }
 
@@ -641,7 +637,7 @@ export function useGitPanelController(
     setGenerateMessageError(null);
     try {
       const response = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}/git/commit-message`,
+        `${workspaceTargetApiPath(target)}/git/commit-message`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -698,7 +694,7 @@ export function useGitPanelController(
     commitFiles,
     generatingMessage,
     pendingHere,
-    sessionId,
+    target,
     setWorktreeCommitMessage,
     t,
     worktreeKey,
@@ -722,11 +718,8 @@ export function useGitPanelController(
   );
 
   const primaryAction = useMemo(
-    () => restrictPrimaryGitActionToSession(
-      derivePrimaryGitAction(stateSnapshot),
-      Boolean(sessionId),
-    ),
-    [sessionId, stateSnapshot],
+    () => derivePrimaryGitAction(stateSnapshot),
+    [stateSnapshot],
   );
   const pullRequestUrl =
     panelData?.prStatus?.url ?? panelData?.github.pullRequest?.url ?? null;
@@ -820,13 +813,13 @@ export function useGitPanelController(
     // The button is disabled without these. This is the second guard the design
     // asks for, and it also catches a click that lands after the selection
     // emptied underneath it.
-    if (!sessionId || !message || commitFiles.length === 0) return false;
+    if (!target || !message || commitFiles.length === 0) return false;
 
     const files = commitFiles.map((file) => file.path);
 
     try {
       const response = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+        `${workspaceTargetApiPath(target)}/git/action`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -861,8 +854,7 @@ export function useGitPanelController(
         ...(result.ok ? {} : { failure_kind: result.failure.kind }),
         file_count: files.length,
       });
-      // The route triggers the state refresh and broadcasts it; the client
-      // never asks for one (docs/design/git-delivery.md §11).
+      void loadPanel({ silent: true });
       return result.ok;
     } catch (nextError) {
       const message =
@@ -883,8 +875,9 @@ export function useGitPanelController(
     commitMessage,
     commitOrigin,
     reportAction,
-    sessionId,
+    loadPanel,
     setWorktreeActionFailure,
+    target,
     worktreeKey,
   ]);
 
@@ -912,11 +905,11 @@ export function useGitPanelController(
    */
   const requestBranchAction = useCallback(
     async (verb: GitBranchActionVerb): Promise<void> => {
-      if (!sessionId) return;
+      if (!target) return;
 
       try {
         const response = await fetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}/git/action`,
+          `${workspaceTargetApiPath(target)}/git/action`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -948,6 +941,7 @@ export function useGitPanelController(
           result: result.ok ? "success" : "failed",
           ...(result.ok ? {} : { failure_kind: result.failure.kind }),
         });
+        void loadPanel({ silent: true });
       } catch (nextError) {
         const message =
           nextError instanceof Error
@@ -964,9 +958,10 @@ export function useGitPanelController(
     },
     [
       commitOrigin,
+      loadPanel,
       reportAction,
-      sessionId,
       setWorktreeActionFailure,
+      target,
       worktreeKey,
     ],
   );
@@ -1052,11 +1047,8 @@ export function useGitPanelController(
    * and what the rest say about why they cannot.
    */
   const menuActions = useMemo(
-    () => restrictGitMenuToSession(
-      deriveGitActionMenu(stateSnapshot),
-      Boolean(sessionId),
-    ),
-    [sessionId, stateSnapshot],
+    () => deriveGitActionMenu(stateSnapshot),
+    [stateSnapshot],
   );
 
   /**
@@ -1234,7 +1226,7 @@ export function useGitPanelController(
 
 
   return {
-    hasActiveSession: Boolean(sessionId),
+    hasActiveSession: Boolean(target),
     changedFileCount,
     commitMessage,
     commitTotals,

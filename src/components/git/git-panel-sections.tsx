@@ -946,7 +946,7 @@ export function GitPanelContentSection({
     <>
     {phoneScrollableContent ? (
       <>
-        {sessionId ? (
+        {hasTarget ? (
           <div
             className="z-20 shrink-0 border-b border-(--chat-header-border) bg-(--sidebar-bg) px-3 py-3"
             data-testid="git-panel-fixed-action"

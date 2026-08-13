@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { restrictGitMenuToSession, restrictPrimaryGitActionToSession } from '@/lib/git/git-target-capabilities';
 import { deriveGitActionMenu } from '@/lib/git/git-action-menu';
 import { derivePrimaryGitAction, type GitStateSnapshot } from '@/lib/git/primary-git-action';
 
@@ -16,43 +15,30 @@ const DIRTY: GitStateSnapshot = {
   conflictOperation: null,
 };
 
-test('a sessionless Worktree keeps real Git state but does not offer dead mutations', () => {
-  const primary = restrictPrimaryGitActionToSession(
-    derivePrimaryGitAction(DIRTY),
-    false,
-  );
-  const menu = restrictGitMenuToSession(deriveGitActionMenu(DIRTY), false);
-
-  assert.equal(primary.kind, 'commit');
-  assert.equal(primary.enabled, false);
-  assert.equal(primary.disabledReasonKey, 'gitPanel.primary.sessionRequired');
-  assert.equal(menu.find((action) => action.id === 'commit')?.enabled, false);
-  assert.equal(
-    menu.find((action) => action.id === 'commit')?.disabledReasonKey,
-    'gitPanel.primary.sessionRequired',
-  );
-  assert.equal(menu.find((action) => action.id === 'open_source_control')?.enabled, true);
-});
-
-test('a Session keeps the Git ladder and menu unchanged', () => {
+test('a sessionless Worktree offers the same Git mutations as a Session', () => {
   const primary = derivePrimaryGitAction(DIRTY);
   const menu = deriveGitActionMenu(DIRTY);
 
-  assert.strictEqual(restrictPrimaryGitActionToSession(primary, true), primary);
-  assert.strictEqual(restrictGitMenuToSession(menu, true), menu);
+  assert.equal(primary.kind, 'commit');
+  assert.equal(primary.enabled, true);
+  assert.equal(menu.find((action) => action.id === 'commit')?.enabled, true);
+  assert.equal(menu.find((action) => action.id === 'open_source_control')?.enabled, true);
 });
 
-test('a Worktree does not claim that session-owned PR discovery is still loading', () => {
-  const unknownPr = { ...DIRTY, changedFileCount: 0, pullRequest: 'unknown' as const };
-  const primary = restrictPrimaryGitActionToSession(
-    derivePrimaryGitAction(unknownPr),
-    false,
-  );
-  const createPr = restrictGitMenuToSession(
-    deriveGitActionMenu(unknownPr),
-    false,
-  ).find((action) => action.id === 'create_pr');
+test('the Git ladder and menu are target-independent', () => {
+  const primary = derivePrimaryGitAction(DIRTY);
+  const menu = deriveGitActionMenu(DIRTY);
 
-  assert.equal(primary.disabledReasonKey, 'gitPanel.primary.sessionRequired');
-  assert.equal(createPr?.disabledReasonKey, 'gitPanel.primary.sessionRequired');
+  assert.equal(primary.enabled, true);
+  assert.equal(menu.find((action) => action.id === 'commit_push')?.enabled, true);
+});
+
+test('a Worktree keeps repository-derived PR discovery state', () => {
+  const unknownPr = { ...DIRTY, changedFileCount: 0, pullRequest: 'unknown' as const };
+  const primary = derivePrimaryGitAction(unknownPr);
+  const createPr = deriveGitActionMenu(unknownPr)
+    .find((action) => action.id === 'create_pr');
+
+  assert.equal(primary.disabledReasonKey, 'gitPanel.pr.statusUnknown');
+  assert.equal(createPr?.disabledReasonKey, 'gitPanel.pr.statusUnknown');
 });

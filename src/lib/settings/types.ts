@@ -29,6 +29,11 @@ export interface SetupState {
 
 export interface GitConfig {
   branchPrefix: string;
+  sourceControlAi: {
+    provider: string;
+    /** Empty means the provider CLI's default model. */
+    model?: string;
+  };
 }
 
 export interface ProviderSessionDefaults {

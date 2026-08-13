@@ -465,6 +465,12 @@ export const en: I18nMessages = {
       branchPrefix: 'Branch prefix',
       branchPrefixPlaceholder: 'e.g. feature/',
       branchPrefixDesc: 'Prefix used when creating new branches.',
+      sourceControlAi: 'Source Control AI defaults',
+      sourceControlAiDesc: 'Provider and model used to generate Git commit messages.',
+      provider: 'Provider',
+      model: 'Model',
+      modelDefault: 'Provider default',
+      opencodeModelNote: 'OpenCode one-shot generation uses the CLI default model.',
     },
   },
   electronClose: {
@@ -1222,7 +1228,6 @@ export const en: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: 'Reading git state…',
-      sessionRequired: 'Start a session in this worktree to run Git actions',
       detachedHead: 'HEAD is detached — check out a branch to push',
       noRemote: 'This repository has no remote to push to',
       upToDate: 'Up to date',

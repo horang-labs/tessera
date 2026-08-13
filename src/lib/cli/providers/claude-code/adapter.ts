@@ -476,9 +476,13 @@ export class ClaudeCodeAdapter implements CliProvider {
    *
    * Returns null on any error/timeout/empty (fail-open).
    */
-  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+  async generateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<GeneratedText | null> {
     try {
-      const text = await this._callCliRaw(prompt, userId);
+      const text = await this._callCliRaw(prompt, userId, model ? ['--model', model] : []);
       return text.trim() ? { text: text.trim() } : null;
     } catch (err) {
       logger.warn({

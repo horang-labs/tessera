@@ -467,6 +467,12 @@ export const ko: I18nMessages = {
       branchPrefix: '브랜치 접두사',
       branchPrefixPlaceholder: '예: feature/',
       branchPrefixDesc: '새 브랜치 생성 시 접두사 사용',
+      sourceControlAi: '소스 제어 AI 기본값',
+      sourceControlAiDesc: 'Git 커밋 메시지 생성에 사용할 공급자와 모델입니다.',
+      provider: '공급자',
+      model: '모델',
+      modelDefault: '공급자 기본값',
+      opencodeModelNote: 'OpenCode의 one-shot 생성은 CLI 기본 모델을 사용합니다.',
     },
   },
   electronClose: {
@@ -1226,7 +1232,6 @@ export const ko: I18nMessages = {
     primary: {
       loading: 'Git',
       stateUnknown: 'git 상태를 읽는 중…',
-      sessionRequired: 'Git 작업을 실행하려면 이 워크트리에서 세션을 시작하세요',
       detachedHead: 'HEAD가 분리되어 있습니다 — 푸시하려면 브랜치를 체크아웃하세요',
       noRemote: '이 저장소에는 푸시할 리모트가 없습니다',
       upToDate: '최신 상태',

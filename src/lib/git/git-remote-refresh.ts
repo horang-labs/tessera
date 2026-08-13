@@ -56,6 +56,8 @@ export interface GitRemoteRefreshRequest {
   sessionId: string;
   workDir: string;
   userId: string;
+  /** Target-specific invalidation for callers that do not own a Session. */
+  onFetched?: () => void;
 }
 
 export interface GitRemoteRefreshDeps {
@@ -168,7 +170,7 @@ export async function scheduleGitRemoteRefresh(
   request: GitRemoteRefreshRequest,
   deps: GitRemoteRefreshDeps = defaultDeps,
 ): Promise<void> {
-  const { sessionId, workDir, userId } = request;
+  const { sessionId, workDir, userId, onFetched } = request;
   const state = getState();
   const key = await resolveRefsKeyCached(workDir, userId, deps);
 
@@ -190,7 +192,8 @@ export async function scheduleGitRemoteRefresh(
       // the same refs on its own 5s poll, so what this adds is speed for the
       // one panel a user is looking at — including one whose poll has backed
       // off after a slow scan.
-      deps.onFetched(sessionId, userId);
+      if (onFetched) onFetched();
+      else deps.onFetched(sessionId, userId);
     } catch (error) {
       logger.debug(
         { error, sessionId, workDir },

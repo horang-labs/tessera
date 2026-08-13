@@ -7,8 +7,11 @@
  * hold for every caller of the action, not just the one HTTP entry point.
  */
 import { executeGitAction, type GitAction } from './git-actions';
-import { resolveSessionGitTarget } from './git-panel';
-import { refreshWorkDirSessionsInBackground } from './session-diff-refresh';
+import { resolveSessionGitTarget, resolveWorktreeGitTarget } from './git-panel';
+import {
+  refreshWorkDirSessionsInBackground,
+  refreshWorktreeGitStateInBackground,
+} from './session-diff-refresh';
 import type { GitActionResult } from '@/types/git';
 
 export async function runSessionGitAction(
@@ -29,5 +32,23 @@ export async function runSessionGitAction(
       actingSessionId: sessionId,
       reason: 'git_action',
     });
+  }
+}
+
+export async function runWorktreeGitAction(
+  worktreeId: string,
+  userId: string,
+  action: GitAction,
+): Promise<GitActionResult> {
+  const target = await resolveWorktreeGitTarget(worktreeId, userId);
+  try {
+    return await executeGitAction(target, action);
+  } finally {
+    refreshWorktreeGitStateInBackground(
+      worktreeId,
+      target.workDir,
+      userId,
+      'git_action',
+    );
   }
 }

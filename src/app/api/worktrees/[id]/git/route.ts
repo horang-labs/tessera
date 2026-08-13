@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { getWorktreeGitPanelData, GitPanelError } from '@/lib/git/git-panel';
+import { scheduleGitRemoteRefresh } from '@/lib/git/git-remote-refresh';
+import { refreshWorktreeGitStateInBackground } from '@/lib/git/session-diff-refresh';
+import { syncWorktreePr } from '@/lib/github/worktree-pr-sync';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
 
@@ -14,7 +17,25 @@ export async function GET(
       error: { code: 'unauthorized', message: 'Unauthorized' },
     });
     if ('response' in auth) return auth.response;
-    return NextResponse.json(await getWorktreeGitPanelData(id, auth.userId));
+    const payload = await getWorktreeGitPanelData(id, auth.userId);
+    void syncWorktreePr(id, {
+      userId: auth.userId,
+      branch: payload.detached ? null : payload.branch,
+    });
+    void scheduleGitRemoteRefresh({
+      sessionId: `worktree:${id}`,
+      workDir: payload.workDir,
+      userId: auth.userId,
+      onFetched: () => refreshWorktreeGitStateInBackground(
+        id,
+        payload.workDir,
+        auth.userId,
+        'remote_fetch',
+      ),
+    }).catch((error) => {
+      logger.debug({ error, worktreeId: id }, 'Worktree remote refresh failed');
+    });
+    return NextResponse.json(payload);
   } catch (error) {
     if (error instanceof GitPanelError) {
       return jsonError(error.code, error.message, error.status);
