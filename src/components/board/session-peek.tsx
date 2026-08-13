@@ -15,8 +15,10 @@ import {
 } from '@/stores/board-store';
 import { useI18n } from '@/lib/i18n';
 import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 
 interface SessionPeekProps {
   sessionId: string;
@@ -52,7 +54,11 @@ export function SessionPeek({
   onClose,
 }: SessionPeekProps) {
   const { t } = useI18n();
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const projectViewDir = selectedProjectDir === ALL_PROJECTS_SENTINEL
+    ? null
+    : selectedProjectDir;
+  const session = useProjectViewSession(sessionId, projectViewDir);
   const peekFileRef = useBoardStore((state) => state.peekFileRef);
   const persistedFileWidth = useBoardStore((state) => state.peekFileSidecarWidth);
   const closePeekFile = useBoardStore((state) => state.closePeekFile);
@@ -342,6 +348,7 @@ export function SessionPeek({
                     sessionId={sessionId}
                     panelId={PEEK_PANEL_ID}
                     presentation="peek"
+                    projectViewDir={projectViewDir}
                   />
                 </TabIdContext.Provider>
               </div>
@@ -396,7 +403,9 @@ export function SessionPeek({
                       panelId={PEEK_FILE_PANEL_ID}
                       surfaceActive
                       onClose={closePeekFile}
-                      onFileRefChange={openPeekFile}
+                      onFileRefChange={(nextFileRef) => {
+                        if (nextFileRef.type === 'workspace-file') openPeekFile(nextFileRef);
+                      }}
                     />
                   )}
                 </TabIdContext.Provider>

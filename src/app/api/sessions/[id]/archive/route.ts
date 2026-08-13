@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import logger from '@/lib/logger';
 import { archiveSession } from '@/lib/session/session-archive';
-import { pruneExpiredArchivedWorktrees, restoreArchivedChat } from '@/lib/archive/archive-service';
-import { SettingsManager } from '@/lib/settings/manager';
+import { restoreArchivedChat } from '@/lib/archive/archive-service';
 import { getSession } from '@/lib/db/sessions';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import {
   isSessionOperationConflictError,
   isTerminalHandoffConflictError,
 } from '@/lib/terminal/terminal-handoff-lock';
+import { getTaskProjectViewIds } from '@/lib/projects/project-view-projection';
 
 /**
  * PATCH /api/sessions/[id]/archive
@@ -55,26 +55,31 @@ export async function PATCH(
   }
 
   try {
+    const session = getSession(sessionId);
+    const affectedProjectIds = session?.task_id
+      ? getTaskProjectViewIds(session.task_id)
+      : session?.project_id ? [session.project_id] : [];
     const result = archived
       ? await archiveSession(sessionId, true, auth.userId)
       : (await restoreArchivedChat(sessionId, auth.userId), { ok: true, worktreeRemoved: false });
-
-    if (archived) {
-      const settings = await SettingsManager.load(auth.userId);
-      if (settings.autoDeleteArchivedWorktrees) {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
-      }
-    }
 
     logger.info({ sessionId, archived }, 'Session archive status updated');
 
     broadcastSessionMutation(auth.userId, {
       kind: 'updated',
-      projectId: getSession(sessionId)?.project_id,
+      projectId: session?.project_id,
+      sessionId,
+      taskId: session?.task_id ?? undefined,
+      archived,
+      affectedProjectIds,
       originClientId: getOriginClientIdFromRequest(req),
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      taskId: session?.task_id ?? undefined,
+      affectedProjectIds,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update archive status';
     const mutationConflict = isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err);

@@ -7,6 +7,7 @@ import {
   readElectronTestInstanceId,
   resolveElectronServerPort,
   resolveElectronTestInstanceConfig,
+  resolveElectronWindowTitle,
 } from '@/lib/electron-test-instance';
 
 test('a normal Electron launch keeps the product paths and real instance lock', () => {
@@ -113,5 +114,26 @@ test('an isolated Electron test instance requires and uses its dedicated server 
       TESSERA_ELECTRON_TEST_SERVER_PORT: 'not-a-port',
     }),
     /TESSERA_ELECTRON_TEST_SERVER_PORT must be an integer between 1024 and 65535/,
+  );
+});
+
+test('test windows expose their instance id while normal window titles stay unchanged', () => {
+  assert.equal(resolveElectronWindowTitle('Tessera', null), 'Tessera');
+
+  const testInstance = resolveElectronTestInstanceConfig({
+    env: {
+      TESSERA_ELECTRON_TEST_INSTANCE: 'codex-0812-title-2',
+      TESSERA_ELECTRON_TEST_ROOT: 'C:\\TesseraParallel',
+    },
+    platform: 'win32',
+  });
+
+  assert.equal(
+    resolveElectronWindowTitle('Tessera', testInstance),
+    'Tessera [TEST · codex-0812-title-2]',
+  );
+  assert.equal(
+    resolveElectronWindowTitle('Tessera Board', testInstance),
+    'Tessera Board [TEST · codex-0812-title-2]',
   );
 });

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useNotificationStore } from '@/stores/notification-store';
 import type { SessionRefItem } from '@/types/session-ref';
 import { SESSION_REF_PLACEHOLDER_REGEX, MAX_SESSION_REFS } from '@/types/session-ref';
@@ -116,7 +117,7 @@ export function useSessionRefs({
         return null;
       }
 
-      const session = useSessionStore.getState().getSession(sessionId);
+      const session = projectViewWorkspaceState.resolveSession(sessionId);
       const kind: 'chat' | 'task' = kindHint ?? (session?.taskId ? 'task' : 'chat');
       return {
         sessionId,

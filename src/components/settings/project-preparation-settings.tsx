@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useBoardStore } from '@/stores/board-store';
-import { useSessionStore } from '@/stores/session-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useSettingsStore } from '@/stores/settings-store';
 import { resolvePreparationProject } from '@/lib/projects/preparation-project-selection';
 import type { PreparationPhase } from '@/lib/projects/preparation-status-policy';
@@ -36,7 +36,7 @@ async function saveScript(
 export default function ProjectPreparationSettings() {
   const { t } = useI18n();
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const requestedProjectId = useSettingsStore((state) => state.openRequest?.projectId);
 
   // A preparation script belongs to a project, not to whatever is on screen, so

@@ -29,6 +29,8 @@
  *   9. The harness's own footing (#280): the open Git panel covers the tab bar
  *      control that opened it, so closing has to go through the control that is
  *      on top. This one is about the file rather than about the product.
+ *  10. Phone over plain HTTP: opening an overlay still works when the browser
+ *      does not expose the secure-context-only `crypto.randomUUID` API.
  *
  * The server runs from the repository itself rather than a copied app root, so
  * Tailwind's utility layer exists and every box measured is a styled box (#252).
@@ -85,6 +87,7 @@ const fixtureDir = await fs.mkdtemp(path.join(tempRoot, 'tessera-phone-overlay-f
 const projectDir = path.join(fixtureDir, 'overlay-e2e');
 
 const serverOutput = [];
+const rendererErrors = [];
 let server = null;
 let browser = null;
 let page = null;
@@ -315,14 +318,30 @@ async function setFontScale(scale) {
  * closed on the tab the phase needs. Every phase starts from a fresh context so
  * one phase's persisted panel state cannot decide the next one's verdict.
  */
-async function openApp({ viewport, touch, fontScale = 1, gitPanelTab = 'git' }) {
+async function openApp({
+  viewport,
+  touch,
+  fontScale = 1,
+  gitPanelTab = 'git',
+  withoutRandomUUID = false,
+}) {
   if (page) await page.context().close().catch(() => {});
+  rendererErrors.length = 0;
   await setFontScale(fontScale);
 
   const options = { extraHTTPHeaders: { 'x-tessera-app-secret': appSecret } };
   const context = viewport === PHONE_VIEWPORT
     ? await createPhoneContext(browser, options)
     : await browser.newContext({ ...options, viewport, hasTouch: touch });
+
+  if (withoutRandomUUID) {
+    await context.addInitScript(() => {
+      Object.defineProperty(globalThis.crypto, 'randomUUID', {
+        configurable: true,
+        value: undefined,
+      });
+    });
+  }
 
   await context.addInitScript(
     ([dir, scale, panelTab]) => {
@@ -343,7 +362,10 @@ async function openApp({ viewport, touch, fontScale = 1, gitPanelTab = 'git' }) 
     { name: 'jwt', value: await mintBrowserToken(), domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
   ]);
   page = await context.newPage();
-  page.on('pageerror', (error) => serverOutput.push(`[renderer:error] ${error.stack ?? error.message}\n`));
+  page.on('pageerror', (error) => {
+    rendererErrors.push(error.stack ?? error.message);
+    serverOutput.push(`[renderer:error] ${error.stack ?? error.message}\n`);
+  });
   // 'load' rather than 'domcontentloaded': every box measured here is a styled
   // box, and an unstyled panel measures as its content.
   await page.goto(`${origin}/chat`, { waitUntil: 'load', timeout: 120_000 });
@@ -975,6 +997,46 @@ async function phaseTheGitPanelClosesWhileItCoversItsOwnToggle() {
   assert.equal(after.gitPanelPresent, false, 'the panel closed from a state where its toggle was covered');
 }
 
+/**
+ * Tailscale reaches the packaged app over plain HTTP, which is not a secure
+ * context on Android Chrome. In that topology `crypto.randomUUID` is absent.
+ * Opening a phone overlay must not let that browser capability crash React's
+ * render tree into Next's global error page.
+ */
+async function phasePhoneOverlayWorksWithoutCryptoRandomUUID() {
+  await openApp({
+    viewport: PHONE_VIEWPORT,
+    touch: true,
+    withoutRandomUUID: true,
+  });
+  await expandSidebar();
+  await openSessionFromSidebar(0);
+  await collapseSidebarIfStillOpen();
+
+  await page.getByTestId('tab-bar-git-toggle').click();
+  await page.waitForTimeout(500);
+
+  assert.deepEqual(
+    rendererErrors,
+    [],
+    `opening the phone overlay raised a renderer error: ${rendererErrors.join('\n')}`,
+  );
+  assert.notEqual(
+    await page.locator('html').getAttribute('id'),
+    '__next_error__',
+    'opening the phone overlay reached Next global error UI',
+  );
+  await page.getByTestId('git-panel').waitFor({ state: 'visible', timeout: 30_000 });
+
+  const overlayStack = await page.evaluate(
+    () => history.state?.__tesseraPhoneOverlayStack ?? [],
+  );
+  assert.ok(
+    overlayStack.some((entry) => /^phone-overlay-/.test(entry)),
+    `the overlay registered its browser-Back entry: ${JSON.stringify(overlayStack)}`,
+  );
+}
+
 // -------------------------------------------------------------------- main ---
 
 const phases = [
@@ -987,6 +1049,7 @@ const phases = [
   ['7 a desktop is unchanged', phaseADesktopIsUnchanged],
   ['8 the largest font scale agrees', phaseTheLargestFontScaleAgrees],
   ['9 the git panel closes while it covers its own toggle', phaseTheGitPanelClosesWhileItCoversItsOwnToggle],
+  ['10 phone overlay works without crypto.randomUUID', phasePhoneOverlayWorksWithoutCryptoRandomUUID],
 ];
 
 let failure = null;

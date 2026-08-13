@@ -7,18 +7,18 @@ import { useNotificationStore, type ActionToast } from '@/stores/notification-st
 import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
-import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { ToastNotification, TOAST_DISMISS_TOUCH_TARGET } from './toast-notification';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
-import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { switchToSessionProject } from '@/lib/session/switch-session-project';
+import { getSessionOriginProjectId } from '@/lib/projects/origin-project-representation';
 import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const MAX_VISIBLE_TOASTS = 5;
 const ACTION_TOAST_DURATION = 3000;
@@ -102,9 +102,7 @@ export function ToastContainer() {
   const markAsRead = useNotificationStore((s) => s.markAsRead);
   const actionToasts = useNotificationStore((s) => s.toasts);
   const dismissActionToast = useNotificationStore((s) => s.dismissActionToast);
-  const clearUnreadCount = useSessionStore((s) => s.clearUnreadCount);
-  const getSession = useSessionStore((s) => s.getSession);
-  const { viewSession } = useSessionNavigation();
+  const { materializeSession, viewSession } = useSessionNavigation();
 
   const visibleNotifications = notifications
     .filter((n) => !n.dismissed)
@@ -114,18 +112,17 @@ export function ToastContainer() {
     markAsRead(notificationId);
     dismissToast(notificationId);
 
-    const session = getSession(sessionId);
+    const session = await materializeSession(sessionId);
     if (!session) {
       toast.error(t('errors.sessionNotFound'));
       return;
     }
 
-    clearUnreadCount(sessionId);
-    wsClient.sendMarkAsRead(sessionId);
+    projectViewWorkspaceState.markSessionRead(sessionId);
 
     // Notified session may live in another project — bring that project into scope first,
     // otherwise it opens in a tab belonging to the project currently on screen.
-    if (!switchToSessionProject(session.projectDir)) return;
+    if (!switchToSessionProject(getSessionOriginProjectId(session))) return;
 
     // Kanban peek mode: open the session in the board peek panel instead of a tab
     const boardStore = useBoardStore.getState();
@@ -147,7 +144,10 @@ export function ToastContainer() {
       return;
     }
 
-    // Session not in any tab/panel: load it in the active panel
+    // Session not in any tab/panel: choose its surface synchronously, before
+    // history I/O. Completion of an older load must never overwrite a newer
+    // tab or panel selection.
+    tabStore.openPreview(sessionId);
     try {
       await viewSession(session);
     } catch {
@@ -160,7 +160,10 @@ export function ToastContainer() {
       <NotificationSound />
       <div
         data-testid="toast-container"
-        className="flex flex-col-reverse items-start gap-2.5 pointer-events-none"
+        className={cn(
+          'flex flex-col-reverse items-start gap-2.5 pointer-events-none',
+          'max-sm:flex-col max-sm:!top-4 max-sm:!bottom-auto',
+        )}
         style={{
           position: 'fixed',
           bottom: '1.25rem',

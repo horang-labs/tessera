@@ -16,6 +16,7 @@ const TASK_ID = 'task-archive-1';
 let database: typeof import('../src/lib/db/database');
 let dbSessions: typeof import('../src/lib/db/sessions');
 let dbTasks: typeof import('../src/lib/db/tasks');
+let projectView: typeof import('../src/lib/projects/project-view-projection');
 let archiveSession: typeof import('../src/lib/session/session-archive')['archiveSession'];
 let archiveService: typeof import('../src/lib/archive/archive-service');
 let processManager: typeof import('../src/lib/cli/process-manager')['processManager'];
@@ -25,6 +26,8 @@ test.before(async () => {
   database = await import('../src/lib/db/database');
   dbSessions = await import('../src/lib/db/sessions');
   dbTasks = await import('../src/lib/db/tasks');
+  const dbProjects = await import('../src/lib/db/projects');
+  projectView = await import('../src/lib/projects/project-view-projection');
   ({ archiveSession } = await import('../src/lib/session/session-archive'));
   archiveService = await import('../src/lib/archive/archive-service');
   ({ processManager } = await import('../src/lib/cli/process-manager'));
@@ -34,9 +37,19 @@ test.before(async () => {
 
   // Two sessions sharing one managed worktree, both owned by the same task —
   // the sidebar shape where a worktree row expands into sub-session rows.
-  const first = persistCreatedSessionRecord({
+  projectId = worktreeDir;
+  dbProjects.registerProject(projectId, worktreeDir, 'Worktree');
+  dbTasks.createTask({
+    id: TASK_ID,
+    projectId,
+    title: 'Worktree task',
+    worktreeBranch: 'feature/archive-test',
+  });
+  persistCreatedSessionRecord({
     sessionId: 'task-session-a',
     resolvedWorkDir: worktreeDir,
+    parentProjectId: projectId,
+    taskId: TASK_ID,
     title: 'Session A',
     providerId: 'claude-code',
     worktreeManaged: true,
@@ -44,20 +57,12 @@ test.before(async () => {
   persistCreatedSessionRecord({
     sessionId: 'task-session-b',
     resolvedWorkDir: worktreeDir,
+    parentProjectId: projectId,
+    taskId: TASK_ID,
     title: 'Session B',
     providerId: 'claude-code',
     worktreeManaged: true,
   });
-  projectId = first.projectId;
-
-  dbTasks.createTask({
-    id: TASK_ID,
-    projectId,
-    title: 'Worktree task',
-    worktreeBranch: 'feature/archive-test',
-  });
-  dbTasks.addSessionToTask(TASK_ID, 'task-session-a');
-  dbTasks.addSessionToTask(TASK_ID, 'task-session-b');
 });
 
 test.after(async () => {
@@ -86,8 +91,8 @@ test('archiving one task session drops it from the task without touching its sib
 });
 
 test('an archived task session leaves the project session list', () => {
-  const ids = dbSessions
-    .getSessionsByProject(projectId)
+  const ids = projectView
+    .getProjectViewSessions(projectId)
     .sessions.map((session) => session.id);
 
   assert.equal(ids.includes('task-session-a'), false);
@@ -138,6 +143,8 @@ test('an archived task owns every child, including ones archived on their own', 
     taskEntry.sessions.map((session) => session.id).sort(),
     ['task-session-a', 'task-session-b'],
   );
+  assert.equal(taskEntry.sessions.find((session) => session.id === 'task-session-a')?.archived, true);
+  assert.equal(taskEntry.sessions.find((session) => session.id === 'task-session-b')?.archived, false);
 });
 
 test('sessions of an archived task cannot be archived or restored on their own', async () => {

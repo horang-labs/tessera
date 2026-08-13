@@ -2,6 +2,13 @@
 export interface Panel {
   readonly id: string;
   sessionId: string | null;
+  /**
+   * Canonical Worktree target for Git/Files. When sessionId is null it also
+   * selects the Worktree overview.
+   */
+  worktreeId?: string | null;
+  /** Creation screen requested by a Worktree overview action. */
+  creationMode?: 'chat' | 'task' | null;
   terminalId?: string | null;
   terminalSessionId?: string | null;
   /** Explicit cwd for standalone terminals that are not owned by a session. */
@@ -54,8 +61,10 @@ export interface PanelStoreActions {
   graftTabIntoActiveTab(sourceTabId: string, targetPanelId: string, edge: PanelDropEdge): string | null;
   closePanel(panelId: string): void;
   closePanelInTab(tabId: string, panelId: string): void;
-  assignSession(panelId: string, sessionId: string | null): void;
-  assignSessionInTab(tabId: string, panelId: string, sessionId: string | null): void;
+  assignSession(panelId: string, sessionId: string | null, worktreeId?: string | null): void;
+  assignSessionInTab(tabId: string, panelId: string, sessionId: string | null, worktreeId?: string | null): void;
+  assignWorktree(panelId: string, worktreeId: string): void;
+  startWorktreeCreation(panelId: string, mode: 'chat' | 'task'): void;
   rebindSession(previousSessionId: string, sessionId: string): void;
   assignTerminal(
     panelId: string,

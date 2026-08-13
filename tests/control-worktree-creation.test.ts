@@ -20,6 +20,7 @@ type Modules = {
   settings: typeof import('@/lib/settings/manager');
   defaults: typeof import('@/lib/settings/defaults');
   tasks: typeof import('@/lib/db/tasks');
+  projection: typeof import('@/lib/projects/project-view-projection');
   controlProjects: typeof import('@/lib/control/database-project-source');
   controlWorktrees: typeof import('@/lib/control/database-worktree-source');
   service: typeof import('@/lib/control/service');
@@ -38,6 +39,7 @@ function modules(): Promise<Modules> {
       settings,
       defaults,
       tasks,
+      projection,
       controlProjects,
       controlWorktrees,
       service,
@@ -51,6 +53,7 @@ function modules(): Promise<Modules> {
       import('@/lib/settings/manager'),
       import('@/lib/settings/defaults'),
       import('@/lib/db/tasks'),
+      import('@/lib/projects/project-view-projection'),
       import('@/lib/control/database-project-source'),
       import('@/lib/control/database-worktree-source'),
       import('@/lib/control/service'),
@@ -66,6 +69,7 @@ function modules(): Promise<Modules> {
       settings,
       defaults,
       tasks,
+      projection,
       controlProjects,
       controlWorktrees,
       service,
@@ -137,12 +141,16 @@ test('Control creates exact local and remote branches through the managed path p
   assert.equal(remote.title, 'Remote presentation title');
   assert.equal(git(remote.path!, ['rev-parse', 'HEAD']), repository.remoteCommit);
 
-  const uiWorktrees = mods.tasks.getTasks(repository.path);
+  const originWorktree = mods.projects.getProjectWorktree(repository.path);
+  assert.ok(originWorktree);
+  const uiWorktrees = mods.projection.getProjectViewWorktrees(repository.path);
   assert.deepEqual(
     uiWorktrees.map((worktree) => ({
       title: worktree.title,
       branch: worktree.worktreeBranch,
       path: worktree.workDir,
+      creationScope: worktree.creationScope,
+      startPoint: worktree.startPoint,
       sessionCount: worktree.sessions.length,
     })),
     [
@@ -150,15 +158,32 @@ test('Control creates exact local and remote branches through the managed path p
         title: 'Remote presentation title',
         branch: 'feature/exact-remote',
         path: remote.path,
+        creationScope: { originWorktreeId: originWorktree.id, branch: 'main' },
+        startPoint: 'origin/remote-start',
         sessionCount: 0,
       },
       {
         title: 'feature/exact-local',
         branch: 'feature/exact-local',
         path: local.path,
+        creationScope: { originWorktreeId: originWorktree.id, branch: 'main' },
+        startPoint: 'main',
         sessionCount: 0,
       },
     ],
+  );
+
+  git(repository.path, ['checkout', '-b', 'view/other']);
+  assert.deepEqual(
+    (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
+      .worktrees,
+    [],
+  );
+  git(repository.path, ['checkout', 'main']);
+  assert.deepEqual(
+    (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
+      .worktrees.map((worktree) => worktree.branch),
+    ['feature/exact-remote', 'feature/exact-local'],
   );
 
   await assert.rejects(
@@ -193,7 +218,23 @@ test('Control creates exact local and remote branches through the managed path p
       && error.code === 'PROJECT_ENVIRONMENT_MISMATCH',
   );
   assert.equal(hasBranch(repository.path, 'feature/environment-mismatch'), false);
-  assert.equal(mods.tasks.getTasks(repository.path).length, 2);
+
+  git(repository.path, ['checkout', '--detach']);
+  await assert.rejects(
+    control.createWorktree({
+      selector: { kind: 'project', projectId: repository.path },
+      branch: 'feature/detached-origin',
+      startPoint: 'main',
+    }, context),
+    (error: unknown) => error instanceof mods.service.ControlOperationError
+      && error.code === 'WORKTREE_CREATE_FAILED'
+      && error.message === 'The Project Worktree must be on a branch before creating a linked Worktree.',
+  );
+  assert.equal(hasBranch(repository.path, 'feature/detached-origin'), false);
+  const persistedCount = mods.database.getDb().prepare(`
+    SELECT COUNT(*) AS count FROM tasks WHERE project_id = ?
+  `).get(repository.path) as { count: number };
+  assert.equal(persistedCount.count, 2);
 });
 
 test('Control opens local and remote-only branches and returns distinct checkout refusals', async () => {
@@ -274,6 +315,12 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
   const managedRoot = path.join(testRoot, 'api-checkout-worktrees');
   git(repository.path, ['branch', 'feature/api-resume', repository.localCommit]);
   git(repository.path, ['config', 'branch.feature/api-resume.base', 'refs/heads/main']);
+  mods.projects.registerProject(repository.path, repository.path, 'API checkout existing');
+  mods.tasks.createTask({
+    id: 'api-creation-scope-task',
+    projectId: repository.path,
+    title: 'API creation scope',
+  });
   await mods.settings.SettingsManager.save('electron-local-user', {
     ...mods.defaults.DEFAULT_SETTINGS,
     agentEnvironment: 'wsl',
@@ -306,6 +353,7 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
         branchPrefix: 'must-not-apply/',
         branchSlug: 'must-not-apply',
         allowBranchSlugSuffix: false,
+        taskId: 'api-creation-scope-task',
       }),
     }));
     const responseText = await response.text();
@@ -319,6 +367,12 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
       git(repository.path, ['config', '--get', 'branch.feature/api-resume.base']),
       'refs/heads/main',
     );
+    const persisted = mods.tasks.getTask('api-creation-scope-task');
+    assert.deepEqual(persisted?.creationScope, {
+      originWorktreeId: mods.projects.getProjectWorktree(repository.path)?.id,
+      branch: 'main',
+    });
+    assert.equal(persisted?.startPoint, 'feature/api-resume');
 
     const refusal = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
       method: 'POST',
@@ -341,6 +395,35 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
       holderWorktreePath: repository.path,
     });
     assert.equal(fs.existsSync(path.join(managedRoot, 'main')), false);
+
+    mods.tasks.createTask({
+      id: 'api-detached-origin-task',
+      projectId: repository.path,
+      title: 'Detached origin refusal',
+    });
+    git(repository.path, ['checkout', '--detach']);
+    const detachedRefusal = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
+      method: 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({
+        projectDir: repository.path,
+        source: { mode: 'branch-off', baseRef: 'main' },
+        branchSlug: 'detached-origin',
+        taskId: 'api-detached-origin-task',
+      }),
+    }));
+    assert.equal(detachedRefusal.status, 422);
+    assert.deepEqual(await detachedRefusal.json(), {
+      code: 'PROJECT_BRANCH_UNAVAILABLE',
+      error: 'The Project Worktree must be on a branch before creating a linked Worktree.',
+    });
+    assert.equal(hasBranch(repository.path, 'detached-origin'), false);
+    assert.equal(mods.tasks.getTask('api-detached-origin-task')?.creationScope, undefined);
   } finally {
     if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
     else process.env.TESSERA_ELECTRON_RUNTIME = previousElectronRuntime;
@@ -434,7 +517,7 @@ test('the CLI and Control HTTP endpoint create from a dash-prefixed exact Git re
     assert.equal(resumed.startPoint, 'feature/cli-resume');
     assert.equal(git(resumed.path as string, ['rev-parse', 'HEAD']), repository.localCommit);
 
-    const visible = mods.tasks.getTasks(repository.path);
+    const visible = mods.projection.getProjectViewWorktrees(repository.path);
     assert.equal(visible.length, 2);
     assert.deepEqual(
       visible.map((worktree) => worktree.worktreeBranch).sort(),
@@ -484,7 +567,7 @@ test('Control reports blocking preparation outcomes while preserving inspectable
       return true;
     },
   );
-  assert.equal(mods.tasks.getTasks(failedRepository.path)[0]?.sessions.length, 0);
+  assert.equal(mods.projection.getProjectViewWorktrees(failedRepository.path)[0]?.sessions.length, 0);
   assert.equal(hasBranch(failedRepository.path, 'feature/preparation-failed'), true);
 
   const succeededRepository = createRepository('preparation-succeeded');
@@ -551,7 +634,7 @@ test('Control reports blocking preparation outcomes while preserving inspectable
       return true;
     },
   );
-  assert.equal(mods.tasks.getTasks(timeoutRepository.path)[0]?.sessions.length, 0);
+  assert.equal(mods.projection.getProjectViewWorktrees(timeoutRepository.path)[0]?.sessions.length, 0);
   assert.equal(hasBranch(timeoutRepository.path, 'feature/preparation-timeout'), true);
 });
 
@@ -590,7 +673,7 @@ test('a persistence failure compensates the checkout and exact new branch', asyn
     mods.database.getDb().exec('DROP TRIGGER fail_control_worktree_persist');
   }
 
-  assert.equal(mods.tasks.getTasks(repository.path).length, 0);
+  assert.equal(mods.projection.getProjectViewWorktrees(repository.path).length, 0);
   assert.equal(hasBranch(repository.path, 'feature/compensated'), false);
   assert.equal(fs.existsSync(path.join(managedRoot, 'feature/compensated')), false);
 });

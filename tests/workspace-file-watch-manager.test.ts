@@ -206,6 +206,57 @@ test('poll-mode refresh diffs the index, notifies listeners, and delays teardown
   assert.equal(internals.entriesByRoot.has(canonicalRoot), false);
 });
 
+test('an empty directory reaches the index and its creation is a change', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-empty-dir-'));
+  writeFileSync(path.join(root, 'seed.txt'), 'seed');
+  mkdirSync(path.join(root, 'already'), { recursive: true });
+  const manager = new WorkspaceFileWatchManager();
+  const internals = managerInternals(manager);
+  let changeCount = 0;
+
+  const dispose = await manager.subscribeRootChanges({
+    listenerId: 'terminal:empty-dir',
+    root,
+    onChange: () => { changeCount += 1; },
+  });
+  const canonicalRoot = realpathSync(root);
+  const entry = internals.entriesByRoot.get(canonicalRoot);
+  assert.ok(entry);
+  await entry.readyPromise;
+  await silenceChokidar(entry);
+
+  try {
+    assert.deepEqual(
+      (await manager.getIndexedSnapshotForRoot(root))?.directories,
+      ['already'],
+      'the initial walk indexes directories in their own right',
+    );
+
+    // A folder with nothing in it changes no file, so unless directories are
+    // diffed too the explorer never hears about it.
+    const beforeMkdir = changeCount;
+    mkdirSync(path.join(root, 'fresh'), { recursive: true });
+    await internals.refreshPollIndex(entry);
+
+    assert.deepEqual(
+      (await manager.getIndexedSnapshotForRoot(root))?.directories,
+      ['already', 'fresh'],
+    );
+    assert.ok(changeCount > beforeMkdir, 'creating an empty folder must notify subscribers');
+
+    const beforeRmdir = changeCount;
+    rmSync(path.join(root, 'fresh'), { recursive: true });
+    await internals.refreshPollIndex(entry);
+    assert.deepEqual((await manager.getIndexedSnapshotForRoot(root))?.directories, ['already']);
+    assert.ok(changeCount > beforeRmdir, 'removing an empty folder must notify subscribers');
+  } finally {
+    dispose();
+    if (entry.closeTimer) clearTimeout(entry.closeTimer);
+    internals.closeEntryNow(entry);
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test('a symlink created after startup lands in the live index with its marker', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-symlink-'));
   const source = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-symlink-src-'));

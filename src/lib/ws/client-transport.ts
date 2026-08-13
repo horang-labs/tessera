@@ -11,6 +11,7 @@ import type {
   TextContentBlock,
 } from './message-types';
 import { startTurnInFlight } from '@/lib/chat/session-client-effects';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 type ClientMessageType = ClientMessage['type'];
 
@@ -66,7 +67,7 @@ function maybeUpdateOptimisticSessionTitle(
   content: string | ContentBlock[],
 ): void {
   const sessionStore = useSessionStore.getState();
-  const currentSession = sessionStore.getSession(sessionId);
+  const currentSession = projectViewWorkspaceState.resolveSession(sessionId);
   if (currentSession?.hasCustomTitle) {
     return;
   }

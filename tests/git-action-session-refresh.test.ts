@@ -29,6 +29,13 @@ const SKIP_ON_WINDOWS = process.platform === 'win32';
 
 const sharedRepo = path.join(dataDir, 'shared-repo');
 const otherRepo = path.join(dataDir, 'other-repo');
+const ACTIVE_SHARED_SESSION_IDS = [
+  'acting-session',
+  'bystander-session',
+  'task-bystander-session',
+  'legacy-anchor-session',
+  'legacy-bystander-session',
+] as const;
 
 let dbSessions: typeof import('../src/lib/db/sessions');
 let subscribeGitPanelData:
@@ -100,17 +107,19 @@ test.before(async () => {
   const dbTasks = await import('../src/lib/db/tasks');
   dbTasks.createTask({
     id: TASK_ID,
-    projectId: persistCreatedSessionRecord({
-      sessionId: 'task-bystander-session',
-      resolvedWorkDir: sharedRepo,
-      title: 'task bystander',
-      providerId: 'claude-code',
-    }).projectId,
+    projectId: sharedRepo,
     title: 'Shared checkout task',
     worktreeBranch: 'main',
     worktreePath: sharedRepo,
   });
-  dbTasks.addSessionToTask(TASK_ID, 'task-bystander-session');
+  persistCreatedSessionRecord({
+    sessionId: 'task-bystander-session',
+    resolvedWorkDir: sharedRepo,
+    parentProjectId: sharedRepo,
+    taskId: TASK_ID,
+    title: 'task bystander',
+    providerId: 'claude-code',
+  });
   dbSessions.updateSession('task-bystander-session', { work_dir: null });
 
   // The same shape one migration earlier: a task that has not stored its own
@@ -119,23 +128,26 @@ test.before(async () => {
   // resolves onto the shared tree and still has a panel to update.
   dbTasks.createTask({
     id: LEGACY_TASK_ID,
-    projectId: persistCreatedSessionRecord({
-      sessionId: 'legacy-anchor-session',
-      resolvedWorkDir: sharedRepo,
-      title: 'legacy anchor',
-      providerId: 'claude-code',
-    }).projectId,
+    projectId: sharedRepo,
     title: 'Task with no stored worktree path',
     worktreeBranch: 'main',
   });
-  dbTasks.addSessionToTask(LEGACY_TASK_ID, 'legacy-anchor-session');
+  persistCreatedSessionRecord({
+    sessionId: 'legacy-anchor-session',
+    resolvedWorkDir: sharedRepo,
+    parentProjectId: sharedRepo,
+    taskId: LEGACY_TASK_ID,
+    title: 'legacy anchor',
+    providerId: 'claude-code',
+  });
   persistCreatedSessionRecord({
     sessionId: 'legacy-bystander-session',
     resolvedWorkDir: sharedRepo,
+    parentProjectId: sharedRepo,
+    taskId: LEGACY_TASK_ID,
     title: 'legacy bystander',
     providerId: 'claude-code',
   });
-  dbTasks.addSessionToTask(LEGACY_TASK_ID, 'legacy-bystander-session');
   dbSessions.updateSession('legacy-bystander-session', { work_dir: null });
 
   unsubscribe = subscribeGitPanelData((sessionId) => {
@@ -166,11 +178,6 @@ async function waitForRecompute(
   );
 }
 
-/** Long enough for a stray recompute to have shown up if one was queued. */
-async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
-}
-
 test('a git action refreshes every active session sharing the working directory', async (t) => {
   if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
 
@@ -185,13 +192,7 @@ test('a git action refreshes every active session sharing the working directory'
 
   assert.equal(result.ok, true);
 
-  await waitForRecompute([
-    'acting-session',
-    'bystander-session',
-    'task-bystander-session',
-    'legacy-bystander-session',
-  ]);
-  await settle();
+  await waitForRecompute([...ACTIVE_SHARED_SESSION_IDS]);
 
   // Archived sessions are on no screen, and the outsider's tree did not move.
   assert.equal(recomputed.includes('archived-session'), false);
@@ -217,7 +218,7 @@ test('an action Git refused still refreshes, and reports the failure unchanged',
     });
 
     assert.equal(result.ok, false);
-    await waitForRecompute(['acting-session', 'bystander-session']);
+    await waitForRecompute([...ACTIVE_SHARED_SESSION_IDS]);
   } finally {
     fs.rmSync(hookPath, { force: true });
   }
@@ -239,7 +240,7 @@ test('an action that throws refreshes too', async (t) => {
     }),
   );
 
-  await waitForRecompute(['acting-session', 'bystander-session']);
+  await waitForRecompute([...ACTIVE_SHARED_SESSION_IDS]);
 });
 
 test('the action answers without waiting for the refresh and carries no panel state', async (t) => {
@@ -266,7 +267,7 @@ test('the action answers without waiting for the refresh and carries no panel st
     ['ok', 'outcome'],
   );
 
-  await waitForRecompute(['acting-session', 'bystander-session']);
+  await waitForRecompute([...ACTIVE_SHARED_SESSION_IDS]);
 });
 
 test('a refresh that fails leaves the reported outcome alone', async (t) => {
@@ -291,7 +292,7 @@ test('a refresh that fails leaves the reported outcome alone', async (t) => {
 
     assert.equal(result.ok, true);
     // And the rest of the fan-out survives the throwing subscriber.
-    await waitForRecompute(['acting-session', 'bystander-session']);
+    await waitForRecompute([...ACTIVE_SHARED_SESSION_IDS]);
   } finally {
     stopThrowing();
   }

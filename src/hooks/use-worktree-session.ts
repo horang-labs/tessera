@@ -11,6 +11,7 @@ import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import type { WorktreeCreationSource } from '@/lib/worktrees/create';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 type TaskCreatedTelemetrySource = 'kanban' | 'list' | 'new_session';
 
@@ -122,7 +123,8 @@ export function useWorktreeSession() {
         const now = new Date().toISOString();
         const placeholder: TaskEntity = {
           id: tempId,
-          projectId: storePlaceholderProjectId,
+          projectId,
+          projectViewId: storePlaceholderProjectId,
           title: taskTitle,
           collectionId,
           workflowStatus: workflowStatus ?? 'todo',
@@ -276,7 +278,8 @@ export function useWorktreeSession() {
           // Preparation started server-side the moment the worktree existed.
           // If the panel is open, move it to where that run can be watched —
           // if it is closed, leave it closed and let the badge do the telling.
-          const project = sessionStore.projects.find((entry) => entry.encodedDir === projectDir);
+          const project = projectViewWorkspaceState.getLoadedProjectViews()
+            .find((entry) => entry.encodedDir === projectDir);
           if (project?.hasPreparationScript) {
             const { useGitStore } = await import('@/stores/git-store');
             const git = useGitStore.getState();

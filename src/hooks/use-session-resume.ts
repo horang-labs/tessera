@@ -6,6 +6,7 @@
 
 import { useCallback, useState } from 'react';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { wsClient } from '@/lib/ws/client';
@@ -29,17 +30,22 @@ export function useSessionResume() {
    */
   const resumeSession = useCallback(
     async (sessionId: string) => {
+      // Capture the explicit resume navigation immediately. The response may
+      // arrive after the user has selected another session and must not restore
+      // this one as a stale side effect.
+      sessionStore.setActiveSession(sessionId);
       setIsResuming(true);
 
       try {
         const settings = useSettingsStore.getState().settings;
-        const providerId = sessionStore.getSession(sessionId)?.provider?.trim();
+        const session = projectViewWorkspaceState.resolveSession(sessionId);
+        const providerId = session?.provider?.trim();
         if (!providerId) {
           throw new Error('Session has no provider');
         }
         const runtimeConfig = applyProviderSessionRuntimeOverrides(
           getProviderSessionRuntimeConfig(settings, providerId),
-          sessionStore.getSession(sessionId),
+          session,
           providerId,
         );
         const response = await fetch(`/api/sessions/${sessionId}/resume`, {
@@ -60,7 +66,6 @@ export function useSessionResume() {
               }
             } catch { /* non-fatal */ }
             // Keep original status — don't overwrite
-            sessionStore.setActiveSession(sessionId);
             return;
           }
           throw new Error('Failed to resume session');
@@ -71,7 +76,6 @@ export function useSessionResume() {
         if (result.status === 'read_only') {
           restoreSessionReplay(sessionId, result);
           sessionStore.updateSessionStatus(sessionId, 'stopped');
-          sessionStore.setActiveSession(sessionId);
           toast.warning(i18n.t('notifications.sessionReadOnlyWarning'));
           sessionStore.markSessionReadOnly(sessionId, true);
           return;
@@ -85,8 +89,6 @@ export function useSessionResume() {
           sessionMode: runtimeConfig.sessionMode,
           accessMode: runtimeConfig.accessMode,
         });
-        sessionStore.setActiveSession(sessionId);
-
         toast.success(i18n.t('notifications.sessionResumed'));
       } catch (err) {
         toast.error(i18n.t('errors.sessionResumeFailed'));
@@ -103,18 +105,19 @@ export function useSessionResume() {
    * Used when user sends a message to a read-only session.
    */
   const resumeAndSend = useCallback(
-    async (sessionId: string, _projectDir: string, content: string | ContentBlock[], skillName?: string, displayContent?: string | ContentBlock[], options?: { forceTranslateInput?: boolean }) => {
+    async (sessionId: string, content: string | ContentBlock[], skillName?: string, displayContent?: string | ContentBlock[], options?: { forceTranslateInput?: boolean }) => {
       setIsResuming(true);
 
       try {
         const settings = useSettingsStore.getState().settings;
-        const providerId = sessionStore.getSession(sessionId)?.provider?.trim();
+        const session = projectViewWorkspaceState.resolveSession(sessionId);
+        const providerId = session?.provider?.trim();
         if (!providerId) {
           throw new Error('Session has no provider');
         }
         const runtimeConfig = applyProviderSessionRuntimeOverrides(
           getProviderSessionRuntimeConfig(settings, providerId),
-          sessionStore.getSession(sessionId),
+          session,
           providerId,
         );
         const response = await fetch(`/api/sessions/${sessionId}/resume`, {
@@ -132,7 +135,6 @@ export function useSessionResume() {
         if (result.status === 'read_only') {
           restoreSessionReplay(sessionId, result);
           sessionStore.updateSessionStatus(sessionId, 'stopped');
-          sessionStore.setActiveSession(sessionId);
           sessionStore.markSessionReadOnly(sessionId, true);
           toast.warning(i18n.t('notifications.sessionReadOnlyWarning'));
           return false;

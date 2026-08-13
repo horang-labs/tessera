@@ -14,6 +14,7 @@ import { DeleteProjectDialog } from './delete-project-dialog';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useTabStore } from '@/stores/tab-store';
 import { useFolderBrowserStore } from '@/stores/folder-browser-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
@@ -52,7 +53,7 @@ export function LeftPanel({
   const kanbanSessionOpenMode = useSettingsStore(
     (state) => state.settings.kanbanSessionOpenMode,
   );
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const { deleteProject } = useSessionCrud();
   const { isActive: isPopoutActive, closePopouts } = usePopoutActive();
 

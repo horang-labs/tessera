@@ -1,9 +1,14 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, LoaderCircle } from "lucide-react";
+import { PhoneBottomSheet } from "@/components/ui/phone-bottom-sheet";
 import { useAnchoredPopover } from "@/hooks/use-anchored-popover";
+import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
+import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
+import { usePhoneViewport } from "@/hooks/use-phone-viewport";
 import { useI18n } from "@/lib/i18n";
+import { useMenuNavigation } from "@/hooks/use-menu-navigation";
 import { cn } from "@/lib/utils";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
 
@@ -24,27 +29,63 @@ export function GitActionMenu({
   pending,
   commitDraftBlocked,
   onRun,
+  onBeforeOpen,
+  menuTestId = "git-action-menu",
+  triggerAriaLabel,
+  triggerClassName,
+  triggerTestId = "git-action-menu-trigger",
 }: {
   actions: readonly GitMenuAction[];
   /** An action is already running against this working directory. */
   pending: boolean;
   commitDraftBlocked: boolean;
   onRun: (id: GitMenuActionId) => void;
+  onBeforeOpen?: () => void;
+  menuTestId?: string;
+  triggerAriaLabel?: string;
+  triggerClassName?: string;
+  triggerTestId?: string;
 }) {
   const { t } = useI18n();
+  const isPhoneViewport = usePhoneViewport();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
+  const dismissPhoneMenu = usePhoneOverlayNavigation({
+    enabled: isPhoneViewport,
+    open,
+    onBack: close,
+  });
+  const dismissMenu = useCallback(() => {
+    if (isPhoneViewport) {
+      return dismissPhoneMenu(() => triggerRef.current?.focus());
+    }
+    close();
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }, [close, dismissPhoneMenu, isPhoneViewport]);
+  useCloseOnEscape(dismissMenu, {
+    enabled: open,
+    capture: true,
+  });
   const { position, updatePosition } = useAnchoredPopover({
-    isOpen: open,
+    isOpen: open && !isPhoneViewport,
     onClose: close,
     triggerRef,
     containerRef,
     popoverRef: menuRef,
     calculatePosition: calculateMenuPosition,
   });
+  const hasPosition = position !== null;
+  useEffect(() => {
+    if (!open || (!isPhoneViewport && !hasPosition)) return;
+    const frame = requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [hasPosition, isPhoneViewport, open]);
+  const handleMenuKeyDown = useMenuNavigation(menuRef);
 
   return (
     <div ref={containerRef} className="relative shrink-0">
@@ -52,16 +93,26 @@ export function GitActionMenu({
         ref={triggerRef}
         type="button"
         onClick={() => {
-          if (open) return close();
+          if (open) {
+            if (isPhoneViewport) return dismissPhoneMenu();
+            return close();
+          }
+          onBeforeOpen?.();
           updatePosition();
           setOpen(true);
         }}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={t("gitPanel.menu.label")}
-        title={pending ? t("gitPanel.menu.pending") : t("gitPanel.menu.label")}
-        data-testid="git-action-menu-trigger"
-        className="flex h-7 w-6 items-center justify-center rounded-md border border-(--divider) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+        aria-busy={pending}
+        aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
+        title={pending
+          ? t("gitPanel.menu.pending")
+          : (triggerAriaLabel ?? t("gitPanel.menu.label"))}
+        data-testid={triggerTestId}
+        className={cn(
+          "flex h-7 w-6 items-center justify-center rounded-md border border-(--divider) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+          triggerClassName,
+        )}
       >
         {/*
           Progress belongs at the button rather than in a toast (§7). A menu
@@ -75,49 +126,92 @@ export function GitActionMenu({
         )}
       </button>
 
-      {open && position ? (
+      {open && isPhoneViewport ? (
+        <PhoneBottomSheet
+          backdropTestId="git-action-menu-sheet-backdrop"
+          sheetTestId="git-action-menu-sheet"
+          className="px-2 pt-2"
+          handleClassName="mb-2"
+          onDismiss={dismissPhoneMenu}
+        >
+          <div
+            ref={menuRef}
+            role="menu"
+            aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
+            data-testid={menuTestId}
+            onKeyDown={handleMenuKeyDown}
+          >
+            <GitActionMenuItems
+              actions={actions}
+              commitDraftBlocked={commitDraftBlocked}
+              pending={pending}
+              touchSized
+              onRun={(id) => dismissPhoneMenu(() => onRun(id))}
+            />
+          </div>
+        </PhoneBottomSheet>
+      ) : open && position ? (
         <div
           ref={menuRef}
           role="menu"
-          data-testid="git-action-menu"
+          aria-label={triggerAriaLabel ?? t("gitPanel.menu.label")}
+          data-testid={menuTestId}
+          onKeyDown={handleMenuKeyDown}
           style={{ position: "fixed", top: position.top, left: position.left, width: position.width }}
           className="z-50 overflow-hidden rounded-lg border border-(--divider) bg-(--sidebar-bg) py-1 shadow-lg"
         >
-          {actions.map((action) => (
-            <GitActionMenuItem
-              key={action.id}
-              action={action}
-              blocked={
-                (action.id === "commit" || action.id === "commit_push")
-                && commitDraftBlocked
-                // Only where the git state left the action available. An empty
-                // draft is not the reason Commit cannot run on a session whose
-                // state has not arrived, and saying so would send the user to
-                // fix the one thing that is not in the way.
-                && action.enabled
-              }
-              pending={pending}
-              onRun={() => {
-                close();
-                onRun(action.id);
-              }}
-            />
-          ))}
+          <GitActionMenuItems
+            actions={actions}
+            commitDraftBlocked={commitDraftBlocked}
+            pending={pending}
+            onRun={(id) => {
+              close();
+              onRun(id);
+            }}
+          />
         </div>
       ) : null}
     </div>
   );
 }
 
+function GitActionMenuItems({
+  actions,
+  commitDraftBlocked,
+  pending,
+  touchSized = false,
+  onRun,
+}: {
+  actions: readonly GitMenuAction[];
+  commitDraftBlocked: boolean;
+  pending: boolean;
+  touchSized?: boolean;
+  onRun: (id: GitMenuActionId) => void;
+}) {
+  return actions.map((action) => (
+    <GitActionMenuItem
+      key={action.id}
+      action={action}
+      blocked={(action.id === "commit" || action.id === "commit_push")
+        && commitDraftBlocked && action.enabled}
+      pending={pending}
+      touchSized={touchSized}
+      onRun={() => onRun(action.id)}
+    />
+  ));
+}
+
 function GitActionMenuItem({
   action,
   blocked,
   pending,
+  touchSized = false,
   onRun,
 }: {
   action: GitMenuAction;
   blocked: boolean;
   pending: boolean;
+  touchSized?: boolean;
   onRun: () => void;
 }) {
   const { t } = useI18n();
@@ -137,13 +231,16 @@ function GitActionMenuItem({
     <button
       type="button"
       role="menuitem"
-      onClick={onRun}
-      disabled={disabled}
+      onClick={() => {
+        if (!disabled) onRun();
+      }}
+      aria-disabled={disabled}
       title={reason ?? undefined}
       data-testid={`git-action-menu-item-${action.id}`}
       data-git-action={action.kind}
       className={cn(
         "flex w-full flex-col items-start gap-0.5 px-2.5 py-1.5 text-left text-[11px] transition-colors",
+        touchSized && "min-h-[44px] justify-center px-4 py-2.5",
         disabled
           ? "cursor-not-allowed text-(--text-muted)"
           // §9's escape throws away whatever the operation had reached, and it

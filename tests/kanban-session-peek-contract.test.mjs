@@ -10,6 +10,10 @@ const boardSource = fs.readFileSync(
   new URL('../src/components/board/kanban-board.tsx', import.meta.url),
   'utf8',
 );
+const cardSource = fs.readFileSync(
+  new URL('../src/components/board/kanban-card.tsx', import.meta.url),
+  'utf8',
+);
 const leftPanelSource = fs.readFileSync(
   new URL('../src/components/chat/left-panel.tsx', import.meta.url),
   'utf8',
@@ -63,6 +67,12 @@ test('normal Kanban clicks open Peek without replacing the active tab session', 
   assert.match(leftPanelSource, /<SessionPeek[\s\S]*sessionId=\{peekSessionId \?\? peekFileRef!\.sourceSessionId\}/);
 });
 
+test('Project-scoped Peek resolves the Session through the selected Project view', () => {
+  assert.match(peekSource, /const selectedProjectDir = useBoardStore/);
+  assert.match(peekSource, /projectViewDir=\{projectViewDir\}/);
+  assert.match(chatAreaSource, /projectViewDir\?: string \| null/);
+});
+
 test('Session Peek light-dismisses safely and hosts the shared GUI or PTY session surface', () => {
   assert.match(peekSource, /role="dialog"/);
   assert.match(peekSource, /aria-modal="true"/);
@@ -106,7 +116,7 @@ test('PTY sessions use retained Peek ownership without pinning or killing a tab 
 });
 
 test('Peek loads history without mutating the hidden active tab session', () => {
-  assert.match(chatAreaSource, /viewSession\(session, \{ activate: !isPeek \}\)/);
+  assert.match(chatAreaSource, /viewSession\(session, \{ activate: false \}\)/);
   assert.match(navigationSource, /const shouldActivate = options\?\.activate !== false/);
   assert.match(navigationSource, /if \(shouldActivate\) sessionStore\.setActiveSession\(session\.id\)/);
 });

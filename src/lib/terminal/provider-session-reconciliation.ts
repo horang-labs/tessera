@@ -34,7 +34,7 @@ export type TerminalProviderSessionReconciliationResult = {
  */
 function childTitle(source: dbSessions.SessionRow, origin: TerminalProviderSessionOrigin): string {
   if (origin === 'reset') {
-    return generateDefaultTitle(dbSessions.countActiveSessionsInProject(source.project_id));
+    return generateDefaultTitle(dbSessions.countActiveSessionsInOriginProject(source.project_id));
   }
   const suffix = ' (Fork)';
   return `${source.title.slice(0, Math.max(1, 100 - suffix.length))}${suffix}`;

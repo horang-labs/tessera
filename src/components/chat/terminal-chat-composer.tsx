@@ -1,12 +1,13 @@
 'use client';
 
 import { memo, useCallback, useRef, useState } from 'react';
-import { ArrowUp, Loader2, Lock, SquareTerminal } from 'lucide-react';
+import { ArrowUp, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/stores/notification-store';
 import {
+  selectCanEscapeInterruptTerminal,
   selectIsTerminalAwaitingInput,
   selectIsTerminalTurnProcessing,
   useTerminalSessionStore,
@@ -20,6 +21,33 @@ import {
 } from '@/lib/chat/composer-arrow-scroll';
 import { MessageRowShell } from './message-row-shell';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
+
+export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
+  onCancel,
+}: {
+  onCancel: () => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <button
+      type="button"
+      onClick={onCancel}
+      title={t('chat.cancelButton')}
+      aria-label={t('chat.cancelButton')}
+      className={cn(
+        'flex shrink-0 items-center justify-center gap-1.5 rounded-md bg-(--error) px-2 py-1',
+        'text-white transition-colors hover:bg-(--destructive-hover)',
+        PHONE_TOUCH_TARGET,
+      )}
+      data-testid="terminal-chat-cancel"
+    >
+      <Square className="h-3 w-3 fill-current" />
+      <span className="sm:hidden">ESC</span>
+      <span className="hidden sm:inline">{t('chat.cancelButton')}</span>
+    </button>
+  );
+});
 
 /**
  * Composer for the chat overlay of a PTY session.
@@ -36,13 +64,16 @@ import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 export const TerminalChatComposer = memo(function TerminalChatComposer({
   sessionId,
   isSinglePanel = false,
+  onInterrupt,
 }: {
   sessionId: string;
   isSinglePanel?: boolean;
+  onInterrupt: () => void;
 }) {
   const { t } = useI18n();
   const isProcessing = useTerminalSessionStore(selectIsTerminalTurnProcessing(sessionId));
   const isAwaitingInput = useTerminalSessionStore(selectIsTerminalAwaitingInput(sessionId));
+  const canEscapeInterrupt = useTerminalSessionStore(selectCanEscapeInterruptTerminal(sessionId));
   const setMode = useTerminalViewModeStore((state) => state.setMode);
 
   const [value, setValue] = useState('');
@@ -156,7 +187,9 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 placeholder={
                   isBlocked
                     ? t('chat.terminalComposerBlocked')
-                    : t('chat.terminalComposerPlaceholder')
+                    : isProcessing && canEscapeInterrupt
+                      ? t('chat.cancelHint')
+                      : t('chat.terminalComposerPlaceholder')
                 }
                 className={cn(
                   'max-h-40 min-h-[1.75rem] flex-1 resize-none overflow-y-auto bg-transparent',
@@ -193,21 +226,26 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 {status.icon}
                 <span>{status.label}</span>
               </span>
-              <button
-                type="button"
-                onClick={() => setMode(sessionId, 'terminal')}
-                title={t('chat.viewAsTerminal')}
-                className={cn(
-                  'ml-auto flex items-center gap-1.5 text-(--text-muted) transition-colors hover:text-(--accent)',
-                  // The label is hidden below `sm`, which left a bare 14px
-                  // glyph as the only way back to the terminal (#259).
-                  PHONE_TOUCH_TARGET,
-                )}
-                data-testid="terminal-chat-back-to-terminal"
-              >
-                <SquareTerminal className="h-3.5 w-3.5 shrink-0" />
-                <span className="hidden sm:inline">{t('chat.terminalComposerHint')}</span>
-              </button>
+              <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                {isProcessing && canEscapeInterrupt
+                  ? <TerminalChatCancelButton onCancel={onInterrupt} />
+                  : null}
+                <button
+                  type="button"
+                  onClick={() => setMode(sessionId, 'terminal')}
+                  title={t('chat.viewAsTerminal')}
+                  className={cn(
+                    'flex items-center gap-1.5 text-(--text-muted) transition-colors hover:text-(--accent)',
+                    // The label is hidden below `sm`, which left a bare 14px
+                    // glyph as the only way back to the terminal (#259).
+                    PHONE_TOUCH_TARGET,
+                  )}
+                  data-testid="terminal-chat-back-to-terminal"
+                >
+                  <SquareTerminal className="h-3.5 w-3.5 shrink-0" />
+                  <span className="hidden sm:inline">{t('chat.terminalComposerHint')}</span>
+                </button>
+              </div>
             </div>
           </div>
         </MessageRowShell>

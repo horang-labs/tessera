@@ -6,7 +6,9 @@ param(
 
   [string]$TestRoot = (Join-Path $env:LOCALAPPDATA 'TesseraTestInstances'),
 
-  [switch]$RemoveData
+  [switch]$RemoveData,
+
+  [switch]$RemoveBuildArtifacts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,7 +47,9 @@ function Test-PathWithinRoot {
 
 function Wait-RecordedProcessesExit {
   param(
+    [AllowNull()]
     [AllowEmptyCollection()]
+    [AllowNull()]
     [Parameter(Mandatory = $true)][array]$ProcessIds,
     [int]$TimeoutSeconds = 15
   )
@@ -62,7 +66,7 @@ function Wait-RecordedProcessesExit {
   throw "Recorded test processes did not exit in time: $($alive -join ', ')"
 }
 
-function Remove-TestRootWithRetry {
+function Remove-PathWithRetry {
   param([Parameter(Mandatory = $true)][string]$Path)
 
   for ($attempt = 1; $attempt -le 20; $attempt += 1) {
@@ -151,8 +155,62 @@ foreach ($instance in @($manifest.instances)) {
       throw "Refusing to remove data outside the test root: $($instance.instanceRoot)"
     }
     if (Test-Path -LiteralPath $instance.instanceRoot) {
-      Remove-TestRootWithRetry -Path $instance.instanceRoot
+      Remove-PathWithRetry -Path $instance.instanceRoot
     }
+  }
+}
+
+$removedBuildArtifacts = @()
+if ($RemoveBuildArtifacts) {
+  $downloads = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads'
+  $executable = [IO.Path]::GetFullPath([string]$manifest.executable)
+  $appDirectory = Split-Path -Parent $executable
+  $appDirectoryName = Split-Path -Leaf $appDirectory
+
+  if ((Split-Path -Leaf $executable) -ne 'Tessera.exe') {
+    throw "Refusing to remove build artifacts for an unexpected executable: $executable"
+  }
+  if (-not $appDirectoryName.EndsWith('-unpacked', [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove a build directory without the -unpacked suffix: $appDirectory"
+  }
+  if (-not (Test-PathWithinRoot -Path $appDirectory -Root $downloads)) {
+    throw "Refusing to remove a build directory outside Downloads: $appDirectory"
+  }
+  if ([IO.Path]::GetFullPath((Split-Path -Parent $appDirectory)).TrimEnd('\') -ne
+      [IO.Path]::GetFullPath($downloads).TrimEnd('\')) {
+    throw "Refusing to remove a nested build directory: $appDirectory"
+  }
+
+  if ($manifest.portableArtifact) {
+    $portableArtifact = [IO.Path]::GetFullPath([string]$manifest.portableArtifact)
+  } else {
+    # Compatibility for manifests written before portableArtifact was recorded.
+    $portableBaseName = $appDirectoryName.Substring(0, $appDirectoryName.Length - ('-unpacked').Length)
+    if (-not $portableBaseName) {
+      throw "Refusing to remove build artifacts without a portable base name: $appDirectory"
+    }
+    $portableArtifact = Join-Path $downloads "$portableBaseName.exe"
+  }
+  if (-not (Test-PathWithinRoot -Path $portableArtifact -Root $downloads)) {
+    throw "Refusing to remove a portable artifact outside Downloads: $portableArtifact"
+  }
+  if ([IO.Path]::GetFullPath((Split-Path -Parent $portableArtifact)).TrimEnd('\') -ne
+      [IO.Path]::GetFullPath($downloads).TrimEnd('\')) {
+    throw "Refusing to remove a nested portable artifact: $portableArtifact"
+  }
+  if ([IO.Path]::GetExtension($portableArtifact) -ne '.exe') {
+    throw "Refusing to remove a portable artifact without an .exe extension: $portableArtifact"
+  }
+
+  # Permanent deletion is intentional here. Linux trash APIs on /mnt/c move
+  # these large artifacts to C:\.Trash-1000 instead of freeing C:.
+  if (Test-Path -LiteralPath $appDirectory) {
+    Remove-PathWithRetry -Path $appDirectory
+    $removedBuildArtifacts += $appDirectory
+  }
+  if (Test-Path -LiteralPath $portableArtifact) {
+    Remove-PathWithRetry -Path $portableArtifact
+    $removedBuildArtifacts += $portableArtifact
   }
 }
 
@@ -161,5 +219,6 @@ Remove-Item -LiteralPath $manifestPath -Force
   sessionId = $SessionId
   stoppedProcessIds = $stopped
   removedData = [bool]$RemoveData
+  removedBuildArtifacts = $removedBuildArtifacts
   manifestRemoved = -not (Test-Path -LiteralPath $manifestPath)
 } | ConvertTo-Json -Depth 4

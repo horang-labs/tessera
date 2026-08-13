@@ -164,6 +164,9 @@ export interface ChatState {
   // Per-session draft input text (preserved across session switches)
   draftInputs: Map<string, string>;
 
+  // Explicit requests for a mounted composer to replace its local editable text.
+  preparedAgentRequests: Map<string, { revision: number; text: string }>;
+
   // Per-session scroll position (preserved across session switches)
   scrollPositions: Map<string, ScrollPositionSnapshot>;
 
@@ -184,6 +187,8 @@ export interface ChatState {
   // Actions
   isHistoryLoaded: (sessionId: string) => boolean;
   setDraftInput: (sessionId: string, text: string) => void;
+  prepareAgentRequest: (sessionId: string, text: string) => void;
+  consumePreparedAgentRequest: (sessionId: string, revision: number) => void;
   getDraftInput: (sessionId: string) => string;
   getTranslationView: (sessionId: string) => 'original' | 'translation';
   setTranslationView: (sessionId: string, view: 'original' | 'translation') => void;
@@ -334,6 +339,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   promptHistory: new Map(),
   historyLoaded: new Set(),
   draftInputs: new Map(),
+  preparedAgentRequests: new Map(),
   translationView: new Map(),
   messageViewOverride: new Map(),
   translateQueue: new Map(),
@@ -385,6 +391,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updated.delete(sessionId);
       }
       return { draftInputs: updated };
+    }),
+
+  prepareAgentRequest: (sessionId, text) =>
+    set((state) => {
+      const drafts = new Map(state.draftInputs);
+      drafts.set(sessionId, text);
+      const prepared = new Map(state.preparedAgentRequests);
+      prepared.set(sessionId, {
+        revision: (prepared.get(sessionId)?.revision ?? 0) + 1,
+        text,
+      });
+      return { draftInputs: drafts, preparedAgentRequests: prepared };
+    }),
+
+  consumePreparedAgentRequest: (sessionId, revision) =>
+    set((state) => {
+      if (state.preparedAgentRequests.get(sessionId)?.revision !== revision) return {};
+      const prepared = new Map(state.preparedAgentRequests);
+      prepared.delete(sessionId);
+      return { preparedAgentRequests: prepared };
     }),
 
   getDraftInput: (sessionId) => get().draftInputs.get(sessionId) || '',
@@ -798,6 +824,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const clearedDrafts = new Map(state.draftInputs);
       clearedDrafts.delete(sessionId);
+      const clearedPreparedAgentRequests = new Map(state.preparedAgentRequests);
+      clearedPreparedAgentRequests.delete(sessionId);
 
       const clearedScrollPositions = new Map(state.scrollPositions);
       clearedScrollPositions.delete(sessionId);
@@ -831,6 +859,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeInteractivePrompt: clearedPrompts,
         promptHistory: clearedPromptHistory,
         draftInputs: clearedDrafts,
+        preparedAgentRequests: clearedPreparedAgentRequests,
         scrollPositions: clearedScrollPositions,
         todoSnapshots: clearedTodoSnapshots,
         compactingStartedAt: clearedCompacting,

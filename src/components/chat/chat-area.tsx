@@ -1,9 +1,10 @@
 "use client";
 
-import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionNavigation } from "@/hooks/use-session-navigation";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { useWindowedMessages } from "@/hooks/use-windowed-messages";
 import { useMessageSearch } from "@/hooks/use-message-search";
 import { groupMessages } from "@/lib/chat/group-messages";
@@ -28,14 +29,18 @@ import { supportsTerminalChatView } from "@/lib/terminal/terminal-chat-view-supp
 import { cancelTerminalChatRefresh } from "@/lib/chat/terminal-chat-live-refresh";
 import { useTerminalViewMode } from "@/hooks/use-terminal-view-mode";
 import {
+  selectCanEscapeInterruptTerminal,
   selectIsTerminalTurnProcessing,
   useTerminalSessionStore,
 } from "@/stores/terminal-session-store";
+import { sendTerminalChatInterrupt } from '@/lib/terminal/terminal-chat-send';
+import { toast } from '@/stores/notification-store';
 
 interface ChatAreaProps {
   sessionId: string;
   panelId: string;
   presentation?: 'panel' | 'peek';
+  projectViewDir?: string | null;
 }
 
 const PEEK_LOADING_DELAY_MS = 300;
@@ -44,6 +49,7 @@ export const ChatArea = memo(function ChatArea({
   sessionId,
   panelId,
   presentation = 'panel',
+  projectViewDir: explicitProjectViewDir,
 }: ChatAreaProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
@@ -64,6 +70,12 @@ export const ChatArea = memo(function ChatArea({
   const isPreviewTab = useTabStore(
     (state) => !isPeek && (state.tabs.find((tab) => tab.id === tabId)?.isPreview ?? false),
   );
+  const tabProjectViewDir = useTabStore(
+    (state) => state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null,
+  );
+  const projectViewDir = explicitProjectViewDir === undefined
+    ? tabProjectViewDir
+    : explicitProjectViewDir;
   const { windowedMessages, hasMore, loadMore, isLoadingMore } =
     useWindowedMessages(sessionId);
   const isSinglePanel = usePanelStore(
@@ -71,7 +83,7 @@ export const ChatArea = memo(function ChatArea({
       || Object.keys(selectActiveTab(state)?.panels ?? EMPTY_PANELS).length <= 1,
   );
 
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useProjectViewSession(sessionId, projectViewDir);
   // 생성 중(낙관적 temp 세션): 서버 세션이 아직 없어서 PTY attach가 불가능하다 —
   // TerminalPanel을 붙이면 존재하지 않는 세션으로 terminal_create가 나가 에러가 뜬다.
   // 전역 creatingSessionId 슬롯은 동시 생성 시 덮여서 믿을 수 없다 — temp- 접두가
@@ -103,7 +115,9 @@ export const ChatArea = memo(function ChatArea({
       return;
     }
     autoLoadedSessionIdRef.current = session.id;
-    void viewSession(session, { activate: !isPeek });
+    // Mounting a panel is passive. Its containing tab/panel action already owns
+    // selection, so a delayed history request must never activate this surface.
+    void viewSession(session, { activate: false });
   }, [session, historyLoaded, isPeek, viewSession]);
   const groupedMessagesForSearch = useMemo(
     () => groupMessages(windowedMessages),
@@ -132,6 +146,9 @@ export const ChatArea = memo(function ChatArea({
   const isTerminalTurnProcessing = useTerminalSessionStore(
     selectIsTerminalTurnProcessing(sessionId),
   );
+  const canEscapeInterrupt = useTerminalSessionStore(
+    selectCanEscapeInterruptTerminal(sessionId),
+  );
   const canToggleTerminalChatView = isTerminalSession && supportsTerminalChatView(sessionProvider);
   const isTerminalChatView = canToggleTerminalChatView
     && !isPendingCreation
@@ -139,6 +156,7 @@ export const ChatArea = memo(function ChatArea({
   // 터미널에서 대화가 계속 진행되므로, 채팅으로 넘어올 때마다 transcript를 다시 읽는다.
   // 전환 순간에만 걸리도록 ref로 가드 — forceReload가 매 렌더 반복되면 안 된다.
   const reloadedChatViewKeyRef = useRef<string | null>(null);
+  const terminalChatOverlayRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!session || !isTerminalChatView) {
       if (!isTerminalChatView) {
@@ -152,6 +170,32 @@ export const ChatArea = memo(function ChatArea({
     reloadedChatViewKeyRef.current = sessionId;
     void viewSession(session, { forceReload: true, activate: false });
   }, [session, sessionId, isTerminalChatView, viewSession]);
+
+  const interruptTerminalChat = useCallback(() => {
+    if (!sendTerminalChatInterrupt(sessionId)) {
+      toast.error(t('chat.terminalSendFailed'));
+      return;
+    }
+    requestAnimationFrame(() => {
+      terminalChatOverlayRef.current
+        ?.querySelector<HTMLTextAreaElement>('[data-testid="terminal-chat-composer-input"]')
+        ?.focus();
+    });
+  }, [sessionId, t]);
+
+  const handleTerminalChatKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.key !== 'Escape'
+        || event.nativeEvent.isComposing
+        || !isTerminalTurnProcessing
+        || !canEscapeInterrupt
+      ) return;
+      event.preventDefault();
+      interruptTerminalChat();
+    },
+    [canEscapeInterrupt, interruptTerminalChat, isTerminalTurnProcessing],
+  );
 
   if (!sessionId) {
     return (
@@ -179,7 +223,7 @@ export const ChatArea = memo(function ChatArea({
           <Button
             onClick={() => {
               clearError(sessionId);
-              viewSession(session, { activate: !isPeek });
+              viewSession(session, { activate: false });
             }}
           >
             {t("chat.retry")}
@@ -220,6 +264,7 @@ export const ChatArea = memo(function ChatArea({
         <Header
           sessionId={sessionId}
           panelId={panelId}
+          projectViewDir={projectViewDir}
           isSinglePanel={isSinglePanel}
           search={{
             isOpen: messageSearch.isSearchOpen,
@@ -266,6 +311,7 @@ export const ChatArea = memo(function ChatArea({
             messages={windowedMessages}
             isLoading={isLoading}
             sessionId={sessionId}
+            projectViewDir={projectViewDir}
             hasMore={hasMore}
             onLoadMore={loadMore}
             isLoadingMore={isLoadingMore}
@@ -282,8 +328,10 @@ export const ChatArea = memo(function ChatArea({
         {/* PTY 위에 덮는 읽기 전용 대화. 밑의 TerminalPanel은 계속 살아 있다. */}
         {isTerminalChatView && (
           <div
+            ref={terminalChatOverlayRef}
             className="absolute inset-0 z-10 flex flex-col bg-(--chat-bg)"
             data-testid="terminal-chat-overlay"
+            onKeyDownCapture={handleTerminalChatKeyDown}
           >
             {/* MessageList는 h-full이라 높이를 부모가 확정해줘야 한다. flex 아이템의
                 기본 min-height:auto 때문에 min-h-0이 없으면 목록이 자연 높이로
@@ -293,6 +341,7 @@ export const ChatArea = memo(function ChatArea({
                 messages={windowedMessages}
                 isLoading={isLoading || isHistoryLoading}
                 sessionId={sessionId}
+                projectViewDir={projectViewDir}
                 hasMore={hasMore}
                 onLoadMore={loadMore}
                 isLoadingMore={isLoadingMore}
@@ -307,7 +356,11 @@ export const ChatArea = memo(function ChatArea({
                 }}
               />
             </div>
-            <TerminalChatComposer sessionId={sessionId} isSinglePanel={isSinglePanel} />
+            <TerminalChatComposer
+              sessionId={sessionId}
+              isSinglePanel={isSinglePanel}
+              onInterrupt={interruptTerminalChat}
+            />
           </div>
         )}
       </div>
@@ -325,6 +378,7 @@ export const ChatArea = memo(function ChatArea({
 
           <MessageInput
             sessionId={sessionId}
+            projectViewDir={projectViewDir}
             isDisabled={isInputDisabled}
             isReadOnly={isReadOnly}
             isStopped={isStopped}

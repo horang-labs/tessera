@@ -9,8 +9,6 @@ import {
   CircleStop,
   ExternalLink,
   FolderGit2,
-  FolderInput,
-  GitBranch,
   MessageSquare,
   Pencil,
   Plus,
@@ -23,6 +21,14 @@ import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useInlineRename } from '@/hooks/use-inline-rename';
 import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
 import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
+import {
+  useAnyProjectViewSessionUnread,
+  useProjectViewSessionUnread,
+} from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { cn } from '@/lib/utils';
@@ -37,6 +43,8 @@ import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
+import { usePanelStore } from '@/stores/panel-store';
+import { useTabStore } from '@/stores/tab-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
@@ -63,7 +71,16 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  SIDEBAR_TREE_LEADING_SLOT,
+  SIDEBAR_TREE_ROW_GUTTER,
+} from './sidebar-tree-layout';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { resolvePreparationBadge } from '@/lib/projects/preparation-status-policy';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -141,8 +158,18 @@ export function CollectionHeaderMenu({
       }
     }
 
-    document.addEventListener('mousedown', handleMouseDown, true);
-    return () => document.removeEventListener('mousedown', handleMouseDown, true);
+    // A phone tap synthesises pointerdown → mousedown → mouseup → click all in
+    // one tick. If we register on the leading edge of that sequence, the very
+    // click that just opened the menu is also seen as an outside mousedown and
+    // the menu snaps shut before the user ever sees it. Deferring by a frame
+    // lets the opening cycle drain first.
+    const raf = window.requestAnimationFrame(() => {
+      document.addEventListener('mousedown', handleMouseDown, true);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      document.removeEventListener('mousedown', handleMouseDown, true);
+    };
   }, [open]);
 
   const handleToggle = useCallback(
@@ -230,6 +257,7 @@ export function CollectionHeaderMenu({
 
 export function CollectionContextMenu({
   menu,
+  projectViewId,
   collections,
   onClose,
   onRename,
@@ -237,12 +265,12 @@ export function CollectionContextMenu({
   onArchive,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onStopProcess,
   onStatusChange,
   onRunPreparation,
 }: {
   menu: ContextMenuState;
+  projectViewId: string;
   collections?: Collection[];
   onClose: () => void;
   onRename?: () => void;
@@ -250,7 +278,6 @@ export function CollectionContextMenu({
   onArchive?: () => void;
   onOpenInNewTab?: () => void;
   onGenerateTitle?: () => void;
-  onMoveToProject?: () => void;
   onStopProcess?: () => void;
   onStatusChange?: (status: string) => void;
   /** Runs the project's preparation script again on this task's worktree. */
@@ -324,9 +351,9 @@ export function CollectionContextMenu({
         return;
       }
 
-      await useTaskStore.getState().updateTask(menu.targetId, { collectionId });
+      await useTaskStore.getState().updateTask(menu.targetId, { collectionId }, projectViewId);
     },
-    [menu, onClose],
+    [menu, onClose, projectViewId],
   );
 
   const menuItemClass = cn(
@@ -425,9 +452,17 @@ export function CollectionContextMenu({
         )}
 
         {onArchive && (
-          <button className={menuItemClass} onClick={() => { onArchive(); onClose(); }}>
+          <button
+            className={menuItemClass}
+            onClick={() => { onArchive(); onClose(); }}
+            data-testid={menu.type === 'task' && !menu.isSubSession
+              ? 'ctx-archive-worktree-task'
+              : 'ctx-archive-session'}
+          >
             <Archive className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-            <span>Archive</span>
+            <span>{menu.type === 'task' && !menu.isSubSession
+              ? 'Archive worktree task'
+              : 'Archive session'}</span>
           </button>
         )}
 
@@ -435,21 +470,6 @@ export function CollectionContextMenu({
           <button className={menuItemClass} onClick={() => { onOpenInNewTab(); onClose(); }}>
             <ExternalLink className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>Open in New Tab</span>
-          </button>
-        )}
-
-        {onMoveToProject && (
-          <button
-            className={cn(menuItemClass, menu.isRunning && 'pointer-events-none opacity-40')}
-            onClick={() => {
-              if (!menu.isRunning) {
-                onMoveToProject();
-                onClose();
-              }
-            }}
-          >
-            <FolderInput className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-            <span>Move to Project</span>
           </button>
         )}
 
@@ -476,6 +496,7 @@ export function CollectionContextMenu({
 
 function SubSessionRow({
   sess,
+  task,
   activeSessionId,
   collectionId,
   onSessionClick,
@@ -489,6 +510,7 @@ function SubSessionRow({
   reorder,
 }: {
   sess: TaskSession;
+  task: TaskEntity;
   activeSessionId: string | null;
   collectionId: string | null;
   reorder?: ReturnType<typeof useSubSessionReorder>;
@@ -508,36 +530,20 @@ function SubSessionRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
-  const liveSession = useSessionStore((state) => {
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return session;
-    }
-    return undefined;
-  });
+  const liveSession = useProjectViewSession(sess.id, task.projectViewId);
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? sess.kind,
     isRunning: liveSession?.isRunning ?? sess.isRunning,
   });
-  const hasUnread = useSessionStore((state) => {
-    if (isActive) return false;
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return (session.unreadCount ?? 0) > 0;
-    }
-    return false;
-  });
+  const hasCanonicalUnread = useProjectViewSessionUnread(sess.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const asUnifiedSession = useCallback(
-    () =>
-      ({
-        id: sess.id,
-        title: sess.title,
-        lastModified: sess.lastModified,
-        isRunning: liveSession?.isRunning ?? sess.isRunning,
-        kind: liveSession?.kind ?? sess.kind,
-      }) as UnifiedSession,
-    [liveSession, sess],
+    () => toLinkedWorktreeSession(task, sess, liveSession),
+    [liveSession, sess, task],
   );
+  const openSession = useCallback(() => {
+    return asUnifiedSession();
+  }, [asUnifiedSession]);
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     event.preventDefault();
@@ -602,12 +608,12 @@ function SubSessionRow({
       onClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
-        onSessionClick(asUnifiedSession(), event);
+        onSessionClick(openSession(), event);
       }}
       onDoubleClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
-        onSessionDoubleClick?.(asUnifiedSession());
+        onSessionDoubleClick?.(openSession());
       }}
       onContextMenu={(event) => {
         if (isRenaming) return;
@@ -676,12 +682,21 @@ function SubSessionRow({
         <span className="min-w-0 flex-1 truncate pr-8">{sess.title}</span>
       )}
 
-      {isHovered && !isRenaming && (
+      {!isRenaming && (
+        // Row actions.
+        // Desktop: hover-reveal — stop / archive / kebab appear together.
+        // Phone: stop and archive collapse into the kebab menu (which already
+        // carries them via onContextMenu), and the kebab itself is always
+        // visible. Hover on touch is unreliable and, when it does fire on tap,
+        // races the row's own onClick that opens the session.
         <div className="flex shrink-0 items-center gap-0.5">
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               onClick={handleStopProcess}
-              className="rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+              className={cn(
+                'max-sm:hidden rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90',
+                isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none',
+              )}
               testId={`collection-subsession-quick-stop-${sess.id}`}
             />
           )}
@@ -694,10 +709,11 @@ function SubSessionRow({
                 handleArchiveClick();
               }}
               className={cn(
-                'rounded p-0.5 transition-all duration-150',
+                'max-sm:hidden rounded p-0.5 transition-all duration-150',
                 isConfirmingArchive
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
+                isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none',
               )}
               testId={`collection-subsession-quick-archive-${sess.id}`}
               confirmTitle="Click again to archive"
@@ -711,7 +727,12 @@ function SubSessionRow({
               onContextMenu?.(event, 'chat', sess.id, collectionId, true);
             }}
             size="compact"
-            className="shrink-0 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)"
+            className={cn(
+              'shrink-0 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
+              // Always available on phone; desktop keeps the hover-reveal.
+              'max-sm:opacity-100',
+              isHovered ? 'sm:opacity-100' : 'sm:opacity-0 sm:pointer-events-none',
+            )}
           />
         </div>
       )}
@@ -773,50 +794,65 @@ export function TaskItemRow({
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
-  const isMultiSession = task.sessions.length > 1;
+  const density = getLinkedWorktreeDensity(task.sessions);
+  const isExpanded = density === 'expanded';
   const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
-  const isTaskActive = !isMultiSession && task.sessions.length === 1 && task.sessions[0].id === activeSessionId;
+  const activeTabId = useTabStore((state) => state.activeTabId);
+  const activeWorktreeId = usePanelStore((state) => {
+    const tab = state.tabPanels[activeTabId];
+    return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
+  });
+  const peekSelection = useWorkspacePeekStore((state) =>
+    state.target === null
+      ? 'none'
+      : state.target.worktreeId === task.worktreeId
+        ? 'self'
+        : 'other'
+  );
+  const isTaskActive = peekSelection !== 'none'
+    ? peekSelection === 'self' && density !== 'composite'
+    : density === 'composite'
+      ? task.sessions[0]?.id === activeSessionId
+      : Boolean(task.worktreeId && task.worktreeId === activeWorktreeId);
   const isPending = task.isPending === true;
+  const hasPreparationBadge = resolvePreparationBadge(
+    task.preparationStatus ?? 'never_run',
+  ) !== null;
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
     primarySessionId ? state.generatingTitleIds.has(primarySessionId) : false,
   );
   const isSelected = useSelectionStore((state) =>
-    primarySessionId ? state.selectedIds.has(primarySessionId) : false,
+    density === 'composite' && primarySessionId
+      ? state.selectedIds.has(primarySessionId)
+      : false,
   );
   const hoverActionFadeStyle = getSidebarHoverActionFadeStyle(
     getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
   );
   const taskSessionIds = task.sessions.map((session) => session.id);
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return resolveSessionRuntimePresentation(session).showRunning;
-      }
-      const snapshot = task.sessions.find((session) => session.id === id);
-      return snapshot
-        ? resolveSessionRuntimePresentation(snapshot).showRunning
-        : false;
-    }),
+  const resolvedTaskSessions = useProjectViewSessions(taskSessionIds, task.projectViewId);
+  const resolvedTaskSessionsById = new Map(
+    resolvedTaskSessions.map((session) => [session.id, session]),
   );
+  const hasVisibleRuntimeSession = taskSessionIds.some((id) => {
+    const snapshot = task.sessions.find((session) => session.id === id);
+    const session = resolvedTaskSessionsById.get(id) ?? snapshot;
+    return session
+      ? resolveSessionRuntimePresentation(session).showRunning
+      : false;
+  });
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
-  const hasUnreadSession = useSessionStore((state) =>
-    !isTaskActive &&
-    taskSessionIds.some((id) => {
-      if (id === activeSessionId) return false;
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return (session.unreadCount ?? 0) > 0;
-      }
-      return false;
-    }),
+  const hasCanonicalUnreadSession = useAnyProjectViewSessionUnread(
+    taskSessionIds,
+    activeSessionId,
   );
+  const hasUnreadSession = !isTaskActive && hasCanonicalUnreadSession;
   const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasVisibleRuntimeSession;
   const {
     inputRef: renameInputRef,
@@ -832,7 +868,9 @@ export function TaskItemRow({
     onRenameComplete,
   });
   const canCollectionDnd = !disableDnd && !isRenaming && !isPending;
-  const canPanelSessionDnd = Boolean(allowPanelSessionDnd && primarySessionId && !isRenaming && !isPending);
+  const canPanelSessionDnd = Boolean(
+    density === 'composite' && allowPanelSessionDnd && primarySessionId && !isRenaming && !isPending,
+  );
   const canDrag = canCollectionDnd || canPanelSessionDnd;
   const titleFadeStyle: React.CSSProperties | undefined = isHovered && !isRenaming
     ? {
@@ -841,27 +879,35 @@ export function TaskItemRow({
       }
     : undefined;
 
-  const handleArchiveTask = useCallback(() => {
+  const archivesCompositeSession = density === 'composite' && Boolean(primarySessionId);
+  const handleArchive = useCallback(() => {
+    if (archivesCompositeSession && primarySessionId) {
+      onSessionArchive?.(primarySessionId);
+      return;
+    }
     void useTaskStore.getState().toggleTaskArchive(task.id, true);
-  }, [task.id]);
+  }, [archivesCompositeSession, onSessionArchive, primarySessionId, task.id]);
 
   const {
     isConfirmingArchive,
     handleArchiveClick,
     resetArchiveConfirm,
-  } = useArchiveConfirm(handleArchiveTask);
+  } = useArchiveConfirm(handleArchive);
 
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     event.preventDefault();
 
     for (const session of task.sessions) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onStopProcess?.(session.id);
       }
     }
-  }, [onStopProcess, task.sessions]);
+  }, [onStopProcess, task.projectViewId, task.sessions]);
 
   const handleDragStart = useCallback((event: React.DragEvent) => {
     if (disableDnd) {
@@ -874,39 +920,41 @@ export function TaskItemRow({
     onDragStart(event);
   }, [disableDnd, onDragStart, primarySessionId]);
 
-  const handleClick = useCallback(
-    (event: React.MouseEvent) => {
-      if (isRenaming) return;
-      const session = task.sessions[0];
-      if (!session) return;
-      onSessionClick(
-        {
-          id: session.id,
-          title: session.title,
-          lastModified: session.lastModified,
-          isRunning: session.isRunning,
-          kind: session.kind,
-        } as UnifiedSession,
-        event,
-      );
-    },
-    [isRenaming, onSessionClick, task.sessions],
-  );
+  const selectWorktree = useCallback(() => {
+    if (!task.worktreeId) return;
+    stepAsidePhoneSidebar();
+    useWorkspacePeekStore.getState().openWorktree(task.worktreeId, task.projectViewId);
+  }, [task.projectViewId, task.worktreeId]);
 
-  const handleDoubleClick = useCallback(() => {
-    if (isRenaming) return;
+  const openPrimarySession = useCallback(async (
+    open: (session: UnifiedSession) => void | Promise<void>,
+  ) => {
     const session = task.sessions[0];
     if (!session) return;
-    onSessionDoubleClick?.(
-      {
-        id: session.id,
-        title: session.title,
-        lastModified: session.lastModified,
-        isRunning: session.isRunning,
-        kind: session.kind,
-      } as UnifiedSession,
-    );
-  }, [isRenaming, onSessionDoubleClick, task.sessions]);
+    const unifiedSession = toLinkedWorktreeSession(task, session);
+    await open(unifiedSession);
+  }, [task]);
+
+  const handleClick = useCallback(
+    async (event: React.MouseEvent) => {
+      if (isRenaming) return;
+      if (density !== 'composite') {
+        selectWorktree();
+        return;
+      }
+      await openPrimarySession((session) => onSessionClick(session, event));
+    },
+    [density, isRenaming, onSessionClick, openPrimarySession, selectWorktree],
+  );
+
+  const handleDoubleClick = useCallback(async () => {
+    if (isRenaming) return;
+    if (density !== 'composite') {
+      selectWorktree();
+      return;
+    }
+    await openPrimarySession((session) => onSessionDoubleClick?.(session));
+  }, [density, isRenaming, onSessionDoubleClick, openPrimarySession, selectWorktree]);
 
   // Worktree mark (git branch icon + PR-mismatch / missing badges). Rendered on
   // the leading side when provider icons are off (it's the task's primary mark),
@@ -915,11 +963,13 @@ export function TaskItemRow({
   // status dot; only the leading placement carries it (trailing gets it on the
   // provider mark instead).
   const renderWorktreeMark = (showStatus: boolean, className?: string, Icon: LucideIcon = FolderGit2) => {
-    if (!task.worktreeBranch) return null;
+    if (!task.worktreeId && !task.worktreeBranch) return null;
+    const branchLabel = task.worktreeBranch ?? 'unknown';
     return (
       <span
-        title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
+        title={task.worktreeMissing ? t('task.worktree.missing', { branch: branchLabel }) : branchLabel}
         className={cn('relative flex shrink-0 items-center', className)}
+        data-testid={`collection-task-worktree-icon-${task.id}`}
       >
         <Icon
           className={cn(
@@ -985,7 +1035,8 @@ export function TaskItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/task relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-all duration-150',
+          'group/task relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150',
+          SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1005,10 +1056,19 @@ export function TaskItemRow({
           onContextMenu(event, 'task', task.id, task.collectionId ?? null);
         }}
         data-session-id={task.sessions[0]?.id}
+        data-worktree-id={task.worktreeId}
+        data-linked-worktree-density={density}
+        aria-current={isTaskActive ? 'true' : undefined}
         data-testid={`collection-task-${task.id}`}
       >
-        <span className="flex shrink-0 items-center">
-          {showProviderIcons ? (
+        {/* Pending, preparation, and ready states share one slot so the title stays put. */}
+        <span className={SIDEBAR_TREE_LEADING_SLOT}>
+          {hasPreparationBadge ? (
+            <TaskPreparationBadge
+              status={task.preparationStatus}
+              presentation="icon"
+            />
+          ) : showProviderIcons && primarySessionId ? (
             <span className="relative flex shrink-0 items-center">
               <ProviderLogoMark
                 providerId={task.sessions[0]?.provider}
@@ -1026,7 +1086,7 @@ export function TaskItemRow({
                 surface="sidebar"
               />
             </span>
-          ) : task.worktreeBranch ? (
+          ) : task.worktreeId || task.worktreeBranch ? (
             renderWorktreeMark(true)
           ) : hasTaskStatus ? (
             <span className="relative flex w-3.5 shrink-0 items-center justify-center">
@@ -1042,13 +1102,6 @@ export function TaskItemRow({
             </span>
           ) : null}
         </span>
-
-        {/* Left of the title, where the hover actions on the trailing edge can
-            never cover it — a preparation failure has to stay reachable. */}
-        <TaskPreparationBadge
-          status={task.preparationStatus}
-          presentation="icon"
-        />
 
         <div className="min-w-0 flex-1">
           {isRenaming ? (
@@ -1089,27 +1142,35 @@ export function TaskItemRow({
             )}
           >
             <DiffStatsBadge stats={task.diffStats} />
-            {showProviderIcons && renderWorktreeMark(false, undefined, GitBranch)}
+            {showProviderIcons && renderWorktreeMark(false)}
           </span>
         )}
 
         <div
           className={cn(
-            'pointer-events-none absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
+            // Desktop keeps hover-reveal. Phone forces the action rail visible
+            // and pointer-active so the + and kebab are always reachable — hover
+            // on touch is unreliable and, when it fires from a tap, races the
+            // row's own onClick that opens the session. Stop/archive drop into
+            // the kebab menu on phone (see max-sm:hidden below).
+            'absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
             hasVisibleRuntimeSession ? 'w-28' : 'w-24',
-            isHovered && !isRenaming ? 'opacity-100' : 'pointer-events-none opacity-0',
+            'max-sm:opacity-100 max-sm:pointer-events-auto',
+            isHovered && !isRenaming
+              ? 'sm:opacity-100 sm:pointer-events-auto'
+              : 'sm:opacity-0 sm:pointer-events-none',
           )}
         >
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 w-full rounded-r-lg"
+            className="absolute inset-y-0 right-0 w-full rounded-r-lg max-sm:hidden"
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
             {hasVisibleRuntimeSession && onStopProcess && (
               <StopProcessButton
                 onClick={handleStopProcess}
-                className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+                className="max-sm:hidden rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
                 testId={`collection-task-quick-stop-${task.id}`}
               />
             )}
@@ -1121,14 +1182,18 @@ export function TaskItemRow({
                 handleArchiveClick();
               }}
               className={cn(
-                'rounded p-1 transition-all duration-150',
+                'max-sm:hidden rounded p-1 transition-all duration-150',
                 isConfirmingArchive
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
               )}
-              testId={`collection-task-quick-archive-${task.id}`}
-              confirmTitle="Click again to archive task"
-              idleTitle="Archive task"
+              testId={archivesCompositeSession
+                ? `collection-session-quick-archive-${primarySessionId}`
+                : `collection-task-quick-archive-${task.id}`}
+              confirmTitle={archivesCompositeSession
+                ? 'Click again to archive session'
+                : 'Click again to archive worktree task'}
+              idleTitle={archivesCompositeSession ? 'Archive session' : 'Archive worktree task'}
             />
             <button
               ref={addButtonRef}
@@ -1162,7 +1227,7 @@ export function TaskItemRow({
         </div>
       </div>
 
-      {isMultiSession && (
+      {isExpanded && (
         <div
           className="relative ml-[30px] pl-3"
           onDragOver={(event) => {
@@ -1184,6 +1249,7 @@ export function TaskItemRow({
             <SubSessionRow
               key={session.id}
               sess={session}
+              task={task}
               activeSessionId={activeSessionId}
               collectionId={task.collectionId ?? null}
               onSessionClick={onSessionClick}
@@ -1275,7 +1341,7 @@ export function ChatItemRow({
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
-  const liveSession = useSessionStore((state) => state.getSession(session.id));
+  const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? session.kind,
@@ -1297,7 +1363,8 @@ export function ChatItemRow({
   // rows already carry the bubble in the leading slot instead.
   const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
   const showTrailingBubble = showProviderIcons;
-  const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
     isConfirmingArchive,
@@ -1359,7 +1426,8 @@ export function ChatItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/chat relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-all duration-150',
+          'group/chat relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150',
+          SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1388,7 +1456,7 @@ export function ChatItemRow({
         data-item-id={session.id}
         data-testid={`collection-chat-${session.id}`}
       >
-        <span className="relative flex shrink-0 items-center">
+        <span className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
           {showProviderIcons ? (
             <ProviderLogoMark
               providerId={session.provider}

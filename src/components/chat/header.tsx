@@ -18,6 +18,10 @@ import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
@@ -36,10 +40,13 @@ import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-presentation';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 
 interface HeaderProps {
   sessionId: string;
   panelId: string;
+  projectViewDir?: string | null;
   isSinglePanel?: boolean;
   search?: {
     isOpen: boolean;
@@ -55,12 +62,16 @@ interface HeaderProps {
   };
 }
 
-export function Header({ sessionId, panelId, isSinglePanel = false, search }: HeaderProps) {
+export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
-  const session = useSessionStore((state) =>
-    state.getSession(sessionId)
-  );
+  const session = useProjectViewSession(sessionId, projectViewDir);
+  const projects = useLoadedProjectViews();
+  const liveWorktreeBranch = session?.worktreeId
+    ? projects
+      .map((project) => project.projectWorktree)
+      .find((worktree) => worktree?.id === session.worktreeId)?.currentBranch ?? null
+    : null;
   const dragSessionId = session?.id ?? null;
   const taskId = session?.taskId;
   const linkedTask = useTaskStore((state) =>
@@ -85,8 +96,6 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
 
   // session-store에서 상태 변경 액션 가져오기
   const updateLinkedTaskWorkflowStatus = useSessionStore((state) => state.updateLinkedTaskWorkflowStatus);
-  const toggleArchive = useSessionStore((state) => state.toggleArchive);
-
   // Unit 4: 패널 닫기 버튼 (REQ-13, BR-CLOSE-004)
   const panels = usePanelStore((state) => selectActiveTab(state)?.panels ?? EMPTY_PANELS);
   const closePanel = usePanelStore((state) => state.closePanel);
@@ -122,9 +131,16 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   };
 
   const handleMoreClick = useCallback((e: React.MouseEvent) => {
+    // stopPropagation keeps the surrounding row from picking the tap up, but it
+    // also means the menu's own outside-click watcher never sees a click on the
+    // trigger. Without a toggle branch here, re-tapping the button while the
+    // menu is open does nothing and the user is stuck reaching for empty space.
     e.stopPropagation();
-    const rect = moreButtonRef.current?.getBoundingClientRect();
-    if (rect) setMenuAnchorRect(rect);
+    setMenuAnchorRect((prev) => {
+      if (prev) return null;
+      const rect = moreButtonRef.current?.getBoundingClientRect();
+      return rect ?? null;
+    });
   }, []);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -146,20 +162,12 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const currentTaskStatus = linkedTask?.workflowStatus ?? session?.workflowStatus;
 
   const handleArchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, true);
-      return;
-    }
-    toggleArchive(sessionId, true);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId);
+  }, [sessionId]);
 
   const handleUnarchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, false);
-      return;
-    }
-    toggleArchive(sessionId, false);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId, false);
+  }, [sessionId]);
 
   const handleDelete = useCallback(() => {
     deleteSession(sessionId);
@@ -217,9 +225,18 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
     wsClient.stopSession(sessionId);
   }, [sessionId]);
 
-  const branchTitle = session?.worktreeBranch
-    ? `${t('chat.branchLabel')}: ${session.worktreeBranch}${
-        session.worktreeDeletedAt ? ` · ${t('chat.worktreeDeleted')}` : ''
+  const branchPresentation = resolveSessionBranchPresentation({
+    worktreeBranch: session?.worktreeBranch,
+    scopeBranch: session?.scopeBranch,
+    liveBranch: liveWorktreeBranch,
+  });
+  const branchTitle = branchPresentation
+    ? `${t(branchPresentation.labelKind === 'scope' ? 'chat.sessionScopeLabel' : 'chat.branchLabel')}: ${branchPresentation.branch}${
+        branchPresentation.liveBranch
+          ? ` · ${t('chat.currentBranchLabel')}: ${branchPresentation.liveBranch}`
+          : ''
+      }${branchPresentation.labelKind === 'scope' ? ` · ${t('chat.presentationScopeHint')}` : ''}${
+        session?.worktreeDeletedAt ? ` · ${t('chat.worktreeDeleted')}` : ''
       }`
     : undefined;
 
@@ -353,7 +370,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                 />
               </span>
 
-              {session.worktreeBranch && (
+              {branchPresentation && (
                 <>
                   <span className="h-3 w-px shrink-0 bg-(--divider) opacity-70 max-sm:hidden" aria-hidden="true" />
                   <span
@@ -361,14 +378,25 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                       'inline-flex min-w-0 max-w-[min(18rem,35vw)] shrink items-center gap-1',
                       'text-[11px] font-normal leading-none text-(--text-secondary)',
                       'max-sm:hidden',
-                      session.worktreeDeletedAt && 'text-(--status-error-text)'
+                      (session.worktreeDeletedAt || branchPresentation.mismatch)
+                        && 'text-(--status-error-text)'
                     )}
                     title={branchTitle}
                     aria-label={branchTitle}
                     data-testid="header-branch-chip"
                   >
                     <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="min-w-0 truncate">{session.worktreeBranch}</span>
+                    <span className="min-w-0 truncate">
+                      {branchPresentation.labelKind === 'scope'
+                        ? `${t('chat.sessionScopeLabel')}: `
+                        : ''}
+                      {branchPresentation.branch}
+                    </span>
+                    {branchPresentation.mismatch && branchPresentation.liveBranch ? (
+                      <span className="min-w-0 truncate">
+                        · {t('chat.currentBranchLabel')}: {branchPresentation.liveBranch}
+                      </span>
+                    ) : null}
                   </span>
                 </>
               )}
@@ -500,7 +528,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
           isArchived={session.archived ?? false}
           isRunning={runtimePresentation.showRunning}
           onStatusChange={isSingleSessionTask ? handleStatusChange : undefined}
-          onArchive={session.taskId ? undefined : handleArchive}
+          onArchive={handleArchive}
           onUnarchive={session.taskId ? undefined : handleUnarchive}
           onRename={handleRenameFromMenu}
           onDelete={handleDelete}

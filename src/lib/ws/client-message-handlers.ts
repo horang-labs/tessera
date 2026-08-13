@@ -33,6 +33,11 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
+import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
+import {
+  projectViewWorkspaceState,
+  refreshProjectViewWorkspaceMutation,
+} from '@/lib/projects/project-view-workspace-state-client';
 import {
   completePendingTerminalRebound,
   getPendingTerminalRebound,
@@ -46,8 +51,8 @@ import {
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
-  providersListCallbacks: Map<string, (providers: ProviderMeta[]) => void>;
-  cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void>;
+  providersListCallbacks: Map<string, (providers: ProviderMeta[] | null) => void>;
+  cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null | undefined) => void>;
   wasReconnect: boolean;
 }
 
@@ -100,6 +105,7 @@ export function handleIncomingServerMessage({
         sessionMode: msg.sessionMode,
         accessMode: msg.accessMode,
       });
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, true);
       return { wasReconnect };
 
     case 'session_closed':
@@ -112,8 +118,12 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'session_stopped': {
-      const stoppedSession = sessionStore.getSession(msg.sessionId);
+      const stoppedSession = projectViewWorkspaceState.resolveSession(msg.sessionId);
+      const stoppedKind = stoppedSession?.kind
+        ?? useTaskStore.getState().getTaskBySessionId(msg.sessionId)?.sessions
+          .find((session) => session.id === msg.sessionId)?.kind;
       sessionStore.markSessionStopped(msg.sessionId);
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, false);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
       // The session was stopped, so any workflow still flagged running can no
       // longer emit its terminal task_notification — settle it instead of
@@ -127,8 +137,8 @@ export function handleIncomingServerMessage({
       // PTY surfaces retire on terminal_session_runtime so a provider session
       // rebound can transfer the existing panel first. GUI sessions have no
       // later runtime event, so stopping one must retire its surface here.
-      if (stoppedSession && stoppedSession.kind !== 'terminal') {
-        useTabStore.getState().retireSessionSurface(msg.sessionId);
+      if (stoppedKind && stoppedKind !== 'terminal') {
+        retireProjectViewSessionSurfaces(msg.sessionId);
       }
       return { wasReconnect };
     }
@@ -193,6 +203,7 @@ export function handleIncomingServerMessage({
 
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, msg.running);
       if (msg.running) {
         removePendingTerminalReboundSource(msg.terminalId, msg.sessionId);
         useTerminalSessionStore.getState().markRuntimeStarted(msg.sessionId);
@@ -240,17 +251,17 @@ export function handleIncomingServerMessage({
           useTerminalSessionStore.getState().markRuntimeStopped(sessionId);
         }
       }
-      for (const project of sessionStore.projects) {
-        for (const session of project.sessions) {
-          // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
-          // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
-          if (session.id.startsWith('temp-')) continue;
-          if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
-            useTerminalSessionStore.getState().markRuntimeStopped(session.id);
-            if (isPendingTerminalReboundSource(session.id)) continue;
-            retireStoppedTerminalSessionSurface(session.id);
-          }
-        }
+      for (const session of projectViewWorkspaceState.getCanonicalSessions()) {
+        // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
+        // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
+        if (session.id.startsWith('temp-')) continue;
+        if (session.kind !== 'terminal') continue;
+        const isActive = activeTerminalIds.has(session.id);
+        useTaskStore.getState().setLinkedSessionRunning(session.id, isActive);
+        if (isActive) continue;
+        useTerminalSessionStore.getState().markRuntimeStopped(session.id);
+        if (isPendingTerminalReboundSource(session.id)) continue;
+        retireStoppedTerminalSessionSurface(session.id);
       }
       return { wasReconnect };
     }
@@ -276,11 +287,14 @@ export function handleIncomingServerMessage({
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
       if (errRequestId && providersListCallbacks.has(errRequestId)) {
-        providersListCallbacks.get(errRequestId)?.([]);
+        providersListCallbacks.get(errRequestId)?.(null);
         providersListCallbacks.delete(errRequestId);
       }
       if (errRequestId && cliStatusCallbacks.has(errRequestId)) {
-        cliStatusCallbacks.get(errRequestId)?.(null);
+        // `null` is reserved for an actual WebSocket disconnect. A request
+        // failure is `undefined` so the UI can keep its last good observation
+        // and report a probe error instead of claiming the socket disconnected.
+        cliStatusCallbacks.get(errRequestId)?.(undefined);
         cliStatusCallbacks.delete(errRequestId);
       }
       console.error('WebSocket error:', msg);
@@ -395,7 +409,6 @@ export function handleIncomingServerMessage({
       useTaskStore.getState().applyDiffStatsUpdate(msg.taskIds, msg.stats ?? null);
       if (msg.autoPromotedTaskIds?.length) {
         useTaskStore.getState().applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);
-        sessionStore.applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);
       }
       return { wasReconnect };
 
@@ -423,17 +436,34 @@ export function handleIncomingServerMessage({
       if (msg.originClientId && msg.originClientId === getClientId()) {
         return { wasReconnect };
       }
-      void useSessionStore.getState().loadProjects();
-      if (msg.projectId) {
-        void useTaskStore.getState().loadTasks(msg.projectId, { setCurrent: false });
+      if (msg.sessionId && msg.archived !== undefined) {
+        projectViewWorkspaceState.applySessionArchiveMutation(msg.sessionId, msg.archived);
       }
+      void refreshProjectViewWorkspaceMutation(msg);
       return { wasReconnect };
 
     case 'task_mutated':
       if (msg.originClientId && msg.originClientId === getClientId()) {
         return { wasReconnect };
       }
-      void useTaskStore.getState().loadTasks(msg.projectId, { setCurrent: false });
+      if (msg.taskId && (
+        msg.title !== undefined
+        || msg.workflowStatus !== undefined
+        || msg.preparationStatus !== undefined
+        || msg.archived !== undefined
+      )) {
+        projectViewWorkspaceState.applyTaskMutation({
+          taskId: msg.taskId,
+          sessionId: msg.sessionId,
+          ...(msg.title !== undefined && { title: msg.title }),
+          ...(msg.workflowStatus !== undefined && { workflowStatus: msg.workflowStatus }),
+          ...(msg.preparationStatus !== undefined && {
+            preparationStatus: msg.preparationStatus,
+          }),
+          ...(msg.archived !== undefined && { archived: msg.archived }),
+        });
+      }
+      void refreshProjectViewWorkspaceMutation(msg);
       return { wasReconnect };
 
     case 'collection_mutated':
@@ -501,7 +531,7 @@ function tryApplyPendingTerminalRebound(terminalId: string): boolean {
     return true;
   }
   const sessionStore = useSessionStore.getState();
-  if (!sessionStore.getSession(pending.destinationSessionId)) return false;
+  if (!projectViewWorkspaceState.resolveSession(pending.destinationSessionId)) return false;
 
   useTabStore.getState().rebindSessionSurface(
     [...pending.sourceSessionIds],
@@ -524,9 +554,9 @@ function cancelPendingTerminalReboundsForDestination(sessionId: string): void {
 }
 
 function retireStoppedTerminalSessionSurface(sessionId: string): void {
-  const session = useSessionStore.getState().getSession(sessionId);
+  const session = projectViewWorkspaceState.resolveSession(sessionId);
   if (session?.kind !== 'terminal' || session.archived) return;
-  useTabStore.getState().retireSessionSurface(sessionId);
+  retireProjectViewSessionSurfaces(sessionId);
 }
 
 function replayEventsIndicateActiveTurn(
@@ -577,8 +607,7 @@ function shouldStartTurnFromReplayEvents(
   // A completed background session may receive a late replay chunk after the
   // completion notification. Keep the unread notification as the visible state
   // until the user opens or marks the session as read.
-  const session = sessionStore.getSession(sessionId);
-  if ((session?.unreadCount ?? 0) > 0) {
+  if (projectViewWorkspaceState.isSessionUnread(sessionId)) {
     return false;
   }
 
@@ -589,16 +618,14 @@ function addCreatedSession(
   msg: Extract<ServerTransportMessage, { type: 'session_created' }>,
   sessionStore: ReturnType<typeof useSessionStore.getState>,
 ): void {
-  const totalSessions = sessionStore.projects.reduce(
-    (sum, project) => sum + project.sessions.length,
-    0,
-  );
+  const totalSessions = projectViewWorkspaceState.getCanonicalSessions().length;
   // Session exists in DB but has no backing runtime yet. GUI sessions start on
   // first input; PTY sessions start when their terminal view is first opened.
   sessionStore.addSession({
     id: msg.sessionId,
     title: i18n.t('chat.sessionDefaultTitle', { count: totalSessions + 1 }),
-    projectDir: msg.workDir,
+    projectDir: msg.projectId,
+    originProjectId: msg.projectId,
     workDir: msg.workDir,
     isRunning: false,
     hasStarted: false,

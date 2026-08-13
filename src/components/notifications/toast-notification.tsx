@@ -6,6 +6,8 @@ import { CheckCircle, AlertTriangle, Shield, MessageCircleQuestion, X, Loader2 }
 import { Notification } from '@/types/notification';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { wsClient } from '@/lib/ws/client';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -34,8 +36,7 @@ export const TOAST_DISMISS_TOUCH_TARGET =
 
 export function ToastNotification({ notification, onDismiss, onClick }: ToastNotificationProps) {
   const { t, language } = useI18n();
-  const getSession = useSessionStore((s) => s.getSession);
-  const session = getSession(notification.sessionId);
+  const session = useProjectViewSession(notification.sessionId);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -74,9 +75,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
     const sent = wsClient.sendInteractiveResponse(notification.sessionId, '', action.value.toString());
     if (sent) {
       onDismissRef.current();
-      useNotificationStore.getState().markSessionAsRead(notification.sessionId);
-      useSessionStore.getState().clearUnreadCount(notification.sessionId);
-      wsClient.sendMarkAsRead(notification.sessionId);
+      projectViewWorkspaceState.markSessionRead(notification.sessionId);
       logger.info('Interactive response sent from toast', {
         sessionId: notification.sessionId,
         action: action.value,
@@ -105,44 +104,43 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
     <motion.div
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
+      exit={{ opacity: 0, x: -400, transition: { duration: 0.2 } }}
       transition={{ duration: 0.15 }}
+      // Horizontal swipe dismisses without triggering the card's onClick
+      // (framer-motion suppresses tap when a drag actually moved).
+      drag="x"
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={0.6}
+      onDragEnd={(_, info) => {
+        if (Math.abs(info.offset.x) > 80 || Math.abs(info.velocity.x) > 400) {
+          onDismissRef.current();
+        }
+      }}
       onClick={onClick}
       data-testid="toast-notification"
       className={cn(
-        'w-[17rem] max-w-full rounded-lg border border-(--toast-border) cursor-pointer',
+        'w-[15rem] max-w-full rounded-lg border border-(--toast-border) cursor-pointer',
         'bg-(--toast-bg)',
-        'hover:bg-(--toast-bg-hover) transition-colors'
+        'hover:bg-(--toast-bg-hover) transition-colors',
+        'touch-pan-y',
       )}
       style={{ boxShadow: 'var(--toast-shadow)' }}
       role="alert"
       aria-live="assertive"
       aria-atomic="true"
     >
-      <div className="p-2.5">
+      <div className="p-2 pr-1">
         <div className="flex items-start gap-2">
           <div className="w-4 h-4 rounded bg-(--toast-icon-bg) border border-(--toast-icon-border) flex items-center justify-center shrink-0 mt-px">
             <IconComponent className="w-2.5 h-2.5" style={{ color: iconColor }} />
           </div>
 
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <span className="text-[0.6875rem] font-medium truncate text-(--text-primary)">
                 {sessionTitle}
               </span>
               <span className="text-[0.625rem] text-(--toast-muted) shrink-0 ml-auto">{relativeTime}</span>
-              <button
-                onClick={(e) => { e.stopPropagation(); onDismissRef.current(); }}
-                data-testid="toast-dismiss"
-                className={cn(
-                  'p-0.5 rounded text-(--toast-muted) hover:text-(--text-primary)',
-                  'hover:bg-(--toast-icon-bg) transition-colors shrink-0',
-                  TOAST_DISMISS_TOUCH_TARGET,
-                )}
-                aria-label="Dismiss notification"
-              >
-                <X className="w-3 h-3" />
-              </button>
             </div>
 
             <p className="text-[0.625rem] text-(--toast-muted) leading-snug line-clamp-2 mt-0.5">
@@ -176,6 +174,25 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
               </div>
             )}
           </div>
+
+          {/* Dismiss lives outside the text column so it gets a full-height,
+              easy-to-hit target rather than a 16px icon competing with the
+              title row. Pointer events are stopped so the tap never bubbles
+              to the card and navigates the user into the session. */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onDismissRef.current(); }}
+            onPointerDown={(e) => e.stopPropagation()}
+            data-testid="toast-dismiss"
+            className={cn(
+              'flex items-center justify-center self-stretch shrink-0',
+              'w-9 -m-2 ml-1 rounded-r-lg',
+              'text-(--toast-muted) hover:text-(--text-primary)',
+              'hover:bg-(--toast-icon-bg) transition-colors',
+            )}
+            aria-label="Dismiss notification"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </motion.div>

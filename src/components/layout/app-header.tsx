@@ -9,10 +9,7 @@ import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useEffectiveViewMode } from '@/hooks/use-effective-view-mode';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useBoardStore } from '@/stores/board-store';
-import { useSessionStore } from '@/stores/session-store';
 import { useGitStore } from '@/stores/git-store';
-import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { ProjectViewModeToggle } from '@/components/tab/project-view-mode-toggle';
@@ -37,22 +34,10 @@ export const AppHeader = memo(function AppHeader() {
   );
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
-  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const isPhoneViewport = usePhoneViewport();
   // The list is what a phone renders, so the header's board chrome goes with it.
   const viewMode = useEffectiveViewMode();
   const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek';
-  const projects = useSessionStore((state) => state.projects);
-  const selectedProject = projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
-  const isAllProjects = selectedProjectDir === ALL_PROJECTS_SENTINEL;
-  const projectDisplayName = isAllProjects
-    ? t('projectStrip.allProjects')
-    : selectedProject?.displayName ?? '';
-  const projectTitle = isAllProjects
-    ? t('projectStrip.allProjects')
-    : selectedProject?.displayPath ?? selectedProject?.decodedPath ?? projectDisplayName;
-  const projectInitial = projectDisplayName.trim().charAt(0).toUpperCase() || '?';
-  const shouldShowProjectContext = isAllProjects || selectedProject !== null;
 
   return (
     <>
@@ -78,73 +63,46 @@ export const AppHeader = memo(function AppHeader() {
             isKanbanPeekMode && isWindowsElectron && !gitPanelOpen && 'pr-[152px]',
           )}
         >
-          {shouldShowProjectContext ? (
-            <>
-              <div
-                className={cn(
-                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[0.6875rem] font-bold leading-none text-white shadow-sm',
-                  isElectronTitlebar && 'electron-drag pointer-events-none',
-                )}
-                style={{ backgroundColor: getProjectColor(projectDisplayName) }}
-                aria-hidden="true"
-              >
-                {projectInitial}
-              </div>
-              <div
-                className={cn(
-                  'min-w-0',
-                  // In peek mode the header spans the full window, so the project
-                  // name must not absorb the free space — the spacer below does.
-                  isKanbanPeekMode ? 'shrink' : 'flex-1',
-                  isElectronTitlebar && 'electron-drag pointer-events-none',
-                )}
-                title={projectTitle}
-              >
-                <div className="truncate text-[0.875rem] font-semibold leading-5 text-(--sidebar-text-active)">
-                  {projectDisplayName}
-                </div>
-              </div>
-              {/* A phone cannot reach the board, so it is not offered the way there. */}
-              {!isPhoneViewport && (
-                <ProjectViewModeToggle
-                  className={isElectronTitlebar ? 'electron-no-drag' : undefined}
-                  labelMode="short"
-                />
+          {/* Project identity already lives in the rail and the Worktree row.
+              Keep this titlebar focused on switching the current Project view. */}
+          {!isPhoneViewport ? (
+            <ProjectViewModeToggle
+              className={isElectronTitlebar ? 'electron-no-drag' : undefined}
+              labelMode="short"
+            />
+          ) : null}
+
+          {/* Preserve a draggable titlebar lane after moving Project context out
+              of the header. The controls on either side remain electron-no-drag. */}
+          <div
+            className={cn(
+              'min-w-0 flex-1',
+              isElectronTitlebar && 'electron-drag pointer-events-none',
+            )}
+          />
+
+          {isKanbanPeekMode ? (
+            <button
+              type="button"
+              onClick={toggleGitPanel}
+              className={cn(
+                // Lift above the Session Peek backdrop (z-50) so the panel
+                // toggle stays clickable while a peek is open — otherwise the
+                // backdrop swallows the click and light-dismisses the peek.
+                'relative z-[60] electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
+                gitPanelOpen
+                  ? 'bg-(--accent)/14 text-(--accent)'
+                  : 'bg-(--chat-bg) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
               )}
-              {isKanbanPeekMode ? (
-                <>
-                  <div
-                    className={cn(
-                      'min-w-0 flex-1',
-                      isElectronTitlebar && 'electron-drag',
-                    )}
-                  />
-                  <button
-                    type="button"
-                    onClick={toggleGitPanel}
-                    className={cn(
-                      // Lift above the Session Peek backdrop (z-50) so the panel
-                      // toggle stays clickable while a peek is open — otherwise the
-                      // backdrop swallows the click and light-dismisses the peek.
-                      'relative z-[60] electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
-                      gitPanelOpen
-                        ? 'bg-(--accent)/14 text-(--accent)'
-                        : 'bg-(--chat-bg) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
-                    )}
-                    aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-                    aria-pressed={gitPanelOpen}
-                    title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-                    data-testid="kanban-git-panel-toggle"
-                  >
-                    {gitPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-                  </button>
-                </>
-              ) : null}
-            </>
-          ) : (
-            <div className="flex-1" />
-          )}
+              aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
+              aria-pressed={gitPanelOpen}
+              title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
+              data-testid="kanban-git-panel-toggle"
+            >
+              {gitPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+            </button>
+          ) : null}
 
           {!isKanbanPeekMode ? (
             <ShortcutTooltip id="toggle-sidebar" label={t('shortcut.toggleSidebar')}>

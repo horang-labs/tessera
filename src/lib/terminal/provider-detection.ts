@@ -68,6 +68,18 @@ export async function detectTerminalProviders(
       cachedDetections.set(environment, { results, checkedAt: Date.now() });
       return results;
     })
+    .catch((error) => {
+      logger.warn({
+        environment,
+        error: error instanceof Error ? error.message : String(error),
+        usedStaleCache: Boolean(cached),
+      }, 'terminal provider detection failed');
+      // A timeout or failed login shell says nothing about installation. Keep
+      // the last successful observation if one exists; otherwise surface the
+      // probe failure instead of fabricating `not_installed` for every CLI.
+      if (cached) return cached.results;
+      throw error;
+    })
     .finally(() => {
       detectionInFlight.delete(environment);
     });
@@ -84,19 +96,10 @@ async function probeAllProviders(
   environment: AgentEnvironment,
 ): Promise<TerminalProviderDetection[]> {
   const entries = Object.entries(TERMINAL_PROVIDER_COMMANDS);
-  try {
-    if (process.platform !== 'win32') return await probeWithLoginShell(entries);
-    return environment === 'wsl'
-      ? await probeWithWslLoginShell(entries)
-      : await probeWithWhere(entries);
-  } catch (err) {
-    // 감지는 어드바이저리 — 프로브 실패가 목록 자체를 막으면 안 된다.
-    logger.warn('terminal provider detection failed; reporting all as not installed', {
-      environment,
-      error: (err as Error).message,
-    });
-    return entries.map(([providerId]) => ({ providerId, installed: false }));
-  }
+  if (process.platform !== 'win32') return probeWithLoginShell(entries);
+  return environment === 'wsl'
+    ? probeWithWslLoginShell(entries)
+    : probeWithWhere(entries);
 }
 
 // 셸 스크립트에 안전하게 인라인할 수 있는 커맨드명만 프로브한다.
@@ -143,11 +146,12 @@ async function probeWithLoginShell(
   entries: Array<[string, string]>,
 ): Promise<TerminalProviderDetection[]> {
   const { command: shell, loginArgs } = resolvePosixTerminalShellCommand();
-  const { stdout } = await runProbe(
+  const { outcome, stdout } = await runProbe(
     shell,
     [...loginArgs, '-c', buildCommandProbeScript(entries)],
     DETECT_TIMEOUT_MS,
   );
+  if (outcome !== 'success') throw new Error(`terminal login-shell probe failed (${outcome})`);
   return parseCommandProbeOutput(entries, stdout);
 }
 
@@ -169,11 +173,14 @@ async function probeWithWslLoginShell(
     'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
     `exec "$shell" -l -i -c ${quotePosixArg(buildCommandProbeScript(entries))}`,
   ].join('; ');
-  const { stdout } = await runProbe(
+  const { outcome, stdout } = await runProbe(
     'wsl.exe',
     ['-e', 'sh', '-c', script],
     WSL_DETECT_TIMEOUT_MS,
   );
+  if (outcome !== 'success') {
+    throw new Error(`WSL terminal login-shell probe failed (${outcome})`);
+  }
   return parseCommandProbeOutput(entries, stdout);
 }
 
@@ -185,11 +192,15 @@ async function probeWithWhere(
       if (!SAFE_COMMAND_PATTERN.test(cmd)) {
         return { providerId, installed: false };
       }
-      const { ok, stdout } = await runProbe('where', [cmd], DETECT_TIMEOUT_MS);
-      const resolvedPath = ok ? stdout.split(/\r?\n/)[0]?.trim() : undefined;
+      const { outcome, stdout } = await runProbe('where', [cmd], DETECT_TIMEOUT_MS);
+      if (outcome === 'error' || outcome === 'timeout') {
+        throw new Error(`Windows terminal provider probe failed (${outcome})`);
+      }
+      const installed = outcome === 'success';
+      const resolvedPath = installed ? stdout.split(/\r?\n/)[0]?.trim() : undefined;
       return {
         providerId,
-        installed: ok,
+        installed,
         ...(resolvedPath ? { resolvedPath } : {}),
       };
     }),
@@ -200,28 +211,31 @@ function runProbe(
   command: string,
   args: string[],
   timeoutMs: number,
-): Promise<{ ok: boolean; stdout: string }> {
+): Promise<{
+  outcome: 'success' | 'exit' | 'error' | 'timeout';
+  stdout: string;
+}> {
   return new Promise((resolve) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
     let stdout = '';
     let settled = false;
 
-    const finish = (ok: boolean) => {
+    const finish = (outcome: 'success' | 'exit' | 'error' | 'timeout') => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ ok, stdout });
+      resolve({ outcome, stdout });
     };
 
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      finish(false);
+      finish('timeout');
     }, timeoutMs);
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
     });
-    child.on('error', () => finish(false));
-    child.on('close', (code) => finish(code === 0));
+    child.on('error', () => finish('error'));
+    child.on('close', (code) => finish(code === 0 ? 'success' : 'exit'));
   });
 }

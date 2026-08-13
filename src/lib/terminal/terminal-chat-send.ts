@@ -20,8 +20,12 @@ import {
   getSessionTerminalId,
   pasteInputToTerminal,
   sendInputToTerminal,
+  terminalSupportsEscapeInterrupt,
 } from './terminal-surface-registry';
-import { normalizeSemanticPrompt } from './session-control-input';
+import {
+  normalizeSemanticPrompt,
+  terminalNamedKeySequence,
+} from './session-control-input';
 
 export { normalizeSemanticPrompt as normalizeTerminalChatText } from './session-control-input';
 
@@ -60,4 +64,14 @@ export function sendTerminalChatMessage(
   }, TERMINAL_CHAT_SUBMIT_DELAY_MS);
 
   return { cancel: () => clearTimeout(timer) };
+}
+
+/** Sends the provider-native interrupt gesture to the live PTY behind chat view. */
+export function sendTerminalChatInterrupt(sessionId: string): boolean {
+  const terminalId = getSessionTerminalId(sessionId);
+  if (!terminalSupportsEscapeInterrupt(terminalId)) return false;
+  return sendInputToTerminal(
+    terminalId,
+    terminalNamedKeySequence('escape'),
+  );
 }

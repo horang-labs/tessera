@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
 import { useGitStore, type GitPanelTab } from "@/stores/git-store";
@@ -9,6 +9,7 @@ import {
   useWorktreeScriptsAvailable,
 } from "@/components/scripts/worktree-scripts-panel";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { useSessionStore } from "@/stores/session-store";
@@ -19,17 +20,22 @@ import {
   GitPanelContentSection,
   GitPanelSummarySection,
 } from "./git-panel-sections";
-import { useGitPanelController } from "./use-git-panel-controller";
-import { GitDefaultBranchConfirmDialog } from "./git-default-branch-confirm-dialog";
+import { useSharedGitPanelController } from "./git-panel-controller-context";
 import {
-  openWorkspaceFileTab,
-  previewWorkspaceFileTab,
+  openWorkspaceTargetFileTab,
+  previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
+import { resolveWorkspaceTarget } from '@/types/worktree';
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
 import { PHONE_TOUCH_TARGET } from "@/lib/ui/touch-target";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
+import { usePhoneViewport } from "@/hooks/use-phone-viewport";
+import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
+import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
+
+const NOOP = () => {};
 
 /**
  * Every tab says what it is.
@@ -68,12 +74,14 @@ function GitPanelTabButton({
 
 export function GitPanel({
   sessionId,
+  worktreeId = null,
   width,
   className,
   closeLabel,
   onClose,
 }: {
   sessionId: string | null;
+  worktreeId?: string | null;
   width: number | string;
   className?: string;
   closeLabel?: string;
@@ -83,19 +91,30 @@ export function GitPanel({
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === "win32";
   const isLinuxElectron = electronPlatform === "linux";
-  const controller = useGitPanelController(sessionId);
+  const isPhoneViewport = usePhoneViewport();
+  const controller = useSharedGitPanelController();
   // The selection lives in the store so a preparation badge can send the user
   // straight to the Scripts tab.
   const activePanelTab = useGitStore((state) => state.panelTab);
   const setActivePanelTab = useGitStore((state) => state.setPanelTab);
   const openedTelemetryRef = useRef(false);
   const resolvedCloseLabel = closeLabel ?? t("chat.closeGitPanel");
+  const dismissPhonePanel = usePhoneOverlayNavigation({
+    enabled: isPhoneViewport && Boolean(onClose),
+    open: Boolean(onClose),
+    onBack: onClose ?? NOOP,
+  });
+  useCloseOnEscape(dismissPhonePanel, {
+    enabled: isPhoneViewport && Boolean(onClose),
+  });
 
-  const sessionProvider = useSessionStore((state) =>
-    sessionId ? state.getSession(sessionId)?.provider?.trim() ?? null : null,
-  );
+  const sessionProvider = useProjectViewSession(sessionId)?.provider?.trim() ?? null;
   const showMemoryTab = supportsMemoryPanel(sessionProvider);
   const showScriptsTab = useWorktreeScriptsAvailable(sessionId);
+  const fileTarget = useMemo(
+    () => resolveWorkspaceTarget(sessionId, worktreeId),
+    [sessionId, worktreeId],
+  );
 
   // Derive the visible tab instead of forcing state: if the stored selection
   // is one this session can't show, fall back to Git for rendering while
@@ -153,7 +172,7 @@ export function GitPanel({
   ]);
 
   const openDiffFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId) return;
+    if (!fileTarget) return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "preview_diff",
@@ -163,7 +182,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    previewWorkspaceFileTab(sessionId, "diff", file.path, {
+    previewWorkspaceTargetFileTab(fileTarget, 'diff', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -171,11 +190,11 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
 
   const pinDiffFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId) return;
+    if (!fileTarget) return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "open_diff_tab",
@@ -185,7 +204,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "diff", file.path, {
+    openWorkspaceTargetFileTab(fileTarget, 'diff', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -193,11 +212,11 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
 
   const openReadOnlyFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId || file.state === "deleted") return;
+    if (!fileTarget || file.state === "deleted") return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "open_file_tab",
@@ -207,7 +226,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "file", file.path, {
+    openWorkspaceTargetFileTab(fileTarget, 'file', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -215,8 +234,28 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
+
+  const summarySection = (
+    <GitPanelSummarySection
+      data={controller.data}
+      loading={controller.loading}
+      error={controller.error}
+      changedFileCount={controller.changedFileCount}
+      onCopyBranch={controller.copyBranch}
+      onCopyWorktreePath={controller.copyWorktreePath}
+      onOpenExternal={controller.openExternal}
+      showDetails={effectivePanelTab === "git"}
+    />
+  );
+  const commitsSection = (
+    <GitPanelCommitsSection
+      data={controller.data}
+      loading={controller.loading}
+      error={controller.error}
+    />
+  );
 
   return (
     <aside
@@ -226,6 +265,8 @@ export function GitPanel({
       )}
       style={{ width: typeof width === "number" ? `${width}px` : width }}
       data-testid="git-panel"
+      data-session-target={sessionId ?? undefined}
+      data-worktree-target={worktreeId ?? undefined}
     >
       {isWindowsElectron || isLinuxElectron ? (
         <div className="electron-drag flex h-[40px] shrink-0 items-stretch justify-end border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)">
@@ -273,7 +314,7 @@ export function GitPanel({
         {onClose ? (
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => dismissPhonePanel()}
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
               PHONE_TOUCH_TARGET,
@@ -287,22 +328,18 @@ export function GitPanel({
         ) : null}
       </div>
 
-      {effectivePanelTab === "scripts" ? null : (
-      <GitPanelSummarySection
-        data={controller.data}
-        loading={controller.loading}
-        error={controller.error}
-        changedFileCount={controller.changedFileCount}
-        onCopyBranch={controller.copyBranch}
-        onCopyWorktreePath={controller.copyWorktreePath}
-        onOpenExternal={controller.openExternal}
-        showDetails={effectivePanelTab === "git"}
-      />
-      )}
+      {effectivePanelTab === "scripts"
+        || (isPhoneViewport && effectivePanelTab === "git")
+        ? null
+        : summarySection}
 
       {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
-          <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+          <WorkspaceFilePanel
+            key={sessionId ?? worktreeId ?? "no-target"}
+            sessionId={sessionId}
+            worktreeId={worktreeId}
+          />
         </div>
       ) : effectivePanelTab === "scripts" ? (
         <div className="flex min-h-0 flex-1 flex-col">
@@ -316,6 +353,7 @@ export function GitPanel({
         <>
           <GitPanelContentSection
             sessionId={sessionId}
+            targetSelected={Boolean(sessionId || worktreeId)}
             data={controller.data}
             loading={controller.loading}
             error={controller.error}
@@ -323,6 +361,11 @@ export function GitPanel({
             failure={{
               report: controller.actionFailure,
               onDismiss: controller.dismissActionFailure,
+            }}
+            conflictHandoff={{
+              available: controller.conflictHandoffAvailable,
+              pending: controller.preparingConflictHandoff,
+              onPrepare: () => void controller.prepareConflictHandoff(),
             }}
             commit={{
               draftBlocked: controller.commitDraftBlocked,
@@ -340,6 +383,10 @@ export function GitPanel({
               pendingVerb: controller.pendingVerb,
               onRun: () => void controller.runPrimaryAction(),
             }}
+            phoneScrollableContent={isPhoneViewport ? {
+              summary: summarySection,
+              commits: commitsSection,
+            } : undefined}
             menu={{
               actions: controller.menuActions,
               onRun: (id) => void controller.runMenuAction(id),
@@ -352,23 +399,10 @@ export function GitPanel({
             onOpenReadOnlyFile={openReadOnlyFile}
           />
 
-          <GitPanelCommitsSection
-            data={controller.data}
-            loading={controller.loading}
-            error={controller.error}
-          />
+          {isPhoneViewport ? null : commitsSection}
         </>
       )}
 
-      {/*
-        Outside the tab switch: the confirmation belongs to the push that is
-        being asked about, not to whichever tab happens to be open behind it.
-      */}
-      <GitDefaultBranchConfirmDialog
-        confirmation={controller.pushConfirmation}
-        onCancel={controller.cancelPrimaryAction}
-        onConfirm={() => void controller.confirmPrimaryAction()}
-      />
     </aside>
   );
 }

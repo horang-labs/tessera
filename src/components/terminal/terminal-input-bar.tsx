@@ -117,7 +117,11 @@ export function TerminalInputBar({
           the scale QA measured at, and why these keys came out 47x36 against a 44px
           budget. Restating 44 by hand here would be a third place for the same
           arithmetic to go wrong (#259). */}
-      <div className="flex gap-1">
+      {/* 4-column grid wraps the row into two lines once the set grows past 5
+          keys — a straight flex row with `min-w-11` overflowed 360px viewports
+          the moment left/right/backspace joined the original five. Grid also
+          gives every cell the same width regardless of icon label. */}
+      <div className="grid grid-cols-4 gap-1">
         {TERMINAL_INPUT_BAR_KEYS.map((key) => (
           <button
             key={key.namedKey}
@@ -127,7 +131,7 @@ export function TerminalInputBar({
             title={t(key.labelKey)}
             data-testid={`terminal-input-bar-key-${key.namedKey}`}
             className={cn(
-              'flex-1 rounded border border-(--divider) bg-(--chat-header-bg) text-xs font-medium text-(--text-primary) active:bg-black/10 dark:active:bg-white/15',
+              'rounded border border-(--divider) bg-(--chat-header-bg) text-xs font-medium text-(--text-primary) active:bg-black/10 dark:active:bg-white/15',
               PHONE_TOUCH_TARGET,
             )}
           >

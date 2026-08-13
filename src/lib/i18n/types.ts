@@ -60,8 +60,6 @@ export interface I18nMessages {
     remoteAccess: {
       title: string;
       description: string;
-      warningTitle: string;
-      warningDescription: string;
       systemFirewallTitle: string;
       systemFirewallDescription: string;
       firewallTitle: string;
@@ -246,6 +244,7 @@ export interface I18nMessages {
       loadingProviders: string;
       empty: string;
       disconnected: string;
+      checkFailed: string;
       active: string;
       refresh: string;
       refreshProviders: string;
@@ -594,6 +593,9 @@ export interface I18nMessages {
     dropSessionReference: string;
     closeSession: string;
     branchLabel: string;
+    sessionScopeLabel: string;
+    currentBranchLabel: string;
+    presentationScopeHint: string;
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
@@ -641,6 +643,9 @@ export interface I18nMessages {
       imageAttachFailed: string;
       keyEscape: string;
       keyShiftTab: string;
+      keyLeft: string;
+      keyRight: string;
+      keyBackspace: string;
       keyUp: string;
       keyDown: string;
       keyEnter: string;
@@ -859,6 +864,7 @@ export interface I18nMessages {
     deleteTaskTitle: string;
     deleteTaskConfirm: string;
     deleteTaskChildSessions: string;
+    deleteTaskWarning: string;
     deleteWarning: string;
     deleteWorktreeWarning: string;
     deleteSession: string;
@@ -928,6 +934,9 @@ export interface I18nMessages {
     showMore: string;
     noSessions: string;
     dragSessionToReference: string;
+    branchRenameWarningTitle: string;
+    branchRenameWarningDescription: string;
+    dismissBranchRenameWarning: string;
   };
   status: {
     starting: string;
@@ -1075,6 +1084,15 @@ export interface I18nMessages {
     commit: {
       messageLabel: string;
       messagePlaceholder: string;
+      composerTitle: string;
+      composerLabel: string;
+      openComposer: string;
+      closeComposer: string;
+      reviewFiles: string;
+      changedFiles: string;
+      diffStatLabel: string;
+      menuLabel: string;
+      worktreeFallback: string;
       selectionSummary: string;
       includeFile: string;
       button: string;
@@ -1102,6 +1120,7 @@ export interface I18nMessages {
       publishButton: string;
       publishButtonPending: string;
       nothingToPush: string;
+      pullFirst: string;
       successToast: string;
       successNoUpstreamToast: string;
       publishedToast: string;
@@ -1140,13 +1159,33 @@ export interface I18nMessages {
       failureToast: string;
       createButton: string;
       createButtonPending: string;
+      viewButton: string;
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
       noUpstream: string;
+      pullFirst: string;
+      pushFirst: string;
       alreadyOpen: string;
     };
     conflict: {
+      resolve: string;
+      recoveryTitle: string;
+      mergeOperation: string;
+      rebaseOperation: string;
+      cherryPickOperation: string;
+      operationInProgress: string;
+      unresolvedFiles: string;
+      unresolvedFilesTruncated: string;
+      noUnresolvedFiles: string;
+      openDiff: string;
+      resolveWithAi: string;
+      aiPreparing: string;
+      aiReviewBoundary: string;
+      aiPreparedToast: string;
+      aiStaleToast: string;
+      aiUnavailableToast: string;
+      aiFailureToast: string;
       mergeInProgress: string;
       rebaseInProgress: string;
       cherryPickInProgress: string;
@@ -1160,13 +1199,17 @@ export interface I18nMessages {
       abortFailureToast: string;
     };
     primary: {
+      loading: string;
       stateUnknown: string;
+      sessionRequired: string;
       detachedHead: string;
       noRemote: string;
+      upToDate: string;
     };
     menu: {
       label: string;
       pending: string;
+      openSourceControl: string;
     };
     failure: {
       commitTitle: string;
@@ -1434,17 +1477,7 @@ export interface I18nMessages {
       rename: string;
       delete: string;
       openInNewTab: string;
-      moveToProject: string;
-      cannotMoveRunning: string;
       generateTitle: string;
-    };
-    moveDialog: {
-      title: string;
-      subtitle: string;
-      currentProject: string;
-      noOtherProjects: string;
-      move: string;
-      movedFrom: string;
     };
     prMismatch: {
       reviewMissing: string;

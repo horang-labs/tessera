@@ -11,6 +11,7 @@
 
 import { extractGitPanelErrorMessage } from "@/components/git/git-panel-shared";
 import type { GitPanelData } from "@/types/git";
+import { workspaceTargetApiPath, type WorkspaceTarget } from '@/types/worktree';
 
 /**
  * What a panel read answers with. A failure is a value rather than a thrown
@@ -35,18 +36,28 @@ export interface GitPanelReadOptions {
   fetchImpl?: typeof fetch;
 }
 
-export function gitPanelReadPath(sessionId: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/git`;
+export function gitPanelReadPath(target: string | WorkspaceTarget): string {
+  const resolved = typeof target === 'string'
+    ? { kind: 'session', id: target } as const
+    : target;
+  return `${workspaceTargetApiPath(resolved)}/git`;
+}
+
+export function gitPanelDiffPath(
+  target: string | WorkspaceTarget,
+  filePath: string,
+): string {
+  return `${gitPanelReadPath(target)}/diff?path=${encodeURIComponent(filePath)}`;
 }
 
 export async function readGitPanelState(
-  sessionId: string,
+  target: string | WorkspaceTarget,
   options: GitPanelReadOptions = {},
 ): Promise<GitPanelRead> {
   const fetchImpl = options.fetchImpl ?? fetch;
 
   try {
-    const response = await fetchImpl(gitPanelReadPath(sessionId));
+    const response = await fetchImpl(gitPanelReadPath(target));
     const payload = await response.json().catch(() => ({}));
 
     if (response.ok) {

@@ -208,9 +208,17 @@ export function CollectionQuickCreateSheet({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
-    document.addEventListener('mousedown', handleMouseDown);
+    // Defer the outside-click watcher by a frame so the tap that opened the
+    // sheet is not re-caught as an outside mousedown — a phone tap synthesises
+    // pointerdown → mousedown → mouseup → click in one tick, and Chrome will
+    // sometimes route that mousedown at the body element rather than the
+    // anchor button, closing the sheet before the user sees it.
+    const raf = window.requestAnimationFrame(() => {
+      document.addEventListener('mousedown', handleMouseDown);
+    });
     document.addEventListener('keydown', handleKeyDown);
     return () => {
+      window.cancelAnimationFrame(raf);
       document.removeEventListener('mousedown', handleMouseDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
@@ -307,6 +315,7 @@ export function CollectionQuickCreateSheet({
     try {
       const sessionId = await createSession({
         workDir: projectDir,
+        parentProjectId: projectId,
         providerId: selectedProvider,
         collectionId: selectedCollection?.id,
         executionMode,
@@ -330,7 +339,7 @@ export function CollectionQuickCreateSheet({
     } finally {
       setSubmittingMode(null);
     }
-  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, selectedCollection?.id, selectedProvider, t]);
+  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, projectId, selectedCollection?.id, selectedProvider, t]);
 
   const handleCreateTask = useCallback(async () => {
     setError(null);

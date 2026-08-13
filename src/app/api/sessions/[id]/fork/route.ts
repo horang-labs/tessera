@@ -28,6 +28,8 @@ export async function POST(
     broadcastSessionMutation(auth.userId, {
       kind: 'created',
       projectId: result.projectDir,
+      sessionId: result.sessionId,
+      taskId: result.taskId,
       originClientId: getOriginClientIdFromRequest(request),
     });
     return NextResponse.json(result);

@@ -33,6 +33,7 @@ import {
   acquireElectronInstanceLock,
   configureElectronTestInstance,
   resolveElectronServerPort,
+  resolveElectronWindowTitle,
 } from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
 import { isPairingDecision } from '../src/lib/auth/pairing-contract';
@@ -1344,18 +1345,31 @@ async function stopServer(): Promise<void> {
 }
 
 // ── Window ─────────────────────────────────────────────────────────────────
+function bindStableTestWindowTitle(win: BrowserWindow, title: string): void {
+  if (!electronTestInstance) return;
+
+  // Next metadata keeps the renderer document title as "Tessera". Test
+  // windows need their isolated instance id in Alt-Tab and the taskbar even
+  // after navigation changes the page title.
+  win.webContents.on('page-title-updated', (event) => {
+    event.preventDefault();
+    win.setTitle(title);
+  });
+}
+
 function createWindow(port: number): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  const windowTitle = resolveElectronWindowTitle('Tessera', electronTestInstance);
 
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    title: 'Tessera',
+    title: windowTitle,
     show: false,
     frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
@@ -1370,6 +1384,8 @@ function createWindow(port: number): BrowserWindow {
     titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
+
+  bindStableTestWindowTitle(win, windowTitle);
 
   bindWindowStateEvents(win);
 
@@ -1468,13 +1484,14 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  const windowTitle = resolveElectronWindowTitle('Tessera Board', electronTestInstance);
 
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 600,
     minHeight: 400,
-    title: 'Tessera Board',
+    title: windowTitle,
     show: false,
     frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
@@ -1489,6 +1506,8 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
     titleBarStyle: isMac ? 'hiddenInset' : isWindows ? 'hidden' : 'default',
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
+
+  bindStableTestWindowTitle(win, windowTitle);
 
   bindWindowStateEvents(win);
 
@@ -1637,15 +1656,19 @@ ipcMain.handle('open-board-window', (_event, payload?: unknown) => {
   if (!serverPort) return { ok: false };
   const params = new URLSearchParams();
   if (payload && typeof payload === 'object') {
-    const { projectDir, collectionFilter } = payload as {
+    const { projectDir, collectionFilter, runningFilter } = payload as {
       projectDir?: unknown;
       collectionFilter?: unknown;
+      runningFilter?: unknown;
     };
     if (typeof projectDir === 'string' && projectDir.length > 0) {
       params.set('projectDir', projectDir);
     }
     if (typeof collectionFilter === 'string' && collectionFilter.length > 0) {
       params.set('collectionFilter', collectionFilter);
+    }
+    if (typeof runningFilter === 'boolean') {
+      params.set('runningFilter', String(runningFilter));
     }
   }
   const query = params.toString();
@@ -1719,6 +1742,20 @@ ipcMain.on('ui-collection-filter-changed', (event, payload: unknown) => {
     if (win.isDestroyed()) continue;
     if (win.webContents.id === senderId) continue;
     win.webContents.send('ui-collection-filter-changed', { collectionId });
+  }
+});
+ipcMain.on('ui-kanban-running-filter-changed', (event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return;
+  const { active } = payload as { active?: unknown };
+  if (typeof active !== 'boolean') return;
+  const senderId = event.sender.id;
+  const targets: BrowserWindow[] = [];
+  if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
+  for (const win of popoutWindows) targets.push(win);
+  for (const win of targets) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.id === senderId) continue;
+    win.webContents.send('ui-kanban-running-filter-changed', { active });
   }
 });
 ipcMain.on(

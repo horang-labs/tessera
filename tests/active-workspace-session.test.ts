@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
 } from '../src/lib/session/active-workspace-session';
 import {
-  buildWorkspaceExplorerSessionId,
   buildWorkspaceFileSessionId,
+  buildWorktreeFileSessionId,
 } from '../src/lib/workspace-tabs/special-session';
 
 test('active workspace session prefers the active panel over stale session store state', () => {
@@ -19,7 +20,7 @@ test('active workspace session prefers the active panel over stale session store
   );
 });
 
-test('active workspace session resolves workspace special tabs to their source session', () => {
+test('active workspace session resolves session-backed file tabs to their source session', () => {
   assert.equal(
     resolveActiveWorkspaceSessionId({
       activePanelSessionId: buildWorkspaceFileSessionId('source-session', 'file', 'src/app/page.tsx'),
@@ -27,13 +28,15 @@ test('active workspace session resolves workspace special tabs to their source s
     }),
     'source-session',
   );
+});
 
+test('sessionless Worktree file tabs do not invent a canonical Session source', () => {
   assert.equal(
     resolveActiveWorkspaceSessionId({
-      activePanelSessionId: buildWorkspaceExplorerSessionId('explorer-source'),
+      activePanelSessionId: buildWorktreeFileSessionId('worktree-source', 'src/app/page.tsx'),
       activeSessionId: null,
     }),
-    'explorer-source',
+    null,
   );
 });
 
@@ -87,5 +90,29 @@ test('split and list layouts continue using the active workspace session', () =>
       peekSessionId: null,
     }),
     'active-session',
+  );
+});
+
+test('Git drops optimistic sessions and any Session target hidden by Worktree Peek', () => {
+  assert.equal(
+    resolveCanonicalGitTargetSessionId({
+      activeSessionId: 'real-session',
+      peekWorktreeId: 'worktree-1',
+    }),
+    null,
+  );
+  assert.equal(
+    resolveCanonicalGitTargetSessionId({
+      activeSessionId: 'temp-optimistic',
+      peekWorktreeId: null,
+    }),
+    null,
+  );
+  assert.equal(
+    resolveCanonicalGitTargetSessionId({
+      activeSessionId: 'real-session',
+      peekWorktreeId: null,
+    }),
+    'real-session',
   );
 });

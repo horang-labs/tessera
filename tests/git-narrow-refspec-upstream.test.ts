@@ -354,26 +354,27 @@ const TRACKING_UNCOUNTABLE: GitStateSnapshot = {
   conflictOperation: null,
 };
 
-test('an uncounted tracking branch is offered a push, not Publish Branch', () => {
+test('an uncounted tracking branch stays unknown and is not mistaken for Publish Branch', () => {
   const action = derivePrimaryGitAction(TRACKING_UNCOUNTABLE);
 
-  assert.equal(action.kind, 'push');
-  assert.equal(action.enabled, true);
-  // The whole bug: a published branch under a button that publishes it.
+  assert.equal(action.kind, 'loading');
+  assert.equal(action.enabled, false);
+  // The branch is known to be published, but the missing comparison ref means
+  // Push cannot be offered speculatively until Git can count it (#313).
   assert.notEqual(action.kind, 'publish');
-  assert.equal(action.disabledReasonKey, null);
+  assert.equal(action.disabledReasonKey, 'gitPanel.primary.stateUnknown');
 });
 
-test('the menu never claims there is nothing to push or pull without counting', () => {
+test('the menu keeps uncounted push and pull visible without claiming they are empty', () => {
   const menu = deriveGitActionMenu(TRACKING_UNCOUNTABLE);
   const push = menu.find((entry) => entry.id === 'push');
   const pull = menu.find((entry) => entry.id === 'pull');
 
-  assert.equal(push?.enabled, true);
+  assert.equal(push?.enabled, false);
   assert.equal(push?.labelParams, undefined, 'there is no count to name');
-  assert.notEqual(push?.disabledReasonKey, 'gitPanel.push.nothingToPush');
-  assert.equal(pull?.enabled, true);
-  assert.notEqual(pull?.disabledReasonKey, 'gitPanel.pull.nothingToPull');
+  assert.equal(push?.disabledReasonKey, 'gitPanel.primary.stateUnknown');
+  assert.equal(pull?.enabled, false);
+  assert.equal(pull?.disabledReasonKey, 'gitPanel.primary.stateUnknown');
 });
 
 test('a branch known to be in sync still says so', () => {

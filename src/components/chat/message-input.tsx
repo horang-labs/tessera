@@ -17,13 +17,18 @@ import {
   useChatStore,
 } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSessionResume } from '@/hooks/use-session-resume';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
-import { useFilePicker } from '@/hooks/use-file-picker';
+import { useReferencePicker } from '@/hooks/use-file-picker';
 import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
@@ -51,6 +56,7 @@ import {
   registerTerminalLaunchDraft,
   shouldClearTerminalLaunchDraft,
 } from '@/lib/terminal/terminal-launch-draft-state';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import {
   getSessionTerminalId,
   sendInputToTerminal,
@@ -118,6 +124,7 @@ import {
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
 import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
+import { MESSAGE_INPUT_MAX_CHARS } from '@/lib/chat/message-input-limits';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import {
   MessageInputAttachmentStrip,
@@ -129,6 +136,7 @@ import type { SessionSpawnConfig } from '@/lib/ws/message-types';
 
 interface MessageInputProps {
   sessionId: string;
+  projectViewDir?: string | null;
   isDisabled: boolean;
   isReadOnly?: boolean;
   isStopped?: boolean;
@@ -140,6 +148,7 @@ const EMPTY_COLLECTIONS: Collection[] = [];
 
 export function MessageInput({
   sessionId,
+  projectViewDir,
   isDisabled,
   isReadOnly,
   isStopped,
@@ -148,6 +157,12 @@ export function MessageInput({
 }: MessageInputProps) {
   const { t } = useI18n();
   const setDraftInput = useChatStore((state) => state.setDraftInput);
+  const preparedAgentRequest = useChatStore((state) =>
+    state.preparedAgentRequests.get(sessionId),
+  );
+  const consumePreparedAgentRequest = useChatStore(
+    (state) => state.consumePreparedAgentRequest,
+  );
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
   const [deleteRequested, setDeleteRequested] = useState(false);
   // Attachment/reference/voice completion can update the local composer after a
@@ -234,9 +249,9 @@ export function MessageInput({
     hasConversationHistory(state.messages.get(sessionId))
   );
   const addMessage = useChatStore((state) => state.addMessage);
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useProjectViewSession(sessionId, projectViewDir);
   const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const sessionStatus = session && 'status' in session ? session.status : 'running';
   const sessionProviderId = session?.provider?.trim() ?? '';
   const sessionCollectionId = session?.collectionId ?? null;
@@ -287,7 +302,7 @@ export function MessageInput({
     serverPlatform,
     agentEnvironment,
   );
-  const filePicker = useFilePicker(sessionId);
+  const filePicker = useReferencePicker(sessionId, session?.projectDir ?? projectViewDir);
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
     textareaRef,
@@ -325,8 +340,20 @@ export function MessageInput({
     setInputValue: setInputValueFromProgrammaticEdit,
     t,
   });
-  const MAX_CHARS = 10000;
   const MAX_ROWS = 5;
+
+  useEffect(() => {
+    if (!preparedAgentRequest) return;
+
+    setInputValue(preparedAgentRequest.text);
+    consumePreparedAgentRequest(sessionId, preparedAgentRequest.revision);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.setSelectionRange(preparedAgentRequest.text.length, preparedAgentRequest.text.length);
+      textarea.focus();
+    });
+  }, [consumePreparedAgentRequest, preparedAgentRequest, sessionId]);
 
   const isInputUnavailable = isReadOnly || isDisabled || isResuming;
   const isGenerating = sessionStatus === 'running' && (
@@ -1015,11 +1042,7 @@ export function MessageInput({
       }
       clearInput();
     } else if (match.nativeCommand === 'archive') {
-      if (session?.taskId) {
-        void useTaskStore.getState().toggleTaskArchive(session.taskId, true);
-      } else {
-        useSessionStore.getState().toggleArchive(sessionId, true);
-      }
+      requestSessionArchive(sessionId);
       clearInput();
     } else if (match.nativeCommand === 'new' || match.nativeCommand === 'clear') {
       void createSession({
@@ -1190,7 +1213,6 @@ export function MessageInput({
     if (shouldResumeSession && session && 'projectDir' in session) {
       void resumeAndSend(
         sessionId,
-        session.projectDir,
         sendContent,
         skillName,
         displayContent,
@@ -1225,14 +1247,14 @@ export function MessageInput({
   };
 
   const handleInjectCurrentSession = useCallback(async (targetSessionId: string) => {
-    const sourceSession = useSessionStore.getState().getSession(sessionId);
+    const sourceSession = projectViewWorkspaceState.resolveSession(sessionId);
     if (!sourceSession) return;
 
     setIsInjectingCurrentSession(true);
     try {
       const exportPath = await exportSessionReference(sessionId);
 
-      const targetSession = useSessionStore.getState().getSession(targetSessionId);
+      const targetSession = projectViewWorkspaceState.resolveSession(targetSessionId);
       const { settings } = useSettingsStore.getState();
       const providerId = targetSession?.provider?.trim();
       if (!providerId) {
@@ -1500,7 +1522,7 @@ export function MessageInput({
     }
   };
 
-  const remainingChars = MAX_CHARS - inputValue.length;
+  const remainingChars = MESSAGE_INPUT_MAX_CHARS - inputValue.length;
   const isOverLimit = remainingChars < 0;
   const hasContent = inputValue.trim().length > 0 || attachments.length > 0 || hasSessionRefs;
   const canSubmit = hasContent || !!skillPicker.selectedSkill;

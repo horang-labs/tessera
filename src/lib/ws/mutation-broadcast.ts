@@ -1,4 +1,6 @@
 import { wsServer } from './server';
+import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
+import type { WorkflowStatus } from '@/types/task-entity';
 
 export function getOriginClientIdFromRequest(req: Request | { headers: Headers }): string | undefined {
   const value = req.headers.get('x-tessera-client-id');
@@ -9,6 +11,10 @@ export function broadcastSessionMutation(userId: string, params: {
   kind: 'created' | 'updated' | 'deleted' | 'reordered' | 'project_reordered' | 'project_deleted';
   originClientId?: string;
   projectId?: string;
+  sessionId?: string;
+  taskId?: string;
+  archived?: boolean;
+  affectedProjectIds?: string[];
 }): void {
   wsServer.sendToUser(userId, { type: 'session_mutated', ...params });
 }
@@ -29,6 +35,13 @@ export function broadcastTaskMutation(userId: string, params: {
   kind: 'created' | 'updated' | 'deleted' | 'reordered';
   originClientId?: string;
   projectId: string;
+  taskId?: string;
+  sessionId?: string;
+  title?: string;
+  workflowStatus?: WorkflowStatus;
+  preparationStatus?: PreparationStatus;
+  archived?: boolean;
+  affectedProjectIds?: string[];
 }): void {
   wsServer.sendToUser(userId, { type: 'task_mutated', ...params });
 }

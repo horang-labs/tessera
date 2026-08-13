@@ -1,5 +1,6 @@
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
+import { buildOriginProjectRepresentation } from '@/lib/projects/origin-project-representation';
 import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
 
 export type RecentWorkItem =
@@ -31,6 +32,11 @@ export type RecentWorkItem =
       worktreeBranch?: string;
       diffStats?: TaskEntity['diffStats'] | UnifiedSession['diffStats'];
     };
+
+export interface ProjectViewRecentWorkRepresentation {
+  project: ProjectGroup;
+  tasks: TaskEntity[];
+}
 
 function timeValue(value: string | undefined): number {
   if (!value) return 0;
@@ -78,6 +84,7 @@ function taskToRecentItem(project: ProjectGroup, task: TaskEntity): RecentWorkIt
     id: recentSession.id,
     title: recentSession.title,
     projectDir: project.encodedDir,
+    originProjectId: recentSession.originProjectId,
     isRunning: recentSession.isRunning,
     status: recentSession.isRunning ? 'running' : 'completed',
     lastModified: recentSession.lastModified,
@@ -137,6 +144,7 @@ function fallbackTaskItemsFromSessions(
     const taskSessions: TaskSession[] = sortedSessions.map((session) => ({
       id: session.id,
       title: session.title,
+      originProjectId: session.originProjectId,
       provider: session.provider,
       lastModified: session.lastModified,
       isRunning: session.isRunning,
@@ -146,6 +154,7 @@ function fallbackTaskItemsFromSessions(
     const task: TaskEntity = {
       id: taskId,
       projectId: project.encodedDir,
+      projectViewId: project.encodedDir,
       title: recentSession.title,
       collectionId: recentSession.collectionId,
       workflowStatus: recentSession.workflowStatus ?? 'todo',
@@ -198,16 +207,26 @@ function chatToRecentItem(project: ProjectGroup, session: UnifiedSession): Recen
 export function buildRecentWorkItems({
   projects,
   tasksByProject,
+  canonicalSessions,
   limit = 8,
+  originOnly = false,
 }: {
   projects: ProjectGroup[];
   tasksByProject: Record<string, TaskEntity[]>;
+  canonicalSessions?: readonly UnifiedSession[];
   limit?: number;
+  originOnly?: boolean;
 }): RecentWorkItem[] {
   const items: RecentWorkItem[] = [];
+  const representation = originOnly
+    ? buildOriginProjectRepresentation(projects, tasksByProject, canonicalSessions)
+    : { projects, tasksByProject };
 
-  for (const project of projects) {
-    const tasks = mergeTasksWithLiveSessions(tasksByProject[project.encodedDir] ?? [], project.sessions);
+  for (const project of representation.projects) {
+    const tasks = mergeTasksWithLiveSessions(
+      representation.tasksByProject[project.encodedDir] ?? [],
+      project.sessions,
+    );
     const knownTaskIds = new Set(tasks.map((task) => task.id));
 
     for (const task of tasks) {
@@ -246,4 +265,19 @@ export function buildRecentWorkItems({
       return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
     })
     .slice(0, limit);
+}
+
+/** Build one selected Project's Recent Work from its resolved workspace representation. */
+export function buildProjectViewRecentWorkItems(
+  representation: ProjectViewRecentWorkRepresentation | undefined,
+  limit = 8,
+): RecentWorkItem[] {
+  if (!representation) return [];
+  return buildRecentWorkItems({
+    projects: [representation.project],
+    tasksByProject: {
+      [representation.project.encodedDir]: representation.tasks,
+    },
+    limit,
+  });
 }

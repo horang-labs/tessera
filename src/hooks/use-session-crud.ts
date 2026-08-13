@@ -22,6 +22,7 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 interface SessionCreateOptions {
   workDir?: string;
@@ -73,8 +74,8 @@ export function useSessionCrud() {
         const taskStore = useTaskStore.getState();
         const task = taskStore.getTaskBySessionId(sessionId);
         if (task) {
-          taskStore.loadTasks(task.projectId, {
-            setCurrent: taskStore.currentProjectId === task.projectId,
+          taskStore.loadTasks(task.projectViewId, {
+            setCurrent: taskStore.currentProjectId === task.projectViewId,
           });
         }
       });
@@ -112,10 +113,12 @@ export function useSessionCrud() {
       // 미지정이면 글로벌 기본.
       const effectiveExecutionMode = options.executionMode
         ?? useSettingsStore.getState().settings.agentExecutionMode;
+      const originProjectId = options.parentProjectId || options.workDir || process.cwd();
       const optimisticSession: UnifiedSession = {
         id: tempSessionId,
         title: t('panel.creating'),
-        projectDir: options.parentProjectId || options.workDir || process.cwd(),
+        projectDir: originProjectId,
+        originProjectId,
         workDir: options.workDir,
         isRunning: false,
         hasStarted: false,
@@ -191,17 +194,16 @@ export function useSessionCrud() {
         const result = await response.json();
 
         const projectDir = options.parentProjectId || result.projectDir || '';
-        const projectExisted = sessionStore.projects.some(
+        const projectExisted = projectViewWorkspaceState.getLoadedProjectViews().some(
           (p) => p.encodedDir === projectDir || p.decodedPath === projectDir
         );
-
-        sessionStore.removeSession(tempSessionId);
 
         // No runtime exists yet. GUI starts on first input; PTY starts on first open.
         const newSession: UnifiedSession = {
           id: result.sessionId,
           title: result.title,
           projectDir: projectDir,
+          originProjectId: projectDir,
           workDir: options.workDir || result.projectDir,
           isRunning: false,
           hasStarted: false,
@@ -212,6 +214,8 @@ export function useSessionCrud() {
           archived: false,
           sortOrder: 0,
           worktreeBranch,
+          worktreeId: result.worktreeId,
+          scopeBranch: result.scopeBranch,
           kind: result.kind,
           provider: result.provider,
           model: result.model,
@@ -225,7 +229,16 @@ export function useSessionCrud() {
           hasCustomTitle: options.hasCustomTitle ?? false,
         };
 
-        sessionStore.addSession(newSession);
+        // The user may have moved to another tab while the request was in flight.
+        // Keep that newer choice active and replace only the optimistic surface
+        // that initiated this creation.
+        sessionStore.addSession(newSession, { activate: false });
+        useTabStore.getState().rebindSessionSurface(
+          [tempSessionId],
+          result.sessionId,
+          { worktreeId: result.worktreeId ?? null },
+        );
+        sessionStore.removeSession(tempSessionId);
         sessionStore.setCreatingSession(null);
 
         // Migrate draft input from temp session to real session
@@ -233,16 +246,6 @@ export function useSessionCrud() {
         const tempDraft = chatStore.getDraftInput(tempSessionId);
         if (tempDraft) {
           chatStore.setDraftInput(result.sessionId, tempDraft);
-        }
-
-        // Update panel from temp to real session
-        {
-          const ps = usePanelStore.getState();
-          ps.assignSession(
-            selectActiveTab(ps)?.activePanelId ?? '',
-            result.sessionId,
-          );
-          useTabStore.getState().syncTabProjectFromSession(ps.activeTabId, result.sessionId);
         }
 
         chatStore.loadHistory(result.sessionId, []);
@@ -353,6 +356,7 @@ export function useSessionCrud() {
           id: result.sessionId,
           title: result.title,
           projectDir: result.projectDir,
+          originProjectId: result.projectDir,
           workDir: result.workDir,
           isRunning: false,
           hasStarted: true,

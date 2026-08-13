@@ -12,6 +12,7 @@
 
 import { readGitPanelState } from "./git-panel-read";
 import type { GitPanelData } from "@/types/git";
+import type { WorkspaceTarget } from '@/types/worktree';
 
 export const GIT_PANEL_POLL_INTERVAL_MS = 5000;
 /**
@@ -32,7 +33,8 @@ export interface GitPanelPollTimers {
 }
 
 export interface GitPanelPollOptions {
-  sessionId: string;
+  sessionId?: string;
+  target?: WorkspaceTarget;
   /** Where a fresh panel state goes — the store, in the panel's case. */
   apply: (data: GitPanelData) => void;
   /**
@@ -57,7 +59,11 @@ const defaultTimers: GitPanelPollTimers = {
  * to has moved to another session by then.
  */
 export function startGitPanelPolling(options: GitPanelPollOptions): () => void {
-  const { sessionId, apply, isVisible, fetchImpl } = options;
+  const { apply, isVisible, fetchImpl } = options;
+  const target = options.target ?? (options.sessionId
+    ? { kind: 'session', id: options.sessionId } as const
+    : null);
+  if (!target) throw new Error('Git panel polling requires a target');
   const timers = options.timers ?? defaultTimers;
 
   let stopped = false;
@@ -82,7 +88,7 @@ export function startGitPanelPolling(options: GitPanelPollOptions): () => void {
     const startedAt = timers.now();
     void (async () => {
       try {
-        const result = await readGitPanelState(sessionId, { fetchImpl });
+        const result = await readGitPanelState(target, { fetchImpl });
         // A failed poll leaves the panel showing what it already had. The error
         // belongs to the read the user asked for, not to a background one.
         if (!stopped && result.kind === "loaded") apply(result.data);

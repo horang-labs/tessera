@@ -12,7 +12,10 @@ import {
   resolveClaudeBackgroundTerminalSessionFork,
   resolveClaudeJobsDir,
 } from '@/lib/cli/providers/claude-code/terminal-session-observer';
-import { createTerminalSessionArtifactObserver } from '@/lib/cli/providers/terminal-session-artifact-observer';
+import {
+  createTerminalSessionArtifactObserver,
+  getTerminalSessionArtifactWatchBackend,
+} from '@/lib/cli/providers/terminal-session-artifact-observer';
 
 /**
  * Forces the bridged topology (Windows server, WSL agent) the packaged app
@@ -77,6 +80,19 @@ test('a parsed fork waits for the PTY identity to catch up before it is emitted'
     providerSessionId: 'thread-child',
   }]);
   assert.equal(readCount, 1, 'the parsed candidate should be rechecked without another file read');
+});
+
+test('provider artifacts on a WSL UNC root use native inotify instead of Windows chokidar', () => {
+  assert.equal(
+    getTerminalSessionArtifactWatchBackend(
+      '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\.codex\\sessions',
+    ),
+    'wsl-inotify',
+  );
+  assert.equal(
+    getTerminalSessionArtifactWatchBackend('C:\\Users\\work\\.codex\\sessions'),
+    'chokidar',
+  );
 });
 
 test('Codex fork artifacts report the child identity before its first prompt', async (t) => {

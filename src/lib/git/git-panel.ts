@@ -7,6 +7,7 @@ import {
 import { resolvePathForHostFilesystem } from "@/lib/filesystem/host-path";
 import * as dbSessions from "@/lib/db/sessions";
 import * as dbTasks from "@/lib/db/tasks";
+import * as dbWorktrees from '@/lib/db/worktrees';
 import { getCachedSessionPr } from "@/lib/github/session-pr-sync";
 import {
   computeWorktreeFileDiffStats,
@@ -1045,8 +1046,49 @@ export async function getGitPanelData(
   userId?: string,
 ): Promise<GitPanelData> {
   const sessionContext = await resolveSessionContext(sessionId);
+  return buildGitPanelData(sessionId, sessionContext, userId);
+}
+
+export async function getWorktreeGitPanelData(
+  worktreeId: string,
+  userId?: string,
+): Promise<GitPanelData> {
+  const initialWorktree = dbWorktrees.getWorktree(worktreeId);
+  const agentEnvironment = await resolveGitEnvironment(
+    userId
+      ? { userId }
+      : { inferFromPaths: initialWorktree?.filesystemPath ? [initialWorktree.filesystemPath] : [] },
+  );
+  const worktree = dbWorktrees.getWorktree(worktreeId);
+  if (!worktree) {
+    throw new GitPanelError('session_not_found', 'Worktree not found', 404);
+  }
+  if (!worktree.filesystemPath) {
+    throw new GitPanelError('missing_work_dir', 'Worktree has no checkout path', 422);
+  }
+  return buildGitPanelData(
+    worktreeId,
+    {
+      workDir: worktree.filesystemPath,
+      taskId: null,
+      worktreeBranch: worktree.currentBranch,
+    },
+    userId,
+    worktreeId,
+    agentEnvironment,
+  );
+}
+
+async function buildGitPanelData(
+  targetId: string,
+  sessionContext: GitSessionContext,
+  userId?: string,
+  worktreeId?: string,
+  resolvedAgentEnvironment?: AgentEnvironment,
+): Promise<GitPanelData> {
   const { workDir } = sessionContext;
-  const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
+  const agentEnvironment = resolvedAgentEnvironment
+    ?? await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const {
     repoRoot,
     branchRaw,
@@ -1069,9 +1111,9 @@ export async function getGitPanelData(
   // PR detection can invoke remote git and gh commands. Keep the initial panel
   // read local-only and use the last cached result; the focus/turn-end/poller
   // refresh paths populate this cache and broadcast the updated panel state.
-  const bareSessionPr = sessionContext.taskId
+  const bareSessionPr = sessionContext.taskId || worktreeId
     ? null
-    : getCachedSessionPr(sessionId) ?? null;
+    : getCachedSessionPr(targetId) ?? null;
   // §9: a filesystem probe rather than a Git command, so it adds no process to
   // this read. `repoRoot` rather than `workDir` because the marker files live
   // beside the worktree's own git directory, and `workDir` is allowed to be a
@@ -1100,9 +1142,13 @@ export async function getGitPanelData(
         }
       : null;
   const github = resolveGitHubPanelState(remoteUrl, prSummary);
+  if (worktreeId && github.reasonCode === 'unknown') {
+    github.reason = 'Start a session in this worktree to check pull request status.';
+  }
 
   return {
-    sessionId,
+    sessionId: targetId,
+    ...(worktreeId ? { worktreeId } : {}),
     ...(sessionContext.taskId ? { taskId: sessionContext.taskId } : {}),
     workDir,
     repoRoot,
@@ -1256,6 +1302,35 @@ export async function getGitDiffData(
   userId?: string,
 ): Promise<GitDiffData> {
   const workDir = await resolveSessionWorkDir(sessionId);
+  return getGitDiffDataForWorkDir(sessionId, workDir, relativePath, userId);
+}
+
+export async function getWorktreeGitDiffData(
+  worktreeId: string,
+  relativePath: string,
+  userId?: string,
+): Promise<GitDiffData> {
+  const worktree = dbWorktrees.getWorktree(worktreeId);
+  if (!worktree) {
+    throw new GitPanelError('session_not_found', 'Worktree not found', 404);
+  }
+  if (!worktree.filesystemPath) {
+    throw new GitPanelError('missing_work_dir', 'Worktree has no checkout path', 422);
+  }
+  return getGitDiffDataForWorkDir(
+    worktreeId,
+    worktree.filesystemPath,
+    relativePath,
+    userId,
+  );
+}
+
+async function getGitDiffDataForWorkDir(
+  targetId: string,
+  workDir: string,
+  relativePath: string,
+  userId?: string,
+): Promise<GitDiffData> {
   const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
   const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
   const changedFiles = await getChangedFiles(workDir, agentEnvironment);
@@ -1272,7 +1347,7 @@ export async function getGitDiffData(
   if (fileEntry.state === "untracked") {
     const diff = await buildSyntheticUntrackedDiff(repoRoot, relativePath, workDir);
     return {
-      sessionId,
+      sessionId: targetId,
       workDir,
       path: relativePath,
       diff,
@@ -1295,7 +1370,7 @@ export async function getGitDiffData(
   );
 
   return {
-    sessionId,
+    sessionId: targetId,
     workDir,
     path: relativePath,
     diff: diff || `No textual diff available for ${relativePath}.`,

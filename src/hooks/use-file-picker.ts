@@ -172,7 +172,10 @@ interface UseReferencePickerReturn {
   close: () => void;
 }
 
-export function useReferencePicker(sessionId: string): UseReferencePickerReturn {
+export function useReferencePicker(
+  sessionId: string,
+  projectViewId: string | null | undefined,
+): UseReferencePickerReturn {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -187,7 +190,7 @@ export function useReferencePicker(sessionId: string): UseReferencePickerReturn 
     setIsOpen(false);
     setTriggerStart(null);
     setQuery('');
-  }, [sessionId]);
+  }, [sessionId, projectViewId]);
 
   const loadRefs = useCallback(async (): Promise<void> => {
     if (inFlightRef.current) return inFlightRef.current;
@@ -197,7 +200,14 @@ export function useReferencePicker(sessionId: string): UseReferencePickerReturn 
     const task = (async () => {
       setIsLoading(true);
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/files`);
+        if (!projectViewId) {
+          setCache({ files: [], chats: [], tasks: [], loadedAt: Date.now(), truncated: false });
+          return;
+        }
+        const query = new URLSearchParams({ projectId: projectViewId });
+        const res = await fetch(
+          `/api/sessions/${encodeURIComponent(sessionId)}/files?${query.toString()}`,
+        );
         if (!res.ok) {
           setCache({ files: [], chats: [], tasks: [], loadedAt: Date.now(), truncated: false });
           return;
@@ -227,7 +237,7 @@ export function useReferencePicker(sessionId: string): UseReferencePickerReturn 
     } finally {
       inFlightRef.current = null;
     }
-  }, [sessionId, cache]);
+  }, [sessionId, projectViewId, cache]);
 
   const { results, sectionBoundaries } = useMemo(() => {
     if (!cache) {
@@ -369,6 +379,3 @@ export function useReferencePicker(sessionId: string): UseReferencePickerReturn 
     close,
   };
 }
-
-// Backwards compatibility: expose the old hook name.
-export const useFilePicker = useReferencePicker;

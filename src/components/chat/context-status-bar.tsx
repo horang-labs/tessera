@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment } from 'react';
-import { useSessionStore } from '@/stores/session-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { useUsageStore } from '@/stores/usage-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -98,7 +98,7 @@ function rateLimitColor(utilization: number): string {
 }
 
 export function ContextStatusBar({ sessionId, isReadOnly }: ContextStatusBarProps) {
-  const providerId = useSessionStore((s) => s.getSession(sessionId)?.provider?.trim() ?? null);
+  const providerId = useProjectViewSession(sessionId)?.provider?.trim() ?? null;
   const usage = useUsageStore((s) => s.sessionUsage.get(sessionId));
   const rateLimits = useRateLimitStore((s) => providerId ? s.limitsByProvider[providerId] ?? null : null);
   const configuredModel = useSettingsStore((s) =>

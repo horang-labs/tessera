@@ -8,6 +8,7 @@ import next from 'next';
 import { createServer, type Server } from 'http';
 import { networkInterfaces } from 'node:os';
 import { initDatabase } from '../src/lib/db/database';
+import { bootstrapCanonicalWorktreeRegistry } from '../src/lib/db/worktree-bootstrap';
 import '../src/lib/cli/providers/bootstrap';
 import { ensureRSAKeys } from '../src/lib/auth/keys';
 import { ensureAppSecret } from '../src/lib/auth/app-secret';
@@ -36,6 +37,8 @@ import {
 import { attachRemoteAddressHeader } from '../src/lib/http/remote-address-header';
 import { directListeners } from '../src/lib/http/direct-listeners';
 import { loadMachineSettings } from '../src/lib/settings/machine-settings';
+import { SettingsManager } from '../src/lib/settings/manager';
+import { registerCurrentProjectAtStartup } from '../src/lib/projects/current-project-registration';
 import { createPairingPresentation } from '../src/lib/auth/pairing-presentation';
 import {
   LOOPBACK_SERVER_HOST,
@@ -135,8 +138,22 @@ if (isElectronChild) {
 
 logStartup('debug', `Server child starting (cwd=${process.cwd()}, dir=${dir}, port=${port})`);
 
-initDatabase().then(() => {
-  logStartup('debug', 'DB initialized, loading model config cache...');
+initDatabase().then(async () => {
+  logStartup('debug', 'DB initialized, bootstrapping canonical Worktree registry...');
+  try {
+    const userId = await resolveServerDefaultUserId();
+    if (userId) {
+      const settings = await SettingsManager.load(userId, { silent: true, strict: true });
+      const bootstrap = await bootstrapCanonicalWorktreeRegistry(settings.agentEnvironment);
+      if (bootstrap.status === 'completed') {
+        logger.info({ bootstrap }, 'Canonical Worktree registry bootstrapped');
+      }
+    }
+  } catch (error) {
+    logger.warn({ error }, 'Canonical Worktree registry bootstrap skipped');
+  }
+  registerCurrentProjectAtStartup();
+  logStartup('debug', 'Worktree bootstrap settled, loading model config cache...');
   return ensureRemoteModelConfigLoaded();
 }).then(() => {
   logStartup('debug', 'Model config cache loaded, calling ensureRSAKeys...');

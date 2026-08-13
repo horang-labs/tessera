@@ -15,6 +15,10 @@ import { AgentMessageGroup } from './agent-message-group';
 import { useShowWaitingIndicator } from '@/hooks/use-show-waiting-indicator';
 import { useVirtualMessageList } from '@/hooks/use-virtual-message-list';
 import { useWebSocket } from '@/hooks/use-websocket';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { useI18n } from '@/lib/i18n';
 import {
   applyProviderSessionRuntimeOverrides,
@@ -24,6 +28,7 @@ import {
   exportSessionReference,
   formatForkConversationPrompt,
 } from '@/lib/session/session-reference';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/notification-store';
 import type { Collection } from '@/types/collection';
@@ -44,6 +49,7 @@ interface MessageListProps {
   messages: EnhancedMessage[];
   isLoading: boolean;
   sessionId: string;
+  projectViewDir?: string | null;
   hasMore: boolean;
   onLoadMore: () => Promise<void> | void;
   isLoadingMore: boolean;
@@ -123,6 +129,7 @@ function MessageListSessionView({
   messages,
   isLoading,
   sessionId,
+  projectViewDir,
   hasMore,
   onLoadMore,
   isLoadingMore,
@@ -142,8 +149,8 @@ function MessageListSessionView({
   const [isInjectingFork, setIsInjectingFork] = useState(false);
   const forkAnchorRef = useRef<HTMLElement | null>(null);
   const messagesRef = useRef(messages);
-  const session = useSessionStore((state) => state.getSession(sessionId));
-  const projects = useSessionStore((state) => state.projects);
+  const session = useProjectViewSession(sessionId, projectViewDir);
+  const projects = useLoadedProjectViews();
   const providerId = session?.provider;
   const { sendMessage } = useWebSocket();
   const showWaitingIndicator =
@@ -272,7 +279,7 @@ function MessageListSessionView({
         untilMessageId: forkSource.message.id,
         untilMessageIndex: forkSource.messageIndex,
       });
-      const targetSession = useSessionStore.getState().getSession(targetSessionId);
+      const targetSession = projectViewWorkspaceState.resolveSession(targetSessionId);
       const { settings } = useSettingsStore.getState();
       const targetProviderId = targetSession?.provider?.trim();
       if (!targetProviderId) {

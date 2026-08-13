@@ -5,6 +5,8 @@ export interface WorkspaceFileData {
   content: string;
   language: string;
   size: number;
+  /** Last-modified time the content was read at; the save-time optimistic lock. */
+  mtimeMs: number;
   truncated: boolean;
   binary: boolean;
 }

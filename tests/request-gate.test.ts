@@ -235,6 +235,15 @@ test('rejects an unauthenticated auth check when the legacy Electron bypass flag
   }
 });
 
+test('renders the login page for remote browsers served by Electron', async () => {
+  const { default: LoginPage } = await import('../src/app/login/page');
+  const { LoginForm } = await import('../src/components/auth/login-form');
+
+  const page = await LoginPage();
+
+  assert.equal(page.type, LoginForm);
+});
+
 test('rejects a state-changing settings request from a disallowed Origin during auth bypass', async () => {
   const { NextRequest } = await import('next/server');
   const { PUT } = await import('../src/app/api/settings/route');

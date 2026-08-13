@@ -8,6 +8,9 @@ import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
+import type { WorkflowStatus } from '@/types/task-entity';
+import type { TerminalInterruptInputPolicy } from '@/lib/cli/providers/types';
 import type {
   TerminalAppearance,
   TerminalLaunchIntent,
@@ -249,7 +252,7 @@ export type ModelUsageEntry = {
 };
 
 export type AppServerMessage =
-  | ({ type: 'session_created'; sessionId: string; status: 'ready'; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
+  | ({ type: 'session_created'; sessionId: string; status: 'ready'; projectId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
   | ({ type: 'session_started'; sessionId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'session_closed'; sessionId: string }
   | {
@@ -289,6 +292,8 @@ export type AppServerMessage =
       status: 'running' | 'completed' | 'input_required' | 'idle';
       hookEvent: string;
       preview?: string;
+      /** Provider-declared input gesture available while this terminal turn is active. */
+      interruptInputPolicy?: TerminalInterruptInputPolicy;
       /** Active child work prevents an Escape fallback from settling the turn. */
       hasWorkingSubagents?: boolean;
       /**
@@ -374,6 +379,8 @@ export type AppServerMessage =
       shell: string;
       reattached: boolean;
       appearance?: TerminalAppearance;
+      /** Provider-declared input gesture for cancelling an active terminal turn. */
+      interruptInputPolicy?: TerminalInterruptInputPolicy;
     }
   | {
       type: 'terminal_snapshot';
@@ -612,12 +619,23 @@ export type AppServerMessage =
       kind: 'created' | 'updated' | 'deleted' | 'reordered' | 'project_reordered' | 'project_deleted';
       originClientId?: string;
       projectId?: string;
+      sessionId?: string;
+      taskId?: string;
+      archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'task_mutated';
       kind: 'created' | 'updated' | 'deleted' | 'reordered';
       originClientId?: string;
       projectId: string;
+      taskId?: string;
+      sessionId?: string;
+      title?: string;
+      workflowStatus?: WorkflowStatus;
+      preparationStatus?: PreparationStatus;
+      archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'collection_mutated';

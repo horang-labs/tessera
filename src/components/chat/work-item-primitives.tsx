@@ -61,9 +61,23 @@ export function ItemStatusIndicator({
         ? 'ring-1 ring-(--board-card-bg)'
         : 'ring-1 ring-(--sidebar-bg)';
 
+  const status = isAwaitingUser
+    ? 'awaiting-user'
+    : isProcessing && (sessionKind === 'terminal' || !hasUnread)
+      ? 'processing'
+      : hasUnread
+        ? 'unread'
+        : 'running';
+
+  const statusProps = {
+    'data-testid': 'item-status-indicator',
+    'data-status': status,
+  };
+
   if (isAwaitingUser) {
     return (
       <span
+        {...statusProps}
         className={cn(
           getPlacementClassName(placement, false, isEnlarged),
           ringClass,
@@ -79,6 +93,7 @@ export function ItemStatusIndicator({
   if (showsProcessing) {
     return (
       <span
+        {...statusProps}
         className={cn(
           getPlacementClassName(placement, true, isEnlarged),
           ringClass,
@@ -97,6 +112,7 @@ export function ItemStatusIndicator({
   if (hasUnread) {
     return (
       <span
+        {...statusProps}
         className={cn(
           getPlacementClassName(placement, false, isEnlarged),
           ringClass,
@@ -109,6 +125,7 @@ export function ItemStatusIndicator({
 
   return (
     <span
+      {...statusProps}
       className={cn(
         getPlacementClassName(placement, false, isEnlarged),
         ringClass,

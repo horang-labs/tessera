@@ -16,6 +16,7 @@ const terminalSession = {
   id: 'terminal-task-session',
   title: 'PTY session',
   projectDir: 'project-a',
+  originProjectId: 'origin-project',
   isRunning: true,
   status: 'running',
   lastModified: '2026-07-14T00:00:00.000Z',
@@ -29,6 +30,7 @@ const terminalSession = {
 const task = {
   id: 'task-a',
   projectId: 'project-a',
+  projectViewId: 'project-a',
   title: 'Task',
   workflowStatus: 'in_progress',
   sortOrder: 0,
@@ -41,6 +43,7 @@ test('task session snapshots preserve the fixed PTY execution kind', () => {
   const [mergedTask] = mergeTasksWithLiveSessions([task], [terminalSession]);
 
   assert.equal(mergedTask.sessions[0]?.kind, 'terminal');
+  assert.equal(mergedTask.sessions[0]?.originProjectId, 'origin-project');
   assert.equal(getCollectionSessionSnapshots([mergedTask], [])[0]?.kind, 'terminal');
   assert.deepEqual(resolveSessionRuntimePresentation(mergedTask.sessions[0]), {
     showRunning: true,
@@ -80,7 +83,7 @@ test('running menus and stop-all targets include live PTY runtimes', () => {
   }]);
 });
 
-test('sidebar groups keep zero-session worktrees while excluding tasks with only hidden children', () => {
+test('sidebar trusts the linked Worktree projection regardless of visible child Sessions', () => {
   const visibleTask = mergeTasksWithLiveSessions([{
     ...task,
     id: 'visible-task',
@@ -113,5 +116,6 @@ test('sidebar groups keep zero-session worktrees while excluding tasks with only
   assert.deepEqual(groups[0]?.tasks.map((item) => item.id), [
     'zero-session-task',
     'visible-task',
+    'hidden-task',
   ]);
 });

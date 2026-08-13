@@ -9,15 +9,25 @@ import { useBoardStore } from '@/stores/board-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useCollectionDnd } from '@/hooks/use-collection-dnd';
+import { useOriginProjectRepresentation } from '@/hooks/use-project-view-workspace-state';
 import { CollectionGroup } from './collection-group';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import { getProjectColor } from '@/lib/constants/project-strip';
 import { Tooltip } from '@/components/ui/tooltip';
-import { buildProjectCollectionGroups, filterCollectionGroupsByRunning } from '@/lib/chat/build-collection-groups';
+import {
+  buildProjectCollectionGroups,
+  countRunningCollectionGroupItems,
+  filterCollectionGroupsByRunning,
+} from '@/lib/chat/build-collection-groups';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import type { Collection } from '@/types/collection';
-import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  originProjectContainsRunningSession,
+} from '@/lib/projects/origin-project-representation';
+import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { shouldShowAllProjectLoading } from './sidebar-utils';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -32,7 +42,6 @@ interface AllProjectsListProps {
   onSessionDelete: (sessionId: string) => void;
   onSessionOpenInNewTab: (sessionId: string) => void;
   onSessionGenerateTitle: (sessionId: string) => void;
-  onSessionMoveToProject: (sessionId: string) => void;
   onSessionStopProcess: (sessionId: string) => void;
   onChatStatusChange: (sessionId: string, status: string) => void;
 }
@@ -47,19 +56,17 @@ export function AllProjectsList({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   onChatStatusChange,
 }: AllProjectsListProps) {
-  const projects = useSessionStore((state) => state.projects);
+  const representation = useOriginProjectRepresentation();
   const visibleProjects = useMemo(() => {
-    if (!isRunningFilterActive) return projects;
-    return projects.filter((project) =>
-      project.sessions.some((session) =>
-        !session.archived && resolveSessionRuntimePresentation(session).showRunning
-      ),
-    );
-  }, [isRunningFilterActive, projects]);
+    if (!isRunningFilterActive) return representation.projects;
+    return representation.projects.filter((project) => originProjectContainsRunningSession(
+      project,
+      representation.tasksByProject[project.encodedDir] ?? EMPTY_TASKS,
+    ));
+  }, [isRunningFilterActive, representation]);
 
   return (
     <>
@@ -67,6 +74,7 @@ export function AllProjectsList({
         <AllProjectSection
           key={project.encodedDir}
           project={project}
+          projectTasks={representation.tasksByProject[project.encodedDir] ?? EMPTY_TASKS}
           activeSessionId={activeSessionId}
           isRunningFilterActive={isRunningFilterActive}
           onSessionClick={onSessionClick}
@@ -76,7 +84,6 @@ export function AllProjectsList({
           onSessionDelete={onSessionDelete}
           onSessionOpenInNewTab={onSessionOpenInNewTab}
           onSessionGenerateTitle={onSessionGenerateTitle}
-          onSessionMoveToProject={onSessionMoveToProject}
           onSessionStopProcess={onSessionStopProcess}
           onChatStatusChange={onChatStatusChange}
         />
@@ -87,10 +94,12 @@ export function AllProjectsList({
 
 interface AllProjectSectionProps extends AllProjectsListProps {
   project: ProjectGroup;
+  projectTasks: TaskEntity[];
 }
 
 function AllProjectSection({
   project,
+  projectTasks,
   activeSessionId,
   isRunningFilterActive,
   onSessionClick,
@@ -100,7 +109,6 @@ function AllProjectSection({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   onChatStatusChange,
 }: AllProjectSectionProps) {
@@ -110,15 +118,13 @@ function AllProjectSection({
   const color = getProjectColor(project.displayName);
   const collections = useCollectionStore((state) => state.collectionsByProject[project.encodedDir] ?? EMPTY_COLLECTIONS);
   const collectionsLoaded = useCollectionStore((state) => state.loadedProjects[project.encodedDir] ?? false);
-  const collectionsLoading = useCollectionStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const loadTasks = useTaskStore((state) => state.loadTasks);
-  const projectTasks = useTaskStore((state) => state.tasksByProject[project.encodedDir] ?? EMPTY_TASKS);
   const tasksLoaded = useTaskStore((state) => state.loadedProjects[project.encodedDir] ?? false);
-  const tasksLoading = useTaskStore((state) => state.loadingProjectIds[project.encodedDir] ?? false);
   const collapsedCollections = useBoardStore((state) => state.collapsedCollections);
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse);
   const isExpanded = useBoardStore((state) => state.allProjectsExpandedSections?.[project.encodedDir] ?? false);
   const toggleAllProjectsSection = useBoardStore((state) => state.toggleAllProjectsSection ?? (() => {}));
+  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
 
   const {
     draggingItem,
@@ -139,16 +145,6 @@ function AllProjectSection({
     handleGroupDrop,
   } = useCollectionDnd();
 
-  const hasMissingTaskData = useMemo(() => {
-    if (projectTasks.length === 0)
-      return project.sessions.some((session) => !session.archived && !!session.taskId);
-
-    const knownTaskIds = new Set(projectTasks.map((task) => task.id));
-    return project.sessions.some(
-      (session) => !session.archived && !!session.taskId && !knownTaskIds.has(session.taskId)
-    );
-  }, [project.sessions, projectTasks]);
-
   useEffect(() => {
     if (!isExpanded) return;
     if (isRunningFilterActive) return;
@@ -159,9 +155,9 @@ function AllProjectSection({
 
   useEffect(() => {
     if (!isExpanded) return;
-    if (tasksLoaded && !hasMissingTaskData) return;
+    if (tasksLoaded) return;
     void loadTasks(project.encodedDir, { setCurrent: false });
-  }, [hasMissingTaskData, isExpanded, loadTasks, project.encodedDir, tasksLoaded]);
+  }, [isExpanded, loadTasks, project.encodedDir, tasksLoaded]);
 
   const collectionGroups = useMemo(
     () => buildProjectCollectionGroups(project, collections, projectTasks),
@@ -187,32 +183,33 @@ function AllProjectSection({
   }, [isRunningFilterActive, visibleCollectionGroups]);
 
   const visibleSessionCount = useMemo(
-    () => project.sessions.filter((session) => !session.archived).length,
-    [project.sessions]
+    () => new Set(collectionGroups.flatMap((group) => [
+      ...group.chats.map((session) => session.id),
+      ...group.tasks.flatMap((task) => task.sessions.map((session) => session.id)),
+    ])).size,
+    [collectionGroups],
   );
   const runningSessionCount = useMemo(
-    () => project.sessions.filter((session) =>
-      !session.archived && resolveSessionRuntimePresentation(session).showRunning
-    ).length,
-    [project.sessions],
+    () => countRunningCollectionGroupItems(collectionGroups),
+    [collectionGroups],
   );
   const sectionSessionCount = isRunningFilterActive ? runningSessionCount : visibleSessionCount;
 
   const isProjectDragActive = draggingItem?.projectId === project.encodedDir;
   const isProjectGroupDragActive = draggingGroupId?.startsWith(`${project.encodedDir}::`) ?? false;
-  const shouldShowLoading =
-    isExpanded && (
-      isRunningFilterActive
-        ? (!tasksLoaded || tasksLoading)
-        : (!collectionsLoaded || !tasksLoaded || collectionsLoading || tasksLoading)
-    );
+  const shouldShowLoading = shouldShowAllProjectLoading({
+    isExpanded,
+    isRunningFilterActive,
+    collectionsLoaded,
+    tasksLoaded,
+  });
 
   const handleTaskRename = useCallback((taskId: string, newTitle: string) => {
     void useTaskStore.getState().updateTask(taskId, { title: newTitle });
   }, []);
 
   const handleTaskDelete = useCallback((taskId: string) => {
-    void useTaskStore.getState().deleteTask(taskId);
+    void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
   const handleTaskStatusChange = useCallback((taskId: string, status: string) => {
@@ -228,23 +225,32 @@ function AllProjectSection({
     }
   }, [collectionsLoaded, isProjectQuickCreateOpen, project.encodedDir]);
 
+  const handleProjectWorktreeSelect = useCallback(() => {
+    const projectWorktree = project.projectWorktree;
+    if (!projectWorktree) return;
+    useWorkspacePeekStore.getState().openWorktree(
+      projectWorktree.id,
+      project.encodedDir,
+    );
+  }, [project.encodedDir, project.projectWorktree]);
+
   return (
     <div className="relative mb-3 mt-3 first:mt-1" data-testid={`all-project-section-${project.encodedDir}`}>
       <div
         className={cn(
-          'flex items-center gap-1 rounded-md py-1.5 pl-0.5 pr-2 transition-colors',
-          'cursor-pointer hover:bg-(--sidebar-hover)'
+          'flex items-center gap-1 rounded-md py-1.5 pl-0 pr-2 transition-colors',
+          'cursor-pointer hover:bg-(--sidebar-hover)',
         )}
         onClick={() => toggleAllProjectsSection(project.encodedDir)}
       >
         <ChevronRight
           className={cn(
             'h-3 w-3 shrink-0 text-(--text-muted) transition-transform duration-200',
-            isExpanded && 'rotate-90'
+            isExpanded && 'rotate-90',
           )}
         />
         <div
-          className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[0.5rem] font-bold text-white select-none"
+          className="flex h-4 w-4 mr-0.5 shrink-0 items-center justify-center rounded text-[0.5rem] font-bold text-white select-none"
           style={{ backgroundColor: color }}
         >
           {project.displayName.charAt(0).toUpperCase()}
@@ -257,8 +263,9 @@ function AllProjectSection({
         <span className="shrink-0 tabular-nums text-[0.625rem] text-(--text-muted)">
           {sectionSessionCount}
         </span>
-        {project.isCurrent && <Pin className="h-3 w-3 shrink-0 text-(--accent)" />}
+        {project.isCurrent ? <Pin className="h-3 w-3 shrink-0 text-(--accent)" /> : null}
         <button
+          type="button"
           onClick={handleProjectQuickCreateToggle}
           className="shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-bg) hover:text-(--accent)"
           title={t('sidebar.createNewSession')}
@@ -283,6 +290,14 @@ function AllProjectSection({
 
       {isExpanded && (
         <div className="ml-2">
+          {project.projectWorktree ? (
+            <CompactProjectWorktreeRow
+              active={peekWorktreeId === project.projectWorktree.id}
+              branch={project.projectWorktree.currentBranch}
+              displayPath={project.projectWorktree.displayPath}
+              onSelect={handleProjectWorktreeSelect}
+            />
+          ) : null}
           {shouldShowLoading ? (
             <div className="px-4 py-3 text-[0.6875rem] text-(--text-muted)">
               {t('common.loading')}
@@ -326,7 +341,6 @@ function AllProjectSection({
               onSessionArchive={onSessionArchive}
               onSessionOpenInNewTab={onSessionOpenInNewTab}
               onSessionGenerateTitle={onSessionGenerateTitle}
-              onSessionMoveToProject={onSessionMoveToProject}
               onSessionStopProcess={onSessionStopProcess}
               disableDnd
               allowPanelSessionDnd
@@ -379,7 +393,6 @@ function AllProjectSection({
                   onSessionArchive={onSessionArchive}
                   onSessionOpenInNewTab={onSessionOpenInNewTab}
                   onSessionGenerateTitle={onSessionGenerateTitle}
-                  onSessionMoveToProject={onSessionMoveToProject}
                   onSessionStopProcess={onSessionStopProcess}
                 />
               );

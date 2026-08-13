@@ -37,8 +37,8 @@ export async function POST(
 
     // Resolve CWD for the CLI process.
     // Priority: explicit workDir > DB work_dir > project.decoded_path > server CWD.
-    // When a session is moved between projects, project_id changes but work_dir
-    // stays the same. The CLI requires --resume to run from the original CWD.
+    // The CLI requires --resume to run from its canonical Worktree rather than
+    // whichever Project View the user opened the Session through.
     let resolvedWorkDir = workDir;
     if (!resolvedWorkDir) {
       resolvedWorkDir = resolveSessionWorkspaceRoot(sessionId) ?? undefined;

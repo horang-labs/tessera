@@ -23,21 +23,23 @@ export interface TerminalInputBarKey {
 }
 
 /**
- * The five keys, in the order they sit on the bar.
+ * Keys, in the order they sit on the bar.
  *
  * Esc, the arrows and Enter answer a provider's permission prompt, the flow a phone was
  * blocked on. Shift+Tab cycles permission mode, which has no other route from a phone.
- *
- * Tab and the left/right arrows are deliberately absent, not forgotten: the bar is
- * buffered, so nothing has reached the PTY for Tab to complete, and the bar is a real
- * textarea, so the phone already owns the caret. Their sequences exist in the named-key
- * table if either turns out to be wrong.
+ * Left/right arrows drive horizontal pickers (e.g. Claude Code's effort slider), which
+ * the earlier "up/down only" set left unreachable on a phone. Backspace deletes at the
+ * TUI prompt when the soft keyboard is not up, and matches the ⌫ users expect from
+ * every other terminal client.
  */
 export const TERMINAL_INPUT_BAR_KEYS: readonly TerminalInputBarKey[] = [
   { namedKey: 'escape', label: 'Esc', labelKey: 'chat.terminalInputBar.keyEscape' },
   { namedKey: 'shift-tab', label: '⇧Tab', labelKey: 'chat.terminalInputBar.keyShiftTab' },
+  { namedKey: 'left', label: '←', labelKey: 'chat.terminalInputBar.keyLeft' },
   { namedKey: 'up', label: '↑', labelKey: 'chat.terminalInputBar.keyUp' },
   { namedKey: 'down', label: '↓', labelKey: 'chat.terminalInputBar.keyDown' },
+  { namedKey: 'right', label: '→', labelKey: 'chat.terminalInputBar.keyRight' },
+  { namedKey: 'backspace', label: '⌫', labelKey: 'chat.terminalInputBar.keyBackspace' },
   { namedKey: 'enter', label: '⏎', labelKey: 'chat.terminalInputBar.keyEnter' },
 ];
 
