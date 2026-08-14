@@ -23,6 +23,7 @@ test('tab bar empty spacer remains an explicit Electron drag region', () => {
   assert.match(tabBarSource, /const isLinuxElectron = electronPlatform === 'linux'/);
   assert.match(tabBarSource, /isLinuxElectron && 'electron-drag h-\[40px\]/);
   assert.match(tabBarSource, /'electron-drag transition-colors'/);
+  assert.match(tabBarSource, /electronPlatform && 'min-w-12'/);
   // The spacer gives its width to the tab list control on a phone (#247), but never in
   // Electron: a frameless titlebar with no drag region is a window that cannot be moved.
   assert.match(tabBarSource, /isPhoneViewport && !electronPlatform \? 'w-0 shrink-0' : 'flex-1'/);
