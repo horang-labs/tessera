@@ -196,7 +196,7 @@ export function CollectionQuickCreateSheet({
   }, [canCreateTask, resolvedInitialMode]);
 
   useEffect(() => {
-    const handleMouseDown = (event: MouseEvent) => {
+    const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       const sheetElement = containerRef.current;
       if (sheetElement?.contains(target)) return;
@@ -209,18 +209,15 @@ export function CollectionQuickCreateSheet({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
-    // Defer the outside-click watcher by a frame so the tap that opened the
-    // sheet is not re-caught as an outside mousedown — a phone tap synthesises
-    // pointerdown → mousedown → mouseup → click in one tick, and Chrome will
-    // sometimes route that mousedown at the body element rather than the
-    // anchor button, closing the sheet before the user sees it.
-    const raf = window.requestAnimationFrame(() => {
-      document.addEventListener('mousedown', handleMouseDown);
-    });
+    // Dismiss from the physical interaction boundary, not the compatibility
+    // mouse event. The pointerdown that opened this sheet necessarily happened
+    // before the click mounted it, while Android Chrome may emit a delayed
+    // compatibility mousedown afterwards and retarget it to document.body.
+    // Listening to that tail made the sheet open and immediately disappear.
+    document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.cancelAnimationFrame(raf);
-      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [anchorRef, boundaryRef, onClose]);

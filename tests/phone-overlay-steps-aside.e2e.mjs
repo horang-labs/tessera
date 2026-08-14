@@ -1053,11 +1053,11 @@ async function phaseAllProjectsPlusKeepsQuickCreateOpen() {
   await sheet.waitFor({ state: 'visible', timeout: 30_000 });
 
   // Android Chrome can deliver the tap's compatibility mousedown after the
-  // sheet has mounted and installed its outside-click watcher. Replay that
-  // delayed tail deterministically: the trigger is part of the interaction,
-  // not an outside click, so it must not dismiss the sheet.
-  await projectPlus.evaluate((button) => {
-    button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  // sheet has mounted and installed its outside-click watcher. It may retarget
+  // that delayed mouse event to the body rather than the original touch target,
+  // so replay that exact tail instead of the easier anchor-targeted case.
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
   });
   await page.waitForTimeout(100);
 
@@ -1066,6 +1066,13 @@ async function phaseAllProjectsPlusKeepsQuickCreateOpen() {
     1,
     'the All Projects header + keeps its quick-create sheet open after the phone tap settles',
   );
+
+  // A later physical interaction outside still dismisses the sheet. The fix
+  // must reject only the opening tap's compatibility tail, not outside dismiss.
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  });
+  await sheet.waitFor({ state: 'detached', timeout: 5_000 });
 }
 
 // -------------------------------------------------------------------- main ---

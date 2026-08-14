@@ -27,4 +27,30 @@ assert.match(
   'the Worktree mark remains rendered beside the phone action rail',
 );
 
-console.log('ok — phone task actions hide Git diff stats and retain the Worktree mark');
+const chatRowStart = source.indexOf("'group/chat relative flex");
+const chatRowEnd = source.indexOf('{dropIndicatorAfter && (', chatRowStart);
+assert.ok(chatRowStart >= 0 && chatRowEnd > chatRowStart, 'chat row markup is present');
+
+const chatRow = source.slice(chatRowStart, chatRowEnd);
+assert.match(
+  chatRow,
+  /group\/chat[^'`]*max-sm:pr-10/,
+  'phone chat rows reserve the trailing width occupied by the always-visible overflow action',
+);
+assert.doesNotMatch(
+  chatRow,
+  /DiffStatsBadge/,
+  'chat rows never show Worktree Git diff stats',
+);
+assert.match(
+  chatRow,
+  /collection-chat-status-bubble-/,
+  'the chat identity icon remains on the trailing edge when provider icons occupy the leading slot',
+);
+assert.match(
+  chatRow,
+  /max-sm:opacity-100 max-sm:pointer-events-auto/,
+  'the chat overflow action remains visible and tappable without hover on a phone',
+);
+
+console.log('ok — phone task and chat actions retain identity while hiding inappropriate Git diff stats');

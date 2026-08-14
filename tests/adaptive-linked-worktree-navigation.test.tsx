@@ -232,7 +232,7 @@ test('adaptive Worktree rows expose parent Worktree archive and independent chil
 
 test('direct Project Worktree Sessions keep their chat identity', () => {
   useSettingsStore.setState((state) => ({
-    settings: { ...state.settings, showProviderIcons: false },
+    settings: { ...state.settings, showProviderIcons: true },
   }));
   const session = {
     id: 'direct-session',
@@ -244,6 +244,14 @@ test('direct Project Worktree Sessions keep their chat identity', () => {
     createdAt: '2026-08-09T00:00:00.000Z',
     archived: false,
     sortOrder: 0,
+    diffStats: {
+      added: 1400,
+      removed: 63,
+      changedFiles: 12,
+      newFiles: 0,
+      deletedFiles: 0,
+      computedAt: '2026-08-14T00:00:00.000Z',
+    },
   } satisfies UnifiedSession;
   const markup = renderToStaticMarkup(createElement(ChatItemRow, {
     session,
@@ -256,6 +264,8 @@ test('direct Project Worktree Sessions keep their chat identity', () => {
     onDragOverItem: () => {},
   }));
 
-  assert.match(markup, /collection-chat-(?:status-)?bubble-direct-session/);
+  assert.match(markup, /collection-chat-status-bubble-direct-session/);
+  assert.match(markup, /aria-label="More options"/);
+  assert.doesNotMatch(markup, /\+1\.4k|\+1,400/);
   assert.doesNotMatch(markup, /collection-task-worktree-icon/);
 });

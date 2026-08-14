@@ -1399,13 +1399,10 @@ export function ChatItemRow({
   const workflowIconFill = workflowStatus
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
-  // Trailing badges mirror the worktree row's trailing group. The diff badge
-  // shows whenever the chat has worktree diff stats — provider icons on or off.
-  // With provider icons on, the leading slot holds the provider logo, so the
-  // chat bubble rides the trailing edge — ALWAYS shown for chats (colored by
-  // status when set, neutral gray when the chat has no status). Provider-off
-  // rows already carry the bubble in the leading slot instead.
-  const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
+  // A chat is not a Worktree row: even if its backing directory reports Git
+  // stats, keep the row identified by the chat bubble instead of replacing
+  // title space with a Worktree diff badge. Provider-off rows already carry
+  // the bubble in the leading slot.
   const showTrailingBubble = showProviderIcons;
   const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
   const hasUnread = !isActive && hasCanonicalUnread;
@@ -1470,7 +1467,7 @@ export function ChatItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/chat relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150',
+          'group/chat relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150 max-sm:pr-10',
           SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
@@ -1564,46 +1561,45 @@ export function ChatItemRow({
           )}
         </div>
 
-        {/* Trailing group mirrors the worktree row: diff first, then a status-
-            colored chat bubble. Diff shows regardless of provider icons; the
-            bubble only when the provider logo holds the leading slot. Hidden on
-            hover so the quick-action buttons show. */}
-        {!isRenaming && (showTrailingDiff || showTrailingBubble) && (
+        {/* When a provider logo occupies the leading slot, keep chat identity on
+            the trailing edge as well. Phone never hides it behind sticky hover. */}
+        {!isRenaming && showTrailingBubble && (
           <span
             className={cn(
               'flex shrink-0 items-center gap-1.5 transition-opacity duration-150',
-              isHovered ? 'opacity-0' : 'opacity-100',
+              'max-sm:opacity-100',
+              isHovered ? 'sm:opacity-0' : 'sm:opacity-100',
             )}
           >
-            <DiffStatsBadge stats={session.diffStats} />
-            {showTrailingBubble && (
-              workflowColor && workflowIconFill ? (
-                <WorkflowMessageSquareIcon
-                  className="h-3.5 w-3.5 opacity-95"
-                  style={{ color: workflowColor }}
-                  fillColor={workflowIconFill}
-                  testId={`collection-chat-status-bubble-${session.id}`}
-                />
-              ) : (
-                <MessageSquare
-                  className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
-                  data-testid={`collection-chat-status-bubble-${session.id}`}
-                />
-              )
+            {workflowColor && workflowIconFill ? (
+              <WorkflowMessageSquareIcon
+                className="h-3.5 w-3.5 opacity-95"
+                style={{ color: workflowColor }}
+                fillColor={workflowIconFill}
+                testId={`collection-chat-status-bubble-${session.id}`}
+              />
+            ) : (
+              <MessageSquare
+                className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
+                data-testid={`collection-chat-status-bubble-${session.id}`}
+              />
             )}
           </span>
         )}
 
         <div
           className={cn(
-            'pointer-events-none absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
-            runtimePresentation.canStop ? 'w-28' : 'w-24',
-            isHovered && !isRenaming ? 'opacity-100' : 'pointer-events-none opacity-0',
+            'absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
+            runtimePresentation.canStop ? 'sm:w-28' : 'sm:w-24',
+            'max-sm:w-10 max-sm:opacity-100 max-sm:pointer-events-auto',
+            isHovered && !isRenaming
+              ? 'sm:opacity-100 sm:pointer-events-auto'
+              : 'sm:opacity-0 sm:pointer-events-none',
           )}
         >
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 w-full rounded-r-lg"
+            className="absolute inset-y-0 right-0 w-full rounded-r-lg max-sm:hidden"
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
@@ -1612,7 +1608,7 @@ export function ChatItemRow({
                 telemetryControl="task.stop"
                 telemetrySurface="workspace_list"
                 onClick={handleStopProcess}
-                className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+                className="max-sm:hidden rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
                 testId={`collection-chat-quick-stop-${session.id}`}
               />
             )}
@@ -1627,7 +1623,7 @@ export function ChatItemRow({
                   handleArchiveClick();
                 }}
                 className={cn(
-                  'rounded p-1 transition-all duration-150',
+                  'max-sm:hidden rounded p-1 transition-all duration-150',
                   isConfirmingArchive
                     ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                     : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
