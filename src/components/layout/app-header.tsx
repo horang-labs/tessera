@@ -43,7 +43,7 @@ export const AppHeader = memo(function AppHeader() {
     <>
       <header
         className={cn(
-          'shrink-0 flex h-9 items-center border-b border-(--divider) bg-(--sidebar-bg)',
+          'relative shrink-0 flex h-9 items-center border-b border-(--divider) bg-(--sidebar-bg)',
           // The collapse control is 44px tall at Phone viewport, which a fixed
           // 36px bar would clip (#259). Electron's own titlebar heights below
           // are desktop-only and untouched.
@@ -54,10 +54,17 @@ export const AppHeader = memo(function AppHeader() {
         )}
         data-testid="app-header"
       >
+        {isElectronTitlebar ? (
+          <div
+            aria-hidden="true"
+            className="electron-drag absolute inset-0"
+            data-testid="app-header-drag-surface"
+          />
+        ) : null}
         <div
           className={cn(
-            'flex min-w-0 flex-1 items-center gap-2 px-3',
-            isElectronTitlebar && 'self-stretch',
+            'relative z-10 flex min-w-0 flex-1 items-center gap-2 px-3',
+            isElectronTitlebar && 'pointer-events-none self-stretch',
             isMacElectron && 'pl-10',
             // Peek mode stretches the header across the window, so it has to
             // clear the native window controls the tab bar normally clears.
@@ -68,7 +75,7 @@ export const AppHeader = memo(function AppHeader() {
               Keep this titlebar focused on switching the current Project view. */}
           {!isPhoneViewport ? (
             <ProjectViewModeToggle
-              className={isElectronTitlebar ? 'electron-no-drag' : undefined}
+              className={isElectronTitlebar ? 'electron-no-drag pointer-events-auto' : undefined}
               labelMode="short"
             />
           ) : null}
@@ -78,10 +85,9 @@ export const AppHeader = memo(function AppHeader() {
           <div
             className={cn(
               'min-w-0 flex-1',
-              // The empty flex item must occupy real titlebar area. Without a
-              // cross-axis size it is 0px tall, so clicks land on the non-drag
-              // layout container behind it instead of a native drag region.
-              isElectronTitlebar && 'electron-drag min-w-12 self-stretch',
+              // The content row ignores pointer hits in Electron, so this gap
+              // exposes the independent drag surface rendered behind it.
+              isElectronTitlebar && 'min-w-12 self-stretch',
             )}
             data-testid="app-header-drag-lane"
           />
@@ -89,7 +95,7 @@ export const AppHeader = memo(function AppHeader() {
           {isKanbanPeekMode ? (
             // Lift above the Session Peek backdrop (z-50) so Git controls stay
             // clickable while a peek is open.
-            <div className="relative z-[60] electron-no-drag">
+            <div className="relative z-[60] electron-no-drag pointer-events-auto">
               <GitBoardHeaderControl />
             </div>
           ) : null}
@@ -101,7 +107,7 @@ export const AppHeader = memo(function AppHeader() {
                 className={cn(
                   'shrink-0 rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
                   PHONE_TOUCH_TARGET,
-                  isElectronTitlebar && 'electron-no-drag',
+                  isElectronTitlebar && 'electron-no-drag pointer-events-auto',
                 )}
                 aria-label={t('sidebar.collapse')}
                 data-testid="sidebar-collapse-btn"
