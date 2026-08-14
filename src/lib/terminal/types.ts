@@ -32,6 +32,8 @@ export interface TerminalLaunchSpec {
   prefillInput?: string;
   /** Session whose app-server ownership was handed to this terminal. */
   handoffSessionId?: string;
+  /** The provider command resumes an existing conversation and may be ready before its first hook. */
+  restoresProviderSession?: boolean;
 }
 
 export interface TerminalCreateOptions {

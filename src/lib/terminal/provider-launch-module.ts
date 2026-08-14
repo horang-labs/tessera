@@ -380,6 +380,7 @@ async function buildLaunchDecision(
       launchSpec: {
         program: built.command,
         args: built.args,
+        ...(resume ? { restoresProviderSession: true } : {}),
         ...(request.mode === 'surface' && request.surface.prefillInput
           ? { prefillInput: request.surface.prefillInput }
           : {}),
@@ -407,6 +408,7 @@ async function buildLaunchDecision(
       launchSpec: {
         program: built.command,
         args: built.args,
+        ...(codexResumeId ? { restoresProviderSession: true } : {}),
         ...(request.mode === 'surface' && request.surface.prefillInput
           ? { prefillInput: request.surface.prefillInput }
           : {}),
@@ -430,6 +432,7 @@ async function buildLaunchDecision(
     launchSpec: {
       program: built.command,
       args: built.args,
+      ...(opencodeResumeId ? { restoresProviderSession: true } : {}),
       ...(request.mode === 'surface' && request.surface.prefillInput
         ? { prefillInput: request.surface.prefillInput }
         : {}),

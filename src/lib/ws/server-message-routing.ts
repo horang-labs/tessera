@@ -24,6 +24,10 @@ import { createTerminalProviderSessionObserver } from '../terminal/provider-sess
 import { getTerminalProviderSessionForTesseraSession } from '../db/terminal-provider-sessions';
 import { observeTerminalProviderSession } from '../terminal/provider-session-observation';
 import type { TerminalCreateOptions, TerminalLaunchSpec } from '../terminal/types';
+import {
+  TerminalSessionInputError,
+  TerminalSessionRuntimeNotRunningError,
+} from '../terminal/terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { CliProvider, ProviderMeta } from '../cli/providers/types';
@@ -118,6 +122,7 @@ export function verifyClientSessionAccess(
       }, 'Session ownership violation');
       sendToUser(userId, {
         type: 'error',
+        requestId: message.requestId,
         sessionId: message.sessionId,
         code: 'unauthorized',
         message: 'You do not own this session',
@@ -141,6 +146,7 @@ export function verifyClientSessionAccess(
     });
     sendToUser(userId, {
       type: 'error',
+      requestId: message.requestId,
       sessionId: message.sessionId,
       code: 'session_not_found',
       message: 'Session does not exist',
@@ -159,6 +165,7 @@ export async function routeClientTransportMessage({
   userId,
 }: RouteClientTransportMessageOptions): Promise<void> {
   const unguardedSessionMessage = message.type === 'terminal_create'
+    || message.type === 'terminal_prompt'
     || message.type === 'subscribe_workspace_files'
     || message.type === 'unsubscribe_workspace_files'
     || message.type === 'mark_as_read'
@@ -174,6 +181,7 @@ export async function routeClientTransportMessage({
   if (guardedSessionId && !beginTesseraSessionOperation(guardedSessionId)) {
     sendToUser(userId, {
       type: 'error',
+      requestId: message.requestId,
       sessionId: guardedSessionId,
       code: 'session_handed_off_to_terminal',
       message: 'Close the Codex terminal before using this session in Tessera.',
@@ -196,6 +204,17 @@ export async function routeClientTransportMessage({
       });
       return;
     }
+  }
+
+  if (message.type === 'terminal_prompt' && !isSafeTerminalIdentity(message.submissionId)) {
+    sendToConnection(connectionId, {
+      type: 'error',
+      requestId: message.requestId,
+      sessionId: message.sessionId,
+      code: 'invalid_terminal_prompt',
+      message: 'Invalid terminal prompt identity.',
+    });
+    return;
   }
 
   try {
@@ -747,6 +766,39 @@ export async function routeClientTransportMessage({
         message.surfaceId,
         message.data,
       );
+      return;
+
+    case 'terminal_prompt':
+      try {
+        await bindTerminalSender(sendToConnection).submitSessionChatPrompt(
+          message.sessionId,
+          userId,
+          message.text,
+          message.submissionId,
+        );
+        sendToConnection(connectionId, {
+          type: 'terminal_prompt_accepted',
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+        });
+      } catch (error) {
+        if (
+          error instanceof TerminalSessionInputError
+          || error instanceof TerminalSessionRuntimeNotRunningError
+        ) {
+          sendToConnection(connectionId, {
+            type: 'error',
+            requestId: message.requestId,
+            sessionId: message.sessionId,
+            code: error instanceof TerminalSessionRuntimeNotRunningError
+              ? 'terminal_runtime_not_running'
+              : 'terminal_input_not_accepted',
+            message: error.message,
+          });
+          return;
+        }
+        throw error;
+      }
       return;
 
     case 'terminal_set_appearance':

@@ -53,8 +53,17 @@ interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
   providersListCallbacks: Map<string, (providers: ProviderMeta[] | null) => void>;
   cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null | undefined) => void>;
+  terminalPromptCallbacks?: Map<string, (result: TerminalPromptSubmitResult) => void>;
   wasReconnect: boolean;
 }
+
+export type TerminalPromptSubmitResult =
+  | { accepted: true }
+  | {
+      accepted: false;
+      reason: 'server' | 'connection' | 'timeout';
+      message?: string;
+    };
 
 /**
  * Server rejections of a manual /compact. Each one means no compaction started,
@@ -86,6 +95,7 @@ export function handleIncomingServerMessage({
   msg,
   providersListCallbacks,
   cliStatusCallbacks,
+  terminalPromptCallbacks = new Map(),
   wasReconnect,
 }: HandleIncomingServerMessageOptions): { wasReconnect: boolean } {
   const chatStore = useChatStore.getState();
@@ -289,6 +299,16 @@ export function handleIncomingServerMessage({
 
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
+      if (errRequestId && terminalPromptCallbacks.has(errRequestId)) {
+        const callback = terminalPromptCallbacks.get(errRequestId);
+        terminalPromptCallbacks.delete(errRequestId);
+        callback?.({
+          accepted: false,
+          reason: 'server',
+          message: msg.message,
+        });
+        return { wasReconnect };
+      }
       if (errRequestId && providersListCallbacks.has(errRequestId)) {
         providersListCallbacks.get(errRequestId)?.(null);
         providersListCallbacks.delete(errRequestId);
@@ -394,6 +414,14 @@ export function handleIncomingServerMessage({
       cliStatusCallbacks.get(msg.requestId)?.(msg.results);
       cliStatusCallbacks.delete(msg.requestId);
       return { wasReconnect };
+
+    case 'terminal_prompt_accepted': {
+      const callback = terminalPromptCallbacks.get(msg.requestId);
+      if (!callback) return { wasReconnect };
+      terminalPromptCallbacks.delete(msg.requestId);
+      callback({ accepted: true });
+      return { wasReconnect };
+    }
 
     case 'skill_analysis_progress':
       useSkillAnalysisStore.getState().handleProgress(msg);

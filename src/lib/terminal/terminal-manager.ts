@@ -207,6 +207,18 @@ interface TerminalRuntime {
   resizeOutputTransaction?: TerminalResizeOutputTransaction;
   handoffSessionId?: string;
   prefillPending?: boolean;
+  restoresProviderSession?: boolean;
+  semanticPromptPending?: boolean;
+  semanticPromptSubmissions: Map<string, {
+    sessionId: string;
+    text: string;
+    promise: Promise<TerminalSessionSnapshot>;
+  }>;
+  acceptedSemanticPrompts: Map<string, {
+    sessionId: string;
+    text: string;
+    snapshot: TerminalSessionSnapshot;
+  }>;
   closing?: boolean;
   closeWatchdog?: ReturnType<typeof setTimeout>;
   closeWatchdogChecks?: number;
@@ -845,6 +857,9 @@ export class TerminalManager {
         pendingSendTimer: null,
         handoffSessionId,
         prefillPending: Boolean(options.launchSpec?.prefillInput),
+        restoresProviderSession: options.launchSpec?.restoresProviderSession,
+        semanticPromptSubmissions: new Map(),
+        acceptedSemanticPrompts: new Map(),
         disposeSessionObservers: options.launchObserverDisposer
           ? [options.launchObserverDisposer]
           : [],
@@ -1360,22 +1375,94 @@ export class TerminalManager {
     userId: string,
     text: string,
   ): Promise<TerminalSessionSnapshot> {
+    return this.submitSemanticSessionPrompt(sessionId, userId, text, true);
+  }
+
+  /** ChatView may be the first input after a restored TUI, before a lifecycle hook exists. */
+  async submitSessionChatPrompt(
+    sessionId: string,
+    userId: string,
+    text: string,
+    submissionId: string,
+  ): Promise<TerminalSessionSnapshot> {
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    const accepted = runtime.acceptedSemanticPrompts.get(submissionId);
+    if (accepted) {
+      if (accepted.sessionId !== sessionId || accepted.text !== text) {
+        throw new TerminalSessionInputError('A Session prompt id was reused with different input.');
+      }
+      return accepted.snapshot;
+    }
+    const pending = runtime.semanticPromptSubmissions.get(submissionId);
+    if (pending) {
+      if (pending.sessionId !== sessionId || pending.text !== text) {
+        throw new TerminalSessionInputError('A Session prompt id was reused with different input.');
+      }
+      return pending.promise;
+    }
+
+    const promise = this.submitSemanticSessionPrompt(sessionId, userId, text, false);
+    runtime.semanticPromptSubmissions.set(submissionId, { sessionId, text, promise });
+    try {
+      const snapshot = await promise;
+      runtime.acceptedSemanticPrompts.set(submissionId, { sessionId, text, snapshot });
+      while (runtime.acceptedSemanticPrompts.size > 32) {
+        const oldest = runtime.acceptedSemanticPrompts.keys().next().value;
+        if (typeof oldest !== 'string') break;
+        runtime.acceptedSemanticPrompts.delete(oldest);
+      }
+      return snapshot;
+    } finally {
+      runtime.semanticPromptSubmissions.delete(submissionId);
+    }
+  }
+
+  private async submitSemanticSessionPrompt(
+    sessionId: string,
+    userId: string,
+    text: string,
+    requireObservedState: boolean,
+  ): Promise<TerminalSessionSnapshot> {
     const body = normalizeSemanticPrompt(text);
     if (!body.trim()) {
       throw new TerminalSessionInputError('The Session prompt must not be empty.');
     }
     const runtime = this.requireLiveSessionRuntime(sessionId, userId);
-    if (runtime.prefillPending || !runtime.lastSessionState) {
+    if (
+      runtime.prefillPending
+      || (!runtime.lastSessionState && (requireObservedState || !runtime.restoresProviderSession))
+    ) {
       throw new TerminalSessionInputError('The Session provider TUI is not ready for input.');
+    }
+    if (runtime.semanticPromptPending) {
+      throw new TerminalSessionInputError('A Session prompt is already being submitted.');
     }
 
     runtime.resizeOutputTransaction?.settle();
+    runtime.semanticPromptPending = true;
     try {
       runtime.process.write(bracketSemanticPrompt(body));
-    } catch {
+      const delayMs = this.managerOptions.semanticPromptSubmitDelayMs ?? 500;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
+      if (
+        runtime.ended
+        || runtime.closing
+        || this.getOwnedTerminal(runtime.terminalId, userId) !== runtime
+        || runtime.sessionId !== sessionId
+        || this.sessionBindings.get(this.getSessionKey(userId, sessionId)) !== runtime.terminalId
+      ) {
+        throw new TerminalSessionRuntimeNotRunningError(sessionId);
+      }
+      runtime.process.write('\r');
+    } catch (error) {
+      if (error instanceof TerminalSessionRuntimeNotRunningError) throw error;
       throw new TerminalSessionInputError('The Session provider TUI did not accept input.');
+    } finally {
+      runtime.semanticPromptPending = false;
     }
 
+    // Enter is the irreversible acceptance boundary. Nothing below may turn a
+    // successful submit into a rejection that encourages a duplicate retry.
     const stateAt = Date.now();
     const message: TerminalSessionStateMessage = {
       type: 'session_state',
@@ -1389,24 +1476,30 @@ export class TerminalManager {
     runtime.lastSessionState = message;
     runtime.runtimeStateAt = stateAt;
     this.notifySessionWaiters(runtime, message);
-    this.managerOptions.onSessionStateChange?.({ message, userId });
+    try {
+      this.managerOptions.onSessionStateChange?.({ message, userId });
+    } catch (error) {
+      logger.warn({ error, sessionId }, 'Session prompt lifecycle callback failed after acceptance');
+    }
 
-    const delayMs = this.managerOptions.semanticPromptSubmitDelayMs ?? 500;
-    const timer = setTimeout(() => {
-      if (
-        runtime.ended
-        || runtime.closing
-        || this.getOwnedTerminal(runtime.terminalId, userId) !== runtime
-      ) return;
-      try {
-        runtime.process.write('\r');
-      } catch {
-        // A runtime can exit between the accepted paste and delayed submit.
-      }
-    }, Math.max(0, delayMs));
-    timer.unref?.();
-
-    return this.trackSessionSnapshot(runtime, message);
+    let visibleText = '';
+    let alternateScreen = false;
+    try {
+      visibleText = runtime.model.readVisibleText();
+      alternateScreen = runtime.model.isAlternateScreen?.() ?? false;
+    } catch (error) {
+      logger.warn({ error, sessionId }, 'Session prompt snapshot read failed after acceptance');
+    }
+    return this.buildSessionSnapshot(runtime, {
+      visibleText,
+      cols: runtime.cols,
+      rows: runtime.rows,
+      alternateScreen,
+      outputSequence: runtime.sequence,
+      runtimeState: 'running',
+      stateAt,
+      lifecyclePreview: message.preview,
+    });
   }
 
   /** Send only the public, closed set of named control keys to one live Session runtime. */
@@ -2034,7 +2127,12 @@ export class TerminalManager {
   ): boolean {
     if (sourceSessionId === destinationSessionId) return true;
     const runtime = this.getOwnedTerminal(terminalId, userId);
-    if (!runtime || runtime.ended || runtime.sessionId !== sourceSessionId) return false;
+    if (
+      !runtime
+      || runtime.ended
+      || runtime.semanticPromptPending
+      || runtime.sessionId !== sourceSessionId
+    ) return false;
 
     const destinationKey = this.getSessionKey(userId, destinationSessionId);
     const existingDestination = this.sessionBindings.get(destinationKey);

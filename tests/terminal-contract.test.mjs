@@ -265,6 +265,8 @@ test('terminal websocket protocol covers process lifecycle', () => {
     'terminal_detach',
     'terminal_release_preview',
     'terminal_input',
+    'terminal_prompt',
+    'terminal_prompt_accepted',
     'terminal_resize',
     'terminal_close',
     'terminal_started',
@@ -296,6 +298,9 @@ test('terminal messages route through the connection-scoped server terminal mana
   assert.match(routingSource, /case 'terminal_create':/);
   assert.match(routingSource, /case 'terminal_release_preview':/);
   assert.match(routingSource, /case 'terminal_input':/);
+  assert.match(routingSource, /case 'terminal_prompt':/);
+  assert.match(routingSource, /await .*\.submitSessionChatPrompt\(/);
+  assert.match(routingSource, /type: 'terminal_prompt_accepted'/);
   assert.match(routingSource, /case 'terminal_resize':/);
   assert.match(routingSource, /case 'terminal_close':/);
   assert.match(routingSource, /await providerLaunchModule\.launch\(\{/);

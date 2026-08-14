@@ -19,11 +19,16 @@ import {
   applyLocalInteractiveResponseStart,
   finalizeInFlightTurn,
 } from '@/lib/chat/session-client-effects';
-import { handleIncomingServerMessage } from './client-message-handlers';
+import {
+  handleIncomingServerMessage,
+  type TerminalPromptSubmitResult,
+} from './client-message-handlers';
 import { applyOptimisticUserMessage, buildClientRequest } from './client-transport';
 import { getClientId } from './client-id';
 
 type ServerMessageListener = (msg: ServerTransportMessage) => void;
+
+const TERMINAL_PROMPT_RESPONSE_TIMEOUT_MS = 10_000;
 
 export class WebSocketClient {
   readonly clientId: string = getClientId();
@@ -36,6 +41,10 @@ export class WebSocketClient {
     string,
     (results: CliStatusEntry[] | null | undefined) => void
   > = new Map();
+  private terminalPromptCallbacks = new Map<
+    string,
+    (result: TerminalPromptSubmitResult) => void
+  >();
   private serverMessageListeners: Set<ServerMessageListener> = new Set();
   private wasReconnect = false;
   private connectionGeneration = 0;
@@ -130,6 +139,7 @@ export class WebSocketClient {
       msg,
       providersListCallbacks: this.providersListCallbacks,
       cliStatusCallbacks: this.cliStatusCallbacks,
+      terminalPromptCallbacks: this.terminalPromptCallbacks,
       wasReconnect: this.wasReconnect,
     });
     this.wasReconnect = result.wasReconnect;
@@ -411,6 +421,40 @@ export class WebSocketClient {
     return this.sendRequest('terminal_input', { terminalId, surfaceId, data });
   }
 
+  submitTerminalPrompt(
+    sessionId: string,
+    text: string,
+    submissionId: string,
+  ): Promise<TerminalPromptSubmitResult> {
+    const request = buildClientRequest('terminal_prompt', { sessionId, text, submissionId });
+
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const settle = (result: TerminalPromptSubmitResult) => {
+        if (timer !== null) clearTimeout(timer);
+        this.terminalPromptCallbacks.delete(request.requestId);
+        resolve(result);
+      };
+
+      this.terminalPromptCallbacks.set(request.requestId, settle);
+      timer = setTimeout(() => {
+        settle({ accepted: false, reason: 'timeout' });
+      }, TERMINAL_PROMPT_RESPONSE_TIMEOUT_MS);
+      (timer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+
+      if (this.ws?.readyState !== WebSocket.OPEN) {
+        settle({ accepted: false, reason: 'connection' });
+        return;
+      }
+
+      try {
+        this.ws.send(JSON.stringify(request));
+      } catch {
+        settle({ accepted: false, reason: 'connection' });
+      }
+    });
+  }
+
   setTerminalAppearance(
     terminalId: string,
     surfaceId: string,
@@ -516,6 +560,11 @@ export class WebSocketClient {
       callback(null);
     }
     this.cliStatusCallbacks.clear();
+
+    for (const callback of this.terminalPromptCallbacks.values()) {
+      callback({ accepted: false, reason: 'connection' });
+    }
+    this.terminalPromptCallbacks.clear();
   }
 
   /**

@@ -78,29 +78,45 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
   const setMode = useTerminalViewModeStore((state) => state.setMode);
 
   const [value, setValue] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const retrySubmissionRef = useRef<{ text: string; id: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 권한/질문 프롬프트가 떠 있는 동안은 TUI 입력 칸이 그 프롬프트 것이다. 여기서
   // 보낸 텍스트는 프롬프트 응답으로 먹혀 엉뚱하게 동작하므로 막는다.
   const isBlocked = isAwaitingInput;
 
-  const submit = useCallback(() => {
+  const submit = useCallback(async () => {
     const text = value;
-    if (!text.trim() || isBlocked) return;
+    if (!text.trim() || isBlocked || submittingRef.current) return;
 
-    const handle = sendTerminalChatMessage(sessionId, text);
-    if (!handle) {
-      toast.error(t('chat.terminalSendFailed'));
-      return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+    try {
+      const submission = retrySubmissionRef.current?.text === text
+        ? retrySubmissionRef.current
+        : { text, id: crypto.randomUUID() };
+      retrySubmissionRef.current = submission;
+      const result = await sendTerminalChatMessage(sessionId, text, submission.id);
+      if (!result.accepted) {
+        if (result.reason === 'server') retrySubmissionRef.current = null;
+        toast.error(result.message ?? t('chat.terminalSendFailed'));
+        return;
+      }
+      retrySubmissionRef.current = null;
+
+      // 서버가 같은 PTY runtime에 본문과 Enter를 모두 쓴 뒤에만 표시한다.
+      // 에이전트는 턴이 끝나야 transcript를 flush하므로(codex 실측 ~35초),
+      // 실제 기록에 나타날 때까지 pending 목록이 새로고침 사이에서도 유지한다.
+      registerPendingTerminalChatMessage(sessionId, text);
+
+      setValue((current) => current === text ? '' : current);
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
     }
-
-    // 낙관적 표시. 에이전트는 턴이 끝나야 transcript를 flush하므로(codex 실측 ~35초)
-    // 그 전에 도는 갱신이 서버의 옛 목록으로 화면을 덮어쓴다. 등록해 두면 갱신 때마다
-    // 다시 붙었다가, 실제 기록에 나타나는 순간 빠진다.
-    registerPendingTerminalChatMessage(sessionId, text);
-
-    setValue('');
-    requestAnimationFrame(() => textareaRef.current?.focus());
   }, [isBlocked, sessionId, t, value]);
 
   const handleKeyDown = useCallback(
@@ -143,7 +159,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
           tone: 'text-(--text-muted)',
         };
 
-  const canSubmit = !!value.trim() && !isBlocked;
+  const canSubmit = !!value.trim() && !isBlocked && !isSubmitting;
 
   // What the shortened placeholders were shortened from. The placeholder is the
   // accessible name when nothing else names the input, so this has to say the
@@ -174,7 +190,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
                 onKeyDown={handleKeyDown}
-                disabled={isBlocked}
+                disabled={isBlocked || isSubmitting}
                 rows={1}
                 // The visible hint has to fit the one line this box is tall: at
                 // 360px it is 204px wide, and the sentence that named the

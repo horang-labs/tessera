@@ -117,6 +117,13 @@ export type ClientMessage =
     }
   | { type: 'terminal_input'; requestId: string; terminalId: string; surfaceId: string; data: string }
   | {
+      type: 'terminal_prompt';
+      requestId: string;
+      submissionId: string;
+      sessionId: string;
+      text: string;
+    }
+  | {
       type: 'terminal_set_appearance';
       requestId: string;
       terminalId: string;
@@ -344,6 +351,11 @@ export type AppServerMessage =
       }>;
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
+  | {
+      type: 'terminal_prompt_accepted';
+      requestId: string;
+      sessionId: string;
+    }
   /**
    * The message landed, but the agent it is for cannot start yet: the
    * worktree's blocking preparation is still running. Sent only when a message
