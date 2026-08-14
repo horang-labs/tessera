@@ -41,6 +41,8 @@ import { useI18n } from '@/lib/i18n';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { UnifiedSession } from '@/types/chat';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
 import {
   CODEX_NATIVE_COMMAND_EVENT,
   type CodexNativeCommandEventDetail,
@@ -123,6 +125,7 @@ function ComposerToggleButton({
   controlId,
   shortcutId,
   shortcutLabel,
+  telemetryControl,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
@@ -134,9 +137,11 @@ function ComposerToggleButton({
   controlId?: string;
   shortcutId?: ShortcutId;
   shortcutLabel?: string;
+  telemetryControl: TelemetryUiControl;
 }) {
   const button = (
     <button
+      {...telemetryClickAttributes(telemetryControl, 'composer')}
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
@@ -178,6 +183,7 @@ function ComposerControlDropdown({
   disabled = false,
   title,
   shortcutId,
+  telemetryControl,
   shortcutLabel,
   openRequest = 0,
 }: {
@@ -193,6 +199,7 @@ function ComposerControlDropdown({
   disabled?: boolean;
   title?: string;
   shortcutId?: ShortcutId;
+  telemetryControl: TelemetryUiControl;
   shortcutLabel?: string;
   openRequest?: number;
 }) {
@@ -301,6 +308,7 @@ function ComposerControlDropdown({
 
   const trigger = (
     <button
+      {...telemetryClickAttributes(telemetryControl, 'composer')}
       ref={triggerRef}
       type="button"
       onClick={() => {
@@ -885,6 +893,7 @@ function ComposerSessionControlsInner({
       <div className={cn('flex items-center gap-1.5', !isInline && 'flex-wrap', isInline && 'contents')}>
         {canToggleFastMode && (
           <ComposerToggleButton
+            telemetryControl="composer.fast.toggle"
             icon={Zap}
             label="Fast"
             pressed={isFastModeEnabled}
@@ -899,6 +908,7 @@ function ComposerSessionControlsInner({
         )}
 
         <ComposerToggleButton
+          telemetryControl="composer.plan.toggle"
           icon={Workflow}
           label={modeToggleLabel}
           pressed={sessionMode === 'plan'}
@@ -912,6 +922,7 @@ function ComposerSessionControlsInner({
         />
 
         <ComposerControlDropdown
+          telemetryControl="composer.access.open"
           icon={Shield}
           label={accessLabel}
           testId="access-mode-selector"
@@ -924,6 +935,7 @@ function ComposerSessionControlsInner({
         >
           {(close) => (
             <ComposerSessionControlMenu
+              telemetryControl="composer.access.select"
               footerLabel={accessFooterLabel}
               options={accessOptions}
               selectedValue={accessMode}
@@ -936,6 +948,7 @@ function ComposerSessionControlsInner({
         </ComposerControlDropdown>
 
         <ComposerControlDropdown
+          telemetryControl="composer.model.open"
           icon={Cpu}
           label={modelLabel}
           testId="model-selector"
@@ -949,6 +962,7 @@ function ComposerSessionControlsInner({
         >
           {(close) => (
             <ComposerModelMenu
+              telemetryControl="composer.model.select"
               isLoading={providerSessionOptions.isLoading}
               modelOptions={sessionOptions?.modelOptions ?? []}
               selectedModel={model}
@@ -964,6 +978,7 @@ function ComposerSessionControlsInner({
         {sessionOptions?.supportsReasoningEffort && reasoningOptions.length > 0 && (
           canOpenReasoningSelector ? (
             <ComposerControlDropdown
+              telemetryControl="composer.effort.open"
               icon={Gauge}
               label={reasoningLabel}
               testId="reasoning-effort-selector"
@@ -976,6 +991,7 @@ function ComposerSessionControlsInner({
             >
               {(close) => (
                 <ComposerReasoningEffortMenu
+                  telemetryControl="composer.effort.select"
                   options={reasoningOptions}
                   selectedEffort={reasoningEffort}
                   disableRestartRequired={session?.isRunning === true}

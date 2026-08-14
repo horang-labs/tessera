@@ -35,6 +35,7 @@ import {
   type MemoryTargetKind,
 } from "@/types/memory";
 import { cn } from "@/lib/utils";
+import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -521,6 +522,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
       >
         <button
           type="button"
+          {...telemetryClickAttributes("memory.file.open", "memory_panel")}
           onClick={() => openRow(row, false)}
           onDoubleClick={() => openRow(row, true)}
           className="flex w-full min-w-0 items-start gap-2 py-1.5 pl-8 pr-8 text-left"
@@ -570,6 +572,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
             <Tooltip content={t("memoryPanel.rows.deleteMemory")}>
               <button
                 type="button"
+                {...telemetryClickAttributes("memory.file.delete", "memory_panel")}
                 onClick={(event) => {
                   event.stopPropagation();
                   setDeleteTarget(row.summary ?? null);
@@ -643,7 +646,13 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
           body={state.error}
           icon="error"
           action={
-            <Button type="button" variant="outline" size="sm" onClick={() => void loadMemories()}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              {...telemetryClickAttributes("memory.retry", "memory_panel")}
+              onClick={() => void loadMemories()}
+            >
               <RefreshCw className="h-3.5 w-3.5" />
               <span>{t("memoryPanel.actions.retry")}</span>
             </Button>
@@ -660,6 +669,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
               type="button"
               variant="outline"
               size="sm"
+              {...telemetryClickAttributes("memory.create.open", "memory_panel")}
               onClick={() => {
                 setCreateError(null);
                 setCreateOpen(true);
@@ -696,6 +706,7 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
             {t("memoryPanel.dialog.newMemoryDescription")}
           </p>
           <input
+            {...telemetryClickAttributes('memory.create.name', 'memory_panel')}
             autoFocus
             value={createName}
             onChange={(event) => setCreateName(event.target.value)}
@@ -715,12 +726,19 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
             <p className="mt-1.5 text-xs text-(--status-error-text)">{createError}</p>
           ) : null}
           <div className="mt-4 flex justify-end gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              {...telemetryClickAttributes("memory.create.cancel", "memory_panel")}
+              onClick={() => setCreateOpen(false)}
+            >
               {t("common.cancel")}
             </Button>
             <Button
               type="button"
               size="sm"
+              {...telemetryClickAttributes("memory.create.confirm", "memory_panel")}
               onClick={() => void handleCreate()}
               disabled={creating || !toMemoryFileSlug(createName)}
               data-testid="memory-create-confirm"
@@ -741,13 +759,20 @@ export function MemoryPanel({ sessionId }: { sessionId: string | null }) {
             {deleteTarget ? t("memoryPanel.dialog.deleteMemoryDescription", { fileName: deleteTarget.fileName }) : null}
           </p>
           <div className="mt-4 flex justify-end gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => setDeleteTarget(null)}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              {...telemetryClickAttributes("memory.delete.cancel", "memory_panel")}
+              onClick={() => setDeleteTarget(null)}
+            >
               {t("common.cancel")}
             </Button>
             <Button
               type="button"
               variant="destructive"
               size="sm"
+              {...telemetryClickAttributes("memory.delete.confirm", "memory_panel")}
               onClick={() => void handleDelete()}
               disabled={deleting}
               data-testid="memory-delete-confirm"

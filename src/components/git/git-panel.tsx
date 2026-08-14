@@ -34,6 +34,10 @@ import { ElectronWindowControls } from "@/components/layout/electron-window-cont
 import { usePhoneViewport } from "@/hooks/use-phone-viewport";
 import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+} from "@/lib/telemetry/ui-click";
 
 const NOOP = () => {};
 
@@ -48,10 +52,12 @@ function GitPanelTabButton({
   active,
   children,
   onClick,
+  telemetryControl,
 }: {
   active: boolean;
   children: string;
   onClick: () => void;
+  telemetryControl: TelemetryUiControl;
 }) {
   return (
     <button
@@ -60,6 +66,7 @@ function GitPanelTabButton({
       aria-selected={active}
       title={children}
       onClick={onClick}
+      {...telemetryClickAttributes(telemetryControl, "right_panel")}
       className={cn(
         "flex h-6 min-w-0 flex-1 items-center justify-center rounded px-1 text-[11px] font-medium transition-colors",
         active
@@ -285,12 +292,14 @@ export function GitPanel({
           <GitPanelTabButton
             active={effectivePanelTab === "git"}
             onClick={() => handlePanelTabChange("git")}
+            telemetryControl="right_panel.tab.git"
           >
             {t("gitPanel.tabs.git")}
           </GitPanelTabButton>
           <GitPanelTabButton
             active={effectivePanelTab === "files"}
             onClick={() => handlePanelTabChange("files")}
+            telemetryControl="right_panel.tab.files"
           >
             {t("gitPanel.tabs.files")}
           </GitPanelTabButton>
@@ -298,6 +307,7 @@ export function GitPanel({
             <GitPanelTabButton
               active={effectivePanelTab === "scripts"}
               onClick={() => handlePanelTabChange("scripts")}
+              telemetryControl="right_panel.tab.scripts"
             >
               {t("gitPanel.tabs.scripts")}
             </GitPanelTabButton>
@@ -306,6 +316,7 @@ export function GitPanel({
             <GitPanelTabButton
               active={effectivePanelTab === "memory"}
               onClick={() => handlePanelTabChange("memory")}
+              telemetryControl="right_panel.tab.memory"
             >
               {t("gitPanel.tabs.context")}
             </GitPanelTabButton>
@@ -315,6 +326,7 @@ export function GitPanel({
           <button
             type="button"
             onClick={() => dismissPhonePanel()}
+            {...telemetryClickAttributes("right_panel.close", "right_panel")}
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
               PHONE_TOUCH_TARGET,

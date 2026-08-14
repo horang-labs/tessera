@@ -11,6 +11,10 @@ import { useMenuNavigation } from '@/hooks/use-menu-navigation';
 import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
 import { ALWAYS_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import type { SettingsSectionId } from '@/stores/settings-store';
+import {
+  SETTINGS_SECTION_TELEMETRY_CONTROLS,
+  settingsTelemetryClickAttributes,
+} from '@/lib/telemetry/ui-click';
 
 /** Distance kept between the trigger and the list below it. */
 const PICKER_GAP = 4;
@@ -107,6 +111,7 @@ export default function SettingsSectionPicker({
   return (
     <div ref={containerRef} className="relative">
       <button
+        {...settingsTelemetryClickAttributes('settings.section_picker.open')}
         ref={triggerRef}
         type="button"
         onClick={() => setIsOpen((open) => !open)}
@@ -170,6 +175,9 @@ export default function SettingsSectionPicker({
 
             return (
               <button
+                {...settingsTelemetryClickAttributes(
+                  SETTINGS_SECTION_TELEMETRY_CONTROLS[section.id],
+                )}
                 key={section.id}
                 type="button"
                 role="menuitem"

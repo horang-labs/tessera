@@ -4,6 +4,7 @@ import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export interface WorkspaceDeleteRequest {
   /** Workspace-relative path of the entry to delete. */
@@ -89,10 +90,17 @@ export function WorkspaceDeleteDialog({
           </p>
         ) : null}
         <div className="mt-5 flex justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+          <Button
+            {...telemetryClickAttributes('workspace_editor.delete.cancel', 'workspace_editor')}
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
           <Button
+            {...telemetryClickAttributes('workspace_editor.delete.confirm', 'workspace_editor')}
             type="button"
             variant="destructive"
             size="sm"

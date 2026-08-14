@@ -21,6 +21,7 @@ import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useInlineRename } from '@/hooks/use-inline-rename';
 import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
 import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import {
   useAnyProjectViewSessionUnread,
   useProjectViewSessionUnread,
@@ -86,6 +87,7 @@ import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { resolvePreparationBadge } from '@/lib/projects/preparation-status-policy';
 import { isSpecialSession } from '@/lib/constants/special-sessions';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -224,6 +226,8 @@ export function CollectionHeaderMenu({
   return (
     <div className="shrink-0 leading-none">
       <OverflowMenuButton
+        telemetryControl="collection.menu.open"
+        telemetrySurface="workspace_list"
         buttonRef={btnRef}
         onClick={handleToggle}
         size="compact"
@@ -240,6 +244,7 @@ export function CollectionHeaderMenu({
           style={{ top: menuPos.top, left: menuPos.left }}
         >
           <button
+            {...telemetryClickAttributes('collection.edit', 'workspace_list')}
             onClick={handleEdit}
             className="flex w-full items-center gap-2 px-3 h-8 text-[0.75rem] text-left rounded-md text-(--sidebar-text-active) transition-colors hover:bg-(--sidebar-hover) cursor-default"
           >
@@ -247,6 +252,7 @@ export function CollectionHeaderMenu({
             <span>Edit</span>
           </button>
           <button
+            {...telemetryClickAttributes('collection.delete', 'workspace_list')}
             onClick={handleDelete}
             className="flex w-full items-center gap-2 px-3 h-8 text-[0.75rem] text-left rounded-md text-(--error) transition-colors hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] cursor-default"
           >
@@ -377,6 +383,7 @@ export function CollectionContextMenu({
         {menu.isRunning && onStopProcess && (
           <>
             <button
+              {...telemetryClickAttributes('task.stop', 'workspace_list')}
               className={cn(menuItemClass, 'text-(--error)')}
               onClick={() => { onStopProcess(); onClose(); }}
               data-testid="ctx-stop-process"
@@ -416,6 +423,7 @@ export function CollectionContextMenu({
               return (
                 <button
                   key={status}
+                  {...telemetryClickAttributes('task.status.change', 'workspace_list')}
                   className={cn(menuItemClass, isCurrent && 'opacity-50 cursor-default')}
                   onClick={isCurrent ? undefined : () => { onStatusChange(status); onClose(); }}
                   disabled={isCurrent}
@@ -432,7 +440,11 @@ export function CollectionContextMenu({
         )}
 
         {onGenerateTitle && (
-          <button className={menuItemClass} onClick={() => { onGenerateTitle(); onClose(); }}>
+          <button
+            {...telemetryClickAttributes('task.generate_title', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onGenerateTitle(); onClose(); }}
+          >
             <Sparkles className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>{t('task.contextMenu.generateTitle' as Parameters<typeof t>[0])}</span>
           </button>
@@ -440,6 +452,7 @@ export function CollectionContextMenu({
 
         {onRunPreparation && (
           <button
+            {...telemetryClickAttributes('task.run_preparation', 'workspace_list')}
             className={menuItemClass}
             onClick={() => { onRunPreparation(); onClose(); }}
             data-testid="ctx-run-preparation"
@@ -450,7 +463,11 @@ export function CollectionContextMenu({
         )}
 
         {onRename && (
-          <button className={menuItemClass} onClick={() => { onRename(); onClose(); }}>
+          <button
+            {...telemetryClickAttributes('task.rename', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onRename(); onClose(); }}
+          >
             <Pencil className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>Rename</span>
           </button>
@@ -458,6 +475,7 @@ export function CollectionContextMenu({
 
         {onArchive && (
           <button
+            {...telemetryClickAttributes('task.archive_toggle', 'workspace_list')}
             className={menuItemClass}
             onClick={() => { onArchive(); onClose(); }}
             data-testid={menu.type === 'task' && !menu.isSubSession
@@ -472,7 +490,11 @@ export function CollectionContextMenu({
         )}
 
         {onOpenInNewTab && (
-          <button className={menuItemClass} onClick={() => { onOpenInNewTab(); onClose(); }}>
+          <button
+            {...telemetryClickAttributes('task.open_new_tab', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onOpenInNewTab(); onClose(); }}
+          >
             <ExternalLink className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>Open in New Tab</span>
           </button>
@@ -482,6 +504,7 @@ export function CollectionContextMenu({
           <>
             <div className="mx-2 my-1 h-px bg-(--divider) opacity-40" />
             <button
+              {...telemetryClickAttributes('task.delete', 'workspace_list')}
               className={cn(
                 'flex h-8 w-full cursor-default items-center gap-2 rounded-md px-3 text-left text-[0.75rem]',
                 'text-(--error) transition-colors hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)]',
@@ -606,6 +629,7 @@ function SubSessionRow({
       onDragOver={(event) => reorder?.handleDragOver(event, sess.id)}
       onDrop={(event) => reorder?.handleDrop(event, sess.id)}
       onMouseEnter={() => setIsHovered(true)}
+      data-telemetry-ignore="manual_capture"
       onMouseLeave={() => {
         setIsHovered(false);
         resetArchiveConfirm();
@@ -613,6 +637,7 @@ function SubSessionRow({
       onClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
+        void captureTelemetryUiControl('list.subsession.open', 'workspace_list');
         onSessionClick(openSession(), event);
       }}
       onDoubleClick={(event) => {
@@ -676,6 +701,7 @@ function SubSessionRow({
 
       {isRenaming ? (
         <InlineRenameInput
+          telemetrySurface="workspace_list"
           inputRef={renameInputRef}
           value={renameValue}
           onValueChange={setRenameValue}
@@ -697,6 +723,8 @@ function SubSessionRow({
         <div className="flex shrink-0 items-center gap-0.5">
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
+              telemetryControl="task.stop"
+              telemetrySurface="workspace_list"
               onClick={handleStopProcess}
               className={cn(
                 'max-sm:hidden rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90',
@@ -707,6 +735,8 @@ function SubSessionRow({
           )}
           {onArchive && (
             <ArchiveConfirmButton
+              telemetryControl="task.archive_toggle"
+              telemetrySurface="workspace_list"
               isConfirming={isConfirmingArchive}
               onClick={(event) => {
                 event.stopPropagation();
@@ -726,6 +756,8 @@ function SubSessionRow({
             />
           )}
           <OverflowMenuButton
+            telemetryControl="task.menu.open"
+            telemetrySurface="workspace_list"
             buttonRef={moreRef}
             onClick={(event) => {
               event.stopPropagation();
@@ -1051,7 +1083,11 @@ export function TaskItemRow({
           isRenaming && 'cursor-default',
           isPending && 'pointer-events-none opacity-60',
         )}
-        onClick={isPending ? undefined : handleClick}
+        data-telemetry-ignore="manual_capture"
+        onClick={isPending ? undefined : (event) => {
+          void captureTelemetryUiControl('list.task.open', 'workspace_list');
+          handleClick(event);
+        }}
         onDoubleClick={isPending ? undefined : handleDoubleClick}
         onContextMenu={(event) => {
           if (isPending || isRenaming || !onContextMenu) return;
@@ -1109,6 +1145,7 @@ export function TaskItemRow({
         <div className="min-w-0 flex-1">
           {isRenaming ? (
             <InlineRenameInput
+              telemetrySurface="workspace_list"
               inputRef={renameInputRef}
               value={renameValue}
               onValueChange={setRenameValue}
@@ -1172,12 +1209,16 @@ export function TaskItemRow({
           <div className="relative flex pointer-events-auto items-center gap-0.5">
             {hasVisibleRuntimeSession && onStopProcess && (
               <StopProcessButton
+                telemetryControl="task.stop"
+                telemetrySurface="workspace_list"
                 onClick={handleStopProcess}
                 className="max-sm:hidden rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
                 testId={`collection-task-quick-stop-${task.id}`}
               />
             )}
             <ArchiveConfirmButton
+              telemetryControl="task.archive_toggle"
+              telemetrySurface="workspace_list"
               isConfirming={isConfirmingArchive}
               onClick={(event) => {
                 event.stopPropagation();
@@ -1196,6 +1237,7 @@ export function TaskItemRow({
             />
             <button
               ref={addButtonRef}
+              {...telemetryClickAttributes('list.task.add_session', 'workspace_list')}
               onClick={(event) => {
                 event.stopPropagation();
                 event.preventDefault();
@@ -1213,6 +1255,8 @@ export function TaskItemRow({
               <Plus className="h-3.5 w-3.5" />
             </button>
             <OverflowMenuButton
+              telemetryControl="task.menu.open"
+              telemetrySurface="workspace_list"
               buttonRef={moreButtonRef}
               onClick={(event) => {
                 event.stopPropagation();
@@ -1264,6 +1308,7 @@ export function TaskItemRow({
           ))}
           {showToggle && (
             <button
+              {...telemetryClickAttributes('collection.subsessions.toggle', 'workspace_list')}
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
@@ -1436,8 +1481,10 @@ export function ChatItemRow({
           isDragging && 'cursor-grabbing opacity-35 scale-[0.97]',
           isJustDropped && 'drop-flash',
         )}
+        data-telemetry-ignore="manual_capture"
         onClick={(event) => {
           if (!isRenaming) {
+            void captureTelemetryUiControl('list.chat.open', 'workspace_list');
             onSessionClick(session, event);
           }
         }}
@@ -1492,6 +1539,7 @@ export function ChatItemRow({
         <div className="min-w-0 flex-1">
           {isRenaming ? (
             <InlineRenameInput
+              telemetrySurface="workspace_list"
               inputRef={renameInputRef}
               value={renameValue}
               onValueChange={setRenameValue}
@@ -1561,6 +1609,8 @@ export function ChatItemRow({
           <div className="relative flex pointer-events-auto items-center gap-0.5">
             {runtimePresentation.canStop && onStopProcess && (
               <StopProcessButton
+                telemetryControl="task.stop"
+                telemetrySurface="workspace_list"
                 onClick={handleStopProcess}
                 className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
                 testId={`collection-chat-quick-stop-${session.id}`}
@@ -1568,6 +1618,8 @@ export function ChatItemRow({
             )}
             {onArchive && (
               <ArchiveConfirmButton
+                telemetryControl="task.archive_toggle"
+                telemetrySurface="workspace_list"
                 isConfirming={isConfirmingArchive}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -1586,6 +1638,8 @@ export function ChatItemRow({
               />
             )}
             <OverflowMenuButton
+              telemetryControl="task.menu.open"
+              telemetrySurface="workspace_list"
               buttonRef={moreButtonRef}
               onClick={(event) => {
                 event.stopPropagation();

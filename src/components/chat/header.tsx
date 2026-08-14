@@ -39,6 +39,7 @@ import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-presentation';
 import { requestSessionArchive } from '@/lib/session/session-archive-client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface HeaderProps {
   sessionId: string;
@@ -296,6 +297,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
         {isEditingTitle ? (
           <div className="flex items-center gap-1.5">
             <input
+              {...telemetryClickAttributes('chat_header.title_input', 'chat_header')}
               type="text"
               value={titleInput}
               onChange={(e) => setTitleInput(e.target.value)}
@@ -305,16 +307,17 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
               className="h-6 rounded border border-(--input-border) bg-(--input-bg) px-2 py-0 text-[15px] font-semibold leading-none text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
               autoFocus
             />
-            <button onClick={handleTitleSave} className="rounded p-0.5 text-(--success) hover:bg-(--sidebar-hover)">
+            <button {...telemetryClickAttributes('chat_header.title_save', 'chat_header')} onClick={handleTitleSave} className="rounded p-0.5 text-(--success) hover:bg-(--sidebar-hover)">
               <Check className="h-3.5 w-3.5" />
             </button>
-            <button onClick={() => { setTitleInput(session.title); setIsEditingTitle(false); }} className="rounded p-0.5 text-(--text-muted) hover:bg-(--sidebar-hover)">
+            <button {...telemetryClickAttributes('chat_header.title_cancel', 'chat_header')} onClick={() => { setTitleInput(session.title); setIsEditingTitle(false); }} className="rounded p-0.5 text-(--text-muted) hover:bg-(--sidebar-hover)">
               <XIcon className="h-3.5 w-3.5" />
             </button>
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:gap-1">
             <button
+              {...telemetryClickAttributes('chat_header.title_action', 'chat_header')}
               type="button"
               draggable
               onClick={handleTitleButtonClick}
@@ -415,6 +418,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
               <button
                 type="button"
                 onClick={() => toggleTerminalViewMode(sessionId)}
+                {...telemetryClickAttributes('chat_header.terminal_toggle', 'chat_header')}
                 title={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
                 aria-label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
                 aria-pressed={isTerminalChatView}
@@ -435,6 +439,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
             <button
               type="button"
               onClick={search?.onOpen}
+              {...telemetryClickAttributes('chat_header.search', 'chat_header')}
               title={t('chat.search.open')}
               aria-label={t('chat.search.open')}
               className={cn(
@@ -455,6 +460,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
           <button
             ref={moreButtonRef}
             onClick={handleMoreClick}
+            {...telemetryClickAttributes('chat_header.more', 'chat_header')}
             className={cn(
               'rounded p-0.5 transition-all duration-150',
               'text-(--text-muted) hover:text-(--sidebar-text-active)',
@@ -481,6 +487,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                   closePanel(panelId);
                 }
               }}
+              {...telemetryClickAttributes('chat_header.close_panel', 'chat_header')}
               title={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               aria-label={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               data-testid="panel-close-button"

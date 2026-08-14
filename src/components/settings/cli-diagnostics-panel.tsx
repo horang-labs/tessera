@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Activity, Download, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useI18n } from '@/lib/i18n';
 import type {
   CliDiagnosticExportResult,
@@ -85,6 +86,7 @@ export default function CliDiagnosticsPanel() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button
+            {...settingsTelemetryClickAttributes('settings.development.diagnostics_run')}
             type="button"
             size="sm"
             variant="outline"
@@ -96,6 +98,7 @@ export default function CliDiagnosticsPanel() {
             {isRunning ? t('settings.cliDiagnostics.running') : t('settings.cliDiagnostics.run')}
           </Button>
           <Button
+            {...settingsTelemetryClickAttributes('settings.development.diagnostics_export')}
             type="button"
             size="sm"
             variant="outline"

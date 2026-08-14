@@ -507,6 +507,10 @@ export function useSessionCrud() {
         if (!response.ok) {
           const body = await response.json();
           if (body.code === 'no_conversation') {
+            void captureTelemetryEvent('ai_title_generation_result', {
+              source: 'manual',
+              result: 'no_conversation',
+            });
             toast.warning(t('notifications.noConversationYet'));
             return;
           }
@@ -518,8 +522,17 @@ export function useSessionCrud() {
         sessionStore.updateSessionTitle(sessionId, result.title, true);
         useTaskStore.getState().syncLinkedTaskTitle(sessionId, result.title);
 
+        void captureTelemetryEvent('ai_title_generation_result', {
+          source: 'manual',
+          result: 'success',
+        });
+
         toast.success(t('notifications.titleGenerated'));
       } catch (err) {
+        void captureTelemetryEvent('ai_title_generation_result', {
+          source: 'manual',
+          result: 'failed',
+        });
         toast.error(t('errors.generateTitleFailed'));
         console.error('Generate title error:', err);
       } finally {

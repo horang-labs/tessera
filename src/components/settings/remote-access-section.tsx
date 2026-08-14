@@ -29,6 +29,7 @@ import { getIntlLocale } from '@/lib/i18n/locale-map';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
 import PairedDeviceManagement from './paired-device-management';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface PairingPresentation {
   pairingLink: string;
@@ -502,6 +503,7 @@ export default function RemoteAccessSection() {
             ) : null}
           </div>
           <Button
+            {...settingsTelemetryClickAttributes('settings.remote.firewall_configure')}
             type="button"
             variant="outline"
             onClick={() => void handleConfigureFirewall()}
@@ -550,6 +552,7 @@ export default function RemoteAccessSection() {
                 const isSelected = normalizedDraft === candidate.url;
                 return (
                   <button
+                    {...settingsTelemetryClickAttributes('settings.remote.address_candidate')}
                     key={`${candidate.interfaceName}:${candidate.address}`}
                     type="button"
                     onClick={() => {
@@ -584,6 +587,7 @@ export default function RemoteAccessSection() {
         ) : null}
         <div className="flex flex-col gap-2 sm:flex-row">
           <input
+            {...settingsTelemetryClickAttributes('settings.remote.address_input')}
             id="advertised-address"
             type="url"
             value={address}
@@ -601,6 +605,7 @@ export default function RemoteAccessSection() {
             )}
           />
           <Button
+            {...settingsTelemetryClickAttributes('settings.remote.address_save')}
             type="button"
             variant="outline"
             onClick={() => void handleSaveAddress()}
@@ -633,6 +638,7 @@ export default function RemoteAccessSection() {
               </p>
             </div>
             <Button
+              {...settingsTelemetryClickAttributes('settings.remote.pairing_issue')}
               type="button"
               onClick={() => void handlePairing('issue')}
               disabled={!canAddDevice || isPairing}
@@ -672,7 +678,13 @@ export default function RemoteAccessSection() {
                 <code className="min-w-0 flex-1 truncate text-xs text-(--text-secondary)">
                   {presentation.pairingLink}
                 </code>
-                <Button type="button" size="sm" variant="outline" onClick={() => void handleCopyLink()}>
+                <Button
+                  {...settingsTelemetryClickAttributes('settings.remote.pairing_copy_link')}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void handleCopyLink()}
+                >
                   <Copy className="h-3.5 w-3.5" />
                   {t('settings.remoteAccess.copyLink')}
                 </Button>
@@ -694,6 +706,7 @@ export default function RemoteAccessSection() {
                       })}
                 </p>
                 <Button
+                  {...settingsTelemetryClickAttributes('settings.remote.pairing_rotate')}
                   type="button"
                   size="sm"
                   variant="outline"
@@ -831,6 +844,7 @@ export default function RemoteAccessSection() {
 
                       <div className="mt-4 flex flex-col-reverse gap-2 border-t border-(--divider) pt-3 sm:flex-row sm:justify-end">
                         <Button
+                          {...settingsTelemetryClickAttributes('settings.remote.pairing_deny')}
                           type="button"
                           size="sm"
                           variant="destructive"
@@ -846,6 +860,7 @@ export default function RemoteAccessSection() {
                           {t('settings.remoteAccess.denyRequest')}
                         </Button>
                         <Button
+                          {...settingsTelemetryClickAttributes('settings.remote.pairing_approve')}
                           type="button"
                           size="sm"
                           onClick={() => void handlePairingDecision(request.id, 'approve')}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import {
   captureTelemetryEvent,
@@ -28,6 +29,7 @@ export function TelemetryProvider() {
 }
 
 function ActiveTelemetryProvider() {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const telemetrySettingEnabled = useSettingsStore(
     (state) => state.settings.telemetry.enabled,
   );
@@ -63,6 +65,8 @@ function ActiveTelemetryProvider() {
   }, [appSessionId, contextServerHostInfo, installId]);
 
   useEffect(() => {
+    if (!isAuthenticated) return undefined;
+
     let cancelled = false;
 
     async function loadBootstrap() {
@@ -80,7 +84,7 @@ function ActiveTelemetryProvider() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!bootstrap || !bootstrap.firstRunEligible) return;

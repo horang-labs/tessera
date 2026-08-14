@@ -7,6 +7,7 @@ import { useI18n } from "@/lib/i18n";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import { GitPrimaryActionButton } from "./git-primary-action";
 import type { GitPendingVerb } from "./use-git-panel-controller";
+import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
 
 /**
  * The commit surface, inline above the changed-file list rather than in a
@@ -74,6 +75,7 @@ export function GitCommitForm({
     <div className="flex flex-col gap-2 rounded-xl border border-(--divider) bg-(--chat-bg) p-2">
       <div className="relative" data-testid="git-commit-message-shell">
         <textarea
+          {...telemetryClickAttributes('git.commit.message', 'git_panel')}
           autoFocus={autoFocus}
           value={message}
           onChange={(event) => onMessageChange(event.target.value)}
@@ -89,6 +91,7 @@ export function GitCommitForm({
           size="sm"
           variant="ghost"
           onClick={onGenerate}
+          {...telemetryClickAttributes("git.generate_commit_message", "git_panel")}
           disabled={!canGenerate}
           aria-label={t("gitPanel.commit.generateLabel")}
           title={t("gitPanel.commit.generateLabel")}

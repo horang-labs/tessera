@@ -10,6 +10,7 @@ import {
   DEFAULT_PROFILE_DISPLAY_NAME,
   PROFILE_AVATAR_PRESETS,
 } from '@/lib/settings/profile-defaults';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const AVATAR_SIZE = 160;
 const MAX_AVATAR_SOURCE_BYTES = 8 * 1024 * 1024;
@@ -154,6 +155,7 @@ export default function ProfileSettings() {
               {t('settings.profile.displayName')}
             </label>
             <input
+              {...settingsTelemetryClickAttributes('settings.profile.display_name')}
               id="profile-display-name"
               type="text"
               value={displayName}
@@ -166,6 +168,7 @@ export default function ProfileSettings() {
 
           <div className="flex flex-wrap items-center gap-2">
             <input
+              {...settingsTelemetryClickAttributes('settings.profile.avatar_upload')}
               ref={fileInputRef}
               type="file"
               accept="image/*"
@@ -178,6 +181,7 @@ export default function ProfileSettings() {
                 const isActive = activePresetId === preset.id;
                 return (
                   <button
+                    {...settingsTelemetryClickAttributes('settings.profile.avatar_preset')}
                     key={preset.id}
                     type="button"
                     onClick={() => updateProfile({ avatarDataUrl: preset.dataUrl })}
@@ -200,6 +204,7 @@ export default function ProfileSettings() {
                 );
               })}
               <button
+                {...settingsTelemetryClickAttributes('settings.profile.avatar_upload')}
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isProcessing}
@@ -217,6 +222,7 @@ export default function ProfileSettings() {
             </div>
             {canResetAvatar && (
               <button
+                {...settingsTelemetryClickAttributes('settings.profile.avatar_reset')}
                 type="button"
                 onClick={() => updateProfile({ avatarDataUrl: DEFAULT_PROFILE_AVATAR_DATA_URL })}
                 className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"

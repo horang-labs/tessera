@@ -27,6 +27,7 @@ import {
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import {
   ANCHORED_VIEWPORT_MARGIN,
   resolveAnchoredAlignedLeft,
@@ -483,6 +484,7 @@ export function CollectionQuickCreateSheet({
 
   const sheetMarkup = (
     <div
+      data-telemetry-ignore="event_boundary"
       ref={containerRef}
       className={sheetContainerClassName}
       style={sheetStyle}
@@ -502,6 +504,7 @@ export function CollectionQuickCreateSheet({
           </p>
         </div>
         <button
+          {...telemetryClickAttributes('creation.sheet.close', 'collection_create')}
           type="button"
           onClick={onClose}
           className="rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)"
@@ -518,9 +521,10 @@ export function CollectionQuickCreateSheet({
               <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
                 {t('settings.provider.label')}
               </span>
-              <CliProviderRefreshButton />
+              <CliProviderRefreshButton telemetrySurface="collection_create" />
             </div>
             <CliProviderChipSelector
+              telemetrySurface="collection_create"
               value={selectedProvider}
               onChange={setSelectedProvider}
               executionMode={executionMode}
@@ -549,6 +553,7 @@ export function CollectionQuickCreateSheet({
                 {t('task.creation.collectionLabel')}
               </span>
               <select
+                {...telemetryClickAttributes('creation.collection.input', 'collection_create')}
                 value={rawSelectedCollectionId ?? ''}
                 onChange={(event) => setSelectedCollectionId(event.target.value || null)}
                 className="w-full rounded-lg border border-(--divider) bg-(--input-bg) px-2.5 py-1.5 text-[13px] text-(--sidebar-text-active) outline-none transition-colors focus:border-(--accent)"
@@ -576,6 +581,7 @@ export function CollectionQuickCreateSheet({
               <button
                 type="button"
                 onClick={handleCreateChat}
+                {...telemetryClickAttributes('creation.submit.chat', 'collection_create')}
                 disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className={cn(
                   'flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
@@ -606,6 +612,7 @@ export function CollectionQuickCreateSheet({
                   setIsTaskExpanded(true);
                   requestAnimationFrame(() => titleInputRef.current?.focus());
                 }}
+                {...telemetryClickAttributes('creation.mode.task', 'collection_create')}
                 disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className={cn(
                   'flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
@@ -637,6 +644,7 @@ export function CollectionQuickCreateSheet({
                 {t('task.creation.titleLabel')}
               </label>
               <input
+                {...telemetryClickAttributes('creation.task.title_input', 'collection_create')}
                 ref={titleInputRef}
                 id={`collection-task-title-${resolvedScopeId}`}
                 type="text"
@@ -673,6 +681,7 @@ export function CollectionQuickCreateSheet({
                   </span>
                 ) : null}
                 <input
+                  {...telemetryClickAttributes('creation.task.branch_input', 'collection_create')}
                   id={`collection-task-branch-slug-${resolvedScopeId}`}
                   type="text"
                   value={branchSlug}
@@ -731,6 +740,7 @@ export function CollectionQuickCreateSheet({
                   }
                   onClose();
                 }}
+                {...telemetryClickAttributes('creation.cancel', 'collection_create')}
                 className="rounded-md px-2.5 py-1 text-[12px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)"
               >
                 {canCreateChat ? t('common.cancel') : t('common.close')}
@@ -738,6 +748,7 @@ export function CollectionQuickCreateSheet({
               <button
                 type="button"
                 onClick={() => void handleCreateTask()}
+                {...telemetryClickAttributes('creation.submit.task', 'collection_create')}
                 disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported || !worktreeSourceForCreate}
                 className="rounded-md bg-(--accent) px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-(--accent-hover) disabled:cursor-not-allowed disabled:opacity-60"
                 data-testid={`collection-task-submit-${resolvedScopeId}`}

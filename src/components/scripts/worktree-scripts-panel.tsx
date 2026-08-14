@@ -40,6 +40,7 @@ import {
 import { useSettingsStore } from '@/stores/settings-store';
 import { useTaskStore } from '@/stores/task-store';
 import { cn } from '@/lib/utils';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const PREPARATION_TAB_ID = 'worktree-preparation';
 const PREPARATION_PANEL_ID = 'worktree-preparation-panel';
@@ -168,6 +169,7 @@ function PreparationRow({
             way to its editor is here rather than back through the menus. */}
         <button
           type="button"
+          {...telemetryClickAttributes('scripts.settings.open', 'scripts_panel')}
           onClick={() => openSettings({ section: 'project', projectId })}
           title={t('scripts.editScript')}
           aria-label={t('scripts.editScript')}
@@ -178,6 +180,7 @@ function PreparationRow({
         </button>
         <button
           type="button"
+          {...telemetryClickAttributes('scripts.preparation.run', 'scripts_panel')}
           onClick={() => requestPreparation(taskId)}
           disabled={!canRerun}
           title={t('task.preparation.rerun')}
@@ -254,6 +257,7 @@ function ScriptSection({ phase, script }: { phase: PreparationPhase; script: str
     >
       <button
         type="button"
+        {...telemetryClickAttributes('scripts.phase.toggle', 'scripts_panel')}
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
         className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[11px] text-(--text-muted) transition-colors hover:text-(--text-primary)"

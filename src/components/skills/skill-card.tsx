@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import type { SkillInfo } from '@/hooks/use-skill-picker';
 import type { SkillDetail } from '@/lib/skill/skill-analysis-types';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface SkillCardProps {
   skill: SkillInfo;
@@ -46,6 +47,7 @@ export function SkillCard({
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <button
+          {...telemetryClickAttributes('skills.item.toggle', 'skills')}
           type="button"
           onClick={() => setIsExpanded(!isExpanded)}
           className="flex-1 text-left min-w-0"
@@ -90,6 +92,7 @@ export function SkillCard({
         <div className="flex items-center gap-1 shrink-0">
           {/* Favorite toggle */}
           <button
+            {...telemetryClickAttributes('skills.favorite.toggle', 'skills')}
             type="button"
             onClick={(e) => {
               e.stopPropagation();
@@ -111,6 +114,7 @@ export function SkillCard({
 
           {/* Expand toggle */}
           <button
+            {...telemetryClickAttributes('skills.item.toggle', 'skills')}
             type="button"
             onClick={() => setIsExpanded(!isExpanded)}
             className="p-1.5 rounded-md text-(--text-muted) hover:text-(--text-secondary) transition-colors"

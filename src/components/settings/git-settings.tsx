@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import type { GitConfig } from '@/lib/settings/types';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const PROVIDER_OPTIONS = ['claude-code', 'codex', 'opencode'] as const;
 const SELECT_CLASS =
@@ -45,6 +46,7 @@ export default function GitSettings() {
             <span className="text-[11px] text-(--text-tertiary)">{t('settings.gitConfig.branchPrefixDesc')}</span>
           </div>
           <input
+            {...settingsTelemetryClickAttributes('settings.git.branch_prefix')}
             type="text"
             value={gitConfig.branchPrefix}
             onChange={(e) => update({ branchPrefix: e.target.value })}
@@ -68,6 +70,7 @@ export default function GitSettings() {
               {t('settings.gitConfig.provider')}
             </label>
             <select
+              {...settingsTelemetryClickAttributes('settings.git.ai_provider')}
               value={sourceControlAi.provider}
               onChange={(event) => updateSourceControlAi({
                 provider: event.target.value,
@@ -86,6 +89,7 @@ export default function GitSettings() {
               {t('settings.gitConfig.model')}
             </label>
             <select
+              {...settingsTelemetryClickAttributes('settings.git.ai_model')}
               value={sourceControlAi.model ?? ''}
               onChange={(event) => updateSourceControlAi({ model: event.target.value })}
               disabled={isOpenCode}

@@ -11,6 +11,7 @@ import { ShortcutInput } from '@/components/keyboard/shortcut-input';
 import { ShortcutConflictDialog } from '@/components/keyboard/shortcut-conflict-dialog';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import type { EnterKeyBehavior } from '@/lib/settings/types';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const CATEGORY_ORDER: ShortcutCategory[] = ['tab', 'view', 'panel', 'input'];
 
@@ -95,6 +96,7 @@ export default function KeyboardSettings() {
           {t('settings.enterKey.label')}
         </label>
         <select
+          {...settingsTelemetryClickAttributes('settings.keyboard.enter_behavior')}
           value={enterKeyBehavior}
           onChange={(e) => updateSettings({ enterKeyBehavior: e.target.value as EnterKeyBehavior })}
           className="w-full px-3 py-2 border border-(--input-border) rounded-md bg-(--input-bg) text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
@@ -132,11 +134,13 @@ export default function KeyboardSettings() {
                     <span className="text-(--warning)" title={t('shortcut.browserConflict')}>⚠</span>
                   )}
                   <ShortcutInput
+                    telemetryControl="settings.keyboard.shortcut_edit"
                     value={key ?? ''}
                     platform={platform}
                     onChange={(v) => handleChange(id, v)}
                   />
                   <button
+                    {...settingsTelemetryClickAttributes('settings.keyboard.shortcut_reset')}
                     type="button"
                     onClick={() => resetOne(id)}
                     // `ml-auto` only bites on a wrapped line: when the row fits on one
@@ -157,6 +161,7 @@ export default function KeyboardSettings() {
 
       <div className="flex justify-end pt-2">
         <button
+          {...settingsTelemetryClickAttributes('settings.keyboard.shortcut_reset_all')}
           type="button"
           onClick={resetAll}
           className="text-xs text-(--text-muted) hover:text-(--text-primary) underline"

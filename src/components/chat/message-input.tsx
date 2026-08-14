@@ -126,6 +126,7 @@ import {
 import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
 import { MESSAGE_INPUT_MAX_CHARS } from '@/lib/chat/message-input-limits';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import {
   MessageInputAttachmentStrip,
   MessageInputSessionRefStrip,
@@ -1554,6 +1555,7 @@ export function MessageInput({
                     <button
                       type="button"
                       onClick={() => setIsQuickCreateOpen((open) => !open)}
+                      {...telemetryClickAttributes('composer.quick_create', 'composer')}
                       disabled={!canCreateFromCurrentSession}
                       className={cn(
                         'inline-flex h-7 w-7 items-center justify-center rounded-md border text-[11px] transition-colors',
@@ -1681,6 +1683,7 @@ export function MessageInput({
             entry point, which #254 did not open. No `capture` either — forcing
             the camera would cost the gallery. */}
         <input
+          {...telemetryIgnoreAttributes('hidden_file_input')}
           ref={fileInputRef}
           type="file"
           multiple
@@ -1700,6 +1703,7 @@ export function MessageInput({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
+            {...telemetryClickAttributes('composer.attach', 'composer')}
             disabled={isInputUnavailable || !!activePrompt}
             className={cn(
               'shrink-0 rounded-md p-2 transition-all duration-150',
@@ -1750,6 +1754,7 @@ export function MessageInput({
             )}
 
             <textarea
+              {...telemetryClickAttributes('composer.input', 'composer')}
               ref={textareaRef}
               data-session-input={sessionId}
               value={inputValue}
@@ -1819,6 +1824,7 @@ export function MessageInput({
             <ShortcutTooltip id="voice-input" label={t('shortcut.voiceInput')}>
               <button
                 onClick={toggleVoiceRecording}
+                {...telemetryClickAttributes('composer.voice', 'composer')}
                 disabled={!canUseVoice}
                 className={cn(
                   'p-2 rounded-md transition-all duration-150',
@@ -1840,6 +1846,7 @@ export function MessageInput({
               <button
                 type="button"
                 onClick={handleCancel}
+                {...telemetryClickAttributes('composer.stop', 'composer')}
                 data-testid="cancel-generation-btn"
                 className={cn(
                   'p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100',
@@ -1853,6 +1860,7 @@ export function MessageInput({
                 <button
                   type="button"
                   onClick={() => handleSend()}
+                  {...telemetryClickAttributes('composer.send_while_running', 'composer')}
                   className={cn(
                     'p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100',
                     PHONE_TOUCH_TARGET,
@@ -1867,6 +1875,7 @@ export function MessageInput({
           ) : !isVoiceActive ? (
             <button
               onClick={() => handleSend()}
+              {...telemetryClickAttributes('composer.send', 'composer')}
               data-testid="message-send-btn"
               disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
               title={`${t('chat.send')}\n${t('chat.translateAndSend')} (${formatShortcut(translateSendShortcut)})`}

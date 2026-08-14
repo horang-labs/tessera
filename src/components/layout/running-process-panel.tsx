@@ -13,6 +13,7 @@ import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useCanonicalRunningProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface RunningProcessPanelProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -101,6 +102,7 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
   return (
     <div className="relative">
       <Button
+        {...telemetryClickAttributes('running_processes.toggle', 'running_processes')}
         ref={buttonRef}
         variant="ghost"
         size={direction === 'right' ? 'icon-lg' : 'icon'}
@@ -165,6 +167,7 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
           {runningSessions.length > 1 && (
             <div className="border-t border-(--divider) px-3 py-2">
               <button
+                {...telemetryClickAttributes('running_processes.stop_all', 'running_processes')}
                 onClick={handleStopAll}
                 className={cn(
                   'w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md',
@@ -204,6 +207,7 @@ function SessionRow({
 
   return (
     <div
+      {...telemetryClickAttributes('running_processes.navigate', 'running_processes')}
       role="button"
       tabIndex={0}
       className={cn(
@@ -227,6 +231,7 @@ function SessionRow({
 
       {/* Stop button */}
       <button
+        {...telemetryClickAttributes('running_processes.stop', 'running_processes')}
         type="button"
         onClick={(e) => onStop(session.id, e)}
         className={cn(

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertCircle, ChevronDown, Copy, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import {
   GIT_FAILURE_TITLE_KEY,
   type GitActionFailureReport,
@@ -76,6 +77,7 @@ export function GitActionFailureBanner({
           </p>
         </div>
         <button
+          {...telemetryClickAttributes('git.failure.dismiss', 'git_panel')}
           type="button"
           onClick={onDismiss}
           className="-mr-0.5 -mt-0.5 shrink-0 rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
@@ -91,6 +93,7 @@ export function GitActionFailureBanner({
         <div className="mt-1.5">
           <div className="flex items-center gap-1">
             <button
+              {...telemetryClickAttributes('git.failure.expand', 'git_panel')}
               type="button"
               onClick={() => setExpanded((value) => !value)}
               aria-expanded={expanded}
@@ -109,6 +112,7 @@ export function GitActionFailureBanner({
             </button>
             {expanded && hasOutput ? (
               <button
+                {...telemetryClickAttributes('git.failure.copy', 'git_panel')}
                 type="button"
                 onClick={() => {
                   // Absent outside a secure context, where copying is simply

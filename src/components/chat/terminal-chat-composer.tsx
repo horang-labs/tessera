@@ -31,6 +31,7 @@ import {
 } from '@/lib/chat/composer-arrow-scroll';
 import { MessageRowShell } from './message-row-shell';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
   onCancel,
@@ -41,6 +42,7 @@ export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
 
   return (
     <button
+      {...telemetryClickAttributes('terminal.chat.cancel', 'terminal')}
       type="button"
       onClick={onCancel}
       title={t('chat.cancelButton')}
@@ -288,6 +290,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
           >
             <div className="flex items-end gap-2 px-3 py-2">
               <textarea
+                {...telemetryClickAttributes('terminal.chat.input', 'terminal')}
                 ref={textareaRef}
                 // MessageList가 빈 영역 클릭 시 이 selector로 입력창을 찾아 포커스한다.
                 // 터미널 세션에서는 MessageInput이 렌더되지 않으므로 중복되지 않는다.
@@ -319,6 +322,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 data-testid="terminal-chat-composer-input"
               />
               <button
+                {...telemetryClickAttributes('terminal.chat.send', 'terminal')}
                 type="button"
                 onClick={submit}
                 disabled={!canSubmit}
@@ -353,6 +357,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                   ? <TerminalChatCancelButton onCancel={onInterrupt} />
                   : null}
                 <button
+                  {...telemetryClickAttributes('terminal.chat.open_terminal', 'terminal')}
                   type="button"
                   onClick={() => setMode(sessionId, 'terminal')}
                   title={t('chat.viewAsTerminal')}

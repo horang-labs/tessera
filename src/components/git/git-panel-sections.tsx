@@ -43,6 +43,10 @@ import type { GitActionFailureReport } from "./git-action-report";
 import { GitCommitForm } from "./git-commit-form";
 import { GitPrimaryActionBar } from "./git-primary-action";
 import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+} from "@/lib/telemetry/ui-click";
+import {
   FILE_STATE_META,
 } from "./git-panel-shared";
 
@@ -108,11 +112,13 @@ function GitSummaryCopyButton({
   ariaLabel,
   disabled,
   onClick,
+  telemetryControl,
   tooltip,
 }: {
   ariaLabel: string;
   disabled?: boolean;
   onClick: () => void;
+  telemetryControl: TelemetryUiControl;
   tooltip: string;
 }) {
   return (
@@ -126,6 +132,7 @@ function GitSummaryCopyButton({
         // reveal is kept from `sm` up (#250).
         className="pointer-events-auto h-6 w-6 shrink-0 rounded text-(--text-muted) opacity-100 sm:pointer-events-none sm:opacity-0 transition-opacity hover:text-(--text-primary) sm:group-hover/summary-copy:pointer-events-auto sm:group-hover/summary-copy:opacity-100 group-focus-within/summary-copy:pointer-events-auto group-focus-within/summary-copy:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
         onClick={onClick}
+        {...telemetryClickAttributes(telemetryControl, "git_panel")}
         disabled={disabled}
         aria-label={ariaLabel}
       >
@@ -185,6 +192,7 @@ function RecentCommitsSection({ data }: { data: GitPanelData }) {
   return (
     <div className="border-t border-(--chat-header-border) px-3 py-2">
       <button
+        {...telemetryClickAttributes('git.section.toggle', 'git_panel')}
         type="button"
         onClick={() => setExpanded((value) => !value)}
         className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
@@ -378,6 +386,7 @@ export function DiffPreview({
             {onCopyFilePath ? (
               <Tooltip content="Copy absolute path" side="top">
                 <button
+                  {...telemetryClickAttributes('git.diff.copy', 'git_panel')}
                   type="button"
                   onClick={() => onCopyFilePath(selectedFile.path)}
                   className="rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
@@ -448,6 +457,7 @@ export function GitPanelSummarySection({
                   type="button"
                   className="inline-flex max-w-full cursor-pointer items-center gap-1.5 truncate text-left hover:text-(--accent)"
                   onClick={() => onOpenExternal(data.repoUrl)}
+                  {...telemetryClickAttributes("git.repository.open", "git_panel")}
                   aria-label={`Open repository ${projectName}`}
                 >
                   <span className="min-w-0 truncate">{projectName}</span>
@@ -479,6 +489,7 @@ export function GitPanelSummarySection({
                   <GitSummaryCopyButton
                     ariaLabel="Copy full worktree path"
                     onClick={onCopyWorktreePath}
+                    telemetryControl="git.worktree_path.copy"
                     tooltip="Copy full worktree path"
                   />
                 ) : null}
@@ -496,6 +507,7 @@ export function GitPanelSummarySection({
                   <GitSummaryCopyButton
                     ariaLabel="Copy branch name"
                     onClick={onCopyBranch}
+                    telemetryControl="git.branch.copy"
                     tooltip="Copy branch name"
                   />
                 ) : null}
@@ -561,6 +573,7 @@ export function GitPanelSummarySection({
                         historicalPr ? "text-(--text-muted)" : "text-(--text-primary)",
                       )}
                       onClick={() => onOpenExternal(prUrl)}
+                      {...telemetryClickAttributes("git.pull_request.open", "git_panel")}
                       aria-label={`Open pull request ${data.prStatus?.number ?? data.github.pullRequest?.number}`}
                     >
                       {prLabel}
@@ -829,6 +842,7 @@ export function GitPanelContentSection({
                               // than only while a commit is what is running.
                               disabled={primary.pendingVerb !== null}
                               onChange={() => commit.onToggleFile(file.path)}
+                              {...telemetryClickAttributes("git.commit_file.toggle", "git_panel")}
                               aria-label={t("gitPanel.commit.includeFile", {
                                 path: file.path,
                               })}
@@ -841,6 +855,7 @@ export function GitPanelContentSection({
                                 setSelectedPath(file.path);
                                 onOpenDiffFile(file);
                               }}
+                              {...telemetryClickAttributes("git.file.diff_open", "git_panel")}
                               onDoubleClick={() => {
                                 setSelectedPath(file.path);
                                 onPinDiffFile(file);
@@ -870,6 +885,7 @@ export function GitPanelContentSection({
                                   setSelectedPath(file.path);
                                   onOpenDiffFile(file);
                                 }}
+                                {...telemetryClickAttributes("git.file.diff_open", "git_panel")}
                                 className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
                                 aria-label={`Open diff for ${file.path}`}
                               >
@@ -889,6 +905,7 @@ export function GitPanelContentSection({
                                   setSelectedPath(file.path);
                                   onOpenReadOnlyFile(file);
                                 }}
+                                {...telemetryClickAttributes("git.file.open", "git_panel")}
                                 onDragStart={(event) => {
                                   event.stopPropagation();
                                   if (!sessionId || !canOpenReadOnly) {
@@ -913,6 +930,7 @@ export function GitPanelContentSection({
                                   event.stopPropagation();
                                   onCopyFilePath(file.path);
                                 }}
+                                {...telemetryClickAttributes("git.file.copy_path", "git_panel")}
                                 className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
                                 aria-label={`Copy absolute path for ${file.path}`}
                               >
@@ -1078,6 +1096,7 @@ export function GitConflictRecoverySection({
           <div className="flex flex-col pb-2">
             {recovery.unresolvedFiles.map((file) => (
               <button
+                {...telemetryClickAttributes('git.file.diff_open', 'git_panel')}
                 key={file.path}
                 type="button"
                 onClick={() => {

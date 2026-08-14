@@ -6,6 +6,22 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import type { GitPendingVerb } from "./use-git-panel-controller";
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+} from "@/lib/telemetry/ui-click";
+
+const GIT_PRIMARY_TELEMETRY_CONTROLS: Record<GitPrimaryAction["kind"], TelemetryUiControl> = {
+  loading: "git.primary.loading",
+  commit: "git.primary.commit",
+  conflict: "git.primary.conflict",
+  push: "git.primary.push",
+  publish: "git.primary.publish",
+  pull: "git.primary.pull",
+  create_pr: "git.primary.create_pr",
+  view_pr: "git.primary.view_pr",
+  up_to_date: "git.primary.up_to_date",
+};
 
 /**
  * What the button says while an action runs. Read off the verb that is actually
@@ -70,6 +86,7 @@ export function GitPrimaryActionButton({
       type="button"
       size="sm"
       onClick={onRun}
+      {...telemetryClickAttributes(GIT_PRIMARY_TELEMETRY_CONTROLS[action.kind], "git_panel")}
       disabled={disabled}
       title={disabled ? reason : undefined}
       data-testid="git-primary-action-button"

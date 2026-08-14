@@ -7,6 +7,7 @@ import { Tooltip } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
 import { useBoardStore } from '@/stores/board-store';
 import type { Collection } from '@/types/collection';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ElectronApiBoardPopout {
   isElectron?: boolean;
@@ -83,6 +84,7 @@ export const CollectionFilterBar = memo(function CollectionFilterBar({
       {/* "All" chip */}
       <button
         type="button"
+        {...telemetryClickAttributes('board.collection_filter.all', 'workspace_board')}
         onClick={() => onFilter(null)}
         className={cn(
           'inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl',
@@ -102,6 +104,7 @@ export const CollectionFilterBar = memo(function CollectionFilterBar({
       {collections.map((col) => (
         <button
           type="button"
+          {...telemetryClickAttributes('board.collection_filter.select', 'workspace_board')}
           key={col.id}
           onClick={() => onFilter(activeFilter === col.id ? null : col.id)}
           className={cn(
@@ -156,6 +159,7 @@ export const CollectionFilterBar = memo(function CollectionFilterBar({
         <Tooltip content="Open board in new window" delay={350}>
           <button
             type="button"
+            {...telemetryClickAttributes('board.popout', 'workspace_board')}
             onClick={handlePopout}
             className={cn(
               'shrink-0 rounded p-1.5 text-(--text-muted) transition-colors',

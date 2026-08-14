@@ -57,6 +57,8 @@ import {
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 // --- Helpers ---
 
@@ -274,8 +276,12 @@ export const KanbanChatCard = memo(function KanbanChatCard({
         onDragStart={dragEnabled && !isRenaming ? onDragStart : undefined}
         onDragEnd={dragEnabled && !isRenaming ? onDragEnd : undefined}
         onDragOver={dragEnabled ? onDragOverItem : undefined}
+        data-telemetry-ignore="manual_capture"
         onClick={(e) => {
-          if (!isRenaming) onClick(e);
+          if (!isRenaming) {
+            void captureTelemetryUiControl('board.chat.open', 'workspace_board');
+            onClick(e);
+          }
         }}
         onDoubleClick={() => {
           if (!isRenaming) onDoubleClick();
@@ -402,6 +408,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
             {/* Title — 2 lines max */}
             {isRenaming ? (
               <InlineRenameInput
+                telemetrySurface="workspace_board"
                 inputRef={renameInputRef}
                 value={renameValue}
                 onValueChange={setRenameValue}
@@ -467,6 +474,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
         >
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
+              telemetryControl="task.stop"
+              telemetrySurface="workspace_board"
               onClick={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
@@ -478,6 +487,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           )}
           {canArchiveSession && (
             <ArchiveConfirmButton
+              telemetryControl="task.archive_toggle"
+              telemetrySurface="workspace_board"
               isConfirming={isConfirmingArchive}
               onClick={(e) => {
                 e.stopPropagation();
@@ -499,6 +510,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
             />
           )}
           <OverflowMenuButton
+            telemetryControl="task.menu.open"
+            telemetrySurface="workspace_board"
             buttonRef={moreButtonRef}
             onClick={handleMoreClick}
             size="compact"
@@ -832,8 +845,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         onDragStart={dragEnabled ? handleDragStart : undefined}
         onDragEnd={dragEnabled ? handleDragEnd : undefined}
         onDragOver={dragEnabled ? onDragOverItem : undefined}
+        data-telemetry-ignore="manual_capture"
         onClick={(e) => {
           if (isPending || isRenaming) return;
+          void captureTelemetryUiControl('board.task.open', 'workspace_board');
           handleCardClick(e);
         }}
         onDoubleClick={() => {
@@ -1010,6 +1025,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
             {/* Title — 2 lines max */}
             {isRenaming ? (
               <InlineRenameInput
+                telemetrySurface="workspace_board"
                 inputRef={renameInputRef}
                 value={renameValue}
                 onValueChange={setRenameValue}
@@ -1080,12 +1096,16 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         >
           {hasVisibleRuntimeSession && onSessionStopProcess && (
             <StopProcessButton
+              telemetryControl="task.stop"
+              telemetrySurface="workspace_board"
               onClick={handleStopProcess}
               className="p-0.5 rounded text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
               testId="kanban-task-quick-stop-button"
             />
           )}
           <ArchiveConfirmButton
+            telemetryControl="task.archive_toggle"
+            telemetrySurface="workspace_board"
             isConfirming={isConfirmingArchive}
             onClick={(e) => {
               e.stopPropagation();
@@ -1107,6 +1127,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
           {/* Add new session to this task */}
           {onAddSession && (
             <button
+              {...telemetryClickAttributes('board.task.add_session', 'workspace_board')}
               ref={addButtonRef}
               onClick={handleAddSession}
               className={cn(
@@ -1126,6 +1147,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
           )}
           {onContextMenu && (
             <OverflowMenuButton
+              telemetryControl="task.menu.open"
+              telemetrySurface="workspace_board"
               buttonRef={moreButtonRef}
               onClick={handleMoreClick}
               className={cn(
@@ -1168,6 +1191,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
             {showToggle && (
               <button
+                {...telemetryClickAttributes('board.task.sessions.toggle', 'workspace_board')}
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1320,8 +1344,12 @@ function KanbanSubSessionItem({
         }}
         onDragOver={(e) => reorder?.handleDragOver(e, session.id)}
         onDrop={(e) => reorder?.handleDrop(e, session.id)}
+        data-telemetry-ignore="manual_capture"
         onClick={(e) => {
-          if (!isRenaming) onClick(e);
+          if (!isRenaming) {
+            void captureTelemetryUiControl('board.subsession.open', 'workspace_board');
+            onClick(e);
+          }
         }}
         onDoubleClick={(e) => {
           if (!isRenaming) onDoubleClick(e);
@@ -1390,6 +1418,7 @@ function KanbanSubSessionItem({
 
         {isRenaming ? (
           <InlineRenameInput
+            telemetrySurface="workspace_board"
             inputRef={renameInputRef}
             value={renameValue}
             onValueChange={setRenameValue}
@@ -1409,6 +1438,8 @@ function KanbanSubSessionItem({
 
         {canOpenMenu && isHovered && !isRenaming && (
           <OverflowMenuButton
+            telemetryControl="task.menu.open"
+            telemetrySurface="workspace_board"
             buttonRef={moreButtonRef}
             onClick={handleMoreClick}
             size="compact"

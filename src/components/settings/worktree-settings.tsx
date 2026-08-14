@@ -2,6 +2,7 @@
 
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const WORKTREE_PATH_TEMPLATE_EXAMPLES = [
   {
@@ -76,6 +77,7 @@ export default function WorktreeSettings() {
             )}
           </div>
           <input
+            {...settingsTelemetryClickAttributes('settings.development.worktree_path_template')}
             id="managedWorktreePathTemplate"
             type="text"
             value={managedWorktreePathTemplate}

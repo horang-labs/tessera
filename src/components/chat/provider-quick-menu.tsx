@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
@@ -150,6 +152,7 @@ export function ProviderQuickMenu({
         <div className="px-3 py-2 text-[12px] text-(--text-muted)">Loading providers...</div>
       ) : providers === null ? (
         <button
+          {...telemetryClickAttributes('composer.provider.refresh', 'composer')}
           role="menuitem"
           type="button"
           onClick={refreshProviders}
@@ -169,6 +172,7 @@ export function ProviderQuickMenu({
           const isUnsupported = !getProviderExecutionCapabilities(provider.id)[agentExecutionMode];
           return (
             <button
+              {...telemetryClickAttributes('composer.provider.select', 'composer')}
               key={provider.id}
               role="menuitem"
               type="button"

@@ -3,6 +3,7 @@
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import type { Language } from '@/lib/settings/types';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export default function LanguageSwitcher() {
   const { t } = useI18n();
@@ -13,6 +14,7 @@ export default function LanguageSwitcher() {
     <div className="space-y-2">
       <label className="block text-sm font-medium text-(--text-secondary)">{t('settings.language')}</label>
       <select
+        {...settingsTelemetryClickAttributes('settings.general.language')}
         value={language}
         onChange={(e) => updateSettings({ language: e.target.value as Language })}
         className="w-full px-3 py-2 border border-(--input-border) rounded-md bg-(--input-bg) text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"

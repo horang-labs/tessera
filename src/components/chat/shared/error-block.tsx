@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, memo } from 'react';
 import { XCircle, ChevronRight, ChevronDown } from 'lucide-react';
 
@@ -44,6 +46,7 @@ export const ErrorBlock = memo(function ErrorBlock({
       </pre>
       {isLong && (
         <button
+          {...telemetryClickAttributes('message.error.toggle', 'message')}
           onClick={() => setIsExpanded(v => !v)}
           className="flex items-center gap-1 px-3 pb-2 text-[10px] text-(--status-error-text) hover:text-(--status-error-text) transition-colors"
         >

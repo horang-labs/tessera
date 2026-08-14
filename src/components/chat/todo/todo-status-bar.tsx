@@ -7,6 +7,7 @@ import type { TodoItem } from '@/types/cli-jsonl-schemas';
 import { cn } from '@/lib/utils';
 import { SINGLE_PANEL_CONTENT_SHELL } from '../single-panel-shell';
 import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface TodoStatusBarProps {
   sessionId: string;
@@ -99,6 +100,7 @@ export function TodoStatusBar({ sessionId, isSinglePanel }: TodoStatusBarProps) 
           className="overflow-hidden rounded-lg border border-(--tool-border) bg-(--tool-bg) shadow-sm"
         >
           <header
+            {...telemetryClickAttributes('message.todo.toggle', 'message')}
             role="button"
             tabIndex={0}
             aria-expanded={!collapsed}

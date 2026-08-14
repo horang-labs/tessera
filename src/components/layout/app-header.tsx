@@ -14,6 +14,7 @@ import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { ProjectViewModeToggle } from '@/components/tab/project-view-mode-toggle';
 import { GitBoardHeaderControl } from '@/components/git/git-board-header-control';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /**
  * AppHeader — project context header for the left panel.
@@ -92,6 +93,7 @@ export const AppHeader = memo(function AppHeader() {
           {!isKanbanPeekMode ? (
             <ShortcutTooltip id="toggle-sidebar" label={t('shortcut.toggleSidebar')}>
               <button
+                {...telemetryClickAttributes('sidebar.toggle', 'workspace_header')}
                 onClick={toggleSidebar}
                 className={cn(
                   'shrink-0 rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',

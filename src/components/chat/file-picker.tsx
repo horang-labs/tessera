@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import type { ReferenceMatch } from '@/hooks/use-file-picker';
@@ -112,6 +114,7 @@ export function FilePicker({
               const isSelected = idx === selectedIndex;
               return (
                 <button
+                  {...telemetryClickAttributes('composer.reference.select', 'composer')}
                   key={`${section.key}-${item.value}-${idx}`}
                   ref={(el) => {
                     itemRefs.current[idx] = el;

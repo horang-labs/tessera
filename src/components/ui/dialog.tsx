@@ -1,5 +1,8 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+
 import { useEffect, type HTMLAttributes, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { X } from 'lucide-react';
@@ -28,8 +31,12 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
+        data-telemetry-ignore="manual_capture"
         className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={() => onOpenChange(false)}
+        onClick={() => {
+          void captureTelemetryUiControl('dialog.close', 'dialog');
+          onOpenChange(false);
+        }}
       />
 
       {/* Content */}
@@ -69,6 +76,7 @@ export function DialogHeader({ children, onClose }: DialogHeaderProps) {
       <div>{children}</div>
       {onClose && (
         <button
+          {...telemetryClickAttributes('dialog.close', 'dialog')}
           onClick={onClose}
           className="p-1 rounded-md text-(--text-muted) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors"
         >

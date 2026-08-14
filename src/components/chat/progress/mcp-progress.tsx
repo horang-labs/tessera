@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { memo, useState } from 'react';
 import { Loader2, CheckCircle, XCircle, Plug, ChevronRight, ChevronDown, Clock, AlertTriangle } from 'lucide-react';
 import type { McpProgressData } from '@/types/cli-jsonl-schemas';
@@ -106,6 +108,7 @@ export const McpProgress = memo(function McpProgress({ data, alignWithMessageBod
       {status === 'failed' && errorMessage && (
         <div className="px-3 pb-2">
           <button
+            {...telemetryClickAttributes('message.mcp_error.toggle', 'message')}
             onClick={() => setIsErrorExpanded(v => !v)}
             className="flex items-center gap-1 text-[10px] text-(--status-error-text) hover:text-(--status-error-text) transition-colors"
           >

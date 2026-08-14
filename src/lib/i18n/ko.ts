@@ -190,7 +190,7 @@ export const ko: I18nMessages = {
     },
     telemetry: {
       title: '익명 텔레메트리',
-      description: '최소한의 익명 사용량 텔레메트리만 공유합니다. 텔레메트리는 PostHog로 수집되며 US 리전에 저장됩니다. IP 주소, 프롬프트, 메시지, 파일 경로, 명령 출력 같은 민감 정보는 일절 수집하지 않습니다.',
+      description: '어떤 이름의 컨트롤과 기능을 사용하는지 포함한 익명 제품 상호작용 텔레메트리를 공유합니다. 텔레메트리는 PostHog로 수집되며 US 리전에 저장됩니다. 화면 텍스트, IP 주소, 프롬프트, 메시지, 파일 경로, 명령 출력은 일절 수집하지 않습니다.',
       enabled: '익명 사용량 데이터 공유',
       disabledByEnv: '환경 정책으로 텔레메트리가 비활성화되어 있습니다.',
     },
@@ -535,7 +535,7 @@ export const ko: I18nMessages = {
     executionModeDescription: '새 세션에서 사용할 기본 화면을 선택하세요. 나중에 설정에서 바꿀 수 있습니다.',
     executionModeNote: '이미 만든 세션은 생성할 때 선택된 화면을 유지합니다.',
     telemetryTitle: '익명 사용량 데이터 공유',
-    telemetryDescription: '최소한의 익명 사용량 텔레메트리만 공유합니다. 텔레메트리는 PostHog로 수집되며 US 리전에 저장됩니다. IP 주소, 프롬프트, 메시지, 파일 경로, 명령 출력 같은 민감 정보는 일절 수집하지 않습니다.',
+    telemetryDescription: '어떤 이름의 컨트롤과 기능을 사용하는지 포함한 익명 제품 상호작용 텔레메트리를 공유합니다. 텔레메트리는 PostHog로 수집되며 US 리전에 저장됩니다. 화면 텍스트, IP 주소, 프롬프트, 메시지, 파일 경로, 명령 출력은 일절 수집하지 않습니다.',
     aiCli: 'Claude Code / Codex',
     providerReady: '채팅과 워크트리 세션에 사용할 수 있습니다.',
     providerNeedsLogin: '설치되어 있지만 Tessera에서 사용하려면 로그인이 필요합니다.',

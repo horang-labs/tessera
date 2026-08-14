@@ -12,6 +12,7 @@
 
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useGitStore } from '@/stores/git-store';
 import {
   resolvePreparationBadge,
@@ -46,6 +47,7 @@ export function TaskPreparationBadge({
 
   return (
     <button
+      {...telemetryClickAttributes('task.preparation.open', 'workspace_list')}
       type="button"
       onClick={() => {
         // The click is left to bubble on purpose: the row it sits in opens the

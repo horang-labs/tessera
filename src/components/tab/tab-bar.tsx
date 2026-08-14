@@ -30,6 +30,7 @@ import { useSharedGitPanelController } from '@/components/git/git-panel-controll
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
 import { moveTerminalPanelToNewTab } from '@/lib/tab/terminal-panel-to-new-tab';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const TAB_SCROLL_MIN_STEP = 180;
 
@@ -65,6 +66,7 @@ function GitPhonePanelToggle({
           : 'bg-[color-mix(in_srgb,var(--chat-header-bg)_78%,var(--sidebar-hover))]',
       )}
       onClick={onToggle}
+      {...telemetryClickAttributes('right_panel.toggle', 'tab_bar')}
       aria-label={accessibleLabel}
       aria-pressed={open}
       aria-busy={pending}
@@ -553,6 +555,7 @@ export const TabBar = memo(function TabBar() {
             isMacElectron && 'electron-no-drag w-10 h-10'
           )}
           onClick={toggleSidebar}
+          {...telemetryClickAttributes('sidebar.toggle', 'tab_bar')}
           aria-label={t('sidebar.expand')}
           data-testid="tab-bar-sidebar-toggle"
         >
@@ -646,6 +649,7 @@ export const TabBar = memo(function TabBar() {
 
           {scrollState.canScrollLeft && (
             <button
+              {...telemetryClickAttributes('tab.scroll.previous', 'tab_bar')}
               type="button"
               className="electron-no-drag absolute left-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               onClick={() => handleScrollTabs('left')}
@@ -658,6 +662,7 @@ export const TabBar = memo(function TabBar() {
 
           {scrollState.canScrollRight && (
             <button
+              {...telemetryClickAttributes('tab.scroll.next', 'tab_bar')}
               type="button"
               className="electron-no-drag absolute right-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               onClick={() => handleScrollTabs('right')}
@@ -682,6 +687,7 @@ export const TabBar = memo(function TabBar() {
             isCreateTabDragOver && 'bg-(--accent)/14 text-(--accent) shadow-[inset_0_-2px_0_var(--accent)]'
           )}
           onClick={handleAddTab}
+          {...telemetryClickAttributes('tab.new', 'tab_bar')}
           onDragOver={handleCreateTabDragOver}
           onDragLeave={handleCreateTabDragLeave}
           onDrop={handleCreateTabDrop}
@@ -738,6 +744,7 @@ export const TabBar = memo(function TabBar() {
             : 'bg-[color-mix(in_srgb,var(--chat-header-bg)_78%,var(--sidebar-hover))]'
         )}
         onClick={toggleGitPanel}
+        {...telemetryClickAttributes('right_panel.toggle', 'tab_bar')}
         aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
         aria-pressed={gitPanelOpen}
         title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}

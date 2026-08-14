@@ -8,6 +8,9 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { resolvePreparationProject } from '@/lib/projects/preparation-project-selection';
 import type { PreparationPhase } from '@/lib/projects/preparation-status-policy';
 import IgnoredFileChecklist from './ignored-file-checklist';
+import {
+  settingsTelemetryClickAttributes,
+} from '@/lib/telemetry/ui-click';
 
 /** Typing pause after which the draft is written back to the project. */
 const SAVE_DELAY_MS = 600;
@@ -19,6 +22,10 @@ type EditorStatus = 'idle' | 'loading' | 'saving' | 'saved' | 'saveFailed' | 'lo
 type Drafts = Record<PreparationPhase, string>;
 
 const EMPTY_DRAFTS: Drafts = { before: '', after: '' };
+const SCRIPT_TELEMETRY_CONTROLS = {
+  before: 'settings.project.before_script',
+  after: 'settings.project.after_script',
+} as const;
 
 async function saveScript(
   projectId: string,
@@ -212,6 +219,7 @@ export default function ProjectPreparationSettings() {
               {t('settings.preparation.projectLabel')}
             </label>
             <select
+              {...settingsTelemetryClickAttributes('settings.project.selector')}
               id="projectPreparationProject"
               value={projectId}
               onChange={(event) => {
@@ -361,6 +369,7 @@ function PreparationScriptField({
 }) {
   const { t } = useI18n();
   const fieldId = `projectPreparationScript-${phase}`;
+  const telemetryControl = SCRIPT_TELEMETRY_CONTROLS[phase];
 
   return (
     <div className="space-y-2">
@@ -373,6 +382,7 @@ function PreparationScriptField({
         </span>
       </div>
       <textarea
+        {...settingsTelemetryClickAttributes(telemetryControl)}
         id={fieldId}
         value={value}
         onChange={(event) => onChange(event.target.value)}

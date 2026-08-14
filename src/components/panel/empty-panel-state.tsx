@@ -33,6 +33,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 import { resolveLastActiveProjectDir } from '@/lib/session/last-active-project';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import {
   useLoadedProjectViews,
   useProjectViewSession,
@@ -427,6 +428,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const panelControls = panelCount >= 2 ? (
     <>
       <button
+        {...telemetryIgnoreAttributes('drag_only')}
         type="button"
         draggable
         onDragStart={handlePanelDragStart}
@@ -440,6 +442,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
       <button
         type="button"
         onClick={handleClose}
+        {...telemetryClickAttributes('panel.close', 'new_session')}
         title={t('panel.closePanel')}
         aria-label={t('panel.closePanel')}
         data-testid="empty-panel-close-button"
@@ -470,6 +473,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             {t('sidebar.runFromProject')}
           </p>
           <button
+            {...telemetryClickAttributes('creation.project.add', 'new_session')}
             type="button"
             onClick={openFolderBrowser}
             className="mt-5 inline-flex items-center gap-2 rounded-full border border-(--divider) bg-(--sidebar-bg) px-3 py-1.5 text-xs font-medium text-(--text-secondary) transition-colors hover:border-(--accent) hover:text-(--accent-hover) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)"
@@ -518,6 +522,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                   )}
                 </span>
                 <select
+                  {...telemetryClickAttributes('creation.project.select', 'new_session')}
                   id={`empty-panel-project-${panelId}`}
                   value={activeProjectId ?? ''}
                   onChange={(event) => handleProjectChange(event.target.value)}
@@ -593,6 +598,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               <button
                 type="button"
                 onClick={() => selectMode('chat')}
+                {...telemetryClickAttributes('creation.mode.chat', 'new_session')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'chat'
@@ -615,6 +621,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               <button
                 type="button"
                 onClick={handleSetModeTask}
+                {...telemetryClickAttributes('creation.mode.task', 'new_session')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'task'
@@ -635,6 +642,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               <button
                 type="button"
                 onClick={() => selectMode('shell')}
+                {...telemetryClickAttributes('creation.mode.shell', 'new_session')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'shell'
@@ -677,6 +685,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                       {t('task.creation.titleLabel')}
                     </label>
                     <input
+                      {...telemetryClickAttributes('creation.task.title_input', 'new_session')}
                       ref={titleInputRef}
                       id={`empty-panel-task-title-${panelId}`}
                       type="text"
@@ -710,6 +719,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                           </span>
                         ) : null}
                         <input
+                          {...telemetryClickAttributes('creation.task.branch_input', 'new_session')}
                           id={`empty-panel-branch-slug-${panelId}`}
                           type="text"
                           value={branchSlug}
@@ -767,6 +777,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                   <button
                     type="button"
                     onClick={() => setSelectedCollectionId(null)}
+                    {...telemetryClickAttributes('creation.collection.select', 'new_session')}
                     className={cn(
                       'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
                       selectedCollectionId === null
@@ -781,6 +792,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                       key={collection.id}
                       type="button"
                       onClick={() => setSelectedCollectionId(collection.id)}
+                      {...telemetryClickAttributes('creation.collection.select', 'new_session')}
                       className={cn(
                         'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
                         selectedCollectionId === collection.id
@@ -833,6 +845,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => void handleLaunch()}
+                      {...telemetryClickAttributes('creation.submit', 'new_session')}
                       disabled={isLaunchDisabled}
                       className="whitespace-nowrap rounded-full bg-(--text-primary) px-5 py-2 text-sm font-medium text-(--chat-bg) transition-colors hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-50"
                       data-testid="empty-panel-create-session"
@@ -868,6 +881,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 </p>
               </div>
               <button
+                {...telemetryClickAttributes('creation.error.dismiss', 'new_session')}
                 onClick={() => setError(null)}
                 aria-label={t('common.close') || 'Close'}
                 className="text-[color:var(--error)]/50 hover:text-[color:var(--error)] shrink-0 transition-colors"

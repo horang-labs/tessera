@@ -2,6 +2,7 @@
 
 import type React from 'react';
 import { MessageSquare, Plus } from 'lucide-react';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export function SidebarLoadingState({ label }: { label: string }) {
   return (
@@ -53,6 +54,7 @@ export function SidebarAddCollectionControl({
           }}
         >
           <input
+            {...telemetryClickAttributes('sidebar.collection.create_input', 'sidebar')}
             type="text"
             value={value}
             onChange={(event) => onValueChange(event.target.value)}
@@ -74,6 +76,7 @@ export function SidebarAddCollectionControl({
   return (
     <div className="mx-2 mb-1.5 mt-2">
       <button
+        {...telemetryClickAttributes('sidebar.collection.create_open', 'sidebar')}
         onClick={onStartAdding}
         className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-(--divider) bg-transparent px-3 py-2 text-[0.6875rem] text-(--text-muted) transition-all hover:border-(--accent) hover:text-(--accent-light)"
       >

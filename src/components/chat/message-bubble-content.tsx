@@ -34,6 +34,7 @@ import { renderMarkdownCode, renderMarkdownPre } from './markdown-code';
 import { MarkdownLink } from './markdown-link';
 import { MessageRowShell } from './message-row-shell';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 type TextMessage = Extract<EnhancedMessage, { type: 'text' }>;
 export type ForkFromMessageHandler = (message: EnhancedMessage, anchorElement: HTMLElement) => void;
@@ -245,6 +246,7 @@ const ContentBlockRenderer = memo(function ContentBlockRenderer({
             const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
             return (
               <button
+                {...telemetryClickAttributes('message.image.open', 'message')}
                 key={`img-${index}`}
                 type="button"
                 onClick={() => setLightboxSrc(dataUrl)}
@@ -371,6 +373,7 @@ const UserMessage = memo(function UserMessage({
           </Tooltip>
           <div data-testid="message-actions" className={MESSAGE_ACTIONS_CLASS}>
             <button
+              {...telemetryClickAttributes('message.copy', 'message')}
               type="button"
               onClick={handleCopy}
               className={MESSAGE_COPY_BUTTON_CLASS}
@@ -390,6 +393,7 @@ const UserMessage = memo(function UserMessage({
             <MessageTranslateButton message={message} />
             {onForkFromMessage && (
               <button
+                {...telemetryClickAttributes('message.fork', 'message')}
                 type="button"
                 onClick={(event) => onForkFromMessage(message, event.currentTarget)}
                 className={MESSAGE_FORK_BUTTON_CLASS}
@@ -503,6 +507,7 @@ export const MessageTranslateButton = memo(function MessageTranslateButton({
 
   return (
     <button
+      {...telemetryClickAttributes('message.translate', 'message')}
       type="button"
       onClick={handleClick}
       disabled={isPending}
@@ -571,6 +576,7 @@ const AssistantMessage = memo(function AssistantMessage({
             <div data-testid="message-actions" className={MESSAGE_ACTIONS_CLASS}>
               {message.content && (
                 <button
+                  {...telemetryClickAttributes('message.copy', 'message')}
                   type="button"
                   onClick={handleCopy}
                   className={MESSAGE_COPY_BUTTON_CLASS}
@@ -593,6 +599,7 @@ const AssistantMessage = memo(function AssistantMessage({
               )}
               {onForkFromMessage && (
                 <button
+                  {...telemetryClickAttributes('message.fork', 'message')}
                   type="button"
                   onClick={(event) => onForkFromMessage(message, event.currentTarget)}
                   className={MESSAGE_FORK_BUTTON_CLASS}

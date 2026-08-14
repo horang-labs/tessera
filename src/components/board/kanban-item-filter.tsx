@@ -4,6 +4,7 @@ import { memo } from 'react';
 import { CircleDot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface KanbanItemFilterProps {
   running: boolean;
@@ -28,6 +29,7 @@ export const KanbanItemFilter = memo(function KanbanItemFilter({
     >
       <button
         type="button"
+        {...telemetryClickAttributes('board.running_filter.all', 'workspace_board')}
         onClick={() => onChange(false)}
         aria-pressed={!running}
         className={cn(
@@ -43,6 +45,7 @@ export const KanbanItemFilter = memo(function KanbanItemFilter({
       </button>
       <button
         type="button"
+        {...telemetryClickAttributes('board.running_filter.running', 'workspace_board')}
         onClick={() => onChange(true)}
         aria-pressed={running}
         className={cn(

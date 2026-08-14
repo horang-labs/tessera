@@ -7,6 +7,10 @@ import { useProviderSessionOptions } from '@/hooks/use-provider-session-options'
 import { DEFAULT_TRANSLATE_PROMPT_TEMPLATE } from '@/lib/session/translate-prompt';
 import { eventToShortcut, formatShortcut } from '@/lib/keyboard-shortcut';
 import type { Language } from '@/lib/settings/types';
+import {
+  settingsTelemetryClickAttributes,
+  type SettingsTelemetryControl,
+} from '@/lib/telemetry/ui-click';
 
 const LANGUAGE_OPTIONS: { value: Language; label: string }[] = [
   { value: 'en', label: 'English' },
@@ -29,10 +33,34 @@ type Direction = {
   promptTemplate?: string;
 };
 
+const DIRECTION_TELEMETRY_CONTROLS = {
+  input: {
+    provider: 'settings.translate.input_provider',
+    model: 'settings.translate.input_model',
+    prompt: 'settings.translate.input_prompt',
+    promptReset: 'settings.translate.input_prompt_reset',
+  },
+  output: {
+    provider: 'settings.translate.output_provider',
+    model: 'settings.translate.output_model',
+    prompt: 'settings.translate.output_prompt',
+    promptReset: 'settings.translate.output_prompt_reset',
+  },
+} as const satisfies Record<'input' | 'output', Record<string, SettingsTelemetryControl>>;
+
 /** A small on/off switch. */
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+function Toggle({
+  checked,
+  onChange,
+  telemetryControl,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  telemetryControl: SettingsTelemetryControl;
+}) {
   return (
     <button
+      {...settingsTelemetryClickAttributes(telemetryControl)}
       type="button"
       role="switch"
       aria-checked={checked}
@@ -66,7 +94,15 @@ const PROMPT_COMMIT_DEBOUNCE_MS = 500;
  * and on blur, so the per-keystroke save storm is gone. External changes (Reset, initial
  * load, other tabs) are adopted during render, but only while not editing.
  */
-function PromptTextarea({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+function PromptTextarea({
+  value,
+  onChange,
+  telemetryControl,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  telemetryControl: SettingsTelemetryControl;
+}) {
   const [local, setLocal] = useState(value);
   const [editing, setEditing] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -97,6 +133,7 @@ function PromptTextarea({ value, onChange }: { value: string; onChange: (next: s
 
   return (
     <textarea
+      {...settingsTelemetryClickAttributes(telemetryControl)}
       value={local}
       onFocus={() => setEditing(true)}
       onChange={(e) => {
@@ -120,6 +157,7 @@ function ShortcutRecorder({ value, onChange }: { value: string; onChange: (next:
 
   return (
     <button
+      {...settingsTelemetryClickAttributes('settings.translate.shortcut')}
       type="button"
       onClick={() => setRecording(true)}
       onBlur={() => setRecording(false)}
@@ -144,12 +182,14 @@ function ShortcutRecorder({ value, onChange }: { value: string; onChange: (next:
 }
 
 function TranslateDirectionSettings({
+  direction,
   sectionTitle,
   value,
   onChangeProvider,
   onChangeModel,
   onChangePrompt,
 }: {
+  direction: 'input' | 'output';
   sectionTitle: string;
   value: Direction;
   onChangeProvider: (provider: string) => void;
@@ -163,6 +203,7 @@ function TranslateDirectionSettings({
   const isOpencode = value.provider === 'opencode';
   const modelOptions = data?.modelOptions ?? [];
   const hasCliCommand = Boolean(cliCommandOverrides?.[value.provider]);
+  const telemetryControls = DIRECTION_TELEMETRY_CONTROLS[direction];
 
   return (
     <div className="space-y-3 rounded-md border border-(--divider) bg-(--sidebar-bg) px-3 py-3">
@@ -173,6 +214,7 @@ function TranslateDirectionSettings({
           {t('settings.translate.provider')}
         </label>
         <select
+          {...settingsTelemetryClickAttributes(telemetryControls.provider)}
           value={value.provider}
           onChange={(e) => onChangeProvider(e.target.value)}
           className={SELECT_CLASS}
@@ -195,6 +237,7 @@ function TranslateDirectionSettings({
           {t('settings.translate.model')}
         </label>
         <select
+          {...settingsTelemetryClickAttributes(telemetryControls.model)}
           value={value.model ?? ''}
           onChange={(e) => onChangeModel(e.target.value)}
           disabled={isOpencode}
@@ -220,6 +263,7 @@ function TranslateDirectionSettings({
             {t('settings.translate.promptLabel')}
           </label>
           <button
+            {...settingsTelemetryClickAttributes(telemetryControls.promptReset)}
             type="button"
             onClick={() => onChangePrompt(DEFAULT_TRANSLATE_PROMPT_TEMPLATE)}
             className="text-[11px] text-(--accent) hover:underline"
@@ -228,6 +272,7 @@ function TranslateDirectionSettings({
           </button>
         </div>
         <PromptTextarea
+          telemetryControl={telemetryControls.prompt}
           value={value.promptTemplate || DEFAULT_TRANSLATE_PROMPT_TEMPLATE}
           onChange={onChangePrompt}
         />
@@ -247,6 +292,7 @@ export default function TranslateSettings() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
         <button
+          {...settingsTelemetryClickAttributes('settings.translate.expand')}
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
           aria-expanded={expanded}
@@ -262,6 +308,7 @@ export default function TranslateSettings() {
           <h3 className="font-medium text-(--text-primary)">{t('settings.translate.title')}</h3>
         </button>
         <Toggle
+          telemetryControl="settings.translate.enabled"
           checked={translate.enabled}
           onChange={(next) => updateSettings({ translate: { ...translate, enabled: next } })}
         />
@@ -274,6 +321,7 @@ export default function TranslateSettings() {
               {t('settings.translate.sourceLanguage')}
             </label>
             <select
+              {...settingsTelemetryClickAttributes('settings.translate.source_language')}
               value={translate.sourceLanguage}
               onChange={(e) =>
                 updateSettings({
@@ -295,6 +343,7 @@ export default function TranslateSettings() {
               {t('settings.translate.targetLanguage')}
             </label>
             <select
+              {...settingsTelemetryClickAttributes('settings.translate.target_language')}
               value={translate.targetLanguage}
               onChange={(e) =>
                 updateSettings({
@@ -323,6 +372,7 @@ export default function TranslateSettings() {
           </div>
 
           <TranslateDirectionSettings
+            direction="input"
             sectionTitle={t('settings.translate.inputSection')}
             value={translate.input}
             onChangeProvider={(provider) =>
@@ -346,6 +396,7 @@ export default function TranslateSettings() {
           />
 
           <TranslateDirectionSettings
+            direction="output"
             sectionTitle={t('settings.translate.outputSection')}
             value={translate.output}
             onChangeProvider={(provider) =>

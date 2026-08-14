@@ -7,6 +7,11 @@ import { Archive, Check, CircleStop, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { WorkflowStatus } from '@/types/task-entity';
 import type { UnifiedSession } from '@/types/chat';
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+  type TelemetryUiSurface,
+} from '@/lib/telemetry/ui-click';
 
 type ItemSurface = 'board' | 'sidebar';
 type ItemStatusPlacement = 'corner' | 'leading' | 'inline';
@@ -178,6 +183,7 @@ export function InlineRenameInput({
   onConfirm,
   onValueChange,
   testId,
+  telemetrySurface,
   value,
 }: {
   className?: string;
@@ -186,10 +192,12 @@ export function InlineRenameInput({
   onConfirm: () => void;
   onValueChange: (value: string) => void;
   testId?: string;
+  telemetrySurface: Extract<TelemetryUiSurface, 'workspace_list' | 'workspace_board'>;
   value: string;
 }) {
   return (
     <input
+      {...telemetryClickAttributes('task.rename_input', telemetrySurface)}
       ref={inputRef}
       type="text"
       value={value}
@@ -218,6 +226,8 @@ export function ArchiveConfirmButton({
   idleTitle,
   isConfirming,
   onClick,
+  telemetryControl,
+  telemetrySurface,
   testId,
 }: {
   className?: string;
@@ -225,10 +235,15 @@ export function ArchiveConfirmButton({
   idleTitle: string;
   isConfirming: boolean;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  telemetryControl?: TelemetryUiControl;
+  telemetrySurface?: TelemetryUiSurface;
   testId?: string;
 }) {
   return (
     <button
+      {...(telemetryControl && telemetrySurface
+        ? telemetryClickAttributes(telemetryControl, telemetrySurface)
+        : {})}
       onClick={onClick}
       className={className}
       data-testid={testId}
@@ -244,12 +259,16 @@ export function StopProcessButton({
   className,
   confirmTitle = 'Click again to stop process',
   onClick,
+  telemetryControl,
+  telemetrySurface,
   testId,
   title = 'Stop process',
 }: {
   className?: string;
   confirmTitle?: string;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  telemetryControl?: TelemetryUiControl;
+  telemetrySurface?: TelemetryUiSurface;
   testId?: string;
   title?: string;
 }) {
@@ -291,6 +310,9 @@ export function StopProcessButton({
   return (
     <button
       type="button"
+      {...(telemetryControl && telemetrySurface
+        ? telemetryClickAttributes(telemetryControl, telemetrySurface)
+        : {})}
       onClick={handleClick}
       className={className}
       data-testid={testId}
@@ -308,6 +330,8 @@ export function OverflowMenuButton({
   onClick,
   size = 'default',
   buttonRef,
+  telemetryControl,
+  telemetrySurface,
   testId,
 }: {
   ariaExpanded?: boolean;
@@ -315,11 +339,16 @@ export function OverflowMenuButton({
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   size?: 'compact' | 'default';
   buttonRef?: RefObject<HTMLButtonElement | null>;
+  telemetryControl?: TelemetryUiControl;
+  telemetrySurface?: TelemetryUiSurface;
   testId?: string;
 }) {
   return (
     <button
       ref={buttonRef}
+      {...(telemetryControl && telemetrySurface
+        ? telemetryClickAttributes(telemetryControl, telemetrySurface)
+        : {})}
       onClick={onClick}
       className={cn(
         'rounded transition-all duration-150',

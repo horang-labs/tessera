@@ -9,6 +9,7 @@ import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
 import { usePhoneViewport } from "@/hooks/use-phone-viewport";
 import { useI18n } from "@/lib/i18n";
+import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
 import type { GitDefaultBranchConfirmation } from "@/lib/git/default-branch-confirmation";
 
 /**
@@ -78,6 +79,7 @@ export function GitDefaultBranchConfirmDialog({
           <Button
             type="button"
             onClick={() => dismissPhoneConfirmation(onConfirm)}
+            {...telemetryClickAttributes("git.default_branch_confirm.accept", "git_panel")}
             className="min-h-[44px] w-full"
             data-testid="git-default-branch-confirm-accept"
           >
@@ -86,6 +88,7 @@ export function GitDefaultBranchConfirmDialog({
           <Button
             type="button"
             onClick={() => dismissPhoneConfirmation()}
+            {...telemetryClickAttributes("git.default_branch_confirm.cancel", "git_panel")}
             variant="outline"
             className="min-h-[44px] w-full"
             data-testid="git-default-branch-confirm-cancel"

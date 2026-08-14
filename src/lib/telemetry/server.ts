@@ -3,6 +3,7 @@ import { getServerHostInfo } from '@/lib/system/server-host';
 import { getTelemetryBootstrapInfo } from './server-state';
 import type { TelemetryBootstrapInfo } from './server-state';
 import logger from '@/lib/logger';
+import { isSensitiveTelemetryPropertyName } from './privacy';
 
 export type ServerTelemetryEventName =
   | 'setup_cli_detection_summary'
@@ -12,15 +13,13 @@ export type ServerTelemetryEventName =
   | 'setup_cli_smoke_run_completed'
   | 'settings_cli_diagnostics_provider_result'
   | 'settings_cli_diagnostics_raw_log'
-  | 'settings_cli_diagnostics_run_completed';
+  | 'settings_cli_diagnostics_run_completed'
+  | 'ai_title_generation_result';
 
 export type ServerTelemetryProperties = Record<string, unknown>;
 
 const MAX_STRING_LENGTH = 100;
-const MAX_ERROR_MESSAGE_LENGTH = 1_000;
 const MAX_ARRAY_LENGTH = 30;
-const MAX_RAW_LOG_JSONL_LENGTH = 512 * 1024;
-const MAX_SMOKE_TRACE_JSONL_LENGTH = 32 * 1024;
 const CAPTURE_TIMEOUT_MS = 2_000;
 
 const allowedEvents = new Set<ServerTelemetryEventName>([
@@ -32,6 +31,7 @@ const allowedEvents = new Set<ServerTelemetryEventName>([
   'settings_cli_diagnostics_provider_result',
   'settings_cli_diagnostics_raw_log',
   'settings_cli_diagnostics_run_completed',
+  'ai_title_generation_result',
 ]);
 
 export function isServerTelemetryCaptureAllowed(request?: NextRequest): boolean {
@@ -129,11 +129,10 @@ function sanitizeTelemetryProperties(
   const sanitized: ServerTelemetryProperties = {};
 
   for (const [key, value] of Object.entries(properties)) {
+    if (isSensitiveTelemetryPropertyName(key)) continue;
+
     if (typeof value === 'string') {
-      sanitized[key] = value.slice(
-        0,
-        getMaxStringLengthForProperty(key),
-      );
+      sanitized[key] = value.slice(0, MAX_STRING_LENGTH);
       continue;
     }
 
@@ -156,11 +155,4 @@ function sanitizeTelemetryProperties(
   }
 
   return sanitized;
-}
-
-function getMaxStringLengthForProperty(key: string): number {
-  if (key === 'raw_log_jsonl') return MAX_RAW_LOG_JSONL_LENGTH;
-  if (key === 'smoke_trace_jsonl') return MAX_SMOKE_TRACE_JSONL_LENGTH;
-  if (key.endsWith('_error_message')) return MAX_ERROR_MESSAGE_LENGTH;
-  return MAX_STRING_LENGTH;
 }

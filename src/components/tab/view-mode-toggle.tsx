@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { ViewMode } from '@/stores/board-store';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ViewModeToggleProps {
   viewMode: ViewMode;
@@ -44,6 +45,7 @@ export const ViewModeToggle = memo(function ViewModeToggle({
         <button
           type="button"
           onClick={() => onToggle('list')}
+          {...telemetryClickAttributes('workspace.view.list', 'workspace_header')}
           aria-pressed={viewMode === 'list'}
           aria-label={t('task.board.viewList')}
           data-testid="view-mode-list"
@@ -66,6 +68,7 @@ export const ViewModeToggle = memo(function ViewModeToggle({
         <button
           type="button"
           onClick={() => onToggle('board')}
+          {...telemetryClickAttributes('workspace.view.kanban', 'workspace_header')}
           aria-pressed={viewMode === 'board'}
           aria-label={t('task.board.viewBoard')}
           data-testid="view-mode-board"

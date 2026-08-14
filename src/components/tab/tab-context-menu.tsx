@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
 import { useMenuNavigation } from '@/hooks/use-menu-navigation';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export interface TabContextMenuProps {
   /** Position where the right-click occurred */
@@ -165,6 +166,7 @@ export function TabContextMenu({
     >
       {/* Close Tab */}
       <button
+        {...telemetryClickAttributes('tab.context.close', 'tab_bar')}
         role="menuitem"
         className={menuItemClass}
         onClick={handleCloseTab}
@@ -179,6 +181,7 @@ export function TabContextMenu({
 
       {/* Close Other Tabs */}
       <button
+        {...telemetryClickAttributes('tab.context.close_others', 'tab_bar')}
         role="menuitem"
         className={hasOtherTabs ? menuItemClass : disabledItemClass}
         onClick={hasOtherTabs ? handleCloseOtherTabs : undefined}
@@ -191,6 +194,7 @@ export function TabContextMenu({
 
       {/* Close Tabs to the Left */}
       <button
+        {...telemetryClickAttributes('tab.context.close_left', 'tab_bar')}
         role="menuitem"
         className={hasTabsToLeft ? menuItemClass : disabledItemClass}
         onClick={hasTabsToLeft ? handleCloseTabsToLeft : undefined}
@@ -203,6 +207,7 @@ export function TabContextMenu({
 
       {/* Close Tabs to the Right */}
       <button
+        {...telemetryClickAttributes('tab.context.close_right', 'tab_bar')}
         role="menuitem"
         className={hasTabsToRight ? menuItemClass : disabledItemClass}
         onClick={hasTabsToRight ? handleCloseTabsToRight : undefined}
@@ -215,6 +220,7 @@ export function TabContextMenu({
 
       {/* Close All Tabs */}
       <button
+        {...telemetryClickAttributes('tab.context.close_all', 'tab_bar')}
         role="menuitem"
         className={destructiveItemClass}
         onClick={handleCloseAllTabs}

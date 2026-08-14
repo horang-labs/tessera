@@ -66,6 +66,7 @@ import {
   useProjectViewRepresentation,
 } from '@/hooks/use-project-view-workspace-state';
 import { getOriginProjectOrderedSessionIds } from '@/lib/projects/origin-project-representation';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -186,6 +187,7 @@ function ProjectListContextHeader({
           data-testid="sidebar-filter-bar"
         >
           <button
+            {...telemetryClickAttributes('sidebar.filter.all', 'sidebar')}
             type="button"
             onClick={handleShowAll}
             aria-pressed={!isRunningFilterActive}
@@ -201,6 +203,7 @@ function ProjectListContextHeader({
             <span className="block truncate">{allLabel}</span>
           </button>
           <button
+            {...telemetryClickAttributes('sidebar.filter.running', 'sidebar')}
             type="button"
             onClick={onShowRunning}
             aria-pressed={isRunningFilterActive}
@@ -234,6 +237,7 @@ function ProjectListContextHeader({
         {isRunningFilterActive ? (
           <Tooltip content={isStopAllConfirmationActive ? confirmStopAllLabel : stopAllLabel} delay={300}>
             <button
+              {...telemetryClickAttributes('sidebar.running.stop_all', 'sidebar')}
               type="button"
               onClick={handleStopAllClick}
               disabled={!canStopAllRunning}
@@ -256,6 +260,7 @@ function ProjectListContextHeader({
         ) : (
           <Tooltip content={projectActionLabel} delay={300}>
             <button
+              {...telemetryClickAttributes('sidebar.groups.toggle_all', 'sidebar')}
               type="button"
               onClick={handleProjectAction}
               disabled={!hasExpandableGroups}

@@ -190,7 +190,7 @@ export const en: I18nMessages = {
     },
     telemetry: {
       title: 'Anonymous telemetry',
-      description: 'Share minimal anonymous usage telemetry. Telemetry is collected with PostHog and stored in the US region. We never collect sensitive data such as IP addresses, prompts, messages, file paths, or command output.',
+      description: 'Share anonymous product-interaction telemetry, including which named controls and features are used. Telemetry is collected with PostHog and stored in the US region. We never collect visible UI text, IP addresses, prompts, messages, file paths, or command output.',
       enabled: 'Share anonymous usage data',
       disabledByEnv: 'Telemetry is disabled by environment policy.',
     },
@@ -533,7 +533,7 @@ export const en: I18nMessages = {
     executionModeDescription: 'Choose the default interface for new sessions. You can change it later in Settings.',
     executionModeNote: 'Existing sessions keep the interface they were created with.',
     telemetryTitle: 'Share anonymous usage data',
-    telemetryDescription: 'Share minimal anonymous usage telemetry. Telemetry is collected with PostHog and stored in the US region. We never collect sensitive data such as IP addresses, prompts, messages, file paths, or command output.',
+    telemetryDescription: 'Share anonymous product-interaction telemetry, including which named controls and features are used. Telemetry is collected with PostHog and stored in the US region. We never collect visible UI text, IP addresses, prompts, messages, file paths, or command output.',
     aiCli: 'Claude Code / Codex',
     providerReady: 'Ready to use for chat and worktree sessions.',
     providerNeedsLogin: 'Installed, but login is required before Tessera can use it.',

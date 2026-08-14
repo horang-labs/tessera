@@ -29,6 +29,7 @@ import type { AgentEnvironment, UserSettings } from '@/lib/settings/types';
 import type { ServerHostInfo } from '@/lib/system/types';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface DirectoryEntry {
   name: string;
@@ -348,6 +349,7 @@ export function FolderBrowserDialog({
           >
             <button
               type="button"
+              {...telemetryClickAttributes('folder_browser.environment.wsl', 'folder_browser')}
               onClick={() => handleEnvironmentChange('wsl')}
               disabled={!isEnvironmentAllowed('wsl')}
               className={cn(
@@ -369,6 +371,7 @@ export function FolderBrowserDialog({
             </button>
             <button
               type="button"
+              {...telemetryClickAttributes('folder_browser.environment.native', 'folder_browser')}
               onClick={() => handleEnvironmentChange('native')}
               disabled={!isEnvironmentAllowed('native')}
               className={cn(
@@ -396,6 +399,7 @@ export function FolderBrowserDialog({
           <div className="flex gap-2">
             <div className="relative flex-1">
               <input
+                {...telemetryClickAttributes('folder_browser.path_input', 'folder_browser')}
                 ref={inputRef}
                 type="text"
                 value={pathInput}
@@ -409,6 +413,7 @@ export function FolderBrowserDialog({
             <Button
               variant="outline"
               size="sm"
+              {...telemetryClickAttributes('folder_browser.path.go', 'folder_browser')}
               className="shrink-0 h-[38px]"
               onClick={() => fetchDirectory(pathInput.trim(), showHidden, browseEnvironment)}
               disabled={isLoading || !isSettingsReady}
@@ -422,6 +427,7 @@ export function FolderBrowserDialog({
         {/* Breadcrumb navigation */}
         <div className="flex shrink-0 items-center gap-0.5 mt-3 text-xs overflow-x-auto pb-1 scrollbar-thin">
           <button
+            {...telemetryClickAttributes('folder_browser.root', 'folder_browser')}
             onClick={() => handleNavigate(rootPath)}
             className="p-1 rounded hover:bg-(--sidebar-hover) text-(--text-muted) hover:text-(--accent) transition-colors shrink-0"
             title={t('dialog.folderBrowser.root')}
@@ -432,6 +438,7 @@ export function FolderBrowserDialog({
             <div key={crumb.path} className="flex items-center shrink-0">
               <ChevronRight className="w-3 h-3 text-(--text-muted) mx-0.5" />
               <button
+                {...telemetryClickAttributes('folder_browser.breadcrumb', 'folder_browser')}
                 onClick={() => handleNavigate(crumb.path)}
                 className={cn(
                   'px-1.5 py-0.5 rounded transition-colors truncate max-w-[150px]',
@@ -451,6 +458,7 @@ export function FolderBrowserDialog({
             </span>
           )}
           <button
+            {...telemetryClickAttributes('folder_browser.hidden.toggle', 'folder_browser')}
             onClick={() => {
               const next = !showHidden;
               setShowHidden(next);
@@ -487,6 +495,7 @@ export function FolderBrowserDialog({
                 <Button
                   variant="ghost"
                   size="sm"
+                  {...telemetryClickAttributes('folder_browser.retry', 'folder_browser')}
                   className="mt-2"
                   onClick={() => fetchDirectory(undefined, false, browseEnvironment)}
                 >
@@ -499,6 +508,7 @@ export function FolderBrowserDialog({
               {/* Parent directory */}
               {parentPath && (
                 <button
+                  {...telemetryClickAttributes('folder_browser.parent', 'folder_browser')}
                   onClick={() => handleNavigate(parentPath)}
                   className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-(--sidebar-hover) transition-colors text-left"
                   data-testid="folder-browser-parent"
@@ -517,6 +527,7 @@ export function FolderBrowserDialog({
                 entries.map((entry) => (
                   <button
                     key={entry.path}
+                    {...telemetryClickAttributes('folder_browser.entry', 'folder_browser')}
                     onClick={() => handleEntryClick(entry)}
                     className="w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors text-left group hover:bg-(--sidebar-hover) text-(--text-primary)"
                     title={entry.path}
@@ -559,6 +570,7 @@ export function FolderBrowserDialog({
         <div className="flex shrink-0 gap-2 sm:gap-3 justify-end mt-4">
           <Button
             variant="outline"
+            {...telemetryClickAttributes('folder_browser.cancel', 'folder_browser')}
             onClick={onClose}
             disabled={isCreating}
             data-testid="folder-browser-cancel"
@@ -568,6 +580,7 @@ export function FolderBrowserDialog({
           </Button>
           <Button
             variant="ghost"
+            {...telemetryClickAttributes('folder_browser.feedback', 'folder_browser')}
             onClick={() => setIsFeedbackOpen(true)}
             disabled={isCreating}
             data-testid="folder-browser-feedback"
@@ -578,6 +591,7 @@ export function FolderBrowserDialog({
             <span className="max-sm:sr-only">{t('feedback.projectImportCta')}</span>
           </Button>
           <Button
+            {...telemetryClickAttributes('folder_browser.confirm', 'folder_browser')}
             onClick={handleSelect}
             disabled={isCreating || isLoading || (!currentFilesystemPath && !currentPath)}
             data-testid="folder-browser-confirm"
