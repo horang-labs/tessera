@@ -217,12 +217,14 @@ function Write-SessionManifest {
   $directory = Split-Path -Parent $Path
   New-Item -ItemType Directory -Path $directory -Force | Out-Null
   $manifest = [ordered]@{
-    schemaVersion = 2
+    schemaVersion = $(if ($PortableArtifactPath) { 2 } else { 3 })
     sessionId = $Id
     executable = $ExecutablePath
-    portableArtifact = $PortableArtifactPath
     updatedAt = [DateTime]::UtcNow.ToString('o')
     instances = @($Instances)
+  }
+  if ($PortableArtifactPath) {
+    $manifest.portableArtifact = $PortableArtifactPath
   }
   $temporaryPath = "$Path.tmp-$PID"
   $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8

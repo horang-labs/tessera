@@ -140,14 +140,16 @@ test('failed launches with no surviving process can still be cleaned by manifest
   );
 });
 
-test('owned Downloads artifacts can be permanently removed without the Linux trash', () => {
-  assert.match(launcherSource, /portableArtifact = \$PortableArtifactPath/);
+test('owned unpacked Downloads app can be permanently removed without the Linux trash', () => {
+  assert.match(launcherSource, /schemaVersion = \$\(if \(\$PortableArtifactPath\) \{ 2 \} else \{ 3 \}\)/);
+  assert.match(launcherSource, /if \(\$PortableArtifactPath\)/);
+  assert.match(launcherSource, /\$manifest\.portableArtifact = \$PortableArtifactPath/);
   assert.match(stopSource, /\[switch\]\$RemoveBuildArtifacts/);
-  assert.match(stopSource, /\$manifest\.portableArtifact/);
   assert.match(stopSource, /GetFolderPath\('UserProfile'\)/);
   assert.match(stopSource, /Test-PathWithinRoot -Path \$appDirectory -Root \$downloads/);
   assert.match(stopSource, /Refusing to remove a nested build directory/);
   assert.match(stopSource, /Remove-PathWithRetry -Path \$appDirectory/);
+  assert.match(stopSource, /\$manifest\.schemaVersion -eq 2/);
   assert.match(stopSource, /Remove-PathWithRetry -Path \$portableArtifact/);
   assert.doesNotMatch(stopSource, /gio\s+trash/i);
 });
