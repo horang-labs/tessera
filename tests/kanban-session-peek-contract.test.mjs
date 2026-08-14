@@ -133,6 +133,18 @@ test('PTY sessions use retained Peek ownership without pinning or killing a tab 
   assert.match(terminalPanelSource, /clearTimeout\(pendingSurfaceCleanupRef\.current\)/);
 });
 
+test('PTY Peek accepts every prompt-input drop supported by list-mode terminals', () => {
+  assert.match(chatAreaSource, /directInputDrop=\{isPeek\}/);
+  assert.match(terminalPanelSource, /directInputDrop\?: boolean/);
+  assert.match(terminalPanelSource, /getWorkspaceFileDragAbsolutePath/);
+  assert.match(terminalPanelSource, /getNativeFileDropAbsolutePaths/);
+  assert.match(terminalPanelSource, /insertSessionReferenceIntoTerminal/);
+  assert.match(terminalPanelSource, /onDragEnter=\{directInputDrop \? handleInputDragEnter : undefined\}/);
+  assert.match(terminalPanelSource, /onDragOver=\{directInputDrop \? handleInputDragOver : undefined\}/);
+  assert.match(terminalPanelSource, /onDragLeave=\{directInputDrop \? handleInputDragLeave : undefined\}/);
+  assert.match(terminalPanelSource, /onDrop=\{directInputDrop \? handleInputDrop : undefined\}/);
+});
+
 test('Peek loads history without mutating the hidden active tab session', () => {
   assert.match(chatAreaSource, /viewSession\(session, \{ activate: false \}\)/);
   assert.match(navigationSource, /const shouldActivate = options\?\.activate !== false/);
