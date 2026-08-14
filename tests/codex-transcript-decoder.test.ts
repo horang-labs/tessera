@@ -95,6 +95,34 @@ test('custom_tool_call (apply_patch) pairs the same way', () => {
   assert.equal(finished.status, 'completed');
 });
 
+test('custom tool image output preserves text and an inline image result', () => {
+  const events = decodeCodexTranscript([
+    line('response_item', {
+      type: 'custom_tool_call',
+      name: 'exec',
+      call_id: 'call_image',
+      input: 'nested view_image call',
+    }),
+    line('response_item', {
+      type: 'custom_tool_call_output',
+      call_id: 'call_image',
+      output: [
+        { type: 'input_text', text: 'loaded image' },
+        { type: 'input_image', image_url: 'data:image/png;base64,QUJDRA==' },
+      ],
+    }),
+  ]);
+
+  const finished = events[1] as any;
+  assert.equal(finished.output, 'loaded image');
+  assert.deepEqual(finished.toolUseResult, {
+    kind: 'file_read',
+    contentType: 'image',
+    base64: 'QUJDRA==',
+    mimeType: 'image/png',
+  });
+});
+
 test('codex tool names normalize to the ones the chat UI renders', () => {
   const events = decodeCodexTranscript([
     line('response_item', { type: 'function_call', name: 'exec_command', call_id: 'a', arguments: '{}' }),

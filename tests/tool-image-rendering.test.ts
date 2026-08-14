@@ -7,6 +7,7 @@ import {
   buildToolImageUrl,
   inferImageMime,
   isImagePath,
+  resolveImageToolResultSrc,
 } from '../src/lib/tool-results/tool-image';
 import { codexProtocolParser } from '../src/lib/cli/providers/codex/protocol-parser';
 import { claudeCodeProtocolParser } from '../src/lib/cli/providers/claude-code/protocol-parser';
@@ -114,6 +115,44 @@ test('Codex imageView with a non-image path does not fabricate an image result',
 
   assert.ok(toolCall, 'expected a tool_call server message');
   assert.equal(toolCall.toolUseResult, undefined);
+});
+
+test('Codex dynamic tool image output is preserved for inline rendering', () => {
+  const parsed = codexProtocolParser.parseStdout(
+    'codex-dynamic-image',
+    JSON.stringify({
+      method: 'item/completed',
+      params: {
+        item: {
+          type: 'dynamicToolCall',
+          id: 'call_dynamic_image',
+          namespace: 'functions',
+          tool: 'exec',
+          arguments: {},
+          contentItems: [
+            { type: 'inputText', text: 'loaded image' },
+            { type: 'inputImage', imageUrl: 'data:image/png;base64,QUJDRA==' },
+          ],
+          success: true,
+          status: 'completed',
+        },
+      },
+    }),
+  );
+
+  const toolCall = parsed
+    .map((p) => p.serverMessage)
+    .find((m) => m && (m as any).type === 'tool_call' && (m as any).toolUseId === 'call_dynamic_image') as any;
+
+  assert.ok(toolCall, 'expected a completed dynamic tool call');
+  assert.equal(toolCall.output, 'loaded image');
+  assert.deepEqual(toolCall.toolUseResult, {
+    kind: 'file_read',
+    contentType: 'image',
+    base64: 'QUJDRA==',
+    mimeType: 'image/png',
+  });
+  assert.equal(resolveImageToolResultSrc(toolCall.toolUseResult), 'data:image/png;base64,QUJDRA==');
 });
 
 // --- claude code Read of an image through the live tool_result path ---
