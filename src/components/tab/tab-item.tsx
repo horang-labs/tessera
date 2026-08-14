@@ -128,7 +128,7 @@ export function shouldDragTabPanelTree(tabData: TabPanelData | null | undefined)
 
 const tabItemVariants = cva(
   // base: always applied
-  'electron-no-drag relative flex h-[calc(100%+1px)] items-center select-none cursor-pointer' +
+  'relative flex h-[calc(100%+1px)] items-center select-none cursor-pointer' +
     ' px-3 py-1.5 text-sm font-medium border-b-2 transition-colors duration-100' +
     ' border-r border-r-(--divider)',
   {
