@@ -25,6 +25,8 @@ import type { ToolCallKind } from '@/types/tool-call-kind';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import { inferToolCallKindFromToolName } from '@/types/tool-call-kind';
 import { buildToolDisplay } from '@/lib/tool-display';
+import { extractImageToolResult } from '@/lib/tool-results/tool-image';
+import type { FileReadImageToolResult } from '@/types/tool-result';
 
 /** Mirrors HISTORY_VERSION in session-history.ts. */
 const HISTORY_VERSION = 1;
@@ -148,14 +150,36 @@ function decodeToolCall(
   };
 }
 
-/** Codex writes outputs as a string, or as `{ output }` / `{ content }`. */
-function readToolOutput(output: unknown): { text: string; isError: boolean } {
+/** Codex writes outputs as text, structured records, or content-block arrays. */
+function readToolOutput(output: unknown): {
+  text: string;
+  isError: boolean;
+  imageResult?: FileReadImageToolResult;
+} {
   if (typeof output === 'string') return { text: output, isError: false };
+  if (Array.isArray(output)) {
+    const text = output
+      .flatMap((item: unknown) => isRecord(item) && typeof item.text === 'string' ? [item.text] : [])
+      .join('\n');
+    const imageResult = extractImageToolResult(output);
+    return {
+      text,
+      isError: false,
+      ...(imageResult !== undefined ? { imageResult } : {}),
+    };
+  }
   if (isRecord(output)) {
     const nested = output.output ?? output.content;
-    const text = typeof nested === 'string' ? nested : JSON.stringify(output);
+    const nestedResult = Array.isArray(nested) ? readToolOutput(nested) : undefined;
+    const text = typeof nested === 'string'
+      ? nested
+      : nestedResult?.text ?? JSON.stringify(output);
     const isError = output.success === false || output.is_error === true;
-    return { text, isError };
+    return {
+      text,
+      isError,
+      ...(nestedResult?.imageResult !== undefined ? { imageResult: nestedResult.imageResult } : {}),
+    };
   }
   return { text: '', isError: false };
 }
@@ -168,7 +192,7 @@ function decodeToolResult(
   const callId = typeof payload.call_id === 'string' ? payload.call_id.trim() : '';
   if (!callId) return null;
 
-  const { text, isError } = readToolOutput(payload.output);
+  const { text, isError, imageResult } = readToolOutput(payload.output);
   const pending = state.pendingToolCalls.get(callId);
   state.pendingToolCalls.delete(callId);
 
@@ -184,6 +208,7 @@ function decodeToolResult(
     ...(pending?.toolDisplay !== undefined ? { toolDisplay: pending.toolDisplay } : {}),
     status: isError ? 'error' : 'completed',
     ...(isError ? { error: text } : { output: text }),
+    ...(!isError && imageResult !== undefined ? { toolUseResult: imageResult } : {}),
     toolUseId: callId,
   };
 }

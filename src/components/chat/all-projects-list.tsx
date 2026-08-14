@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Pin, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -29,6 +29,7 @@ import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktre
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { selectActiveTab, usePanelStore } from '@/stores/panel-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -124,6 +125,7 @@ function AllProjectSection({
 }: AllProjectSectionProps) {
   const { t } = useI18n();
   const [isProjectQuickCreateOpen, setIsProjectQuickCreateOpen] = useState(false);
+  const projectQuickCreateTriggerRef = useRef<HTMLButtonElement>(null);
 
   const color = getProjectColor(project.displayName);
   const collections = useCollectionStore((state) => state.collectionsByProject[project.encodedDir] ?? EMPTY_COLLECTIONS);
@@ -274,11 +276,16 @@ function AllProjectSection({
         </span>
         {project.isCurrent ? <Pin className="h-3 w-3 shrink-0 text-(--accent)" /> : null}
         <button
+          ref={projectQuickCreateTriggerRef}
           type="button"
           onClick={handleProjectQuickCreateToggle}
-          className="shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-bg) hover:text-(--accent)"
+          className={cn(
+            'shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-bg) hover:text-(--accent)',
+            PHONE_TOUCH_TARGET,
+          )}
           title={t('sidebar.createNewSession')}
           aria-label={t('sidebar.createNewSession')}
+          data-testid={`all-project-quick-create-toggle-${project.encodedDir}`}
         >
           <Plus className="h-3 w-3" />
         </button>
@@ -291,7 +298,7 @@ function AllProjectSection({
           projectDir={project.decodedPath}
           projectId={project.encodedDir}
           allowCollectionSelection
-          className="left-2 right-2 w-auto"
+          anchorRef={projectQuickCreateTriggerRef}
           scopeId={`project-${project.encodedDir}`}
           onClose={() => setIsProjectQuickCreateOpen(false)}
         />

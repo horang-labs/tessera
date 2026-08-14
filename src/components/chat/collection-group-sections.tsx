@@ -1038,7 +1038,7 @@ export function TaskItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/task relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150',
+          'group/task relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150 max-sm:pr-14',
           SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
@@ -1144,7 +1144,7 @@ export function TaskItemRow({
               isHovered ? 'opacity-0' : 'opacity-100',
             )}
           >
-            <DiffStatsBadge stats={task.diffStats} />
+            <DiffStatsBadge stats={task.diffStats} className="max-sm:hidden" />
             {showProviderIcons && renderWorktreeMark(false)}
           </span>
         )}
