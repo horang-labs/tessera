@@ -48,12 +48,23 @@ try {
     return {
       tabCount: tabItems.querySelectorAll('[data-testid="tab-item"]').length,
       tabBar: measure('tab-bar'),
+      appHeaderDragLane: measure('app-header-drag-lane'),
       tabDragLane: measure('tab-bar-new-tab-drop-zone'),
     };
   });
 
   process.stdout.write(`${JSON.stringify(measurements, null, 2)}\n`);
   assert.equal(measurements.tabCount, 24);
+  assert.equal(measurements.appHeaderDragLane?.appRegion, 'drag');
+  assert.equal(measurements.appHeaderDragLane?.hitTestId, 'app-header-drag-lane');
+  assert.ok(
+    (measurements.appHeaderDragLane?.width ?? 0) >= 48,
+    `project header must leave at least a 48px draggable lane: ${JSON.stringify(measurements)}`,
+  );
+  assert.ok(
+    (measurements.appHeaderDragLane?.height ?? 0) >= 39,
+    `project header drag lane must fill the titlebar height: ${JSON.stringify(measurements)}`,
+  );
   assert.equal(measurements.tabDragLane?.appRegion, 'drag');
   assert.equal(measurements.tabDragLane?.hitTestId, 'tab-bar-new-tab-drop-zone');
   assert.ok(
