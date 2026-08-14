@@ -10,22 +10,22 @@
  */
 const dirtyPaths = new Set<string>();
 
-function key(sessionId: string, filePath: string): string {
-  return `${sessionId}\0${filePath}`;
+function key(workspaceKey: string, filePath: string): string {
+  return `${workspaceKey}\0${filePath}`;
 }
 
-export function markWorkspaceFileDirty(sessionId: string, filePath: string): void {
-  dirtyPaths.add(key(sessionId, filePath));
+export function markWorkspaceFileDirty(workspaceKey: string, filePath: string): void {
+  dirtyPaths.add(key(workspaceKey, filePath));
 }
 
-export function clearWorkspaceFileDirty(sessionId: string, filePath: string): void {
-  dirtyPaths.delete(key(sessionId, filePath));
+export function clearWorkspaceFileDirty(workspaceKey: string, filePath: string): void {
+  dirtyPaths.delete(key(workspaceKey, filePath));
 }
 
 export function hasUnsavedWorkspaceFileEdits(
-  sessionId: string | null,
+  workspaceKey: string | null,
   filePath: string,
 ): boolean {
-  if (!sessionId) return false;
-  return dirtyPaths.has(key(sessionId, filePath));
+  if (!workspaceKey) return false;
+  return dirtyPaths.has(key(workspaceKey, filePath));
 }

@@ -20,6 +20,8 @@ import {
   parseWorktreeFileSessionId,
 } from '../src/lib/workspace-tabs/special-session';
 import {
+  openWorkspaceFileTab,
+  openWorktreeFileTab,
   previewWorkspaceTargetFileTab,
   previewWorktreeFileTab,
 } from '../src/lib/workspace-tabs/open-workspace-tab';
@@ -184,11 +186,119 @@ test('opening a Worktree file dismisses Peek and targets a Worktree-scoped previ
     kind: 'file',
     path: 'README.md',
   });
+  assert.equal(
+    activePanel?.panels[activePanel.activePanelId]?.worktreeId,
+    'wt_project_root',
+  );
   assert.equal(useTabStore.getState().tabs.find((tab) => tab.id === activeTabId)?.projectDir, 'project-a');
   assert.equal(
     specialSessionId,
     buildWorktreeFileSessionId('wt_project_root', 'README.md'),
   );
+});
+
+test('Worktree file tabs are unique by Worktree and path while retaining Worktree identity', () => {
+  const tabCountBefore = useTabStore.getState().tabs.length;
+
+  openWorktreeFileTab('wt_always_new', 'src/a.ts', 'project-a');
+  openWorktreeFileTab('wt_always_new', 'src/b.ts', 'project-a');
+  openWorktreeFileTab('wt_always_new', 'src/a.ts', 'project-a');
+
+  let openedTabs = useTabStore.getState().tabs.slice(tabCountBefore);
+  assert.equal(openedTabs.length, 2);
+  assert.equal(useTabStore.getState().activeTabId, openedTabs[0].id);
+
+  openWorktreeFileTab('wt_other', 'src/a.ts', 'project-a');
+  openedTabs = useTabStore.getState().tabs.slice(tabCountBefore);
+  assert.equal(openedTabs.length, 3);
+  assert.equal(openedTabs.every((tab) => tab.isPreview === false), true);
+  assert.equal(useTabStore.getState().activeTabId, openedTabs[1].id);
+  assert.deepEqual(
+    openedTabs.map((tab) => {
+      const panelData = usePanelStore.getState().tabPanels[tab.id];
+      const panel = panelData.panels[panelData.activePanelId];
+      return {
+        fileRef: parseWorktreeFileSessionId(panel.sessionId ?? ''),
+        projectDir: tab.projectDir,
+        worktreeId: panel.worktreeId,
+      };
+    }),
+    [
+      {
+        fileRef: {
+          type: 'worktree-file',
+          sourceWorktreeId: 'wt_always_new',
+          kind: 'file',
+          path: 'src/a.ts',
+        },
+        projectDir: 'project-a',
+        worktreeId: 'wt_always_new',
+      },
+      {
+        fileRef: {
+          type: 'worktree-file',
+          sourceWorktreeId: 'wt_other',
+          kind: 'file',
+          path: 'src/a.ts',
+        },
+        projectDir: 'project-a',
+        worktreeId: 'wt_other',
+      },
+      {
+        fileRef: {
+          type: 'worktree-file',
+          sourceWorktreeId: 'wt_always_new',
+          kind: 'file',
+          path: 'src/b.ts',
+        },
+        projectDir: 'project-a',
+        worktreeId: 'wt_always_new',
+      },
+    ],
+  );
+
+  for (const tab of [...openedTabs].reverse()) {
+    useTabStore.getState().closeTab(tab.id);
+  }
+});
+
+test('Session file tabs are unique by Session and path', () => {
+  const tabCountBefore = useTabStore.getState().tabs.length;
+
+  openWorkspaceFileTab('session-always-new', 'file', 'src/a.ts');
+  openWorkspaceFileTab('session-always-new', 'file', 'src/b.ts');
+  openWorkspaceFileTab('session-always-new', 'file', 'src/a.ts');
+
+  const openedTabs = useTabStore.getState().tabs.slice(tabCountBefore);
+  assert.equal(openedTabs.length, 2);
+  assert.equal(openedTabs.every((tab) => tab.isPreview === false), true);
+  assert.equal(useTabStore.getState().activeTabId, openedTabs[0].id);
+  assert.deepEqual(
+    openedTabs.map((tab) => {
+      const panelData = usePanelStore.getState().tabPanels[tab.id];
+      return parseWorkspaceFileSessionId(
+        panelData.panels[panelData.activePanelId].sessionId ?? '',
+      );
+    }),
+    [
+      {
+        type: 'workspace-file',
+        sourceSessionId: 'session-always-new',
+        kind: 'file',
+        path: 'src/a.ts',
+      },
+      {
+        type: 'workspace-file',
+        sourceSessionId: 'session-always-new',
+        kind: 'file',
+        path: 'src/b.ts',
+      },
+    ],
+  );
+
+  for (const tab of [...openedTabs].reverse()) {
+    useTabStore.getState().closeTab(tab.id);
+  }
 });
 
 test('a composite panel stores its Session and owning Worktree together', () => {
@@ -200,20 +310,48 @@ test('a composite panel stores its Session and owning Worktree together', () => 
   assert.equal(panel?.worktreeId, 'wt-composite');
 });
 
-test('a composite target keeps its Session capabilities', () => {
+test('a composite target keys file tabs by its stable Worktree identity', () => {
   const target = resolveWorkspaceTarget('session-composite', 'wt-composite');
-  assert.deepEqual(target, { kind: 'session', id: 'session-composite' });
+  assert.deepEqual(target, {
+    kind: 'session',
+    id: 'session-composite',
+    worktreeId: 'wt-composite',
+  });
 
-  previewWorkspaceTargetFileTab(target!, 'file', 'README.md');
+  previewWorkspaceTargetFileTab(target!, 'file', 'README.md', {
+    projectDir: '/repo/project-a',
+  });
   const activeTabId = useTabStore.getState().activeTabId;
   const activePanel = usePanelStore.getState().tabPanels[activeTabId];
   const specialSessionId = activePanel?.panels[activePanel.activePanelId]?.sessionId ?? '';
   assert.deepEqual(parseWorkspaceFileSessionId(specialSessionId), {
     type: 'workspace-file',
     sourceSessionId: 'session-composite',
+    sourceWorktreeId: 'wt-composite',
     kind: 'file',
     path: 'README.md',
   });
+  assert.equal(
+    activePanel?.panels[activePanel.activePanelId]?.worktreeId,
+    'wt-composite',
+  );
+  assert.equal(
+    useTabStore.getState().tabs.find((tab) => tab.id === activeTabId)?.projectDir,
+    '/repo/project-a',
+  );
+
+  const tabCount = useTabStore.getState().tabs.length;
+  const reboundTarget = resolveWorkspaceTarget('session-rebound', 'wt-composite');
+  previewWorkspaceTargetFileTab(reboundTarget!, 'file', 'README.md');
+  assert.equal(useTabStore.getState().tabs.length, tabCount);
+  assert.equal(useTabStore.getState().activeTabId, activeTabId);
+  const reboundPanel = usePanelStore.getState().tabPanels[activeTabId];
+  assert.equal(
+    parseWorkspaceFileSessionId(
+      reboundPanel.panels[reboundPanel.activePanelId].sessionId ?? '',
+    )?.sourceSessionId,
+    'session-rebound',
+  );
 });
 
 test('ChatLayout routes both Git surfaces through the canonical target resolver', () => {

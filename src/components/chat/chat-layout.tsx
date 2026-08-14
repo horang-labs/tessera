@@ -53,6 +53,7 @@ import {
   resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
+  shouldBridgeActiveSessionToPanel,
 } from "@/lib/session/active-workspace-session";
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 import { reconcileActiveSessionSurface } from "@/lib/session/reconcile-active-session-surface";
@@ -509,10 +510,22 @@ export function ChatLayout() {
       // Once the restored workspace is visible, an intentionally empty active
       // panel outranks background runtime bookkeeping. User navigation opens or
       // assigns its target panel before selecting the Session.
-      if (projectsLoaded && activePanelWorkspaceSessionId === null) return;
+      if (!shouldBridgeActiveSessionToPanel({
+        activePanelSessionId,
+        activePanelWorkspaceSessionId,
+        renderedActiveSessionId: activeSessionId,
+        currentActiveSessionId: useSessionStore.getState().activeSessionId,
+        projectsLoaded,
+      })) return;
       reconcileActiveSessionSurface(activeSessionId);
     },
-    [activePanelWorkspaceSessionId, activeSessionId, projectsLoaded, selectedProjectDir],
+    [
+      activePanelSessionId,
+      activePanelWorkspaceSessionId,
+      activeSessionId,
+      projectsLoaded,
+      selectedProjectDir,
+    ],
   );
 
   // When the last popout board window closes, refresh tasks/collections in the

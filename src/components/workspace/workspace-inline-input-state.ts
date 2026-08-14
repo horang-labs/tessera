@@ -59,19 +59,12 @@ export function resolveDirToggleTiming({
 }
 
 /**
- * Whether a click on a file row should open the file. A file row has nothing
- * to defer — the first click opens a preview, as it always has — so only the
- * second click of a double-click on the name is dropped, leaving that gesture
- * meaning rename and nothing else.
+ * Whether a click on a file row should open the file. Chromium dispatches two
+ * click events before `dblclick`; only the first may create a tab, regardless
+ * of whether the pointer was over the rename hotspot.
  */
-export function shouldOpenOnRowClick({
-  clickCount,
-  fromRenameHotspot,
-}: {
-  clickCount: number;
-  fromRenameHotspot: boolean;
-}): boolean {
-  return !(fromRenameHotspot && clickCount > 1);
+export function shouldOpenOnRowClick(clickCount: number): boolean {
+  return clickCount === 1;
 }
 
 /**

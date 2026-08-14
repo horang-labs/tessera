@@ -27,6 +27,7 @@ import {
 } from '@/lib/projects/origin-project-representation';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { selectActiveTab, usePanelStore } from '@/stores/panel-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
 
 const EMPTY_TASKS: TaskEntity[] = [];
@@ -60,6 +61,12 @@ export function AllProjectsList({
   onChatStatusChange,
 }: AllProjectsListProps) {
   const representation = useOriginProjectRepresentation();
+  const activePanelWorktreeId = usePanelStore((state) => {
+    const tab = selectActiveTab(state);
+    return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
+  });
+  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
+  const activeWorktreeId = peekWorktreeId ?? activePanelWorktreeId;
   const visibleProjects = useMemo(() => {
     if (!isRunningFilterActive) return representation.projects;
     return representation.projects.filter((project) => originProjectContainsRunningSession(
@@ -75,6 +82,7 @@ export function AllProjectsList({
           key={project.encodedDir}
           project={project}
           projectTasks={representation.tasksByProject[project.encodedDir] ?? EMPTY_TASKS}
+          activeWorktreeId={activeWorktreeId}
           activeSessionId={activeSessionId}
           isRunningFilterActive={isRunningFilterActive}
           onSessionClick={onSessionClick}
@@ -93,11 +101,13 @@ export function AllProjectsList({
 }
 
 interface AllProjectSectionProps extends AllProjectsListProps {
+  activeWorktreeId: string | null;
   project: ProjectGroup;
   projectTasks: TaskEntity[];
 }
 
 function AllProjectSection({
+  activeWorktreeId,
   project,
   projectTasks,
   activeSessionId,
@@ -124,7 +134,6 @@ function AllProjectSection({
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse);
   const isExpanded = useBoardStore((state) => state.allProjectsExpandedSections?.[project.encodedDir] ?? false);
   const toggleAllProjectsSection = useBoardStore((state) => state.toggleAllProjectsSection ?? (() => {}));
-  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
 
   const {
     draggingItem,
@@ -292,7 +301,7 @@ function AllProjectSection({
         <div className="ml-2">
           {project.projectWorktree ? (
             <CompactProjectWorktreeRow
-              active={peekWorktreeId === project.projectWorktree.id}
+              active={activeWorktreeId === project.projectWorktree.id}
               branch={project.projectWorktree.currentBranch}
               diffStats={project.projectWorktree.diffStats}
               displayPath={project.projectWorktree.displayPath}

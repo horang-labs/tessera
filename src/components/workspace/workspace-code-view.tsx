@@ -210,6 +210,7 @@ export function WorkspaceCodeView({
   dirty = false,
   draft = null,
   editable = false,
+  editorModelKey,
   error,
   loading,
   mode,
@@ -231,6 +232,8 @@ export function WorkspaceCodeView({
   /** Unsaved buffer, shown instead of the loaded content when present. */
   draft?: string | null;
   editable?: boolean;
+  /** Stable per-tab identity so duplicate file tabs never share a Monaco model. */
+  editorModelKey?: string;
   error: string | null;
   loading: boolean;
   mode: "file" | "diff";
@@ -532,6 +535,7 @@ export function WorkspaceCodeView({
             content={content}
             language={mode === "diff" ? "git-diff" : fileData?.language}
             mode={mode}
+            modelKey={editorModelKey}
             path={path}
             readOnly={!editable}
             onChange={editable ? onDraftChange : undefined}

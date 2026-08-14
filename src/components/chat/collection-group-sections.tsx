@@ -85,6 +85,7 @@ import {
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { resolvePreparationBadge } from '@/lib/projects/preparation-status-policy';
+import { isSpecialSession } from '@/lib/constants/special-sessions';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -805,7 +806,8 @@ export function TaskItemRow({
   const activeTabId = useTabStore((state) => state.activeTabId);
   const activePanelSessionId = usePanelStore((state) => {
     const tab = state.tabPanels[activeTabId];
-    return tab?.panels[tab.activePanelId]?.sessionId ?? null;
+    const sessionId = tab?.panels[tab.activePanelId]?.sessionId ?? null;
+    return isSpecialSession(sessionId) ? null : sessionId;
   });
   const activePanelWorktreeId = usePanelStore((state) => {
     const tab = state.tabPanels[activeTabId];

@@ -15,6 +15,8 @@ const mutationClientSource = read('../src/lib/workspace-files/workspace-file-mut
 const tabSyncSource = read('../src/lib/workspace-tabs/workspace-tab-sync.ts');
 const fileRouteSource = read('../src/app/api/sessions/[id]/file/route.ts');
 const directoryRouteSource = read('../src/app/api/sessions/[id]/directory/route.ts');
+const worktreeFileRouteSource = read('../src/app/api/worktrees/[id]/file/route.ts');
+const worktreeDirectoryRouteSource = read('../src/app/api/worktrees/[id]/directory/route.ts');
 const filesRouteSource = read('../src/app/api/sessions/[id]/files/route.ts');
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const panelContainerSource = read('../src/components/panel/panel-container.tsx');
@@ -69,16 +71,16 @@ test('the delete confirmation states what is lost', () => {
 });
 
 test('a dirty buffer is visible to the delete confirmation', () => {
-  assert.match(fileTabSource, /markWorkspaceFileDirty\(sourceSessionId, path\)/);
-  assert.match(fileTabSource, /clearWorkspaceFileDirty\(sourceSessionId, path\)/);
-  assert.match(filePanelSource, /dirty: hasUnsavedWorkspaceFileEdits\(sessionId, node\.path\)/);
+  assert.match(fileTabSource, /markWorkspaceFileDirty\(sourceTargetKey, path\)/);
+  assert.match(fileTabSource, /clearWorkspaceFileDirty\(sourceTargetKey, path\)/);
+  assert.match(filePanelSource, /dirty: hasUnsavedWorkspaceFileEdits\(targetKey, node\.path\)/);
 });
 
 test('rename warns about the draft it discards', () => {
   // Re-pointing a tab remounts it on the new path, so the draft goes with the
   // old one — the same loss the delete confirmation warns about. The warning
   // moved onto the inline row with the dialog's removal (#322).
-  assert.match(filePanelSource, /hasUnsavedWorkspaceFileEdits\(sessionId, input\.path\)/);
+  assert.match(filePanelSource, /hasUnsavedWorkspaceFileEdits\(targetKey, input\.path\)/);
   assert.match(filePanelSource, /unsaved edits, and they are discarded by the rename/);
   assert.match(inlineRowSource, /data-testid="workspace-inline-input-hint"/);
 });
@@ -89,8 +91,8 @@ test('only a folder delete asks the server to recurse', () => {
 });
 
 test('open tabs follow a rename and close on a delete', () => {
-  assert.match(filePanelSource, /repointWorkspaceFileTabs\(sessionId, renamed\.previousPath, renamed\.path\)/);
-  assert.match(filePanelSource, /closeWorkspaceFileTabsFor\(sessionId, request\.path\)/);
+  assert.match(filePanelSource, /repointWorkspaceFileTabs\(target, renamed\.previousPath, renamed\.path\)/);
+  assert.match(filePanelSource, /closeWorkspaceFileTabsFor\(target, request\.path\)/);
   // A folder operation moves everything under it, so matching the path alone
   // would leave the tabs inside it pointed at nothing.
   assert.match(tabSyncSource, /openPath\.startsWith\(`\$\{mutatedPath\}\/`\)/);
@@ -139,21 +141,20 @@ test('a blur commits before the row can be unmounted out from under it', () => {
   assert.match(inlineHookSource, /if \(generationRef\.current !== generation\) return/);
 });
 
-test('an input from another session cannot strand this panel', () => {
-  // The panel outlives a session switch. An input left behind would create at
+test('an input from another workspace cannot strand this panel', () => {
+  // The panel outlives a workspace switch. An input left behind would create at
   // the new root — and, worse, hold the watch refresh back for good, which is
   // why the open input is derived against the current session rather than
   // reset in an effect.
-  assert.match(inlineHookSource, /opened\.sessionId === handlers\.sessionId \? opened\.input : null/);
-  assert.match(inlineHookSource, /current\.sessionId === handlersRef\.current\.sessionId/);
-  assert.match(filePanelSource, /onRename: renameEntry,\s*\n\s*sessionId,/);
+  assert.match(inlineHookSource, /opened\.workspaceKey === handlers\.workspaceKey \? opened\.input : null/);
+  assert.match(inlineHookSource, /current\.workspaceKey === handlersRef\.current\.workspaceKey/);
+  assert.match(filePanelSource, /onRename: renameEntry,\s*\n\s*workspaceKey: targetKey,/);
 });
 
-test('the rename gesture does not also re-open the file', () => {
-  // Both clicks of a double-click on the name reach the row; the second one
-  // previewing the file again under the input it just opened is nobody's ask.
-  assert.match(filePanelSource, /if \(target\.kind === 'session' && !shouldOpenOnRowClick\(\{/);
-  assert.match(inlineStateSource, /return !\(fromRenameHotspot && clickCount > 1\)/);
+test('a double-click gesture creates only one file tab', () => {
+  // Both clicks reach the row, but only the first is an independent open action.
+  assert.match(filePanelSource, /if \(!shouldOpenOnRowClick\(event\.detail\)\) return;/);
+  assert.match(inlineStateSource, /return clickCount === 1/);
   // F2 renames; Enter still activates the row, so the keyboard can open a file.
   assert.match(filePanelSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
 });
@@ -195,7 +196,12 @@ test('the delete confirmation survives the move to inline entry', () => {
 });
 
 test('the mutating routes authenticate before parsing a body', () => {
-  for (const [name, source] of [['file', fileRouteSource], ['directory', directoryRouteSource]]) {
+  for (const [name, source] of [
+    ['file', fileRouteSource],
+    ['directory', directoryRouteSource],
+    ['Worktree file', worktreeFileRouteSource],
+    ['Worktree directory', worktreeDirectoryRouteSource],
+  ]) {
     const authIndex = source.indexOf('requireAuthenticatedUserId');
     const bodyIndex = source.indexOf('request.json()');
     assert.ok(authIndex !== -1, `${name} route authenticates`);
@@ -204,6 +210,9 @@ test('the mutating routes authenticate before parsing a body', () => {
   assert.match(fileRouteSource, /export async function DELETE\(/);
   assert.match(fileRouteSource, /export async function PATCH\(/);
   assert.match(directoryRouteSource, /export async function POST\(/);
+  assert.match(worktreeFileRouteSource, /export async function DELETE\(/);
+  assert.match(worktreeFileRouteSource, /export async function PATCH\(/);
+  assert.match(worktreeDirectoryRouteSource, /export async function POST\(/);
 });
 
 test('the tree mutations run under the shared filesystem deadline', () => {

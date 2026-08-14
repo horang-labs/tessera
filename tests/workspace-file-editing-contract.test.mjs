@@ -5,13 +5,16 @@ import test from 'node:test';
 const read = (relativePath) => fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 
 const fileRouteSource = read('../src/app/api/sessions/[id]/file/route.ts');
+const worktreeFileRouteSource = read('../src/app/api/worktrees/[id]/file/route.ts');
 const writeLibSource = read('../src/lib/workspace-files/workspace-file-write.ts');
 const writeTargetSource = read('../src/lib/workspace-files/workspace-file-write-target.ts');
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const codeViewSource = read('../src/components/workspace/workspace-code-view.tsx');
+const monacoEditorSource = read('../src/components/workspace/workspace-monaco-editor.tsx');
 const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
 const mutationClientSource = read('../src/lib/workspace-files/workspace-file-mutation-client.ts');
 const workspaceFileTypeSource = read('../src/types/workspace-file.ts');
+const fileListHookSource = read('../src/hooks/use-workspace-file-list.ts');
 
 test('the read route reports the mtime the optimistic lock is built on', () => {
   // Post-merge the read body lives in a shared helper; the client still receives mtimeMs.
@@ -63,6 +66,21 @@ test('the save route authenticates before touching the filesystem', () => {
   assert.match(putBody, /authenticateAndResolveRoot/);
 });
 
+test('Worktree file tabs use the same guarded save capability as Session file tabs', () => {
+  assert.match(worktreeFileRouteSource, /export async function PUT/);
+  assert.match(worktreeFileRouteSource, /requireAuthenticatedUserId/);
+  assert.match(worktreeFileRouteSource, /saveWorkspaceFile/);
+  assert.match(fileTabSource, /getFileMutationUrl\(sourceTarget\)/);
+  assert.doesNotMatch(
+    fileTabSource,
+    /sourceSessionId !== null\s*&& fileData !== null\s*&& !fileData\.binary\s*&& !fileData\.truncated/,
+  );
+  for (const method of ['POST', 'PATCH', 'DELETE']) {
+    assert.match(worktreeFileRouteSource, new RegExp(`export async function ${method}`));
+  }
+  assert.match(mutationClientSource, /workspaceTargetApiPath\(target\)/);
+});
+
 test('a background refresh can never overwrite an unsaved draft', () => {
   // Watcher events, window focus and WS replays all funnel through loadFile.
   assert.match(fileTabSource, /options\?\.silent && \(dirtyRef\.current \|\| activeLoadsRef\.current > 0\)/);
@@ -112,7 +130,7 @@ test('the save is guarded by the optimistic lock unless the user chose to overwr
 test('only a whole, textual buffer is editable', () => {
   assert.match(
     fileTabSource,
-    /sourceSessionId !== null\s*&& fileData !== null\s*&& !fileData\.binary\s*&& !fileData\.truncated/,
+    /fileData !== null\s*&& !fileData\.binary\s*&& !fileData\.truncated/,
   );
   assert.match(fileTabSource, /data\.binary \|\| data\.truncated \|\| draft === null/);
   // Diff tabs get no editable buffer: editable is only ever computed for files.
@@ -128,7 +146,13 @@ test('the save shortcut is bound to this view, not to the window', () => {
 });
 
 test('a dirty preview tab is pinned so it cannot be replaced out from under the draft', () => {
-  assert.match(fileTabSource, /tabStore\.pinTab\(location\.tabId\)/);
+  assert.match(fileTabSource, /pinTab\(tabId\)/);
+});
+
+test('duplicate file tabs receive distinct Monaco model identities', () => {
+  assert.match(fileTabSource, /editorModelKey=\{tabId \|\|/);
+  assert.match(codeViewSource, /modelKey=\{editorModelKey\}/);
+  assert.match(monacoEditorSource, /modelKey \?\? `\$\{mode\}:\$\{filePath\}`/);
 });
 
 test('the conflict banner offers reload, overwrite and cancel', () => {
@@ -146,7 +170,16 @@ test('creating a file posts and opens what it created', () => {
   // POST, now issued straight from the inline input.
   assert.match(mutationClientSource, /createWorkspaceFileRequest/);
   assert.match(mutationClientSource, /body: JSON\.stringify\(\{ path, content: "" \}\)/);
-  assert.match(filePanelSource, /openWorkspaceFileTab\(sessionId, "file", created\.path\)/);
+  assert.match(filePanelSource, /await loadFiles\(\{[\s\S]*silent: true,[\s\S]*mutation:/);
+  assert.match(fileListHookSource, /cache: 'no-store'/);
+  assert.match(fileListHookSource, /MUTATION_LIST_ATTEMPTS = 5/);
+  assert.match(filePanelSource, /mutation: \{ kind: "file", path: created\.path, type: "create" \}/);
+  assert.match(filePanelSource, /useWorkspacePeekStore\(\(state\) => state\.target\)/);
+  assert.match(filePanelSource, /peekTarget\?\.worktreeId !== target\.id/);
+  assert.match(
+    filePanelSource,
+    /openWorkspaceTargetFileTab\(target, "file", created\.path, \{[\s\S]*projectDir: sessionProjectDir/,
+  );
 });
 
 test('the Files panel users actually reach carries the create actions', () => {

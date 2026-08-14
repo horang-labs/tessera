@@ -8,7 +8,7 @@ export interface ProjectWorktreeSummary {
 }
 
 export type WorkspaceTarget =
-  | { kind: 'session'; id: string }
+  | { kind: 'session'; id: string; worktreeId?: string | null }
   | { kind: 'worktree'; id: string };
 
 /** Select the most specific Git-capable workspace target. */
@@ -16,7 +16,7 @@ export function resolveWorkspaceTarget(
   sessionId: string | null | undefined,
   worktreeId: string | null | undefined,
 ): WorkspaceTarget | null {
-  if (sessionId) return { kind: 'session', id: sessionId };
+  if (sessionId) return { kind: 'session', id: sessionId, worktreeId: worktreeId ?? null };
   if (worktreeId) return { kind: 'worktree', id: worktreeId };
   return null;
 }

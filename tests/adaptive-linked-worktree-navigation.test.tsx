@@ -12,6 +12,8 @@ import { WorktreeOverview } from '../src/components/worktree/worktree-overview';
 import { ChatItemRow, TaskItemRow } from '../src/components/chat/collection-group-sections';
 import { buildCollectionGroups } from '../src/lib/chat/build-collection-groups';
 import { useSettingsStore } from '../src/stores/settings-store';
+import { isSpecialSession } from '../src/lib/constants/special-sessions';
+import { buildWorktreeFileSessionId } from '../src/lib/workspace-tabs/special-session';
 import type { TaskEntity, TaskSession } from '../src/types/task-entity';
 import type { UnifiedSession } from '../src/types/chat';
 
@@ -173,6 +175,30 @@ test('selecting an expanded child Session does not also select its parent Worktr
     activeSessionId: null,
     taskWorktreeId: 'wt-2',
     activePanelSessionId: null,
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), true);
+});
+
+test('a Worktree file tab is special content, not an active child Session', () => {
+  const fileTabId = buildWorktreeFileSessionId('wt-2', 'shared.txt');
+  const activePanelSessionId = isSpecialSession(fileTabId) ? null : fileTabId;
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'standalone',
+    primarySessionId: null,
+    activeSessionId: null,
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId,
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), true);
+
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'composite',
+    primarySessionId: 'one',
+    activeSessionId: null,
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId,
     activePanelWorktreeId: 'wt-2',
     peekWorktreeId: null,
   }), true);

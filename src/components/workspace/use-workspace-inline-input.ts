@@ -15,12 +15,12 @@ interface WorkspaceInlineInputHandlers {
   onRefreshFiles: () => void;
   onRename: (path: string, newName: string) => Promise<void>;
   /** The workspace the open input belongs to. Changing it abandons the input. */
-  sessionId: string | null;
+  workspaceKey: string | null;
 }
 
 interface OpenedInlineInput {
   input: WorkspaceInlineInput;
-  sessionId: string | null;
+  workspaceKey: string | null;
 }
 
 export interface WorkspaceInlineInputController {
@@ -60,7 +60,7 @@ export function useWorkspaceInlineInput(
   const [opened, setOpened] = useState<OpenedInlineInput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const input = opened && opened.sessionId === handlers.sessionId ? opened.input : null;
+  const input = opened && opened.workspaceKey === handlers.workspaceKey ? opened.input : null;
   // The refs carry what the callbacks need without re-creating them on every
   // render of the panel, which would remount the input and lose its focus.
   const handlersRef = useRef(handlers);
@@ -92,7 +92,7 @@ export function useWorkspaceInlineInput(
   }, []);
 
   const open = useCallback((next: WorkspaceInlineInput) => {
-    const entry = { input: next, sessionId: handlersRef.current.sessionId };
+    const entry = { input: next, workspaceKey: handlersRef.current.workspaceKey };
     generationRef.current += 1;
     openedRef.current = entry;
     submittingRef.current = false;
@@ -114,7 +114,7 @@ export function useWorkspaceInlineInput(
 
   const submit = useCallback((value: string) => {
     const current = openedRef.current;
-    if (!current || current.sessionId !== handlersRef.current.sessionId) return;
+    if (!current || current.workspaceKey !== handlersRef.current.workspaceKey) return;
     if (submittingRef.current) return;
 
     const intent = resolveInlineSubmitIntent(current.input, value);
@@ -153,7 +153,7 @@ export function useWorkspaceInlineInput(
     const current = openedRef.current;
     // Only an input for *this* workspace holds the reload back. One left from a
     // session that is no longer shown must not stop the panel updating.
-    if (current && current.sessionId === handlersRef.current.sessionId) {
+    if (current && current.workspaceKey === handlersRef.current.workspaceKey) {
       pendingRefreshRef.current = true;
       return;
     }
