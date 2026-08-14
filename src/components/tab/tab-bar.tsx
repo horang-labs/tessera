@@ -706,6 +706,10 @@ export const TabBar = memo(function TabBar() {
         className={cn(
           'electron-drag transition-colors',
           isPhoneViewport && !electronPlatform ? 'w-0 shrink-0' : 'flex-1',
+          // A flex-1 item has a zero flex basis, so a crowded intrinsic-width tab
+          // strip can otherwise consume every remaining pixel. Keep a stable
+          // native hit target even when the tab list overflows.
+          electronPlatform && 'min-w-12',
           (isCreateTabDragOver || isEndZoneDragOver) && 'bg-(--accent)/10',
         )}
         onDragOver={handleEndZoneDragOver}
