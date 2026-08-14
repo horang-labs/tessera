@@ -417,13 +417,19 @@ export function createProjectViewWorkspaceState(
   );
 
   const markSessionRead = (sessionId: string): boolean => {
-    if (!resolveCanonicalSession(sessionId) || !isSessionUnread(sessionId)) return false;
+    if (!resolveCanonicalSession(sessionId)) return false;
 
+    const wasUnread = isSessionUnread(sessionId);
+
+    // Re-apply the zero state even when the canonical snapshot is already read.
+    // A restored tab can still be rendering an older Project/retained/notification
+    // appearance; touching every backing store gives those subscribers one
+    // authoritative reconciliation boundary when the user activates the Session.
     dependencies.clearSessionUnread(sessionId);
     dependencies.clearTaskSessionUnread(sessionId);
     dependencies.markNotificationsRead(sessionId);
-    dependencies.acknowledgeSessionRead(sessionId);
-    return true;
+    if (wasUnread) dependencies.acknowledgeSessionRead(sessionId);
+    return wasUnread;
   };
 
   const stopAllRunningSessions = (): string[] => {

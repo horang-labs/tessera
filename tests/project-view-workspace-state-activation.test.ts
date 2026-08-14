@@ -120,6 +120,72 @@ test('activating a retained Session clears canonical and notification unread wit
   assert.deepEqual(acknowledgements, [retainedSession.id]);
 });
 
+test('activating an already-open tab marks its visible Session as read', (t) => {
+  const backgroundTabId = 'tab-background';
+  const unreadTabId = 'tab-unread';
+  const unreadPanelId = 'panel-unread';
+
+  useSessionStore.setState({
+    ...useSessionStore.getInitialState(),
+    projects: [],
+    retainedSessions: { [retainedSession.id]: retainedSession },
+  }, true);
+  useNotificationStore.setState({
+    ...useNotificationStore.getInitialState(),
+    notifications: [{
+      id: 'notification-tab-activation',
+      sessionId: retainedSession.id,
+      type: 'completed',
+      preview: 'Finished in background tab',
+      timestamp: '2026-08-12T01:00:00.000Z',
+      read: false,
+      dismissed: false,
+    }],
+  }, true);
+  useTaskStore.setState(useTaskStore.getInitialState(), true);
+  useTabStore.setState({
+    ...useTabStore.getInitialState(),
+    tabs: [
+      { id: backgroundTabId, projectDir: 'project-b', title: null, isPreview: false },
+      { id: unreadTabId, projectDir: 'project-c', title: null, isPreview: false },
+    ],
+    activeTabId: backgroundTabId,
+    lruTabIds: [backgroundTabId, unreadTabId],
+    currentProjectDir: 'project-b',
+  }, true);
+  usePanelStore.setState({
+    ...usePanelStore.getInitialState(),
+    activeTabId: backgroundTabId,
+    tabPanels: {
+      [backgroundTabId]: {
+        layout: { type: 'leaf', panelId: 'panel-background' },
+        panels: {
+          'panel-background': { id: 'panel-background', sessionId: null },
+        },
+        activePanelId: 'panel-background',
+      },
+      [unreadTabId]: {
+        layout: { type: 'leaf', panelId: unreadPanelId },
+        panels: {
+          [unreadPanelId]: { id: unreadPanelId, sessionId: retainedSession.id },
+        },
+        activePanelId: unreadPanelId,
+      },
+    },
+  }, true);
+
+  const acknowledgements: string[] = [];
+  t.mock.method(wsClient, 'sendMarkAsRead', (sessionId: string) => {
+    acknowledgements.push(sessionId);
+  });
+
+  useTabStore.getState().setActiveTab(unreadTabId);
+
+  assert.equal(projectViewWorkspaceState.isSessionUnread(retainedSession.id), false);
+  assert.equal(useNotificationStore.getState().notifications[0]?.read, true);
+  assert.deepEqual(acknowledgements, [retainedSession.id]);
+});
+
 test('a linked Task Session with a direct origin stays resolvable and targets its Worktree', async () => {
   const directSession: UnifiedSession = {
     id: 'session-linked',

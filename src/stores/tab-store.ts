@@ -62,6 +62,11 @@ function getTabActiveSessionId(
   return tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
 }
 
+function markTabActiveSessionRead(tabId: string): void {
+  const sessionId = getTabActiveSessionId(tabId, usePanelStore.getState());
+  if (sessionId) projectViewWorkspaceState.markSessionRead(sessionId);
+}
+
 function isFileLikeSessionId(sessionId: string | null): boolean {
   if (!sessionId) return false;
   return parseWorkspaceFileSessionId(sessionId) !== null
@@ -861,8 +866,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   setActiveTab: (tabId: string): void => {
     const state = get();
 
-    // Step 1: 이미 활성 탭이면 no-op
-    if (tabId === state.activeTabId) return;
+    // Step 1: 이미 활성 탭이어도 사용자가 다시 누른 visible Session은 읽음 처리한다.
+    if (tabId === state.activeTabId) {
+      markTabActiveSessionRead(tabId);
+      return;
+    }
 
     // Step 2: 탭이 존재해야 함
     const newTabIdx = state.tabs.findIndex(t => t.id === tabId);
@@ -881,6 +889,9 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
     // Step 5: panel-store에 활성 탭 전환 (포인터만 변경, 데이터 복사 불필요)
     usePanelStore.getState().setActiveTabId(tabId);
+    // PanelWrapper가 비활성 탭에서도 mounted 상태를 유지할 수 있으므로 탭 전환
+    // 자체가 visible Session의 읽음 경계다. effect 재실행에만 의존하지 않는다.
+    markTabActiveSessionRead(tabId);
   },
 
   reorderTab: (dragTabId: string, dropTabId: string): void => {
