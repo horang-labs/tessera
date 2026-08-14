@@ -594,23 +594,65 @@ export function countArchivedChatSessions(projectId?: string, query?: string): n
   return row?.cnt ?? 0;
 }
 
-function projectViewWhere(
+export function buildProjectViewWhere(
   membership: ProjectViewMembership,
 ): { sql: string; params: unknown[] } {
   if (membership.kind === 'non-git-project') {
     return { sql: 's.project_id = ?', params: [membership.projectId] };
   }
 
-  return {
-    sql: `(
-      s.worktree_id = ?
+  const canonicalSql = `
+    SELECT canonical.id
+    FROM sessions canonical INDEXED BY idx_sessions_worktree_scope
+    WHERE canonical.worktree_id = ?
       AND (
-        s.scope_branch IS NULL
-        OR (? IS NOT NULL AND s.scope_branch = ?)
+        canonical.scope_branch IS NULL
+        OR (? IS NOT NULL AND canonical.scope_branch = ?)
       )
+  `;
+  const canonicalParams = [
+    membership.worktreeId,
+    membership.currentBranch,
+    membership.currentBranch,
+  ];
+  if (!membership.projectRootFallback) {
+    return {
+      sql: `s.id IN (${canonicalSql})`,
+      params: canonicalParams,
+    };
+  }
+
+  return {
+    sql: `s.id IN (
+      ${canonicalSql}
+      UNION ALL
+      SELECT project_root.id
+      FROM sessions project_root INDEXED BY idx_sessions_project_updated
+      WHERE project_root.project_id = ?
+        AND project_root.worktree_id IS NULL
+        AND project_root.task_id IS NULL
+        AND project_root.work_dir = ?
     )`,
-    params: [membership.worktreeId, membership.currentBranch, membership.currentBranch],
+    params: [
+      ...canonicalParams,
+      membership.projectRootFallback.projectId,
+      membership.projectRootFallback.workDir,
+    ],
   };
+}
+
+function applyProjectRootMembershipFallback(
+  sessions: SessionRow[],
+  membership: ProjectViewMembership,
+): SessionRow[] {
+  if (membership.kind === 'non-git-project') return sessions;
+
+  // The canonical query admits a NULL membership only through the exact
+  // Project-root fallback above. Expose that effective identity to the API
+  // without rewriting an ahead-version or otherwise incompatible database.
+  return sessions.map((session) => session.worktree_id === null
+    ? { ...session, worktree_id: membership.worktreeId }
+    : session);
 }
 
 export function setSessionWorktreeDeletedAt(id: string, deletedAt: string): void {
@@ -627,7 +669,7 @@ export function getSessionsForProjectView(
 ): SessionQueryResult {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = projectViewWhere(membership);
+  const where = buildProjectViewWhere(membership);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
@@ -653,6 +695,7 @@ export function getSessionsForProjectView(
       LIMIT ?
     `).all(...where.params, limit) as SessionRow[];
   }
+  sessions = applyProjectRootMembershipFallback(sessions, membership);
 
   const nextCursor = sessions.length === limit
     ? encodeSessionCursor(sessions[sessions.length - 1])
@@ -680,7 +723,7 @@ export function getSessionsForProjectViewGrouped(
 } {
   const db = getDb();
   const limitPerStatus = options.limitPerStatus ?? 20;
-  const where = projectViewWhere(membership);
+  const where = buildProjectViewWhere(membership);
 
   // Get counts per status (exclude archived and soft-deleted)
   const statusCounts = db.prepare(`
@@ -724,7 +767,10 @@ export function getSessionsForProjectViewGrouped(
     params.push(...where.params, status, limitPerStatus);
   }
 
-  const sessions = db.prepare(unions).all(...params) as SessionRow[];
+  const sessions = applyProjectRootMembershipFallback(
+    db.prepare(unions).all(...params) as SessionRow[],
+    membership,
+  );
 
   const cursorByStatus: Record<string, string | null> = {};
   for (const status of statuses) {
@@ -761,7 +807,7 @@ export function getSessionsForProjectViewByStatus(
 ): { sessions: SessionRow[]; totalCount: number; nextCursor: string | null } {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = projectViewWhere(membership);
+  const where = buildProjectViewWhere(membership);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
@@ -787,6 +833,7 @@ export function getSessionsForProjectViewByStatus(
       LIMIT ?
     `).all(...where.params, statusGroup, limit) as SessionRow[];
   }
+  sessions = applyProjectRootMembershipFallback(sessions, membership);
 
   const nextCursor = sessions.length === limit
     ? encodeSessionCursor(sessions[sessions.length - 1])

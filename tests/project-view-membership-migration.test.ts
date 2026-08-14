@@ -106,6 +106,24 @@ test('a feature v38 database gains dev PR columns without resetting completed Wo
   }
 });
 
+test('an ahead-version database uses the exact Project-root read fallback without rewriting membership', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-ahead-project-membership-'));
+  const dataDir = path.join(root, 'data');
+  try {
+    await fs.mkdir(dataDir, { recursive: true });
+    await writeProjectRootMembershipFixture(dataDir, '41');
+
+    const projected = await runAheadVersionProjection(dataDir);
+    assert.equal(projected.schemaVersion, '41');
+    assert.equal(projected.storedWorktreeId, null);
+    assert.deepEqual(projected.sessions, [
+      { id: 'exact-root-session', worktreeId: 'wt_project_root' },
+    ]);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 function runFailedBridgeBootstrap(dataDir: string): Promise<{
   rejected: boolean;
   bootstrapState: string;
@@ -250,6 +268,131 @@ async function writeFeatureV38Fixture(dataDir: string): Promise<void> {
   `);
   await fs.writeFile(path.join(dataDir, 'tessera.db'), Buffer.from(db.export()));
   db.close();
+}
+
+async function writeProjectRootMembershipFixture(
+  dataDir: string,
+  schemaVersion: string,
+): Promise<void> {
+  const SqlJs = await initSqlJs();
+  const db = new SqlJs.Database();
+  db.exec(CREATE_TABLES);
+  const timestamp = '2026-08-14T00:00:00.000Z';
+  const reportedRoot = '/home/work/legacy-project-root';
+  db.run(`INSERT INTO _meta (key, value) VALUES ('schema_version', ?)`, [schemaVersion]);
+  db.run(`
+    INSERT INTO _meta (key, value)
+    VALUES ('canonical_worktree_bootstrap_v38', 'complete')
+  `);
+  db.run(`
+    INSERT INTO worktrees (
+      id, filesystem_path, canonical_path_key, created_at, updated_at
+    ) VALUES ('wt_project_root', ?, ?, ?, ?)
+  `, [
+    '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\legacy-project-root',
+    '\\\\wsl.localhost\\ubuntu-24.04\\home\\work\\legacy-project-root',
+    timestamp,
+    timestamp,
+  ]);
+  db.run(`
+    INSERT INTO projects (
+      id, decoded_path, display_name, visible, sort_order,
+      project_worktree_id, registered_at, updated_at
+    ) VALUES ('legacy-project', ?, 'Legacy Project', 1, 0, 'wt_project_root', ?, ?)
+  `, [reportedRoot, timestamp, timestamp]);
+  db.run(`
+    INSERT INTO projects (
+      id, decoded_path, display_name, visible, sort_order,
+      project_worktree_id, registered_at, updated_at
+    ) VALUES ('non-git-project', '/home/work/non-git', 'Non-Git', 1, 1, NULL, ?, ?)
+  `, [timestamp, timestamp]);
+
+  const insertSession = db.prepare(`
+    INSERT INTO sessions (
+      id, project_id, title, provider, work_dir, created_at, updated_at
+    ) VALUES (?, ?, ?, 'codex', ?, ?, ?)
+  `);
+  insertSession.run([
+    'exact-root-session',
+    'legacy-project',
+    'Exact root',
+    reportedRoot,
+    timestamp,
+    timestamp,
+  ]);
+  insertSession.run([
+    'different-linked-session',
+    'legacy-project',
+    'Different linked checkout',
+    '/home/work/different-linked-checkout',
+    timestamp,
+    timestamp,
+  ]);
+  insertSession.run([
+    'non-git-session',
+    'non-git-project',
+    'Non-Git session',
+    '/home/work/non-git',
+    timestamp,
+    timestamp,
+  ]);
+  insertSession.free();
+  await fs.writeFile(path.join(dataDir, 'tessera.db'), Buffer.from(db.export()));
+  db.close();
+}
+
+function runAheadVersionProjection(dataDir: string): Promise<{
+  schemaVersion: string;
+  storedWorktreeId: string | null;
+  sessions: Array<{ id: string; worktreeId: string | null }>;
+}> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      '--import', 'tsx', '--eval',
+      `(async () => {
+        const database = await import('./src/lib/db/database.ts');
+        const projection = await import('./src/lib/projects/project-view-projection.ts');
+        await (database.initDatabase ?? database.default?.initDatabase)();
+        const db = (database.getDb ?? database.default?.getDb)();
+        const result = {
+          schemaVersion: db.prepare(
+            "SELECT value FROM _meta WHERE key = 'schema_version'",
+          ).get()?.value,
+          storedWorktreeId: db.prepare(
+            "SELECT worktree_id FROM sessions WHERE id = 'exact-root-session'",
+          ).get()?.worktree_id ?? null,
+          sessions: (projection.getProjectViewProjection
+            ?? projection.default?.getProjectViewProjection)('legacy-project').sessions
+              .map((session) => ({ id: session.id, worktreeId: session.worktree_id })),
+        };
+        process.stdout.write('__AHEAD_PROJECTION_RESULT__' + JSON.stringify(result) + '\\n');
+      })().catch((error) => { console.error(error); process.exitCode = 1; })`,
+    ], {
+      cwd: process.cwd(),
+      env: { ...process.env, TESSERA_DATA_DIR: dataDir, TESSERA_PRODUCTION_DB: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr));
+        return;
+      }
+      const resultLine = stdout.split('\n')
+        .find((line) => line.startsWith('__AHEAD_PROJECTION_RESULT__'));
+      if (!resultLine) {
+        reject(new Error(`Missing ahead-version projection result: ${stdout}`));
+        return;
+      }
+      resolve(JSON.parse(resultLine.slice('__AHEAD_PROJECTION_RESULT__'.length)));
+    });
+  });
 }
 
 function runDatabaseStartup(dataDir: string): Promise<void> {
