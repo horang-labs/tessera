@@ -587,7 +587,11 @@ export const TabBar = memo(function TabBar() {
           */}
           <div
             ref={containerRef}
-            className="flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
+            // Keep the native no-drag rectangle on the clipped viewport, not on
+            // each tab. Chromium does not clip child app-region rectangles to a
+            // horizontal scroller, so scrolled-off tabs otherwise subtract the
+            // adjacent AppHeader drag region.
+            className="electron-no-drag flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
             data-testid="tab-bar-items"
           >
             {tabs.map((tab) => (
@@ -617,7 +621,7 @@ export const TabBar = memo(function TabBar() {
             <div
               ref={endZoneRef}
               className={cn(
-                'electron-no-drag shrink-0 transition-colors',
+                'shrink-0 transition-colors',
                 scrollState.hasOverflow ? 'w-8' : 'w-0',
                 isWindowsElectron && 'h-[39px]',
                 isLinuxElectron && 'h-[39px]',

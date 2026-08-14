@@ -10,6 +10,10 @@ const tabBarSource = fs.readFileSync(
   new URL('../src/components/tab/tab-bar.tsx', import.meta.url),
   'utf8',
 );
+const tabItemSource = fs.readFileSync(
+  new URL('../src/components/tab/tab-item.tsx', import.meta.url),
+  'utf8',
+);
 
 test('project header keeps an explicit drag lane around its view controls', () => {
   assert.match(appHeaderSource, /const isLinuxElectron = electronPlatform === 'linux'/);
@@ -33,4 +37,15 @@ test('tab bar empty spacer remains an explicit Electron drag region', () => {
   // Electron: a frameless titlebar with no drag region is a window that cannot be moved.
   assert.match(tabBarSource, /isPhoneViewport && !electronPlatform \? 'w-0 shrink-0' : 'flex-1'/);
   assert.match(tabBarSource, /data-testid="tab-bar-new-tab-drop-zone"/);
+});
+
+test('scroll viewport owns the tab no-drag region instead of offscreen tabs', () => {
+  assert.match(
+    tabBarSource,
+    /className="electron-no-drag flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"/,
+  );
+  assert.doesNotMatch(
+    tabItemSource,
+    /'electron-no-drag relative flex h-\[calc\(100%\+1px\)\]/,
+  );
 });
