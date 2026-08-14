@@ -4,6 +4,11 @@ export type ProjectViewMembership =
       kind: 'canonical-worktree';
       worktreeId: string;
       currentBranch: string | null;
+      /** Narrow legacy lookup for only the selected Project's exact root. */
+      projectRootFallback?: {
+        projectId: string;
+        workDir: string;
+      };
     }
   | {
       /** Non-Git Projects have no canonical Worktree identity. */
