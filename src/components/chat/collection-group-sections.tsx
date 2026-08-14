@@ -77,7 +77,11 @@ import {
 } from './sidebar-tree-layout';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
-import { getLinkedWorktreeDensity, toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
+import {
+  getLinkedWorktreeDensity,
+  isLinkedWorktreeParentActive,
+  toLinkedWorktreeSession,
+} from '@/lib/worktrees/linked-worktree-presentation';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { resolvePreparationBadge } from '@/lib/projects/preparation-status-policy';
@@ -799,22 +803,24 @@ export function TaskItemRow({
   const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const activeTabId = useTabStore((state) => state.activeTabId);
-  const activeWorktreeId = usePanelStore((state) => {
+  const activePanelSessionId = usePanelStore((state) => {
+    const tab = state.tabPanels[activeTabId];
+    return tab?.panels[tab.activePanelId]?.sessionId ?? null;
+  });
+  const activePanelWorktreeId = usePanelStore((state) => {
     const tab = state.tabPanels[activeTabId];
     return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
   });
-  const peekSelection = useWorkspacePeekStore((state) =>
-    state.target === null
-      ? 'none'
-      : state.target.worktreeId === task.worktreeId
-        ? 'self'
-        : 'other'
-  );
-  const isTaskActive = peekSelection !== 'none'
-    ? peekSelection === 'self' && density !== 'composite'
-    : density === 'composite'
-      ? task.sessions[0]?.id === activeSessionId
-      : Boolean(task.worktreeId && task.worktreeId === activeWorktreeId);
+  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
+  const isTaskActive = isLinkedWorktreeParentActive({
+    density,
+    primarySessionId: task.sessions[0]?.id ?? null,
+    activeSessionId,
+    taskWorktreeId: task.worktreeId ?? null,
+    activePanelSessionId,
+    activePanelWorktreeId,
+    peekWorktreeId,
+  });
   const isPending = task.isPending === true;
   const hasPreparationBadge = resolvePreparationBadge(
     task.preparationStatus ?? 'never_run',

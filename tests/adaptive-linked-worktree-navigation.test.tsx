@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   findCompositeWorktreeId,
   getLinkedWorktreeDensity,
+  isLinkedWorktreeParentActive,
   toLinkedWorktreeSession,
 } from '../src/lib/worktrees/linked-worktree-presentation';
 import { WorktreeOverview } from '../src/components/worktree/worktree-overview';
@@ -153,6 +154,28 @@ test('linked Worktree rows render standalone, composite, and expanded identities
   assert.match(expanded, /collection-task-worktree-icon-task-2/);
   assert.match(expanded, /collection-subsession-one/);
   assert.match(expanded, /collection-subsession-two/);
+});
+
+test('selecting an expanded child Session does not also select its parent Worktree', () => {
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'expanded',
+    primarySessionId: 'one',
+    activeSessionId: 'two',
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId: 'two',
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), false);
+
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'expanded',
+    primarySessionId: 'one',
+    activeSessionId: null,
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId: null,
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), true);
 });
 
 test('provider-enabled composite rows keep both agent and Worktree identity', () => {

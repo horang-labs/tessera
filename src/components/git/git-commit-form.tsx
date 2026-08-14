@@ -72,19 +72,43 @@ export function GitCommitForm({
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-(--divider) bg-(--chat-bg) p-2">
-      <textarea
-        autoFocus={autoFocus}
-        value={message}
-        onChange={(event) => onMessageChange(event.target.value)}
-        disabled={busy || generating}
-        rows={2}
-        aria-label={t("gitPanel.commit.messageLabel")}
-        placeholder={t("gitPanel.commit.messagePlaceholder")}
-        data-testid="git-commit-message"
-        className="min-h-[3.5rem] w-full resize-y rounded-md border border-(--divider) bg-(--sidebar-bg) px-2 py-1.5 text-[12px] leading-5 text-(--text-primary) outline-none placeholder:text-(--text-muted) focus:border-(--accent) disabled:opacity-60"
-      />
+      <div className="relative" data-testid="git-commit-message-shell">
+        <textarea
+          autoFocus={autoFocus}
+          value={message}
+          onChange={(event) => onMessageChange(event.target.value)}
+          disabled={busy || generating}
+          rows={2}
+          aria-label={t("gitPanel.commit.messageLabel")}
+          placeholder={t("gitPanel.commit.messagePlaceholder")}
+          data-testid="git-commit-message"
+          className="min-h-[3.5rem] w-full resize-y rounded-md border border-(--divider) bg-(--sidebar-bg) py-1.5 pl-2 pr-10 text-[12px] leading-5 text-(--text-primary) outline-none placeholder:text-(--text-muted) focus:border-(--accent) disabled:opacity-60"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={onGenerate}
+          disabled={!canGenerate}
+          aria-label={t("gitPanel.commit.generateLabel")}
+          title={t("gitPanel.commit.generateLabel")}
+          data-testid="git-commit-generate-button"
+          className="absolute right-1.5 top-1.5 h-7 w-7 shrink-0 border border-(--divider) bg-(--chat-bg) p-0 text-(--text-muted) shadow-sm hover:text-(--text-primary)"
+        >
+          {generating ? (
+            <span className="animate-spin">
+              <LoaderCircle className="h-3.5 w-3.5" />
+            </span>
+          ) : (
+            <Sparkles className="h-3.5 w-3.5" />
+          )}
+        </Button>
+      </div>
       {children}
-      <div className="flex items-center justify-between gap-2">
+      <div
+        className="flex items-center justify-between gap-2"
+        data-testid="git-commit-footer"
+      >
         <span
           className="min-w-0 truncate font-mono text-[10px] text-(--text-muted) tabular-nums"
           data-testid="git-commit-selection-summary"
@@ -111,30 +135,15 @@ export function GitCommitForm({
             </>
           )}
         </span>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={onGenerate}
-          disabled={!canGenerate}
-          aria-label={t("gitPanel.commit.generateLabel")}
-          title={t("gitPanel.commit.generateLabel")}
-          data-testid="git-commit-generate-button"
-          className="h-7 shrink-0 px-2 text-[11px]"
-        >
-          {generating ? (
-            <LoaderCircle className="h-3 w-3 animate-spin" />
-          ) : (
-            <Sparkles className="h-3 w-3" />
-          )}
-        </Button>
-        <GitPrimaryActionButton
-          action={primaryAction}
-          pendingVerb={pendingVerb}
-          blocked={commitBlocked}
-          onRun={onCommit}
-        />
-        {menu}
+        <div className="flex shrink-0 items-center gap-1">
+          <GitPrimaryActionButton
+            action={primaryAction}
+            pendingVerb={pendingVerb}
+            blocked={commitBlocked}
+            onRun={onCommit}
+          />
+          {menu}
+        </div>
       </div>
     </div>
   );
