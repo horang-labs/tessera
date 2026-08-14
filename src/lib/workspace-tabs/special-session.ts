@@ -12,6 +12,8 @@ export type WorkspaceFileTabKind = "file" | "diff";
 export interface WorkspaceFileSessionRef {
   type: "workspace-file";
   sourceSessionId: string;
+  /** Stable physical identity when this Session belongs to a Worktree. */
+  sourceWorktreeId?: string;
   kind: WorkspaceFileTabKind;
   path: string;
 }
@@ -37,7 +39,11 @@ export function buildWorkspaceFileSessionId(
   sourceSessionId: string,
   kind: WorkspaceFileTabKind,
   filePath: string,
+  sourceWorktreeId?: string | null,
 ): string {
+  if (sourceWorktreeId) {
+    return `${WORKSPACE_FILE_SESSION_PREFIX}${encodeURIComponent(sourceSessionId)}|${encodeURIComponent(sourceWorktreeId)}|${encodeURIComponent(kind)}|${encodeURIComponent(filePath)}`;
+  }
   return `${WORKSPACE_FILE_SESSION_PREFIX}${encodeURIComponent(sourceSessionId)}|${encodeURIComponent(kind)}|${encodeURIComponent(filePath)}`;
 }
 
@@ -55,16 +61,23 @@ export function parseWorkspaceFileSessionId(
 ): WorkspaceFileSessionRef | null {
   if (!sessionId.startsWith(WORKSPACE_FILE_SESSION_PREFIX)) return null;
   const parts = sessionId.slice(WORKSPACE_FILE_SESSION_PREFIX.length).split("|");
-  const [encodedSourceSessionId, encodedKind, encodedPath] = parts;
-  if (!encodedSourceSessionId || !encodedKind || !encodedPath) return null;
+  const [encodedSourceSessionId, encodedWorktreeOrKind, encodedKindOrPath, encodedPath] = parts;
+  const hasWorktreeIdentity = parts.length === 4;
+  const encodedWorktreeId = hasWorktreeIdentity ? encodedWorktreeOrKind : null;
+  const encodedKind = hasWorktreeIdentity ? encodedKindOrPath : encodedWorktreeOrKind;
+  const resolvedEncodedPath = hasWorktreeIdentity ? encodedPath : encodedKindOrPath;
+  if (!encodedSourceSessionId || !encodedKind || !resolvedEncodedPath) return null;
   try {
     const kind = decodeURIComponent(encodedKind);
     if (kind !== "file" && kind !== "diff") return null;
     return {
       type: "workspace-file",
       sourceSessionId: decodeURIComponent(encodedSourceSessionId),
+      ...(encodedWorktreeId
+        ? { sourceWorktreeId: decodeURIComponent(encodedWorktreeId) }
+        : {}),
       kind,
-      path: decodeURIComponent(encodedPath),
+      path: decodeURIComponent(resolvedEncodedPath),
     };
   } catch {
     return null;

@@ -100,12 +100,7 @@ test("a rename preselects the name without its extension", () => {
   assert.deepEqual(selectBaseNameRange("archive.tar.gz"), [0, 11]);
 });
 
-test("the second click of a rename gesture does not open the file again", () => {
-  // The folder row defers its toggle; a file row has nothing to defer — it
-  // opens a preview on the first click, and only the second click has to be
-  // dropped so a double-click on the name is a rename and nothing else.
-  assert.equal(shouldOpenOnRowClick({ clickCount: 1, fromRenameHotspot: true }), true);
-  assert.equal(shouldOpenOnRowClick({ clickCount: 2, fromRenameHotspot: true }), false);
-  // Away from the name, a double-click still means "open and keep it open".
-  assert.equal(shouldOpenOnRowClick({ clickCount: 2, fromRenameHotspot: false }), true);
+test("a double-click gesture creates exactly one file tab", () => {
+  assert.equal(shouldOpenOnRowClick(1), true);
+  assert.equal(shouldOpenOnRowClick(2), false);
 });

@@ -36,6 +36,7 @@ export function isLinkedWorktreeParentActive({
     return peekWorktreeId === taskWorktreeId && density !== 'composite';
   }
   if (density === 'composite') {
+    if (!activePanelSessionId && taskWorktreeId === activePanelWorktreeId) return true;
     return primarySessionId === activeSessionId;
   }
   return Boolean(

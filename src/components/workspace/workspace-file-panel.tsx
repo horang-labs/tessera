@@ -35,12 +35,11 @@ import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
 import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import {
-  openWorkspaceFileTab,
   openWorkspaceTargetFileTab,
-  previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
-import { resolveWorkspaceTarget } from '@/types/worktree';
+import { resolveWorkspaceTarget, workspaceTargetKey } from '@/types/worktree';
 import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
@@ -214,12 +213,14 @@ export function WorkspaceFilePanel({
   sessionId: string | null;
   worktreeId?: string | null;
 }) {
-  const canMutate = Boolean(sessionId);
   const target = useMemo(
     () => resolveWorkspaceTarget(sessionId, worktreeId),
     [sessionId, worktreeId],
   );
+  const targetKey = target ? workspaceTargetKey(target) : null;
+  const canMutate = target !== null;
   const isDocumentVisible = useDocumentVisibility();
+  const peekTarget = useWorkspacePeekStore((state) => state.target);
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -236,6 +237,7 @@ export function WorkspaceFilePanel({
     directories,
     error,
     files,
+    loadFiles,
     loading,
     refreshFiles,
     symlinks,
@@ -245,6 +247,16 @@ export function WorkspaceFilePanel({
     target,
     sessionProjectDir,
   );
+
+  // A Worktree panel has no Session watcher. Re-selecting its Peek is the
+  // explicit signal that the explorer is visible again, so reload instead of
+  // carrying a tree snapshot from before a file-tab mutation. Subscribe to the
+  // target object, not just its ID: clicking the already-selected Worktree is
+  // still a new open event and must refresh this panel.
+  useEffect(() => {
+    if (target?.kind !== 'worktree' || peekTarget?.worktreeId !== target.id) return;
+    void loadFiles({ silent: true });
+  }, [loadFiles, peekTarget, target]);
 
   const deferredToggleRef = useRef<number | null>(null);
   useEffect(() => () => {
@@ -271,7 +283,7 @@ export function WorkspaceFilePanel({
     onExpandParent: expandPath,
     onRefreshFiles: refreshFiles,
     onRename: renameEntry,
-    sessionId,
+    workspaceKey: targetKey,
   });
 
   useWorkspaceFilesLiveSync({
@@ -335,43 +347,66 @@ export function WorkspaceFilePanel({
   }
 
   async function createFolder(path: string) {
-    if (!sessionId) return;
-    const created = await createWorkspaceDirectoryRequest(sessionId, path);
+    if (!target) return;
+    const created = await createWorkspaceDirectoryRequest(target, path);
     expandParentOf(created.path);
-    refreshFiles();
+    await loadFiles({
+      silent: true,
+      mutation: { kind: "directory", path: created.path, type: "create" },
+    });
   }
 
   async function createFile(path: string) {
-    if (!sessionId) return;
-    const created = await createWorkspaceFileRequest(sessionId, path);
+    if (!target) return;
+    const created = await createWorkspaceFileRequest(target, path);
     expandParentOf(created.path);
-    refreshFiles();
+    // Creation immediately navigates away to the new file tab. Finish the
+    // list reload first so a Worktree panel without a Session watcher does not
+    // show a stale tree when the user comes back.
+    await loadFiles({
+      silent: true,
+      mutation: { kind: "file", path: created.path, type: "create" },
+    });
     setSelectedPath(created.path);
-    openWorkspaceFileTab(sessionId, "file", created.path);
+    openWorkspaceTargetFileTab(target, "file", created.path, {
+      projectDir: sessionProjectDir,
+    });
   }
 
   async function renameEntry(path: string, newName: string) {
-    if (!sessionId) return;
-    const renamed = await renameWorkspaceEntryRequest(sessionId, path, newName);
-    repointWorkspaceFileTabs(sessionId, renamed.previousPath, renamed.path);
+    if (!target) return;
+    const kind = directories.includes(path) ? "directory" : "file";
+    const renamed = await renameWorkspaceEntryRequest(target, path, newName);
+    repointWorkspaceFileTabs(target, renamed.previousPath, renamed.path);
     if (selectedPath && isPathUnderMutation(selectedPath, renamed.previousPath)) {
       setSelectedPath(renamed.path + selectedPath.slice(renamed.previousPath.length));
     }
-    refreshFiles();
+    await loadFiles({
+      silent: true,
+      mutation: {
+        kind,
+        path: renamed.path,
+        previousPath: renamed.previousPath,
+        type: "rename",
+      },
+    });
   }
 
   async function deleteEntry(request: WorkspaceDeleteRequest) {
-    if (!sessionId) return;
-    await deleteWorkspaceEntryRequest(sessionId, request.path, {
+    if (!target) return;
+    await deleteWorkspaceEntryRequest(target, request.path, {
       recursive: request.kind === "directory",
     });
     // The tab has to go with the file: leaving it open shows an editable buffer
     // for a path that no longer exists.
-    closeWorkspaceFileTabsFor(sessionId, request.path);
+    closeWorkspaceFileTabsFor(target, request.path);
     if (selectedPath && isPathUnderMutation(selectedPath, request.path)) {
       setSelectedPath(null);
     }
-    refreshFiles();
+    await loadFiles({
+      silent: true,
+      mutation: { kind: request.kind, path: request.path, type: "delete" },
+    });
   }
 
   function toggleDirectory(path: string) {
@@ -473,7 +508,7 @@ export function WorkspaceFilePanel({
     return {
       kind: "file",
       path: node.path,
-      dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
+      dirty: hasUnsavedWorkspaceFileEdits(targetKey, node.path),
     };
   }
 
@@ -501,7 +536,7 @@ export function WorkspaceFilePanel({
     // Re-pointing a tab remounts it on the new path, so the draft goes with the
     // old one. The delete confirmation says so; the rename has to as well.
     const hint = input.kind === "rename"
-      && hasUnsavedWorkspaceFileEdits(sessionId, input.path)
+      && hasUnsavedWorkspaceFileEdits(targetKey, input.path)
       ? "This file has unsaved edits, and they are discarded by the rename."
       : null;
     return (
@@ -623,22 +658,13 @@ export function WorkspaceFilePanel({
           onClick={(event) => {
             setSelectedPath(node.path);
             if (!target) return;
-            // The second click of a double-click on the name means rename, and
-            // re-previewing the same file under the input it just opened is
-            // nothing anyone asked for.
-            if (target.kind === 'session' && !shouldOpenOnRowClick({
-              clickCount: event.detail,
-              fromRenameHotspot: isRenameHotspotTarget(event.target),
-            })) return;
-            previewWorkspaceTargetFileTab(target, 'file', node.path, {
-              preferKanbanPeek: true,
-            });
-          }}
-          onDoubleClick={() => {
-            setSelectedPath(node.path);
-            if (!target) return;
+            // A browser double-click also dispatches two click events. Only the
+            // first creates a tab; the double-click itself may still rename the
+            // name hotspot without creating extra duplicate tabs.
+            if (!shouldOpenOnRowClick(event.detail)) return;
             openWorkspaceTargetFileTab(target, 'file', node.path, {
               preferKanbanPeek: true,
+              projectDir: sessionProjectDir,
             });
           }}
           onKeyDown={(event) => {
@@ -714,7 +740,7 @@ export function WorkspaceFilePanel({
           {/* Two buttons for the whole panel, always in the same place. What was
               removed is the strip that followed the pointer down the tree — a
               row's own actions are on its right-click menu. */}
-          <Tooltip content={canMutate ? "New file" : "Start a session to edit files"}>
+          <Tooltip content={canMutate ? "New file" : "Select a workspace to edit files"}>
             <button
               type="button"
               onClick={() => beginNewEntry("file", "")}
@@ -726,7 +752,7 @@ export function WorkspaceFilePanel({
               <FilePlus2 className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
-          <Tooltip content={canMutate ? "New folder" : "Start a session to edit files"}>
+          <Tooltip content={canMutate ? "New folder" : "Select a workspace to edit files"}>
             <button
               type="button"
               onClick={() => beginNewEntry("folder", "")}

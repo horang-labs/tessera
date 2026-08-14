@@ -78,7 +78,20 @@ function inferSessionWorktreeId(
   sessionId: string | null | undefined,
   projectViewId?: string | null,
 ): string | null {
-  if (!sessionId || isSpecialSession(sessionId)) return null;
+  if (!sessionId) return null;
+  const worktreeFile = parseWorktreeFileSessionId(sessionId);
+  if (worktreeFile) return worktreeFile.sourceWorktreeId;
+  const workspaceFile = parseWorkspaceFileSessionId(sessionId);
+  if (workspaceFile?.sourceWorktreeId) return workspaceFile.sourceWorktreeId;
+  const sourceSessionId = getSpecialSessionSourceSessionId(sessionId);
+  if (sourceSessionId) {
+    const requestedProjectViewId = projectViewId && !isAllProjectsScope(projectViewId)
+      ? projectViewId
+      : undefined;
+    return projectViewWorkspaceState.resolveSession(sourceSessionId, requestedProjectViewId)
+      ?.worktreeId ?? null;
+  }
+  if (isSpecialSession(sessionId)) return null;
   const requestedProjectViewId = projectViewId && !isAllProjectsScope(projectViewId)
     ? projectViewId
     : undefined;
@@ -1028,7 +1041,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       }
       const tabData = panelStore.tabPanels[panelStore.activeTabId];
       if (tabData) {
-        panelStore.assignSession(tabData.activePanelId, sessionId);
+        panelStore.assignSession(
+          tabData.activePanelId,
+          sessionId,
+          inferSessionWorktreeId(sessionId, existingPreview.projectDir),
+        );
         get().syncTabProjectFromSession(panelStore.activeTabId, sessionId);
         set({ tabs: [...get().tabs] });
       }
@@ -1038,7 +1055,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const tabData = panelStore.tabPanels[state.activeTabId];
     const activePanel = tabData?.panels[tabData?.activePanelId ?? ''];
     if (activePanel?.sessionId === null) {
-      panelStore.assignSession(tabData!.activePanelId, sessionId);
+      panelStore.assignSession(
+        tabData!.activePanelId,
+        sessionId,
+        inferSessionWorktreeId(sessionId, state.currentProjectDir),
+      );
       get().syncTabProjectFromSession(state.activeTabId, sessionId);
       set({
         tabs: get().tabs.map((tab): Tab =>

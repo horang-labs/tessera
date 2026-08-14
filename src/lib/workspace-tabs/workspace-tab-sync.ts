@@ -1,9 +1,13 @@
 import { usePanelStore } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import {
+  buildWorktreeFileSessionId,
   buildWorkspaceFileSessionId,
+  parseWorktreeFileSessionId,
+  parseWorkspaceFileSessionId,
   type WorkspaceFileTabKind,
 } from "@/lib/workspace-tabs/special-session";
+import type { WorkspaceTarget } from '@/types/worktree';
 
 const WORKSPACE_FILE_TAB_KINDS: WorkspaceFileTabKind[] = ["file", "diff"];
 
@@ -26,13 +30,11 @@ export function isPathUnderMutation(openPath: string, mutatedPath: string): bool
  * user gets a stale editor they can still type into. Retiring the surface is
  * what the store already does when a session goes away.
  */
-export function closeWorkspaceFileTabsFor(sessionId: string, deletedPath: string): void {
+export function closeWorkspaceFileTabsFor(target: WorkspaceTarget, deletedPath: string): void {
   const tabStore = useTabStore.getState();
-  for (const openPath of listOpenWorkspaceFilePaths(sessionId)) {
+  for (const openPath of listOpenWorkspaceFilePaths(target)) {
     if (!isPathUnderMutation(openPath.path, deletedPath)) continue;
-    tabStore.retireSessionSurface(
-      buildWorkspaceFileSessionId(sessionId, openPath.kind, openPath.path),
-    );
+    tabStore.retireSessionSurface(openPath.sessionId);
   }
 }
 
@@ -45,24 +47,31 @@ export function closeWorkspaceFileTabsFor(sessionId: string, deletedPath: string
  * was the active one, and whether or not the watcher batched the pair.
  */
 export function repointWorkspaceFileTabs(
-  sessionId: string,
+  target: WorkspaceTarget,
   previousPath: string,
   nextPath: string,
 ): void {
   const tabStore = useTabStore.getState();
   const panelStore = usePanelStore.getState();
 
-  for (const { kind, path } of listOpenWorkspaceFilePaths(sessionId)) {
+  for (const { kind, path, ref, sessionId } of listOpenWorkspaceFilePaths(target)) {
     if (!isPathUnderMutation(path, previousPath)) continue;
     const movedPath = nextPath + path.slice(previousPath.length);
-    const location = tabStore.findSessionLocation(
-      buildWorkspaceFileSessionId(sessionId, kind, path),
-    );
+    const location = tabStore.findSessionLocation(sessionId);
     if (!location) continue;
+    const nextSessionId = ref.type === 'workspace-file'
+      ? buildWorkspaceFileSessionId(
+          ref.sourceSessionId,
+          kind,
+          movedPath,
+          ref.sourceWorktreeId,
+        )
+      : buildWorktreeFileSessionId(ref.sourceWorktreeId, movedPath, kind);
     panelStore.assignSessionInTab(
       location.tabId,
       location.panelId,
-      buildWorkspaceFileSessionId(sessionId, kind, movedPath),
+      nextSessionId,
+      ref.sourceWorktreeId,
     );
   }
 }
@@ -70,6 +79,9 @@ export function repointWorkspaceFileTabs(
 interface OpenWorkspaceFilePath {
   kind: WorkspaceFileTabKind;
   path: string;
+  ref: NonNullable<ReturnType<typeof parseWorkspaceFileSessionId>>
+    | NonNullable<ReturnType<typeof parseWorktreeFileSessionId>>;
+  sessionId: string;
 }
 
 /**
@@ -77,7 +89,20 @@ interface OpenWorkspaceFilePath {
  * layouts rather than off a registry — the panels are the only record of what
  * is on screen.
  */
-function listOpenWorkspaceFilePaths(sessionId: string): OpenWorkspaceFilePath[] {
+function fileRefMatchesTarget(
+  target: WorkspaceTarget,
+  ref: OpenWorkspaceFilePath['ref'],
+): boolean {
+  if (target.kind === 'worktree') {
+    return ref.sourceWorktreeId === target.id;
+  }
+  if (target.worktreeId) {
+    return ref.sourceWorktreeId === target.worktreeId;
+  }
+  return ref.type === 'workspace-file' && ref.sourceSessionId === target.id;
+}
+
+function listOpenWorkspaceFilePaths(target: WorkspaceTarget): OpenWorkspaceFilePath[] {
   const panelStore = usePanelStore.getState();
   const found = new Map<string, OpenWorkspaceFilePath>();
 
@@ -85,16 +110,16 @@ function listOpenWorkspaceFilePaths(sessionId: string): OpenWorkspaceFilePath[] 
     for (const panel of Object.values(tabData.panels)) {
       const openSessionId = panel.sessionId;
       if (!openSessionId) continue;
-      for (const kind of WORKSPACE_FILE_TAB_KINDS) {
-        const prefix = buildWorkspaceFileSessionId(sessionId, kind, "");
-        if (!openSessionId.startsWith(prefix)) continue;
-        try {
-          const path = decodeURIComponent(openSessionId.slice(prefix.length));
-          if (path) found.set(openSessionId, { kind, path });
-        } catch {
-          // A session id that will not decode names no file we can act on.
-        }
-      }
+      const ref = parseWorkspaceFileSessionId(openSessionId)
+        ?? parseWorktreeFileSessionId(openSessionId);
+      if (!ref || !WORKSPACE_FILE_TAB_KINDS.includes(ref.kind)) continue;
+      if (!fileRefMatchesTarget(target, ref)) continue;
+      found.set(openSessionId, {
+        kind: ref.kind,
+        path: ref.path,
+        ref,
+        sessionId: openSessionId,
+      });
     }
   }
 

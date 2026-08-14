@@ -30,7 +30,7 @@ import {
   type WorkspaceFileRef,
 } from "@/lib/workspace-tabs/special-session";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
-import type { WorkspaceTarget } from '@/types/worktree';
+import { workspaceTargetKey, type WorkspaceTarget } from '@/types/worktree';
 
 type WorkspaceFilesChangedMessage = Extract<
   ServerTransportMessage,
@@ -56,6 +56,11 @@ function getFileUrl(target: WorkspaceTarget, kind: 'file' | 'diff', filePath: st
   const sessionId = encodeURIComponent(target.id);
   if (kind === "diff") return `/api/sessions/${sessionId}/git/diff?path=${path}`;
   return `/api/sessions/${sessionId}/file?path=${path}`;
+}
+
+function getFileMutationUrl(target: WorkspaceTarget): string {
+  const collection = target.kind === 'worktree' ? 'worktrees' : 'sessions';
+  return `/api/${collection}/${encodeURIComponent(target.id)}/file`;
 }
 
 function getDirectoryName(filePath: string): string {
@@ -130,6 +135,7 @@ export function WorkspaceFileTab({
     () => ({ kind: sourceTargetKind, id: sourceTargetId }),
     [sourceTargetId, sourceTargetKind],
   );
+  const sourceTargetKey = useMemo(() => workspaceTargetKey(sourceTarget), [sourceTarget]);
   const tabId = useContext(TabIdContext);
   const isTabActive = useTabStore((state) => surfaceActive || state.activeTabId === tabId);
   const isDocumentVisible = useDocumentVisibility();
@@ -154,8 +160,7 @@ export function WorkspaceFileTab({
   const fileData = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
   // A truncated buffer holds only the first 512 KB: saving it back would delete
   // everything past that. A binary file has no text buffer to edit at all.
-  const editable = sourceSessionId !== null
-    && fileData !== null
+  const editable = fileData !== null
     && !fileData.binary
     && !fileData.truncated;
   const dirty = editable && draft !== null && draft !== fileData.content;
@@ -165,26 +170,20 @@ export function WorkspaceFileTab({
   // file, so the dirty state has to be visible from outside this tab (#320).
   useEffect(() => {
     if (kind !== "file") return;
-    if (!sourceSessionId) return;
     if (dirty) {
-      markWorkspaceFileDirty(sourceSessionId, path);
+      markWorkspaceFileDirty(sourceTargetKey, path);
     } else {
-      clearWorkspaceFileDirty(sourceSessionId, path);
+      clearWorkspaceFileDirty(sourceTargetKey, path);
     }
-    return () => clearWorkspaceFileDirty(sourceSessionId, path);
-  }, [dirty, kind, path, sourceSessionId]);
+    return () => clearWorkspaceFileDirty(sourceTargetKey, path);
+  }, [dirty, kind, path, sourceTargetKey]);
 
   // A preview tab is replaced by the next previewed file without warning; pin
   // it as soon as there are unsaved edits so the draft cannot vanish.
   useEffect(() => {
     if (!dirty) return;
-    if (!sourceSessionId) return;
-    const tabStore = useTabStore.getState();
-    const location = tabStore.findSessionLocation(
-      buildWorkspaceFileSessionId(sourceSessionId, kind, path),
-    );
-    if (location) tabStore.pinTab(location.tabId);
-  }, [dirty, kind, path, sourceSessionId]);
+    if (tabId) useTabStore.getState().pinTab(tabId);
+  }, [dirty, tabId]);
 
   const loadFile = useCallback(async (options?: {
     signal?: AbortSignal;
@@ -297,6 +296,9 @@ export function WorkspaceFileTab({
         onFileRefChange({
           type: "workspace-file",
           sourceSessionId,
+          ...(fileRef.type === 'workspace-file' && fileRef.sourceWorktreeId
+            ? { sourceWorktreeId: fileRef.sourceWorktreeId }
+            : {}),
           kind,
           path: renameTarget,
         });
@@ -304,7 +306,12 @@ export function WorkspaceFileTab({
       }
       assignSession(
         panelId,
-        buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
+        buildWorkspaceFileSessionId(
+          sourceSessionId,
+          kind,
+          renameTarget,
+          fileRef.type === 'workspace-file' ? fileRef.sourceWorktreeId : undefined,
+        ),
       );
       return;
     }
@@ -331,6 +338,7 @@ export function WorkspaceFileTab({
   }, [
     assignSession,
     confirmExternalChange,
+    fileRef,
     kind,
     loadFile,
     onFileRefChange,
@@ -405,15 +413,14 @@ export function WorkspaceFileTab({
   const saveFile = useCallback(async (options?: { overwrite?: boolean }) => {
     const data = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
     if (!data || data.binary || data.truncated || draft === null || saving) return;
-    if (!sourceSessionId) return;
 
     setSaving(true);
     // Stamped before the request so the watcher event, which can arrive while
     // the PUT is still in flight, is already recognised as our own.
-    markSelfWrite(sourceSessionId, path);
+    if (sourceSessionId) markSelfWrite(sourceSessionId, path);
     try {
       const response = await fetchWithTimeout(
-        `/api/sessions/${encodeURIComponent(sourceSessionId)}/file`,
+        getFileMutationUrl(sourceTarget),
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -431,7 +438,7 @@ export function WorkspaceFileTab({
         | { mtimeMs?: number; size?: number; error?: { code?: string; message?: string } }
         | null;
       if (response.status === 409) {
-        clearSelfWrite(sourceSessionId, path);
+        if (sourceSessionId) clearSelfWrite(sourceSessionId, path);
         setConflict(true);
         return;
       }
@@ -460,7 +467,7 @@ export function WorkspaceFileTab({
       setConflict(false);
       toast.success(`Saved ${path}`);
     } catch (error) {
-      clearSelfWrite(sourceSessionId, path);
+      if (sourceSessionId) clearSelfWrite(sourceSessionId, path);
       const message = isTimeoutError(error)
         ? "The file did not save in time. The workspace filesystem may be unresponsive."
         : error instanceof Error ? error.message : "Failed to save file.";
@@ -468,7 +475,7 @@ export function WorkspaceFileTab({
     } finally {
       setSaving(false);
     }
-  }, [draft, kind, path, saving, sourceSessionId, state.data]);
+  }, [draft, kind, path, saving, sourceSessionId, sourceTarget, state.data]);
 
   return (
     <WorkspaceCodeView
@@ -499,6 +506,7 @@ export function WorkspaceFileTab({
       }}
       onRetry={() => void loadFile()}
       path={fileRef.path}
+      editorModelKey={tabId || `${sourceTarget.kind}:${sourceTarget.id}:${kind}:${path}`}
       sourceTarget={sourceTarget}
     />
   );

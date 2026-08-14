@@ -24,6 +24,7 @@ import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { ItemStatusIndicator } from '@/components/chat/work-item-primitives';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { transitionTabClickSuppression } from '@/lib/tab/tab-drag-click-guard';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -340,11 +341,23 @@ export const TabItem = memo(function TabItem({
 
   const handleClick = useCallback(
     function handleClick() {
-      if (suppressClickAfterDragRef.current || isEditingTitle) return;
+      const transition = transitionTabClickSuppression(
+        suppressClickAfterDragRef.current,
+        'click',
+      );
+      suppressClickAfterDragRef.current = transition.suppressed;
+      if (!transition.shouldActivate || isEditingTitle) return;
       onActivate(tab.id);
     },
     [isEditingTitle, onActivate, tab.id],
   );
+
+  const handlePointerDown = useCallback(function handlePointerDown() {
+    suppressClickAfterDragRef.current = transitionTabClickSuppression(
+      suppressClickAfterDragRef.current,
+      'pointer-down',
+    ).suppressed;
+  }, []);
 
   const handleDoubleClick = useCallback(
     function handleDoubleClick(e: React.MouseEvent) {
@@ -412,7 +425,10 @@ export const TabItem = memo(function TabItem({
 
   const handleDragStart = useCallback(
     function handleDragStart(e: React.DragEvent) {
-      suppressClickAfterDragRef.current = true;
+      suppressClickAfterDragRef.current = transitionTabClickSuppression(
+        suppressClickAfterDragRef.current,
+        'drag-start',
+      ).suppressed;
       e.dataTransfer.effectAllowed = 'move';
       onDragStart(tab.id, e);
 
@@ -507,7 +523,10 @@ export const TabItem = memo(function TabItem({
       clearHoverTimer();
       onDragEnd();
       window.setTimeout(() => {
-        suppressClickAfterDragRef.current = false;
+        suppressClickAfterDragRef.current = transitionTabClickSuppression(
+          suppressClickAfterDragRef.current,
+          'reset',
+        ).suppressed;
       }, 150);
     },
     [onDragEnd, clearHoverTimer],
@@ -544,6 +563,7 @@ export const TabItem = memo(function TabItem({
         isSessionDragHover && !isDragOver && 'border-b-(--accent) bg-(--accent)/10',
       )}
       onClick={handleClick}
+      onPointerDown={handlePointerDown}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
