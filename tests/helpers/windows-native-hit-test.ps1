@@ -6,7 +6,9 @@ param(
 
   [int[]]$ClientY = @(20, 30),
 
-  [switch]$Scan
+  [switch]$Scan,
+
+  [switch]$RestoreNoActivate
 )
 
 $nativeMethods = @'
@@ -69,6 +71,10 @@ public static class TesseraNativeHitTest
     public static extern bool IsWindowVisible(IntPtr window);
 
     [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ShowWindowAsync(IntPtr window, int command);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(Point point);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -89,6 +95,13 @@ $process = Get-Process -Id $ProcessId -ErrorAction Stop
 $window = $process.MainWindowHandle
 if ($window -eq [IntPtr]::Zero) {
   throw "Process $ProcessId has no main window"
+}
+
+if ($RestoreNoActivate -and [TesseraNativeHitTest]::IsIconic($window)) {
+  # SW_SHOWNOACTIVATE: restore the isolated test window without taking focus or
+  # moving the user's pointer.
+  [void][TesseraNativeHitTest]::ShowWindowAsync($window, 4)
+  Start-Sleep -Milliseconds 300
 }
 
 $clientRect = New-Object TesseraNativeHitTest+Rect
