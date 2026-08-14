@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, Archive, Trash2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSelectionStore } from '@/stores/selection-store';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /**
  * SelectionActionBar — floating bar that appears next to the last-clicked
@@ -86,6 +87,7 @@ function SelectionActionBarContent({
       <div className="w-px h-5 bg-(--divider) mx-1" />
 
       <button
+        {...telemetryClickAttributes('list.selection.done', 'workspace_list')}
         onClick={bulkMarkDone}
         className={cn(
           'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium',
@@ -100,6 +102,7 @@ function SelectionActionBarContent({
       </button>
 
       <button
+        {...telemetryClickAttributes('list.selection.archive', 'workspace_list')}
         onClick={bulkArchive}
         className={cn(
           'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium',
@@ -113,6 +116,7 @@ function SelectionActionBarContent({
       </button>
 
       <button
+        {...telemetryClickAttributes('list.selection.delete', 'workspace_list')}
         onClick={handleDelete}
         className={cn(
           'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium',
@@ -130,6 +134,7 @@ function SelectionActionBarContent({
       <div className="w-px h-5 bg-(--divider) mx-1" />
 
       <button
+        {...telemetryClickAttributes('list.selection.clear', 'workspace_list')}
         onClick={clearSelection}
         className={cn(
           'p-1.5 rounded-lg text-(--text-muted)',

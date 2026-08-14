@@ -40,6 +40,7 @@ import type {
 } from '@/lib/setup/setup-status';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const TOOL_ORDER = ['git', 'gh'] as const;
 
@@ -426,6 +427,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
               </div>
 
               <AgentExecutionModePicker
+                telemetryTarget={{ control: 'setup.execution_mode', surface: 'setup' }}
                 value={selectedExecutionMode}
                 onChange={(mode) => {
                   if (mode === selectedExecutionMode) return;
@@ -480,6 +482,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
 
               <div className="pt-2">
                 <button
+                  {...telemetryClickAttributes('setup.advanced.toggle', 'setup')}
                   type="button"
                   onClick={() => setShowAdvanced((value) => !value)}
                   aria-expanded={showAdvanced}
@@ -504,6 +507,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
 
               <div className="flex flex-wrap items-center gap-2 border-t border-(--divider) pt-4">
                 <Button
+                  {...telemetryClickAttributes('setup.continue', 'setup')}
                   type="button"
                   onClick={handleProceed}
                   disabled={isProceeding || pendingSaveCount > 0}
@@ -514,6 +518,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                   {status.isFullyReady ? t('setup.start') : t('setup.continue')}
                 </Button>
                 <Button
+                  {...telemetryClickAttributes('setup.status.refresh', 'setup')}
                   type="button"
                   variant="outline"
                   onClick={() => void refreshStatus('manual_refresh')}
@@ -553,6 +558,7 @@ function SetupTelemetryConsent({
         className="flex cursor-pointer items-start gap-3"
       >
         <input
+          {...telemetryClickAttributes('setup.telemetry.enabled', 'setup')}
           type="checkbox"
           id="setup-telemetry-enabled"
           checked={enabled}
@@ -596,6 +602,10 @@ function EnvironmentSwitch({
 
   return (
     <Button
+      {...telemetryClickAttributes(
+        target === 'native' ? 'setup.environment.native' : 'setup.environment.wsl',
+        'setup',
+      )}
       type="button"
       variant="outline"
       size="sm"
@@ -678,6 +688,7 @@ function AccountSetupForm({
             {t('auth.username')}
           </span>
           <input
+            {...telemetryClickAttributes('setup.account.username', 'setup')}
             name="username"
             value={username}
             onChange={(event) => onUsernameChange(event.target.value)}
@@ -692,6 +703,7 @@ function AccountSetupForm({
             {t('auth.password')}
           </span>
           <input
+            {...telemetryClickAttributes('setup.account.password', 'setup')}
             name="password"
             type="password"
             value={password}
@@ -704,7 +716,11 @@ function AccountSetupForm({
         </label>
       </div>
 
-      <Button type="submit" disabled={isSubmitting}>
+      <Button
+        {...telemetryClickAttributes('setup.account.create', 'setup')}
+        type="submit"
+        disabled={isSubmitting}
+      >
         {isSubmitting ? t('setup.creatingAccount') : t('setup.createAccount')}
       </Button>
     </form>

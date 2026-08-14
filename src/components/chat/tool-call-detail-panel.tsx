@@ -1,5 +1,8 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { X } from 'lucide-react';
 import type { ToolCallMessage } from '@/types/chat';
@@ -93,7 +96,10 @@ function BottomSheetPanel({ toolCall, onClose }: ToolCallDetailPanelProps) {
   const currentY = useRef(0);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onClose();
+    if (e.target === e.currentTarget) {
+      void captureTelemetryUiControl('message.tool_detail.close', 'message');
+      onClose();
+    }
   }, [onClose]);
 
   useEffect(() => {
@@ -134,6 +140,7 @@ function BottomSheetPanel({ toolCall, onClose }: ToolCallDetailPanelProps) {
 
   return (
     <div
+      data-telemetry-ignore="manual_capture"
       data-testid="tool-detail-sheet-backdrop"
       className="fixed inset-0 z-50 bg-black/50 flex items-end"
       onClick={handleBackdropClick}
@@ -171,6 +178,7 @@ function DetailHeader({ toolCall, onClose }: { toolCall: ToolCallMessage; onClos
         Tool Output
       </span>
       <button
+        {...telemetryClickAttributes('message.tool_detail.close', 'message')}
         onClick={onClose}
         className="shrink-0 p-1.5 rounded hover:bg-(--tool-bg) transition-colors text-(--text-muted) hover:text-(--text-secondary)"
         aria-label="Close detail panel"

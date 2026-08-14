@@ -1,5 +1,12 @@
 import type { CaptureOptions, CaptureResult, PostHogConfig } from 'posthog-js';
 import type { ServerHostInfo } from '@/lib/system/types';
+import {
+  isTelemetryUiControl,
+  isTelemetryUiSurface,
+  sanitizeAutocaptureClickProperties,
+  type TelemetryUiControl,
+  type TelemetryUiSurface,
+} from './ui-click';
 
 export type TelemetryEventName =
   | 'first_run_started'
@@ -10,12 +17,15 @@ export type TelemetryEventName =
   | 'session_created'
   | 'task_created'
   | 'workspace_view_changed'
+  | 'settings_changed'
   | 'provider_setup_issue_seen'
   | 'project_import_result'
   | 'git_panel_opened'
   | 'git_panel_tab_changed'
   | 'git_file_opened'
   | 'git_action_triggered'
+  | 'ai_title_generation_result'
+  | 'ui_control_clicked'
   | 'provider_selected'
   | 'telemetry_opt_out';
 
@@ -51,12 +61,15 @@ const allowedEvents = new Set<TelemetryEventName>([
   'session_created',
   'task_created',
   'workspace_view_changed',
+  'settings_changed',
   'provider_setup_issue_seen',
   'project_import_result',
   'git_panel_opened',
   'git_panel_tab_changed',
   'git_file_opened',
   'git_action_triggered',
+  'ai_title_generation_result',
+  'ui_control_clicked',
   'provider_selected',
   'telemetry_opt_out',
 ]);
@@ -87,10 +100,15 @@ const allowedProperties = new Set([
   'result',
   'source',
   'status',
+  'setting',
   'tab',
   'target',
   'view',
   'action',
+  'control',
+  'surface',
+  'failure_kind',
+  'file_count',
 ]);
 
 const allowedSources = new Set([
@@ -101,9 +119,10 @@ const allowedSources = new Set([
   'list',
   'project_import',
   'git_panel',
+  'manual',
 ]);
 const allowedViews = new Set(['list', 'kanban']);
-const allowedGitTabs = new Set(['git', 'files', 'memory']);
+const allowedGitTabs = new Set(['git', 'files', 'scripts', 'memory']);
 const allowedGitActions = new Set([
   'commit',
   'fetch',
@@ -119,6 +138,8 @@ const allowedGitActions = new Set([
   'open_diff_tab',
   'open_file_tab',
   'generate_commit_message',
+  'copy_file_path',
+  'abort',
 ]);
 const allowedGitTargets = new Set([
   'repository',
@@ -129,6 +150,9 @@ const allowedGitTargets = new Set([
   'diff',
   'file',
   'commit_message',
+  'commit',
+  'conflict',
+  'file_path',
   'unknown',
 ]);
 const allowedGitFileStates = new Set([
@@ -147,7 +171,7 @@ const allowedProviderIssueStatuses = new Set<TelemetryProviderSetupIssueStatus>(
   'needs_login',
   'unavailable',
 ]);
-const allowedProjectImportResults = new Set(['success', 'failed']);
+const allowedResults = new Set(['success', 'failed', 'fallback', 'no_conversation']);
 const allowedProjectImportErrorCodes = new Set([
   'environment_mismatch',
   'permission_denied',
@@ -156,6 +180,41 @@ const allowedProjectImportErrorCodes = new Set([
   'unknown',
 ]);
 const allowedEnvironments = new Set(['native', 'wsl']);
+const allowedSettings = new Set([
+  'language',
+  'agentExecutionMode',
+  'terminalSessionDefaultView',
+  'defaultNewSessionKind',
+  'profile',
+  'notifications',
+  'translate',
+  'theme',
+  'terminalThemeLightPreset',
+  'terminalThemeDarkPreset',
+  'fontSize',
+  'enterKeyBehavior',
+  'defaultPermissionMode',
+  'defaultModel',
+  'providerDefaults',
+  'providerCustomModels',
+  'inactivePanelDimming',
+  'showProviderIcons',
+  'showRecentWork',
+  'kanbanSessionOpenMode',
+  'sttEngine',
+  'geminiApiKey',
+  'favoriteSkills',
+  'agentEnvironment',
+  'cliCommandOverrides',
+  'windowsCloseBehavior',
+  'setup',
+  'telemetry',
+  'autoDeleteArchivedWorktrees',
+  'archivedWorktreeRetentionDays',
+  'managedWorktreePathTemplate',
+  'shortcutOverrides',
+  'gitConfig',
+]);
 
 let telemetryContext: TelemetryRuntimeContext | null = null;
 let telemetryEnabled = false;
@@ -218,6 +277,13 @@ export async function captureTelemetryEvent(
   );
 }
 
+export function captureTelemetryUiControl(
+  control: TelemetryUiControl,
+  surface: TelemetryUiSurface,
+): Promise<void> {
+  return captureTelemetryEvent('ui_control_clicked', { control, surface });
+}
+
 export async function captureTelemetryOptOut(
   source: TelemetryOptOutSource,
 ): Promise<void> {
@@ -264,7 +330,7 @@ function baseProperties(context: TelemetryRuntimeContext): TelemetryEventPropert
   };
 }
 
-function sanitizeTelemetryProperties(
+export function sanitizeTelemetryProperties(
   properties: TelemetryEventProperties,
 ): TelemetryEventProperties {
   const sanitized: TelemetryEventProperties = {};
@@ -282,9 +348,12 @@ function sanitizeTelemetryProperties(
       key === 'status'
       && (typeof value !== 'string' || !allowedProviderIssueStatuses.has(value as TelemetryProviderSetupIssueStatus))
     ) continue;
-    if (key === 'result' && (typeof value !== 'string' || !allowedProjectImportResults.has(value))) continue;
+    if (key === 'result' && (typeof value !== 'string' || !allowedResults.has(value))) continue;
     if (key === 'error_code' && (typeof value !== 'string' || !allowedProjectImportErrorCodes.has(value))) continue;
     if (key === 'environment' && (typeof value !== 'string' || !allowedEnvironments.has(value))) continue;
+    if (key === 'setting' && (typeof value !== 'string' || !allowedSettings.has(value))) continue;
+    if (key === 'control' && !isTelemetryUiControl(value)) continue;
+    if (key === 'surface' && !isTelemetryUiSurface(value)) continue;
 
     if (typeof value === 'string') {
       sanitized[key] = value.slice(0, MAX_STRING_LENGTH);
@@ -312,6 +381,42 @@ function sanitizeTelemetryProperties(
   return sanitized;
 }
 
+export function prepareTelemetryCaptureForTransport(
+  captureResult: CaptureResult | null,
+  context: TelemetryRuntimeContext | null = telemetryContext,
+  enabled: boolean = telemetryEnabled,
+  transportToken: string | undefined = projectToken,
+): CaptureResult | null {
+  if (!captureResult || !transportToken) return null;
+
+  if (captureResult.event === '$autocapture') {
+    const clickProperties = sanitizeAutocaptureClickProperties(captureResult.properties ?? {});
+    if (!clickProperties || !context || !enabled) return null;
+
+    return {
+      ...captureResult,
+      event: 'ui_control_clicked',
+      properties: {
+        token: transportToken,
+        ...baseProperties(context),
+        ...clickProperties,
+      },
+    };
+  }
+
+  if (!allowedEvents.has(captureResult.event as TelemetryEventName)) return null;
+
+  return {
+    ...captureResult,
+    // `token` is the public PostHog project token required by the ingestion API.
+    // Everything else is rebuilt from Tessera's explicit property allowlist.
+    properties: {
+      token: transportToken,
+      ...sanitizeTelemetryProperties(captureResult.properties ?? {}),
+    },
+  };
+}
+
 async function loadPostHog(): Promise<PostHogClient | null> {
   if (!projectToken || !isBrowser()) return null;
   if (posthogClient) return posthogClient;
@@ -322,7 +427,21 @@ async function loadPostHog(): Promise<PostHogClient | null> {
       const config: Partial<PostHogConfig> = {
         api_host: apiHost,
         ui_host: uiHost,
-        autocapture: false,
+        autocapture: {
+          dom_event_allowlist: ['click'],
+          css_selector_allowlist: ['[data-ph-capture]'],
+          element_attribute_ignorelist: [
+            'id',
+            'title',
+            'aria-label',
+            'href',
+            'name',
+            'value',
+            'data-testid',
+          ],
+          capture_copied_text: false,
+        },
+        mask_all_text: true,
         capture_pageview: false,
         capture_pageleave: false,
         capture_performance: false,
@@ -356,12 +475,7 @@ async function loadPostHog(): Promise<PostHogClient | null> {
           '$viewport_height',
           '$viewport_width',
         ],
-        before_send: (captureResult: CaptureResult | null) => {
-          if (!captureResult) return null;
-          return allowedEvents.has(captureResult.event as TelemetryEventName)
-            ? captureResult
-            : null;
-        },
+        before_send: prepareTelemetryCaptureForTransport,
         loaded: () => {
           if (telemetryEnabled) {
             posthog.opt_in_capturing({ captureEventName: false });

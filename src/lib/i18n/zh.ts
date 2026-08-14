@@ -190,7 +190,7 @@ export const zh: I18nMessages = {
     },
     telemetry: {
       title: '匿名遥测',
-      description: '仅共享最低限度的匿名使用遥测。遥测由 PostHog 收集，并存储在美国区域。我们绝不会收集 IP 地址、提示词、消息、文件路径或命令输出等敏感信息。',
+      description: '共享匿名的产品交互遥测，包括使用了哪些具名控件和功能。遥测由 PostHog 收集，并存储在美国区域。我们绝不会收集界面可见文本、IP 地址、提示词、消息、文件路径或命令输出。',
       enabled: '共享匿名使用数据',
       disabledByEnv: '遥测已被环境策略禁用。',
     },
@@ -533,7 +533,7 @@ export const zh: I18nMessages = {
     executionModeDescription: '选择新会话的默认界面。之后可在设置中更改。',
     executionModeNote: '现有会话会保留创建时选择的界面。',
     telemetryTitle: '共享匿名使用数据',
-    telemetryDescription: '仅共享最低限度的匿名使用遥测。遥测由 PostHog 收集，并存储在美国区域。我们绝不会收集 IP 地址、提示词、消息、文件路径或命令输出等敏感信息。',
+    telemetryDescription: '共享匿名的产品交互遥测，包括使用了哪些具名控件和功能。遥测由 PostHog 收集，并存储在美国区域。我们绝不会收集界面可见文本、IP 地址、提示词、消息、文件路径或命令输出。',
     aiCli: 'Claude Code / Codex',
     providerReady: 'Ready to use for chat and worktree sessions.',
     providerNeedsLogin: 'Installed, but login is required before Tessera can use it.',

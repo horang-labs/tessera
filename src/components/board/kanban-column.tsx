@@ -24,6 +24,7 @@ import type { Collection } from '@/types/collection';
 import { CollectionQuickCreateSheet } from '@/components/chat/collection-quick-create-sheet';
 import { KanbanChatCard, KanbanTaskCard } from './kanban-card';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 type KanbanQuickCreateColumn = 'chat' | WorkflowStatus;
 export type KanbanColumnInteractionMode = 'editable' | 'filtered';
@@ -72,6 +73,7 @@ function KanbanQuickCreateButton({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <button
+        {...telemetryClickAttributes('board.column.add_chat', 'workspace_board')}
         type="button"
         disabled={project === null}
         title={project === null ? t('task.board.selectProjectToCreate') : undefined}

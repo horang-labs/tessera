@@ -7,6 +7,8 @@ import type {
   ProviderReasoningEffortOption,
 } from '@/lib/cli/provider-session-options';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
 
 interface SessionControlMenuOption {
   value: ProviderSessionMode | ProviderSessionAccessMode;
@@ -28,6 +30,7 @@ interface ComposerSessionControlMenuProps {
   options: SessionControlMenuOption[];
   selectedValue: ProviderSessionMode | ProviderSessionAccessMode;
   onSelect: (value: ProviderSessionMode | ProviderSessionAccessMode) => void;
+  telemetryControl: TelemetryUiControl;
 }
 
 interface ComposerModelMenuProps {
@@ -36,6 +39,7 @@ interface ComposerModelMenuProps {
   selectedModel: string;
   loadingLabel: string;
   onSelectModel: (model: string) => void;
+  telemetryControl: TelemetryUiControl;
 }
 
 interface ComposerReasoningEffortMenuProps {
@@ -45,6 +49,7 @@ interface ComposerReasoningEffortMenuProps {
   /** Disable spawn-only options (requiresRestart) while the session is running. */
   disableRestartRequired?: boolean;
   restartRequiredTooltip?: string;
+  telemetryControl: TelemetryUiControl;
 }
 
 interface ComposerReadonlyReasoningBadgeProps {
@@ -63,6 +68,7 @@ export function ComposerSessionRunState({
   if (isRunning) {
     return (
       <button
+        {...telemetryClickAttributes('composer.stop', 'composer')}
         type="button"
         onClick={onStop}
         data-composer-control="run-state"
@@ -103,11 +109,13 @@ export function ComposerSessionControlMenu({
   options,
   selectedValue,
   onSelect,
+  telemetryControl,
 }: ComposerSessionControlMenuProps) {
   return (
     <>
       {options.map((option) => (
         <button
+          {...telemetryClickAttributes(telemetryControl, 'composer')}
           key={option.value}
           type="button"
           data-composer-menu-item
@@ -137,11 +145,13 @@ export function ComposerModelMenu({
   selectedModel,
   loadingLabel,
   onSelectModel,
+  telemetryControl,
 }: ComposerModelMenuProps) {
   return (
     <>
       {modelOptions.map((option) => (
         <button
+          {...telemetryClickAttributes(telemetryControl, 'composer')}
           key={option.value}
           type="button"
           data-composer-menu-item
@@ -173,6 +183,7 @@ export function ComposerReasoningEffortMenu({
   onSelect,
   disableRestartRequired,
   restartRequiredTooltip,
+  telemetryControl,
 }: ComposerReasoningEffortMenuProps) {
   return (
     <>
@@ -180,6 +191,7 @@ export function ComposerReasoningEffortMenu({
         const isDisabled = disableRestartRequired === true && option.requiresRestart === true;
         return (
           <button
+            {...telemetryClickAttributes(telemetryControl, 'composer')}
             key={option.value}
             type="button"
             data-composer-menu-item

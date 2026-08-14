@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
@@ -53,6 +55,7 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
 
   return createPortal(
     <div
+      {...telemetryClickAttributes('message.image.close', 'message')}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
       onClick={handleOverlayClick}
       role="dialog"
@@ -60,6 +63,7 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       aria-label={resolvedAlt}
     >
       <button
+        {...telemetryClickAttributes('message.image.close', 'message')}
         type="button"
         onClick={onClose}
         className={cn(

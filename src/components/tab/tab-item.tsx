@@ -25,6 +25,8 @@ import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { ItemStatusIndicator } from '@/components/chat/work-item-primitives';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { transitionTabClickSuppression } from '@/lib/tab/tab-drag-click-guard';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -347,6 +349,7 @@ export const TabItem = memo(function TabItem({
       );
       suppressClickAfterDragRef.current = transition.suppressed;
       if (!transition.shouldActivate || isEditingTitle) return;
+      void captureTelemetryUiControl('tab.select', 'tab_bar');
       onActivate(tab.id);
     },
     [isEditingTitle, onActivate, tab.id],
@@ -410,6 +413,7 @@ export const TabItem = memo(function TabItem({
   const handleCloseMouseDown = useCallback(
     function handleCloseMouseDown(e: React.MouseEvent) {
       e.stopPropagation();
+      void captureTelemetryUiControl('tab.close', 'tab_bar');
       onClose(tab.id);
     },
     [onClose, tab.id],
@@ -542,6 +546,7 @@ export const TabItem = memo(function TabItem({
 
   return (
     <div
+      data-telemetry-ignore="manual_capture"
       draggable={!isEditingTitle}
       role="tab"
       aria-selected={isActive}
@@ -603,6 +608,7 @@ export const TabItem = memo(function TabItem({
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
       {isEditingTitle ? (
         <input
+          {...telemetryClickAttributes('tab.rename', 'tab_bar')}
           type="text"
           value={titleInput}
           onChange={(e) => setTitleInput(e.target.value)}
@@ -627,6 +633,7 @@ export const TabItem = memo(function TabItem({
       {/* Close button — always visible (BR-UI-024) */}
       <ShortcutTooltip id="close-tab" label={t('shortcut.closeTab')}>
         <button
+          data-telemetry-ignore="manual_capture"
           className="ml-1.5 shrink-0 rounded hover:bg-(--sidebar-hover) p-0.5"
           onMouseDown={handleCloseMouseDown}
           aria-label={t('chat.closeTab', { title: displayTitle })}

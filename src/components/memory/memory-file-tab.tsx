@@ -23,6 +23,7 @@ import { useI18n } from "@/lib/i18n";
 import { wsClient } from "@/lib/ws/client";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { toast } from "@/stores/notification-store";
 import {
   buildMemoryFileSessionId,
@@ -95,6 +96,7 @@ function MemoryViewModeToggle({
       aria-label={t("memoryPanel.fileTab.viewModeAria")}
     >
       <button
+        {...telemetryClickAttributes('memory.preview', 'memory_panel')}
         type="button"
         role="tab"
         aria-selected={mode === "preview"}
@@ -106,6 +108,7 @@ function MemoryViewModeToggle({
         <span>{t("memoryPanel.fileTab.preview")}</span>
       </button>
       <button
+        {...telemetryClickAttributes('memory.edit', 'memory_panel')}
         type="button"
         role="tab"
         aria-selected={mode === "edit"}
@@ -398,6 +401,7 @@ export function MemoryFileTab({
         {viewMode === "edit" && state.data && !readOnly ? (
           <Tooltip content={dirty ? t("memoryPanel.fileTab.saveShortcut") : t("memoryPanel.fileTab.noUnsavedChanges")}>
             <Button
+              {...telemetryClickAttributes('memory.save', 'memory_panel')}
               type="button"
               variant="ghost"
               size="sm"
@@ -416,6 +420,7 @@ export function MemoryFileTab({
         ) : null}
         <Tooltip content={t("memoryPanel.fileTab.copyContent")}>
           <Button
+            {...telemetryClickAttributes('memory.copy', 'memory_panel')}
             type="button"
             variant="ghost"
             size="icon"
@@ -429,6 +434,7 @@ export function MemoryFileTab({
         </Tooltip>
         <Tooltip content={t("common.close")}>
           <Button
+            {...telemetryClickAttributes('memory.close', 'memory_panel')}
             type="button"
             variant="ghost"
             size="icon"
@@ -470,6 +476,7 @@ export function MemoryFileTab({
             </p>
             <div className="mt-4 flex justify-center">
               <Button
+                {...telemetryClickAttributes('memory.reload', 'memory_panel')}
                 type="button"
                 variant="outline"
                 size="sm"
@@ -499,6 +506,7 @@ export function MemoryFileTab({
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             <Button
+              {...telemetryClickAttributes('memory.reload', 'memory_panel')}
               type="button"
               variant="outline"
               size="sm"
@@ -508,6 +516,7 @@ export function MemoryFileTab({
               {t("memoryPanel.fileTab.reloadDiscard")}
             </Button>
             <Button
+              {...telemetryClickAttributes('memory.overwrite', 'memory_panel')}
               type="button"
               variant="outline"
               size="sm"

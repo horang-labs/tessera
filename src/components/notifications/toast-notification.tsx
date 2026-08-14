@@ -14,6 +14,7 @@ import { useI18n } from '@/lib/i18n';
 import { formatDistanceToNow } from 'date-fns';
 import { getDateFnsLocale } from '@/lib/i18n/locale-map';
 import logger from '@/lib/logger';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ToastNotificationProps {
   notification: Notification;
@@ -102,6 +103,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
 
   return (
     <motion.div
+      {...telemetryClickAttributes('notifications.item.open', 'notifications')}
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -400, transition: { duration: 0.2 } }}
@@ -155,6 +157,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
               <div className="flex gap-1.5 mt-2">
                 {notification.actions!.map((action, i) => (
                   <button
+                    {...telemetryClickAttributes('notifications.toast.action', 'notifications')}
                     key={i}
                     onClick={(e) => { e.stopPropagation(); handleActionClick(action); }}
                     disabled={isSubmitting}
@@ -180,6 +183,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
               title row. Pointer events are stopped so the tap never bubbles
               to the card and navigates the user into the session. */}
           <button
+            {...telemetryClickAttributes('notifications.toast.dismiss', 'notifications')}
             onClick={(e) => { e.stopPropagation(); onDismissRef.current(); }}
             onPointerDown={(e) => e.stopPropagation()}
             data-testid="toast-dismiss"

@@ -29,6 +29,7 @@ import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktre
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { selectActiveTab, usePanelStore } from '@/stores/panel-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -246,6 +247,7 @@ function AllProjectSection({
   return (
     <div className="relative mb-3 mt-3 first:mt-1" data-testid={`all-project-section-${project.encodedDir}`}>
       <div
+        {...telemetryClickAttributes('sidebar.section.toggle', 'sidebar')}
         className={cn(
           'flex items-center gap-1 rounded-md py-1.5 pl-0 pr-2 transition-colors',
           'cursor-pointer hover:bg-(--sidebar-hover)',
@@ -274,6 +276,7 @@ function AllProjectSection({
         </span>
         {project.isCurrent ? <Pin className="h-3 w-3 shrink-0 text-(--accent)" /> : null}
         <button
+          {...telemetryClickAttributes('sidebar.project.add', 'sidebar')}
           type="button"
           onClick={handleProjectQuickCreateToggle}
           className="shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-bg) hover:text-(--accent)"

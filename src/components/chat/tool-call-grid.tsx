@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { memo, useState, useMemo, useCallback } from 'react';
 import { CheckCircle, XCircle, Loader2, ChevronDown, ChevronUp, Wrench } from 'lucide-react';
 import type { ToolCallMessage } from '@/types/chat';
@@ -121,6 +123,7 @@ function InlineToolImage({ toolCall, alignWithMessageBody }: {
         <span className="truncate font-mono">{caption}</span>
       </div>
       <button
+        {...telemetryClickAttributes('message.image.open', 'message')}
         type="button"
         onClick={() => setLightboxOpen(true)}
         className="inline-block cursor-zoom-in overflow-hidden rounded-lg border border-(--tool-border) hover:border-(--accent) transition-colors"
@@ -180,6 +183,7 @@ function CompactRow({
 
   return (
     <button
+      {...telemetryClickAttributes('message.tool.toggle', 'message')}
       data-testid={`tool-call-row-${toolName}`}
       data-cell-id={toolCall.id}
       onClick={onSelect}
@@ -316,6 +320,7 @@ function SummaryBar({ toolCalls, selectedId, loadingId, onToggle, showInlinePane
       className={cn('my-2 max-w-2xl', alignWithMessageBody && MESSAGE_BODY_OFFSET_CLASS)}
     >
       <button
+        {...telemetryClickAttributes('message.tool.toggle', 'message')}
         onClick={() => setIsExpanded(prev => !prev)}
         className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md border ${
           isExpanded ? 'border-(--accent)/50' : 'border-(--tool-border)'

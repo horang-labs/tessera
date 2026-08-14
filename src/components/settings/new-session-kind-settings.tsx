@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { NewSessionDefaultKind } from '@/lib/settings/types';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const OPTIONS: ReadonlyArray<{
   kind: NewSessionDefaultKind;
@@ -50,6 +51,7 @@ export default function NewSessionKindSettings() {
 
           return (
             <label
+              {...settingsTelemetryClickAttributes('settings.general.new_session_kind')}
               key={kind}
               htmlFor={inputId}
               className={cn(
@@ -72,6 +74,7 @@ export default function NewSessionKindSettings() {
               </span>
               <span className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                 <input
+                  {...settingsTelemetryClickAttributes('settings.general.new_session_kind')}
                   type="radio"
                   id={inputId}
                   name={groupId}

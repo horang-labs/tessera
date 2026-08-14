@@ -8,6 +8,7 @@ import type {
 } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const SCROLL_CONTROL_EPSILON = 1;
 const SCROLL_CONTROL_STEP_FALLBACK = 280;
@@ -228,6 +229,7 @@ export function KanbanScrollControls({ scrollAreaId, scrollAreaRef }: KanbanScro
     >
       <div className="flex items-center gap-2">
         <button
+          {...telemetryClickAttributes('board.scroll.previous', 'workspace_board')}
           type="button"
           aria-label="Scroll kanban board left"
           title="Scroll left"
@@ -283,6 +285,7 @@ export function KanbanScrollControls({ scrollAreaId, scrollAreaRef }: KanbanScro
         </div>
 
         <button
+          {...telemetryClickAttributes('board.scroll.next', 'workspace_board')}
           type="button"
           aria-label="Scroll kanban board right"
           title="Scroll right"

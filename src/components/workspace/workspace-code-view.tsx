@@ -16,6 +16,7 @@ import {
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import type { WorkspaceTarget } from '@/types/worktree';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 type MarkdownViewMode = "preview" | "source";
 
@@ -118,6 +119,7 @@ function MarkdownModeToggle({
       aria-label="Markdown view mode"
     >
       <button
+        {...telemetryClickAttributes('workspace_editor.preview', 'workspace_editor')}
         type="button"
         role="tab"
         aria-selected={mode === "preview"}
@@ -128,6 +130,7 @@ function MarkdownModeToggle({
         <span>Preview</span>
       </button>
       <button
+        {...telemetryClickAttributes('workspace_editor.source', 'workspace_editor')}
         type="button"
         role="tab"
         aria-selected={mode === "source"}
@@ -189,6 +192,7 @@ function PendingStateHeader({
       {onClose ? (
         <Tooltip content="Close">
           <Button
+            {...telemetryClickAttributes('workspace_editor.close', 'workspace_editor')}
             type="button"
             variant="ghost"
             size="icon"
@@ -324,6 +328,7 @@ export function WorkspaceCodeView({
             icon="error"
             action={onRetry ? (
               <Button
+                {...telemetryClickAttributes('workspace_editor.retry', 'workspace_editor')}
                 type="button"
                 variant="outline"
                 size="sm"
@@ -409,6 +414,7 @@ export function WorkspaceCodeView({
           {editable ? (
             <Tooltip content={dirty ? "Save (Ctrl/Cmd+S)" : "No unsaved changes"}>
               <Button
+                {...telemetryClickAttributes('workspace_editor.save', 'workspace_editor')}
                 type="button"
                 variant="ghost"
                 size="sm"
@@ -428,6 +434,7 @@ export function WorkspaceCodeView({
           {showOpenButton ? (
             <Tooltip content="Open">
               <Button
+                {...telemetryClickAttributes('workspace_editor.open_host', 'workspace_editor')}
                 type="button"
                 variant="ghost"
                 size="sm"
@@ -442,6 +449,7 @@ export function WorkspaceCodeView({
           ) : null}
           <Tooltip content={copied ? "Copied" : "Copy"}>
             <Button
+              {...telemetryClickAttributes('workspace_editor.copy_content', 'workspace_editor')}
               type="button"
               variant="ghost"
               size="icon"
@@ -455,6 +463,7 @@ export function WorkspaceCodeView({
           </Tooltip>
           <Tooltip content="Copy absolute path">
             <Button
+              {...telemetryClickAttributes('workspace_editor.copy_path', 'workspace_editor')}
               type="button"
               variant="ghost"
               size="icon"
@@ -469,6 +478,7 @@ export function WorkspaceCodeView({
           {onClose ? (
             <Tooltip content="Close">
               <Button
+                {...telemetryClickAttributes('workspace_editor.close', 'workspace_editor')}
                 type="button"
                 variant="ghost"
                 size="icon"
@@ -492,6 +502,7 @@ export function WorkspaceCodeView({
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             <Button
+              {...telemetryClickAttributes('workspace_editor.reload', 'workspace_editor')}
               type="button"
               variant="outline"
               size="sm"
@@ -502,6 +513,7 @@ export function WorkspaceCodeView({
               Reload and discard
             </Button>
             <Button
+              {...telemetryClickAttributes('workspace_editor.overwrite', 'workspace_editor')}
               type="button"
               variant="outline"
               size="sm"
@@ -513,6 +525,7 @@ export function WorkspaceCodeView({
               Overwrite
             </Button>
             <Button
+              {...telemetryClickAttributes('workspace_editor.cancel', 'workspace_editor')}
               type="button"
               variant="ghost"
               size="sm"

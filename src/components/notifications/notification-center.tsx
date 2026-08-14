@@ -13,6 +13,7 @@ import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { switchToSessionProject } from '@/lib/session/switch-session-project';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import {
   resolveAnchoredAlignedLeft,
   resolveAnchoredSideLeft,
@@ -193,6 +194,7 @@ function NotificationCenterContent({
           {notifications.length > 0 && (
             <>
               <button
+                {...telemetryClickAttributes('notifications.mark_all_read', 'notifications')}
                 onClick={handleMarkAllAsRead}
                 className="text-xs text-(--accent) hover:text-(--accent-light)"
               >
@@ -200,6 +202,7 @@ function NotificationCenterContent({
               </button>
               <span className="text-(--text-muted)">|</span>
               <button
+                {...telemetryClickAttributes('notifications.dismiss_all', 'notifications')}
                 onClick={dismissAll}
                 className="text-xs text-(--error) hover:opacity-80"
               >
@@ -226,6 +229,7 @@ function NotificationCenterContent({
 
               return (
                 <div
+                  {...telemetryClickAttributes('notifications.item.open', 'notifications')}
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification.id, notification.sessionId)}
                   className={cn(

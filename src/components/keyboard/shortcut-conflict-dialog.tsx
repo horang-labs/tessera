@@ -1,6 +1,7 @@
 'use client';
 
 import { useI18n } from '@/lib/i18n';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export interface ShortcutConflictDialogProps {
   existingActionLabel: string;
@@ -25,6 +26,7 @@ export function ShortcutConflictDialog({
         </p>
         <div className="flex justify-end gap-2">
           <button
+            {...settingsTelemetryClickAttributes('settings.keyboard.conflict_cancel')}
             type="button"
             onClick={onCancel}
             className="px-3 py-1 text-sm rounded border border-(--input-border) text-(--text-secondary)"
@@ -32,6 +34,7 @@ export function ShortcutConflictDialog({
             {t('common.cancel')}
           </button>
           <button
+            {...settingsTelemetryClickAttributes('settings.keyboard.conflict_confirm')}
             type="button"
             onClick={onConfirm}
             className="px-3 py-1 text-sm rounded bg-(--accent) text-white hover:bg-(--accent-hover)"

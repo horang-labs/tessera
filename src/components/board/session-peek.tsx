@@ -19,6 +19,7 @@ import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state'
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface SessionPeekProps {
   sessionId: string;
@@ -305,6 +306,7 @@ export function SessionPeek({
                   label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
                 >
                   <button
+                    {...telemetryClickAttributes('board.peek.terminal_mode', 'workspace_board')}
                     type="button"
                     onClick={() => setTerminalViewMode(
                       sessionId,
@@ -323,6 +325,7 @@ export function SessionPeek({
               ) : null}
               <ShortcutTooltip id="close-tab" label={t('common.close')}>
                 <button
+                  {...telemetryClickAttributes('board.peek.close', 'workspace_board')}
                   ref={closeButtonRef}
                   type="button"
                   onClick={onClose}

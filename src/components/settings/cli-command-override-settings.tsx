@@ -10,6 +10,7 @@ import {
 } from '@/lib/settings/cli-command-overrides';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { cn } from '@/lib/utils';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface CliCommandOverrideSettingsProps {
   environments?: AgentEnvironment[];
@@ -88,6 +89,7 @@ export default function CliCommandOverrideSettings({
                 </span>
                 <span className="flex min-w-0 items-center gap-1.5">
                   <input
+                    {...settingsTelemetryClickAttributes('settings.development.cli_command_override')}
                     key={`${provider.providerId}-${environment}-${value}`}
                     defaultValue={value}
                     onBlur={(event) => {
@@ -115,6 +117,7 @@ export default function CliCommandOverrideSettings({
                     data-testid={`cli-command-override-${provider.providerId}-${environment}`}
                   />
                   <button
+                    {...settingsTelemetryClickAttributes('settings.development.cli_command_clear')}
                     type="button"
                     onClick={() => {
                       void saveCommand(provider.providerId, environment, '');

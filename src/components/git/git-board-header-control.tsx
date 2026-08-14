@@ -7,6 +7,7 @@ import { useGitStore } from '@/stores/git-store';
 import { useBoardStore } from '@/stores/board-store';
 import { GitDesktopDeliveryControl, supportsDesktopGitControl } from './git-desktop-commit-control';
 import { useSharedGitPanelController } from './git-panel-controller-context';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 
 /** Git delivery/status surface for the full-width Kanban header. */
 export function GitBoardHeaderControl() {
@@ -32,6 +33,7 @@ export function GitBoardHeaderControl() {
         <GitDesktopDeliveryControl />
       ) : (
         <button
+          {...telemetryIgnoreAttributes('non_action')}
           type="button"
           disabled
           aria-label={t('task.creation.selectProjectHint')}
@@ -46,6 +48,7 @@ export function GitBoardHeaderControl() {
       <button
         type="button"
         onClick={toggleGitPanel}
+        {...telemetryClickAttributes('right_panel.toggle', 'workspace_header')}
         disabled={!hasOpenBoardTarget}
         aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
         aria-pressed={gitPanelOpen}

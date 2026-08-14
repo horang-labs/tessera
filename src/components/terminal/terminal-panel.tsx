@@ -32,6 +32,7 @@ import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -296,6 +297,7 @@ export function TerminalPanel({
       {!sessionOwned && showHeader && (
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-black/10 px-2 text-xs dark:border-white/10">
           <button
+            {...telemetryIgnoreAttributes('drag_only')}
             type="button"
             draggable
             onDragStart={handlePanelDragStart}
@@ -321,6 +323,7 @@ export function TerminalPanel({
           />
           <span className="text-black/60 dark:text-white/60">{status}</span>
           <Button
+            {...telemetryClickAttributes('terminal.action', 'terminal')}
             variant="ghost"
             size="icon"
             className="h-7 w-7 text-black/60 hover:bg-black/5 hover:text-black dark:text-white/60 dark:hover:bg-white/10 dark:hover:text-white"
@@ -342,6 +345,7 @@ export function TerminalPanel({
         ) : null}
         {!isAtBottom && (
           <ScrollToBottomButton
+            telemetryTarget={{ control: 'terminal.scroll_bottom', surface: 'terminal' }}
             onClick={() => surface.scrollToBottom()}
             title={t('chat.scrollToBottom')}
             testId="terminal-scroll-to-bottom-button"
@@ -367,6 +371,7 @@ export function TerminalPanel({
               </span>
               {(canRestart || (themeRestartRequired && themeRestartAllowed)) && (
                 <Button
+                  {...telemetryClickAttributes('terminal.restart', 'terminal')}
                   variant="outline"
                   size="sm"
                   className="h-7 shrink-0 px-2"

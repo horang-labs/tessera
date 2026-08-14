@@ -6,6 +6,7 @@ import { WorktreeOverview } from '@/components/worktree/worktree-overview';
 import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useTaskStore } from '@/stores/task-store';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export function WorktreePeek() {
   const target = useWorkspacePeekStore((state) => state.target);
@@ -79,6 +80,7 @@ export function WorktreePeek() {
             Worktree preview
           </span>
           <button
+            {...telemetryClickAttributes('worktree.peek.close', 'worktree')}
             type="button"
             onClick={close}
             className="flex h-11 w-11 items-center justify-center rounded-md text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"

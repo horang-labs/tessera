@@ -9,6 +9,7 @@ import { getIntlLocale } from '@/lib/i18n/locale-map';
 import type { Language } from '@/lib/settings/types';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface PairedDeviceSummary {
   id: string;
@@ -168,6 +169,7 @@ export default function PairedDeviceManagement() {
           </p>
         </div>
         <Button
+          {...settingsTelemetryClickAttributes('settings.remote.devices_refresh')}
           type="button"
           size="sm"
           variant="ghost"
@@ -193,7 +195,12 @@ export default function PairedDeviceManagement() {
       {loadFailed ? (
         <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-(--status-error-border) bg-(--status-error-bg) px-3 py-2 text-xs text-(--status-error-text)" role="alert">
           <span>{t('settings.remoteAccess.deviceListFailed')}</span>
-          <button type="button" className="font-semibold underline" onClick={() => void refreshDeviceList({ showLoading: true })}>
+          <button
+            {...settingsTelemetryClickAttributes('settings.remote.devices_retry')}
+            type="button"
+            className="font-semibold underline"
+            onClick={() => void refreshDeviceList({ showLoading: true })}
+          >
             {t('common.retry')}
           </button>
         </div>
@@ -278,6 +285,7 @@ export default function PairedDeviceManagement() {
                 </div>
 
                 <Button
+                  {...settingsTelemetryClickAttributes('settings.remote.device_disconnect')}
                   type="button"
                   size="sm"
                   variant="outline"
@@ -308,6 +316,7 @@ export default function PairedDeviceManagement() {
             </p>
           </div>
           <Button
+            {...settingsTelemetryClickAttributes('settings.remote.devices_disconnect_all')}
             type="button"
             size="sm"
             variant="outline"
@@ -325,6 +334,14 @@ export default function PairedDeviceManagement() {
       ) : null}
 
       <AsyncConfirmDialog
+        cancelTelemetry={{
+          control: 'settings.remote.revocation_cancel',
+          surface: 'settings',
+        }}
+        confirmTelemetry={{
+          control: 'settings.remote.revocation_confirm',
+          surface: 'settings',
+        }}
         open={revocationTarget !== null}
         onCancel={() => setRevocationTarget(null)}
         onConfirm={confirmRevocation}

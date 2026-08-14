@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import type { GitChangedFile, GitDiffData } from '@/types/git';
 import { DiffPreview } from './git-panel-sections';
 import { FILE_STATE_META } from './git-panel-shared';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface GitDiffDrawerProps {
   selectedFile: GitChangedFile | null;
@@ -66,6 +67,7 @@ export function GitDiffDrawer({
       {selectedFile && onCopyFilePath ? (
         <Tooltip content="Copy absolute path">
           <Button
+            {...telemetryClickAttributes('git.diff.copy', 'git_panel')}
             variant="ghost"
             size="icon"
             className="h-7 w-7"
@@ -78,6 +80,7 @@ export function GitDiffDrawer({
       ) : null}
       <Tooltip content="Previous file">
         <Button
+          {...telemetryClickAttributes('git.diff.previous', 'git_panel')}
           variant="ghost"
           size="icon"
           className="h-7 w-7"
@@ -93,6 +96,7 @@ export function GitDiffDrawer({
       </span>
       <Tooltip content="Next file">
         <Button
+          {...telemetryClickAttributes('git.diff.next', 'git_panel')}
           variant="ghost"
           size="icon"
           className="h-7 w-7"

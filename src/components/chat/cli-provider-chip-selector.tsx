@@ -15,6 +15,10 @@ import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 import { useSettingsStore } from '@/stores/settings-store';
 import { ProviderExecutionBadge } from './provider-execution-badge';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryUiSurface } from '@/lib/telemetry/ui-click';
+
+type ProviderCreationSurface = Extract<TelemetryUiSurface, 'new_session' | 'collection_create'>;
 
 interface CliProviderChipSelectorProps {
   value: string;
@@ -23,6 +27,7 @@ interface CliProviderChipSelectorProps {
   chipClassName?: string;
   executionMode?: AgentExecutionMode;
   showRefresh?: boolean;
+  telemetrySurface?: ProviderCreationSurface;
 }
 
 export function CliProviderChipSelector({
@@ -32,6 +37,7 @@ export function CliProviderChipSelector({
   chipClassName,
   executionMode,
   showRefresh = true,
+  telemetrySurface = 'new_session',
 }: CliProviderChipSelectorProps) {
   const { t } = useI18n();
   const providers = useProvidersStore((s) => s.providers);
@@ -112,6 +118,7 @@ export function CliProviderChipSelector({
       <div className={cn('flex items-center gap-2 text-[11px] text-(--text-muted)', className)}>
         <span>{t('settings.cliStatus.providerLoadDelayed')}</span>
         <button
+          {...telemetryClickAttributes('creation.provider.refresh', telemetrySurface)}
           type="button"
           onClick={refreshProviders}
           className="underline underline-offset-2 text-(--accent-hover) hover:opacity-80"
@@ -134,6 +141,7 @@ export function CliProviderChipSelector({
             onClick={() => selectable.length > 1 && onChange(provider.id)}
             chipClassName={chipClassName}
             preferredExecutionMode={agentExecutionMode}
+            telemetrySurface={telemetrySurface}
           />
         ))}
         {needsLogin.map((provider) => (
@@ -142,6 +150,7 @@ export function CliProviderChipSelector({
             provider={provider}
             variant="needs-login"
             chipClassName={chipClassName}
+            telemetrySurface={telemetrySurface}
           />
         ))}
         {notInstalled.map((provider) => (
@@ -150,9 +159,10 @@ export function CliProviderChipSelector({
             provider={provider}
             variant="not-installed"
             chipClassName={chipClassName}
+            telemetrySurface={telemetrySurface}
           />
         ))}
-        {showRefresh && <CliProviderRefreshButton />}
+        {showRefresh && <CliProviderRefreshButton telemetrySurface={telemetrySurface} />}
       </div>
 
       {isEmpty && !loading && (
@@ -160,6 +170,7 @@ export function CliProviderChipSelector({
           variant={hasOnlyNeedsLogin ? 'needs-login' : 'not-installed'}
           providers={hasOnlyNeedsLogin ? needsLogin : list}
           onRefresh={refreshProviders}
+          telemetrySurface={telemetrySurface}
         />
       )}
     </div>
@@ -174,6 +185,7 @@ function ProviderChip({
   variant = 'connected',
   chipClassName,
   preferredExecutionMode,
+  telemetrySurface,
 }: {
   provider: ProviderMeta;
   isSelected?: boolean;
@@ -182,6 +194,7 @@ function ProviderChip({
   variant?: 'connected' | 'needs-login' | 'not-installed';
   chipClassName?: string;
   preferredExecutionMode?: 'pty' | 'gui';
+  telemetrySurface: ProviderCreationSurface;
 }) {
   const { t } = useI18n();
 
@@ -233,6 +246,7 @@ function ProviderChip({
 
   return (
     <button
+      {...telemetryClickAttributes('creation.provider.select', telemetrySurface)}
       type="button"
       onClick={onClick}
       className={cn(
@@ -263,13 +277,20 @@ function ProviderChip({
   );
 }
 
-export function CliProviderRefreshButton({ className }: { className?: string }) {
+export function CliProviderRefreshButton({
+  className,
+  telemetrySurface = 'new_session',
+}: {
+  className?: string;
+  telemetrySurface?: ProviderCreationSurface;
+}) {
   const { t } = useI18n();
   const loading = useProvidersStore((state) => state.loading);
   const refreshProviders = useProvidersStore((state) => state.refresh);
 
   return (
     <button
+      {...telemetryClickAttributes('creation.provider.refresh', telemetrySurface)}
       type="button"
       onClick={refreshProviders}
       disabled={loading}
@@ -291,10 +312,12 @@ function EmptyState({
   variant,
   providers,
   onRefresh,
+  telemetrySurface,
 }: {
   variant: 'not-installed' | 'needs-login';
   providers: ProviderMeta[];
   onRefresh: () => void;
+  telemetrySurface: ProviderCreationSurface;
 }) {
   const { t } = useI18n();
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
@@ -307,6 +330,7 @@ function EmptyState({
         <div className="mt-0.5 text-yellow-700/80 dark:text-yellow-300/80">
           {t('settings.cliStatus.loginInstructionPrefix')}
           <button
+            {...telemetryClickAttributes('creation.provider.refresh', telemetrySurface)}
             type="button"
             onClick={onRefresh}
             className="underline underline-offset-2 hover:text-yellow-800 dark:hover:text-yellow-200"
@@ -315,7 +339,7 @@ function EmptyState({
           </button>
           {t('settings.cliStatus.loginInstructionSuffix')}
         </div>
-        <FeedbackButton onClick={() => setIsFeedbackOpen(true)} />
+        <FeedbackButton telemetrySurface={telemetrySurface} onClick={() => setIsFeedbackOpen(true)} />
         {isFeedbackOpen && (
           <FeedbackDialog source="cli_error" onClose={() => setIsFeedbackOpen(false)} />
         )}
@@ -329,6 +353,7 @@ function EmptyState({
       <div className="mt-0.5">
         {t('settings.cliStatus.installInstructionPrefix')}
         <button
+          {...telemetryClickAttributes('creation.provider.refresh', telemetrySurface)}
           type="button"
           onClick={onRefresh}
           className="underline underline-offset-2 text-(--accent-hover) hover:opacity-80"
@@ -337,7 +362,7 @@ function EmptyState({
         </button>
         {t('settings.cliStatus.installInstructionSuffix')}
       </div>
-      <FeedbackButton onClick={() => setIsFeedbackOpen(true)} />
+      <FeedbackButton telemetrySurface={telemetrySurface} onClick={() => setIsFeedbackOpen(true)} />
       {isFeedbackOpen && (
         <FeedbackDialog source="cli_error" onClose={() => setIsFeedbackOpen(false)} />
       )}
@@ -345,11 +370,18 @@ function EmptyState({
   );
 }
 
-function FeedbackButton({ onClick }: { onClick: () => void }) {
+function FeedbackButton({
+  onClick,
+  telemetrySurface,
+}: {
+  onClick: () => void;
+  telemetrySurface: ProviderCreationSurface;
+}) {
   const { t } = useI18n();
 
   return (
     <button
+      {...telemetryClickAttributes('creation.provider.feedback', telemetrySurface)}
       type="button"
       onClick={onClick}
       className="mt-1.5 inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-(--accent-hover) hover:bg-(--sidebar-hover)"

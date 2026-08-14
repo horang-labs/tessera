@@ -16,6 +16,7 @@ import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { cn } from '@/lib/utils';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
 import { switchToSessionProject } from '@/lib/session/switch-session-project';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { getSessionOriginProjectId } from '@/lib/projects/origin-project-representation';
 import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
@@ -73,6 +74,7 @@ function ActionToastItem({ t: toastItem, onDismiss }: { t: ActionToast; onDismis
       <span className="text-[0.6875rem] font-medium text-(--text-primary) flex-1 min-w-0 truncate">{toastItem.message}</span>
       {toastItem.action && (
         <button
+          {...telemetryClickAttributes('notifications.toast.action', 'notifications')}
           onClick={(e) => { e.stopPropagation(); toastItem.action!.onClick(); onDismissRef.current(); }}
           className="shrink-0 text-[0.625rem] font-medium text-(--accent) hover:underline"
         >
@@ -80,6 +82,7 @@ function ActionToastItem({ t: toastItem, onDismiss }: { t: ActionToast; onDismis
         </button>
       )}
       <button
+        {...telemetryClickAttributes('notifications.toast.dismiss', 'notifications')}
         onClick={(e) => { e.stopPropagation(); onDismissRef.current(); }}
         data-testid="toast-dismiss"
         className={cn(

@@ -38,6 +38,11 @@ import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { SETTINGS_DIALOG_STACKED_NAV_MEDIA_QUERY } from '@/lib/viewport/settings-dialog-viewport';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
+import {
+  SETTINGS_SECTION_TELEMETRY_CONTROLS,
+  settingsTelemetryClickAttributes,
+} from '@/lib/telemetry/ui-click';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
 
 // Defined with the store, because opening the panel is how a caller asks for a
 // section and the store is what carries the ask.
@@ -270,11 +275,16 @@ export default function SettingsPanel() {
   return (
     <>
       <div
+        data-telemetry-ignore="manual_capture"
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4"
-        onClick={closeSettings}
+        onClick={() => {
+          void captureTelemetryUiControl('settings.overlay_close', 'settings');
+          closeSettings();
+        }}
         data-testid="settings-overlay"
       >
         <div
+          data-telemetry-ignore="event_boundary"
           role="dialog"
           aria-modal="true"
           aria-labelledby="settings-title"
@@ -294,6 +304,7 @@ export default function SettingsPanel() {
                   reader looks for a modal dismiss. Hidden on `md` where the
                   body's top-right corner is unambiguous. */}
               <button
+                {...settingsTelemetryClickAttributes('settings.close')}
                 type="button"
                 onClick={closeSettings}
                 disabled={isSaving}
@@ -334,6 +345,9 @@ export default function SettingsPanel() {
 
                   return (
                     <button
+                      {...settingsTelemetryClickAttributes(
+                        SETTINGS_SECTION_TELEMETRY_CONTROLS[section.id],
+                      )}
                       key={section.id}
                       type="button"
                       onClick={() => setActiveSection(section.id)}
@@ -394,6 +408,7 @@ export default function SettingsPanel() {
             </p>
             <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-2 sm:row-span-3">
               <button
+                {...settingsTelemetryClickAttributes('settings.feedback.open')}
                 type="button"
                 onClick={() => setIsFeedbackOpen(true)}
                 className={cn(
@@ -409,6 +424,7 @@ export default function SettingsPanel() {
                 <span className="max-sm:sr-only">{t('feedback.settingsCta')}</span>
               </button>
               <button
+                {...settingsTelemetryClickAttributes('settings.close')}
                 onClick={closeSettings}
                 disabled={isSaving}
                 aria-label="Close settings"

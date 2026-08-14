@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { AlertTriangle, CheckCircle, Copy, ExternalLink, EyeOff, RefreshCw, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useNotificationStore } from '@/stores/notification-store';
@@ -75,6 +76,7 @@ export default function UpdateSettings() {
           </p>
         </div>
         <Button
+          {...settingsTelemetryClickAttributes('settings.updates.check')}
           type="button"
           variant="outline"
           size="sm"
@@ -167,24 +169,47 @@ export default function UpdateSettings() {
 
           <div className="flex flex-wrap gap-2">
             {info?.installCommand && (
-              <Button type="button" size="sm" onClick={() => void handleCopyCommand()}>
+              <Button
+                {...settingsTelemetryClickAttributes('settings.updates.copy_command')}
+                type="button"
+                size="sm"
+                onClick={() => void handleCopyCommand()}
+              >
                 <Copy className="h-3.5 w-3.5" />
                 {t('updates.copyCommand')}
               </Button>
             )}
             {info?.releaseUrl && (
-              <Button type="button" variant={info.installCommand ? 'outline' : 'default'} size="sm" onClick={handleOpenRelease}>
+              <Button
+                {...settingsTelemetryClickAttributes('settings.updates.open_release')}
+                type="button"
+                variant={info.installCommand ? 'outline' : 'default'}
+                size="sm"
+                onClick={handleOpenRelease}
+              >
                 <ExternalLink className="h-3.5 w-3.5" />
                 {t('updates.openRelease')}
               </Button>
             )}
             {isDismissed ? (
-              <Button type="button" variant="outline" size="sm" onClick={clearDismissedVersion}>
+              <Button
+                {...settingsTelemetryClickAttributes('settings.updates.show_again')}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={clearDismissedVersion}
+              >
                 <RotateCcw className="h-3.5 w-3.5" />
                 {t('updates.showAgain')}
               </Button>
             ) : (
-              <Button type="button" variant="outline" size="sm" onClick={() => dismissVersion(latestVersion)}>
+              <Button
+                {...settingsTelemetryClickAttributes('settings.updates.dismiss')}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => dismissVersion(latestVersion)}
+              >
                 <EyeOff className="h-3.5 w-3.5" />
                 {t('updates.dismissVersion')}
               </Button>

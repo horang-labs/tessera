@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useEffect, useRef } from 'react';
 import { Terminal as TerminalIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -108,6 +110,7 @@ export function SkillPicker({
 
       {skills.map((skill, idx) => (
         <button
+          {...telemetryClickAttributes('composer.skill.select', 'composer')}
           key={`${skill.name}-${idx}`}
           ref={(el) => { itemRefs.current[idx] = el; }}
           role="option"

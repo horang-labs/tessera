@@ -190,7 +190,7 @@ export const ja: I18nMessages = {
     },
     telemetry: {
       title: '匿名テレメトリ',
-      description: '最小限の匿名利用テレメトリのみを共有します。テレメトリは PostHog で収集され、米国リージョンに保存されます。IP アドレス、プロンプト、メッセージ、ファイルパス、コマンド出力などの機密情報は一切収集しません。',
+      description: '利用された名前付きコントロールや機能を含む、匿名の製品操作テレメトリを共有します。テレメトリは PostHog で収集され、米国リージョンに保存されます。画面上のテキスト、IP アドレス、プロンプト、メッセージ、ファイルパス、コマンド出力は一切収集しません。',
       enabled: '匿名の利用データを共有',
       disabledByEnv: '環境ポリシーによりテレメトリは無効です。',
     },
@@ -533,7 +533,7 @@ export const ja: I18nMessages = {
     executionModeDescription: '新しいセッションの既定の画面を選択します。後から設定で変更できます。',
     executionModeNote: '作成済みのセッションは、作成時に選択した画面を維持します。',
     telemetryTitle: '匿名の利用データを共有',
-    telemetryDescription: '最小限の匿名利用テレメトリのみを共有します。テレメトリは PostHog で収集され、米国リージョンに保存されます。IP アドレス、プロンプト、メッセージ、ファイルパス、コマンド出力などの機密情報は一切収集しません。',
+    telemetryDescription: '利用された名前付きコントロールや機能を含む、匿名の製品操作テレメトリを共有します。テレメトリは PostHog で収集され、米国リージョンに保存されます。画面上のテキスト、IP アドレス、プロンプト、メッセージ、ファイルパス、コマンド出力は一切収集しません。',
     aiCli: 'Claude Code / Codex',
     providerReady: 'Ready to use for chat and worktree sessions.',
     providerNeedsLogin: 'Installed, but login is required before Tessera can use it.',

@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ProviderLogoMark, getProviderBrand } from './provider-brand';
@@ -157,6 +159,7 @@ export function ProviderUsageRail() {
           const brand = getProviderBrand(model.providerId);
           return (
             <button
+              {...telemetryClickAttributes('sidebar.provider_usage.open', 'sidebar')}
               key={model.providerId}
               type="button"
               onClick={(event) => toggleDetails(model.providerId, event.currentTarget)}

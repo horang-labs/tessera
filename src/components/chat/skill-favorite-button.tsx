@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Star, X, Search, Plus } from 'lucide-react';
@@ -129,6 +131,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
   return (
     <div ref={containerRef} className="relative shrink-0">
       <button
+        {...telemetryClickAttributes('composer.skill_favorites.open', 'composer')}
         ref={triggerRef}
         type="button"
         onClick={handleToggleOpen}
@@ -177,6 +180,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                     )}
                   >
                     <button
+                      {...telemetryClickAttributes('composer.skill_favorites.run', 'composer')}
                       type="button"
                       onClick={() => handleExecuteSkill(skillName)}
                       className="flex-1 text-left text-sm font-mono text-(--accent) truncate"
@@ -184,6 +188,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                       /{skillName}
                     </button>
                     <button
+                      {...telemetryClickAttributes('composer.skill_favorites.remove', 'composer')}
                       type="button"
                       onClick={() => handleRemoveFavorite(skillName)}
                       className={cn(
@@ -208,6 +213,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
           {/* Add button / Search section (bottom, closest to button) */}
           {!isAddMode ? (
             <button
+              {...telemetryClickAttributes('composer.skill_favorites.add_open', 'composer')}
               type="button"
               onClick={() => setIsAddMode(true)}
               className={cn(
@@ -227,6 +233,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-(--text-muted)" />
                   <input
+                    {...telemetryClickAttributes('composer.skill_favorites.search', 'composer')}
                     ref={searchInputRef}
                     type="text"
                     value={searchQuery}
@@ -262,6 +269,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                 ) : (
                   filteredSkills.map((skill) => (
                     <button
+                      {...telemetryClickAttributes('composer.skill_favorites.add', 'composer')}
                       key={skill.name}
                       type="button"
                       onClick={() => handleAddFavorite(skill)}

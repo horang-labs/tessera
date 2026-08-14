@@ -2,6 +2,7 @@ import { FolderGit2, GitBranch } from 'lucide-react';
 import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
 import { cn } from '@/lib/utils';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export function ProjectWorktreeRow({ active, branch, name, displayPath, diffStats, onSelect }: {
   active: boolean;
@@ -15,6 +16,7 @@ export function ProjectWorktreeRow({ active, branch, name, displayPath, diffStat
 
   return (
     <button
+      {...telemetryClickAttributes('worktree.select', 'worktree')}
       type="button"
       onClick={onSelect}
       aria-current={active ? 'true' : undefined}
@@ -62,6 +64,7 @@ export function CompactProjectWorktreeRow({ active, branch, displayPath, diffSta
 
   return (
     <button
+      {...telemetryClickAttributes('worktree.select', 'worktree')}
       type="button"
       onClick={onSelect}
       aria-current={active ? 'true' : undefined}

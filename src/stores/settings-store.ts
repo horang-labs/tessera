@@ -7,6 +7,7 @@ import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { i18n } from '@/lib/i18n';
 import { useBoardStore, type ViewMode } from '@/stores/board-store';
 import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export const SETTINGS_STORAGE_KEY = 'tessera:settings';
 export const SETTINGS_SYNC_CHANNEL = 'tessera:settings-sync';
@@ -348,6 +349,11 @@ export const useSettingsStore = create<SettingsState>()(
             '@/hooks/use-provider-session-options'
           );
           invalidateProviderSessionOptionsClientCache();
+        }
+        if (saved) {
+          for (const setting of Object.keys(partial)) {
+            void captureTelemetryEvent('settings_changed', { setting });
+          }
         }
       },
 

@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 /**
  * Task card status indicators:
  *
@@ -139,6 +141,7 @@ function PrIndicator({ prStatus }: { prStatus: TaskPrStatus | undefined }) {
 
   return (
     <a
+      {...telemetryClickAttributes('message.pr.open', 'message')}
       href={prStatus.url}
       target="_blank"
       rel="noopener noreferrer"

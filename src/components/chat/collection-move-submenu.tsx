@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Collection } from '@/types/collection';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const SUBMENU_CLOSE_DELAY_MS = 180;
 
@@ -77,6 +78,7 @@ export function CollectionMoveSubmenu({
       onMouseLeave={closeSubmenu}
     >
       <button
+        {...telemetryClickAttributes('collection.move.open', 'workspace_list')}
         ref={triggerRef}
         role="menuitem"
         type="button"
@@ -113,6 +115,7 @@ export function CollectionMoveSubmenu({
         >
           {collections.map((collection) => (
             <button
+              {...telemetryClickAttributes('collection.move.select', 'workspace_list')}
               key={collection.id}
               type="button"
               role="menuitem"
@@ -130,6 +133,7 @@ export function CollectionMoveSubmenu({
           ))}
 
           <button
+            {...telemetryClickAttributes('collection.move.select', 'workspace_list')}
             type="button"
             role="menuitem"
             onClick={() => onMoveToCollection(null)}

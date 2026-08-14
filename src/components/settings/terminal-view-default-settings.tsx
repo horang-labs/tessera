@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { TerminalSessionDefaultView } from '@/lib/settings/types';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const OPTIONS: ReadonlyArray<{
   view: TerminalSessionDefaultView;
@@ -53,6 +54,7 @@ export default function TerminalViewDefaultSettings() {
 
           return (
             <label
+              {...settingsTelemetryClickAttributes('settings.general.terminal_view')}
               key={view}
               htmlFor={inputId}
               className={cn(
@@ -75,6 +77,7 @@ export default function TerminalViewDefaultSettings() {
               </span>
               <span className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                 <input
+                  {...settingsTelemetryClickAttributes('settings.general.terminal_view')}
                   type="radio"
                   id={inputId}
                   name={groupId}

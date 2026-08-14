@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, memo } from 'react';
 import { cn } from '@/lib/utils';
 import type { FileChangeToolResult } from '@/types/tool-result';
@@ -149,6 +151,7 @@ function HunkView({ hunk, index, isExpanded, onToggle }: {
 
       {isLong && !isExpanded && (
         <button
+          {...telemetryClickAttributes('message.result.open', 'message')}
           onClick={(e) => { e.stopPropagation(); onToggle(); }}
           className="w-full text-center text-[11px] text-(--accent) bg-(--tool-param-bg) py-1 hover:bg-(--tool-header-hover) transition-colors"
         >

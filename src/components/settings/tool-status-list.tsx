@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
@@ -155,6 +156,7 @@ export default function ToolStatusList() {
 
       <div className="flex justify-end">
         <button
+          {...settingsTelemetryClickAttributes('settings.development.tool_status_refresh')}
           type="button"
           onClick={() => void fetchStatus()}
           disabled={status === null}

@@ -20,6 +20,7 @@ import {
 import { useGitStore } from "@/stores/git-store";
 import type { GitPanelData } from "@/types/git";
 import type { WorktreeDiffStats } from "@/types/worktree-diff-stats";
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { GitActionMenu } from "./git-action-menu";
 import { GitActionFailureBanner } from "./git-action-failure-banner";
 import { GIT_FAILURE_TITLE_KEY } from "./git-action-report";
@@ -70,6 +71,7 @@ export function GitWorkingTreeDiffStatButton({
 }) {
   return (
     <button
+      {...telemetryClickAttributes('git.commit.open', 'git_panel')}
       type="button"
       onClick={onOpen}
       aria-label={accessibleLabel}
@@ -117,6 +119,7 @@ function GitDesktopConflictControl({
       className="electron-no-drag hidden h-full shrink-0 items-stretch border-l border-(--divider) sm:flex"
     >
       <button
+        {...telemetryClickAttributes('git.primary.conflict', 'git_panel')}
         type="button"
         onClick={() => void controller.runPrimaryAction()}
         data-testid="desktop-conflict-primary"
@@ -226,6 +229,7 @@ function GitDesktopCommitControlView({
       className="electron-no-drag hidden h-full shrink-0 items-center border-l border-(--divider) sm:flex"
     >
       <button
+        {...telemetryClickAttributes('git.commit.open', 'git_panel')}
         ref={triggerRef}
         type="button"
         onClick={composerOpen ? closeComposer : runPrimary}
@@ -320,6 +324,7 @@ function GitDesktopCommitControlView({
               </div>
               <div className="flex shrink-0 items-center gap-1">
                 <button
+                  {...telemetryClickAttributes('git.changed_files.toggle', 'git_panel')}
                   type="button"
                   onClick={openChangedFiles}
                   className="h-7 rounded-md px-2 text-[11px] font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
@@ -327,6 +332,7 @@ function GitDesktopCommitControlView({
                   {t("gitPanel.commit.reviewFiles")}
                 </button>
                 <button
+                  {...telemetryClickAttributes('git.commit.close', 'git_panel')}
                   type="button"
                   onClick={closeComposer}
                   aria-label={t("gitPanel.commit.closeComposer")}
@@ -361,6 +367,7 @@ function GitDesktopCommitControlView({
                       className="flex cursor-pointer items-center gap-2 border-b border-(--divider)/60 px-2 py-1.5 last:border-b-0 hover:bg-(--sidebar-hover)"
                     >
                       <input
+                        {...telemetryClickAttributes('git.commit.include_toggle', 'git_panel')}
                         type="checkbox"
                         checked={controller.isSelectedForCommit(file.path)}
                         disabled={controller.pendingVerb !== null}

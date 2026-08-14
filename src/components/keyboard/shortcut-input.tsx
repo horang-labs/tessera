@@ -3,6 +3,10 @@
 import { useEffect, useState } from 'react';
 import { formatShortcut, detectPlatform, type Platform } from '@/lib/keyboard/format';
 import { useI18n } from '@/lib/i18n';
+import {
+  settingsTelemetryClickAttributes,
+  type SettingsTelemetryControl,
+} from '@/lib/telemetry/ui-click';
 
 export interface ShortcutInputProps {
   /** Current key string (tinykeys format) or empty for disabled. */
@@ -12,6 +16,7 @@ export interface ShortcutInputProps {
   /** Override platform detection (tests). */
   platform?: Platform;
   className?: string;
+  telemetryControl?: SettingsTelemetryControl;
 }
 
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'OS']);
@@ -31,7 +36,13 @@ function eventToShortcut(e: KeyboardEvent): string | null {
   return parts.join('+');
 }
 
-export function ShortcutInput({ value, onChange, platform, className }: ShortcutInputProps) {
+export function ShortcutInput({
+  value,
+  onChange,
+  platform,
+  className,
+  telemetryControl,
+}: ShortcutInputProps) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const plat = platform ?? detectPlatform();
@@ -65,6 +76,7 @@ export function ShortcutInput({ value, onChange, platform, className }: Shortcut
 
   return (
     <button
+      {...(telemetryControl ? settingsTelemetryClickAttributes(telemetryControl) : {})}
       type="button"
       onClick={() => setEditing(true)}
       className={`px-2 py-1 text-xs font-mono rounded border ${

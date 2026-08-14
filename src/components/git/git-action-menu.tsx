@@ -11,6 +11,20 @@ import { useI18n } from "@/lib/i18n";
 import { useMenuNavigation } from "@/hooks/use-menu-navigation";
 import { cn } from "@/lib/utils";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+} from "@/lib/telemetry/ui-click";
+
+const GIT_MENU_TELEMETRY_CONTROLS: Record<GitMenuActionId, TelemetryUiControl> = {
+  commit: "git.action.commit",
+  commit_push: "git.action.commit_push",
+  push: "git.action.push",
+  pull: "git.action.pull",
+  create_pr: "git.action.create_pr",
+  open_source_control: "git.action.open_source_control",
+  abort: "git.action.abort",
+};
 
 /**
  * The dropdown beside the primary button (`docs/design/git-delivery.md` §4).
@@ -101,6 +115,7 @@ export function GitActionMenu({
           updatePosition();
           setOpen(true);
         }}
+        {...telemetryClickAttributes("git.action_menu.open", "git_panel")}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-busy={pending}
@@ -234,6 +249,7 @@ function GitActionMenuItem({
       onClick={() => {
         if (!disabled) onRun();
       }}
+      {...telemetryClickAttributes(GIT_MENU_TELEMETRY_CONTROLS[action.id], "git_panel")}
       aria-disabled={disabled}
       title={reason ?? undefined}
       data-testid={`git-action-menu-item-${action.id}`}

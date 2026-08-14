@@ -5,6 +5,7 @@ import {
   openFilePathOnHost,
   parseLocalFileHref,
 } from "@/lib/workspace-tabs/file-path-actions";
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /**
  * Anchor renderer shared by the chat markdown surfaces. Web URLs open in the
@@ -31,6 +32,7 @@ export function MarkdownLink({
     };
     return (
       <a
+        {...telemetryClickAttributes('message.link.open', 'message')}
         href={href}
         onClick={handleClick}
         className={className}

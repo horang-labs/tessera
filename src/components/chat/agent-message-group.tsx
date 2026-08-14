@@ -18,6 +18,7 @@ import { ToolCallGrid } from './tool-call-grid';
 import { AssistantTextBody, extractAssistantText, type ForkFromMessageHandler } from './message-bubble-content';
 import { MessageRowShell } from './message-row-shell';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 function formatMessageTime(timestamp: string) {
   const date = new Date(timestamp);
@@ -127,6 +128,7 @@ function SubgroupTranslateButton({
 
   return (
     <button
+      {...telemetryClickAttributes('message.translate', 'message')}
       type="button"
       onClick={handleClick}
       disabled={isAnyPending}
@@ -209,6 +211,7 @@ function AgentSubGroupView({
           {combinedText && (
             <div data-testid="message-actions" className={MESSAGE_ACTIONS_CLASS}>
               <button
+                {...telemetryClickAttributes('message.copy', 'message')}
                 type="button"
                 onClick={handleCopy}
                 className={MESSAGE_COPY_BUTTON_CLASS}
@@ -228,6 +231,7 @@ function AgentSubGroupView({
               <SubgroupTranslateButton messages={textMessages} />
               {onForkFromMessage && forkTargetMessage && (
                 <button
+                  {...telemetryClickAttributes('message.fork', 'message')}
                   type="button"
                   onClick={(event) => onForkFromMessage(forkTargetMessage, event.currentTarget)}
                   className={MESSAGE_FORK_BUTTON_CLASS}

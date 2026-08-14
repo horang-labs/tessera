@@ -14,6 +14,7 @@ import {
   revealFilePathOnHost,
 } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /**
  * The tree operations, when the surface that opened this menu has them. A file
@@ -152,6 +153,7 @@ export function WorkspaceFileContextMenu({
       {entryActions ? (
         <>
           <button
+            {...telemetryClickAttributes('workspace_editor.context.new_file', 'workspace_editor')}
             type="button"
             role="menuitem"
             className={menuItemClassName}
@@ -162,6 +164,7 @@ export function WorkspaceFileContextMenu({
             <span>New file</span>
           </button>
           <button
+            {...telemetryClickAttributes('workspace_editor.context.new_folder', 'workspace_editor')}
             type="button"
             role="menuitem"
             className={menuItemClassName}
@@ -177,6 +180,7 @@ export function WorkspaceFileContextMenu({
       {hasElectronFileActions ? (
         <>
           <button
+            {...telemetryClickAttributes('workspace_editor.context.open', 'workspace_editor')}
             type="button"
             role="menuitem"
             className={canOpenFile ? menuItemClassName : disabledItemClassName}
@@ -187,6 +191,7 @@ export function WorkspaceFileContextMenu({
             <span>Open</span>
           </button>
           <button
+            {...telemetryClickAttributes('workspace_editor.context.reveal', 'workspace_editor')}
             type="button"
             role="menuitem"
             className={menuItemClassName}
@@ -199,6 +204,7 @@ export function WorkspaceFileContextMenu({
         </>
       ) : null}
       <button
+        {...telemetryClickAttributes('workspace_editor.context.copy_path', 'workspace_editor')}
         type="button"
         role="menuitem"
         className={menuItemClassName}
@@ -210,6 +216,7 @@ export function WorkspaceFileContextMenu({
       {entryActions?.onRename || entryActions?.onDelete ? separator : null}
       {entryActions?.onRename ? (
         <button
+          {...telemetryClickAttributes('workspace_editor.context.rename', 'workspace_editor')}
           type="button"
           role="menuitem"
           className={menuItemClassName}
@@ -222,6 +229,7 @@ export function WorkspaceFileContextMenu({
       ) : null}
       {entryActions?.onDelete ? (
         <button
+          {...telemetryClickAttributes('workspace_editor.context.delete', 'workspace_editor')}
           type="button"
           role="menuitem"
           className={destructiveItemClassName}

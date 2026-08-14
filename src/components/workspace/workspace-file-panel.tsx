@@ -69,6 +69,7 @@ import {
   repointWorkspaceFileTabs,
 } from "@/lib/workspace-tabs/workspace-tab-sync";
 import { cn } from "@/lib/utils";
+import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
 import {
   buildWorkspacePathContextMenuState,
   type WorkspacePathContextMenuState,
@@ -583,6 +584,7 @@ export function WorkspaceFilePanel({
           <div className="group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)">
           <button
             type="button"
+            {...telemetryClickAttributes("files.directory.toggle", "files_panel")}
             onClick={(event) => handleDirectoryClick(event, node.path)}
             onKeyDown={(event) => {
               if (!canMutate || event.key !== "F2") return;
@@ -655,6 +657,7 @@ export function WorkspaceFilePanel({
       >
         <button
           type="button"
+          {...telemetryClickAttributes("files.file.open", "files_panel")}
           onClick={(event) => {
             setSelectedPath(node.path);
             if (!target) return;
@@ -743,6 +746,7 @@ export function WorkspaceFilePanel({
           <Tooltip content={canMutate ? "New file" : "Select a workspace to edit files"}>
             <button
               type="button"
+              {...telemetryClickAttributes("files.new_file", "files_panel")}
               onClick={() => beginNewEntry("file", "")}
               disabled={!canMutate}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
@@ -755,6 +759,7 @@ export function WorkspaceFilePanel({
           <Tooltip content={canMutate ? "New folder" : "Select a workspace to edit files"}>
             <button
               type="button"
+              {...telemetryClickAttributes("files.new_folder", "files_panel")}
               onClick={() => beginNewEntry("folder", "")}
               disabled={!canMutate}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
@@ -767,6 +772,7 @@ export function WorkspaceFilePanel({
           <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
             <button
               type="button"
+              {...telemetryClickAttributes("files.hidden.toggle", "files_panel")}
               onClick={toggleShowHiddenFiles}
               className={cn(
                 "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors",
@@ -785,6 +791,7 @@ export function WorkspaceFilePanel({
         <label className="mt-3 flex h-8 items-center gap-2 rounded-md border border-(--input-border) bg-(--chat-bg) px-2.5 focus-within:border-(--accent)">
           <Search className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
           <input
+            {...telemetryClickAttributes('files.search', 'files_panel')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search files"
