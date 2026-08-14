@@ -30,9 +30,6 @@ export interface TabScrollRevealResult {
   scrollLeft: number;
   /**
    * 이 위치에서 탭이 실제로 보이는 화살표에 가려지지 않으면 true.
-   *
-   * false는 "스크롤 여유가 모자라 아직 못 드러냈다"는 뜻이다 — 오버플로가 막
-   * 시작된 커밋에서는 끝 여백이 아직 0이라 여기에 걸린다.
    */
   settled: boolean;
 }
@@ -65,14 +62,15 @@ export function resolveTabScrollReveal({
 
   const next = clamp(target, 0, maxScrollLeft);
 
-  // 오른쪽이 잘렸다면 스크롤 여유가 모자란 것이다. 이 순간에는 스크롤 끝이라
-  // 화살표가 아직 안 보이지만, 끝 여백이 펼쳐지는 다음 커밋에 화살표가 나타나
-  // 그대로 탭을 덮는다 — 그러니 "아직 못 드러냈다"로 본다.
-  const shortOnRight = maxScrollLeft > 0 && target > maxScrollLeft + TAB_SCROLL_EDGE_EPSILON;
+  // 스크롤 끝에서는 오른쪽 화살표 자체가 사라지므로 탭이 뷰포트 끝에 붙어도
+  // 가려지지 않는다. 별도 끝 여백을 두지 않아야 "+"도 마지막 탭에 바로 붙는다.
+  const atRightEdge = next >= maxScrollLeft - TAB_SCROLL_EDGE_EPSILON;
+  const coveredOnRight =
+    !atRightEdge && tabEnd > next + viewportWidth - gutter + TAB_SCROLL_EDGE_EPSILON;
   // 왼쪽은 반대다. 스크롤 0이면 왼쪽 화살표 자체가 없으므로 탭이 끝에 붙어도
   // 가려지지 않고, 더 되돌릴 여유도 없다.
   const coveredOnLeft =
     next > TAB_SCROLL_EDGE_EPSILON && tabStart < next + gutter - TAB_SCROLL_EDGE_EPSILON;
 
-  return { scrollLeft: next, settled: !shortOnRight && !coveredOnLeft };
+  return { scrollLeft: next, settled: !coveredOnRight && !coveredOnLeft };
 }

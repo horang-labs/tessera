@@ -46,6 +46,11 @@ try {
 
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
+    const lastTab = [...tabItems.querySelectorAll('[data-testid="tab-item"]')].at(-1);
+    const addButton = document.querySelector('[data-testid="tab-bar-add"]');
+    const lastTabRect = lastTab?.getBoundingClientRect();
+    const addButtonRect = addButton?.getBoundingClientRect();
+
     const measure = (testId) => {
       const element = document.querySelector(`[data-testid="${testId}"]`);
       if (!(element instanceof HTMLElement)) return null;
@@ -88,6 +93,8 @@ try {
       tabBarItems: measure('tab-bar-items'),
       appHeaderDragLane: measure('app-header-drag-lane'),
       tabDragLane: measure('tab-bar-new-tab-drop-zone'),
+      lastTabToAddButtonGap:
+        lastTabRect && addButtonRect ? addButtonRect.left - lastTabRect.right : null,
       offscreenNoDragTabsOverlappingHeader,
     };
   });
@@ -107,6 +114,11 @@ try {
   );
   assert.equal(measurements.tabDragLane?.appRegion, 'drag');
   assert.equal(measurements.tabDragLane?.hitTestId, 'tab-bar-new-tab-drop-zone');
+  assert.ok(
+    measurements.lastTabToAddButtonGap !== null
+      && Math.abs(measurements.lastTabToAddButtonGap) <= 1,
+    `new-tab button must sit directly beside the last tab: ${JSON.stringify(measurements)}`,
+  );
   assert.ok(
     (measurements.tabDragLane?.width ?? 0) >= 48,
     `crowded tabs must leave at least a 48px draggable lane: ${JSON.stringify(measurements)}`,
