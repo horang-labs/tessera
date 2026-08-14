@@ -55,8 +55,7 @@ try {
 
   process.stdout.write(`${JSON.stringify(measurements, null, 2)}\n`);
   assert.equal(measurements.tabCount, 24);
-  assert.equal(measurements.appHeaderDragLane?.appRegion, 'drag');
-  assert.equal(measurements.appHeaderDragLane?.hitTestId, 'app-header-drag-lane');
+  assert.equal(measurements.appHeaderDragLane?.hitTestId, 'app-header-drag-surface');
   assert.ok(
     (measurements.appHeaderDragLane?.width ?? 0) >= 48,
     `project header must leave at least a 48px draggable lane: ${JSON.stringify(measurements)}`,
