@@ -77,8 +77,12 @@ export const AppHeader = memo(function AppHeader() {
           <div
             className={cn(
               'min-w-0 flex-1',
-              isElectronTitlebar && 'electron-drag pointer-events-none',
+              // The empty flex item must occupy real titlebar area. Without a
+              // cross-axis size it is 0px tall, so clicks land on the non-drag
+              // layout container behind it instead of a native drag region.
+              isElectronTitlebar && 'electron-drag min-w-12 self-stretch',
             )}
+            data-testid="app-header-drag-lane"
           />
 
           {isKanbanPeekMode ? (

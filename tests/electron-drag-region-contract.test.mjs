@@ -14,7 +14,8 @@ const tabBarSource = fs.readFileSync(
 test('project header keeps an explicit drag lane around its view controls', () => {
   assert.match(appHeaderSource, /const isLinuxElectron = electronPlatform === 'linux'/);
   assert.match(appHeaderSource, /isMacElectron \|\| isWindowsElectron \|\| isLinuxElectron/);
-  assert.match(appHeaderSource, /isElectronTitlebar && 'electron-drag pointer-events-none'/);
+  assert.match(appHeaderSource, /isElectronTitlebar && 'electron-drag min-w-12 self-stretch'/);
+  assert.match(appHeaderSource, /data-testid="app-header-drag-lane"/);
   assert.match(appHeaderSource, /<ProjectViewModeToggle[\s\S]*labelMode="short"/);
   assert.doesNotMatch(appHeaderSource, /projectDisplayName|projectInitial|getProjectColor/);
 });
