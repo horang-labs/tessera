@@ -37,6 +37,7 @@ test('tab bar empty spacer remains an explicit Electron drag region', () => {
   // Electron: a frameless titlebar with no drag region is a window that cannot be moved.
   assert.match(tabBarSource, /isPhoneViewport && !electronPlatform \? 'w-0 shrink-0' : 'flex-1'/);
   assert.match(tabBarSource, /data-testid="tab-bar-new-tab-drop-zone"/);
+  assert.doesNotMatch(tabBarSource, /data-testid="tab-bar-end-zone"/);
 });
 
 test('scroll viewport owns the tab no-drag region instead of offscreen tabs', () => {
