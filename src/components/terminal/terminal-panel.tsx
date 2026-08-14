@@ -6,6 +6,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type DragEvent,
   type ReactNode,
@@ -22,6 +23,7 @@ import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
 import {
   closeAndDisposeTerminalSurface,
+  getTerminalPromptBounds,
   getTerminalSurface,
 } from '@/lib/terminal/terminal-surface-registry';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
@@ -32,6 +34,27 @@ import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
+import {
+  getWorkspaceFileDragAbsolutePath,
+  hasWorkspaceFileDragData,
+  isSessionReferenceDragData,
+} from '@/lib/dnd/panel-session-drag';
+import {
+  getNativeFileDropAbsolutePaths,
+  isNativeFileDrag,
+} from '@/lib/dnd/native-file-drop';
+import { insertFilePathIntoTerminal } from '@/lib/terminal/terminal-file-path-insert';
+import { insertSessionReferenceIntoTerminal } from '@/lib/session/session-reference';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { toast } from '@/stores/notification-store';
+import {
+  PANEL_NODE_DRAG_MIME,
+  PANEL_SESSION_DRAG_MIME,
+  SESSION_DRAG_MIME,
+  TAB_DRAG_MIME,
+  TAB_PANEL_TREE_DND_MIME,
+} from '@/types/panel';
+import { PanelDropZone } from '@/components/panel/panel-drop-zone';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -42,6 +65,8 @@ interface TerminalPanelProps {
   runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained' | 'session-peek';
   /** Treat a transient surface as visible/focused without borrowing panel-store state. */
   surfaceActive?: boolean;
+  /** Accept prompt-input drops directly when no PanelWrapper surrounds this surface. */
+  directInputDrop?: boolean;
   /**
    * Leave the PTY running when this surface goes away. Set it for a runtime the
    * server owns and merely lets a surface watch — closing the view has to detach
@@ -88,6 +113,7 @@ export function TerminalPanel({
   terminalCwd = null,
   runtimeOwnership = 'standalone',
   surfaceActive = false,
+  directInputDrop = false,
   detachOnUnmount = false,
   startupOverlay,
   launch,
@@ -104,6 +130,13 @@ export function TerminalPanel({
   const terminalFontSize = getTerminalFontSize(fontScale);
   const containerRef = useRef<HTMLDivElement>(null);
   const pendingSurfaceCleanupRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const directDragCounterRef = useRef(0);
+  const directDropKindRef = useRef<'path' | 'session' | null>(null);
+  const [directDropKind, setDirectDropKind] = useState<'path' | 'session' | null>(null);
+  const [directSessionDropZone, setDirectSessionDropZone] = useState<{
+    top: number;
+    height: number;
+  } | null>(null);
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const sessionOwned = runtimeOwnership !== 'standalone';
@@ -171,6 +204,102 @@ export function TerminalPanel({
       (activeElement as HTMLElement).blur();
     }
   }, [isPhoneViewport]);
+
+  const resetDirectInputDrop = useCallback(() => {
+    directDragCounterRef.current = 0;
+    directDropKindRef.current = null;
+    setDirectDropKind(null);
+    setDirectSessionDropZone(null);
+  }, []);
+
+  const resolveDirectInputDropKind = useCallback((dataTransfer: DataTransfer) => {
+    if (isNativeFileDrag(dataTransfer) || hasWorkspaceFileDragData(dataTransfer)) {
+      return 'path' as const;
+    }
+    const isLayoutDrag = [
+      PANEL_SESSION_DRAG_MIME,
+      PANEL_NODE_DRAG_MIME,
+      TAB_DRAG_MIME,
+      TAB_PANEL_TREE_DND_MIME,
+    ].some((mime) => dataTransfer.types.includes(mime));
+    if (!isLayoutDrag && isSessionReferenceDragData(dataTransfer)) return 'session' as const;
+    return null;
+  }, []);
+
+  const handleInputDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!resolveDirectInputDropKind(event.dataTransfer)) return;
+    directDragCounterRef.current += 1;
+  }, [resolveDirectInputDropKind]);
+
+  const handleInputDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    const kind = resolveDirectInputDropKind(event.dataTransfer);
+    if (!kind) return;
+
+    if (kind === 'session') {
+      const hostRect = event.currentTarget.getBoundingClientRect();
+      const promptBounds = getTerminalPromptBounds(terminalId) ?? {
+        top: hostRect.bottom - 56,
+        bottom: hostRect.bottom,
+      };
+      const isOverPrompt = event.clientY >= promptBounds.top && event.clientY <= promptBounds.bottom;
+      if (!isOverPrompt) {
+        directDropKindRef.current = null;
+        setDirectDropKind(null);
+        setDirectSessionDropZone(null);
+        return;
+      }
+      setDirectSessionDropZone({
+        top: promptBounds.top - hostRect.top,
+        height: promptBounds.bottom - promptBounds.top,
+      });
+    } else {
+      setDirectSessionDropZone(null);
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = isNativeFileDrag(event.dataTransfer) ? 'copy' : 'move';
+    directDropKindRef.current = kind;
+    setDirectDropKind(kind);
+  }, [resolveDirectInputDropKind, terminalId]);
+
+  const handleInputDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!resolveDirectInputDropKind(event.dataTransfer)) return;
+    directDragCounterRef.current -= 1;
+    if (directDragCounterRef.current <= 0) resetDirectInputDrop();
+  }, [resetDirectInputDrop, resolveDirectInputDropKind]);
+
+  const handleInputDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    const kind = directDropKindRef.current;
+    if (!kind) return;
+    event.preventDefault();
+    event.stopPropagation();
+    resetDirectInputDrop();
+
+    if (kind === 'path') {
+      const paths = isNativeFileDrag(event.dataTransfer)
+        ? getNativeFileDropAbsolutePaths(event.dataTransfer)
+        : [getWorkspaceFileDragAbsolutePath(event.dataTransfer)].filter(
+            (path): path is string => Boolean(path),
+          );
+      let inserted = false;
+      for (const path of paths) {
+        if (insertFilePathIntoTerminal(terminalId, path)) inserted = true;
+      }
+      if (inserted) surface.activate();
+      return;
+    }
+
+    const referencedSessionId = event.dataTransfer.getData(SESSION_DRAG_MIME);
+    if (!referencedSessionId) return;
+    const title = projectViewWorkspaceState.resolveSession(referencedSessionId)?.title
+      ?? referencedSessionId.slice(0, 8);
+    void insertSessionReferenceIntoTerminal(terminalId, referencedSessionId, title)
+      .then((inserted) => {
+        if (inserted) surface.activate();
+      })
+      .catch(() => toast.error(t('errors.sessionExportFailed')));
+  }, [resetDirectInputDrop, surface, t, terminalId]);
 
   useEffect(() => {
     surface.setTheme(
@@ -289,9 +418,13 @@ export function TerminalPanel({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
+      className="relative flex h-full min-h-0 flex-col"
       data-testid="terminal-panel"
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
+      onDragEnter={directInputDrop ? handleInputDragEnter : undefined}
+      onDragOver={directInputDrop ? handleInputDragOver : undefined}
+      onDragLeave={directInputDrop ? handleInputDragLeave : undefined}
+      onDrop={directInputDrop ? handleInputDrop : undefined}
     >
       {!sessionOwned && showHeader && (
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-black/10 px-2 text-xs dark:border-white/10">
@@ -392,6 +525,20 @@ export function TerminalPanel({
           isTabActive={isTabActive}
         />
       )}
+      {directDropKind === 'path' ? (
+        <PanelDropZone edge="center" label={t('panel.dropToInsertPath')} />
+      ) : null}
+      {directDropKind === 'session' && directSessionDropZone ? (
+        <div
+          className="pointer-events-none absolute inset-x-1 z-50 flex items-center justify-center rounded-md border-2 border-solid border-(--accent) bg-(--accent)/25"
+          style={{ top: directSessionDropZone.top, height: directSessionDropZone.height }}
+          data-testid="session-insert-drop-zone"
+        >
+          <span className="rounded-md bg-(--accent) px-2 py-1 text-xs font-medium text-white shadow-sm">
+            {t('panel.dropToInsertSessionReference')}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }
