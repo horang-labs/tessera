@@ -657,7 +657,7 @@ export const ko: I18nMessages = {
     terminalWorkingNotice: '터미널에서 작업 중 \u2014 보기 전용',
     terminalWaitingNotice: '터미널에서 입력을 기다리는 중',
     terminalComposerHint: '터미널 열기',
-    terminalComposerLabel: '터미널로 보낼 텍스트 \u2014 텍스트만 가능, 첨부는 불가',
+    terminalComposerLabel: '터미널로 보낼 텍스트 또는 파일 경로',
     terminalComposerPlaceholder: '터미널로 보낼 텍스트',
     terminalComposerBlocked: '터미널에서 답하세요',
     terminalComposerBlockedLabel: '터미널이 응답을 기다리는 중 \u2014 터미널에서 답하세요',

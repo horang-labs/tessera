@@ -2,10 +2,9 @@
  * The PTY chat composer's placeholder fits the one line the box is tall (issue #271).
  *
  * The textarea is `rows={1}` and its placeholder was a whole sentence — "Send text to the
- * terminal — text only, no attachments". At 360px the box is 204px wide, so the sentence
+ * terminal". At 360px the box is 204px wide, so the full accessible label
  * wrapped onto a second line `overflow: auto` hid (`clientHeight` 28, `scrollHeight` 48).
- * A placeholder cannot be scrolled into view, so what a user read stopped mid-sentence on
- * the word "no", inverting it.
+ * A placeholder cannot be scrolled into view, so what a user read stopped mid-sentence.
  *
  * Two claims per surface. `scrollHeight <= clientHeight` for the empty composer is the
  * assertion the ticket asked for, so the next string that grows past one line fails here
@@ -41,7 +40,7 @@ const FONT_SCALES = [1, 0.8125];
  * `en.ts` on purpose: reading it from the same file the page reads would pass whatever
  * that file said, which is the copy edit this is here to catch.
  */
-const FULL_SENTENCE = 'Send text to the terminal — text only, no attachments';
+const FULL_SENTENCE = 'Send text or file paths to the terminal';
 const BROWSER_USER_ID = 'e2e-browser-user';
 
 const artifactDir = process.env.TESSERA_E2E_ARTIFACT_DIR
@@ -187,6 +186,17 @@ async function check({ phone, fontScale, name }) {
       FULL_SENTENCE,
       'the shortened hint dropped what the sentence said instead of moving it to the'
         + ` input's accessible name (got ${JSON.stringify(box.accessibleName)})`,
+    );
+
+    const input = page.getByTestId('terminal-chat-composer-input');
+    await input.fill('one line');
+    const singleLine = await measure(page);
+    await input.fill('one line\ntwo lines\nthree lines\nfour lines');
+    const fourLines = await measure(page);
+    assert.ok(
+      fourLines.clientHeight >= singleLine.clientHeight + Number.parseFloat(singleLine.lineHeight) * 2,
+      'the PTY ChatView composer did not grow with multiline input'
+        + ` — ${singleLine.clientHeight}px for one line, ${fourLines.clientHeight}px for four lines`,
     );
 
     console.log(`ok — ${name}: ${geometry}`);
