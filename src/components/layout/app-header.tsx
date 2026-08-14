@@ -58,6 +58,7 @@ export const AppHeader = memo(function AppHeader() {
         <div
           className={cn(
             'flex min-w-0 flex-1 items-center gap-2 px-3',
+            isElectronTitlebar && 'self-stretch',
             isMacElectron && 'pl-10',
             // Peek mode stretches the header across the window, so it has to
             // clear the native window controls the tab bar normally clears.
