@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { ArrowUp, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
@@ -15,6 +15,16 @@ import {
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { sendTerminalChatMessage } from '@/lib/terminal/terminal-chat-send';
 import { registerPendingTerminalChatMessage } from '@/lib/chat/terminal-chat-live-refresh';
+import {
+  getWorkspaceFileDragAbsolutePath,
+  hasWorkspaceFileDragData,
+} from '@/lib/dnd/panel-session-drag';
+import {
+  getNativeFileDropAbsolutePaths,
+  isNativeFileDrag,
+} from '@/lib/dnd/native-file-drop';
+import { uploadTerminalClipboardFile } from '@/lib/terminal/terminal-clipboard-paste';
+import { insertTerminalChatPathsAtCursor } from '@/lib/terminal/terminal-chat-composer-input';
 import {
   resolveComposerArrowScroll,
   scrollSessionMessages,
@@ -53,11 +63,9 @@ export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
 /**
  * Composer for the chat overlay of a PTY session.
  *
- * Text goes to the terminal as a paste followed by Enter (terminal-chat-send.ts),
- * so this stays deliberately plain: no attachments, no slash-command handling,
- * no skill picker. Those need the TUI's own input affordances, and the input's
- * accessible name says so rather than letting the surface look more capable
- * than it is.
+ * Text and agent-visible paths go to the terminal as a paste followed by Enter
+ * (terminal-chat-send.ts). Clipboard images are uploaded first; their returned
+ * paths and all dropped paths stay ordinary editable draft text.
  *
  * It also carries the PTY's lifecycle state, because the overlay has no other
  * live signal — without it a quiet session is indistinguishable from a broken one.
@@ -78,18 +86,110 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
   const setMode = useTerminalViewModeStore((state) => state.setMode);
 
   const [value, setValue] = useState('');
+  const [dragDepth, setDragDepth] = useState(0);
+  const [pendingImageUploads, setPendingImageUploads] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const retrySubmissionRef = useRef<{ text: string; id: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isDragOver = dragDepth > 0;
+  const isUploadingImage = pendingImageUploads > 0;
+
+  useEffect(() => {
+    const resizeTextarea = () => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      textarea.style.height = 'auto';
+      const maxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
+      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    };
+
+    resizeTextarea();
+    const frame = requestAnimationFrame(resizeTextarea);
+    return () => cancelAnimationFrame(frame);
+  }, [value]);
 
   // 권한/질문 프롬프트가 떠 있는 동안은 TUI 입력 칸이 그 프롬프트 것이다. 여기서
   // 보낸 텍스트는 프롬프트 응답으로 먹혀 엉뚱하게 동작하므로 막는다.
   const isBlocked = isAwaitingInput;
 
+  const insertPaths = useCallback((paths: string[]) => {
+    const textarea = textareaRef.current;
+    const currentValue = textarea?.value ?? '';
+    const cursorPos = textarea?.selectionStart ?? currentValue.length;
+    const edit = insertTerminalChatPathsAtCursor(currentValue, cursorPos, paths);
+    setValue(edit.nextValue);
+    requestAnimationFrame(() => {
+      const input = textareaRef.current;
+      input?.setSelectionRange(edit.nextCursorPos, edit.nextCursorPos);
+      input?.focus();
+    });
+  }, []);
+
+  const acceptsPathDrop = useCallback((dataTransfer: DataTransfer) => (
+    isNativeFileDrag(dataTransfer) || hasWorkspaceFileDragData(dataTransfer)
+  ), []);
+
+  const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (isBlocked || isSubmitting || !acceptsPathDrop(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDragDepth((depth) => depth + 1);
+  }, [acceptsPathDrop, isBlocked, isSubmitting]);
+
+  const handleDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (isBlocked || isSubmitting || !acceptsPathDrop(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = isNativeFileDrag(event.dataTransfer) ? 'copy' : 'move';
+  }, [acceptsPathDrop, isBlocked, isSubmitting]);
+
+  const handleDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsPathDrop(event.dataTransfer)) return;
+    event.stopPropagation();
+    setDragDepth((depth) => Math.max(0, depth - 1));
+  }, [acceptsPathDrop]);
+
+  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsPathDrop(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDragDepth(0);
+    if (isBlocked || isSubmitting) return;
+
+    const paths = isNativeFileDrag(event.dataTransfer)
+      ? getNativeFileDropAbsolutePaths(event.dataTransfer)
+      : [getWorkspaceFileDragAbsolutePath(event.dataTransfer)].filter(
+          (path): path is string => Boolean(path),
+        );
+    insertPaths(paths);
+  }, [acceptsPathDrop, insertPaths, isBlocked, isSubmitting]);
+
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // Match the desktop PTY clipboard policy: when a clipboard exposes both,
+    // ordinary text wins and the textarea's native paste remains untouched.
+    if (event.clipboardData.getData('text/plain')) return;
+    const imageFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (imageFiles.length === 0) return;
+
+    event.preventDefault();
+    setPendingImageUploads((count) => count + imageFiles.length);
+    void Promise.all(imageFiles.map(uploadTerminalClipboardFile))
+      .then(insertPaths)
+      .catch(() => toast.error(t('chat.terminalInputBar.imageAttachFailed')))
+      .finally(() => {
+        setPendingImageUploads((count) => Math.max(0, count - imageFiles.length));
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      });
+  }, [insertPaths, t]);
+
   const submit = useCallback(async () => {
     const text = value;
-    if (!text.trim() || isBlocked || submittingRef.current) return;
+    if (!text.trim() || isBlocked || isUploadingImage || submittingRef.current) return;
 
     submittingRef.current = true;
     setIsSubmitting(true);
@@ -117,7 +217,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       setIsSubmitting(false);
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [isBlocked, sessionId, t, value]);
+  }, [isBlocked, isUploadingImage, sessionId, t, value]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -159,7 +259,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
           tone: 'text-(--text-muted)',
         };
 
-  const canSubmit = !!value.trim() && !isBlocked && !isSubmitting;
+  const canSubmit = !!value.trim() && !isBlocked && !isSubmitting && !isUploadingImage;
 
   // What the shortened placeholders were shortened from. The placeholder is the
   // accessible name when nothing else names the input, so this has to say the
@@ -174,11 +274,16 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
         {/* 컴포저와 같은 shell — 메시지 열에 정렬된다. */}
         <MessageRowShell>
           <div
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
             className={cn(
               'relative rounded-lg border transition-colors',
               'bg-(--input-bg) border-(--input-border)',
               !isBlocked && 'focus-within:border-(--accent)/50',
               isBlocked && 'opacity-60',
+              isDragOver && 'border-(--accent) ring-2 ring-(--accent)/30 ring-inset',
             )}
           >
             <div className="flex items-end gap-2 px-3 py-2">
@@ -190,15 +295,13 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 disabled={isBlocked || isSubmitting}
+                aria-busy={isUploadingImage}
                 rows={1}
-                // The visible hint has to fit the one line this box is tall: at
-                // 360px it is 204px wide, and the sentence that named the
-                // attachment limit wrapped onto a second line the user cannot
-                // scroll to, so it read as ending on "no" (#271). The whole
-                // sentence stays as the accessible name and as the pointer
-                // tooltip, both of which have no such line — and it follows the
-                // state, or a blocked box would announce that it takes text.
+                // Keep the visible hint short enough for the one-line phone box.
+                // The full capability description stays in the accessible name
+                // and pointer tooltip, which do not clip like a placeholder (#271).
                 aria-label={accessibleName}
                 title={accessibleName}
                 placeholder={
@@ -230,7 +333,9 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
                 )}
                 data-testid="terminal-chat-composer-send"
               >
-                <ArrowUp className="h-3.5 w-3.5" />
+                {isUploadingImage
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <ArrowUp className="h-3.5 w-3.5" />}
               </button>
             </div>
 

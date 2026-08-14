@@ -655,7 +655,7 @@ export const zh: I18nMessages = {
     terminalWorkingNotice: '正在终端中工作 \u2014 仅供查看',
     terminalWaitingNotice: '正在终端中等待输入',
     terminalComposerHint: '打开终端',
-    terminalComposerLabel: '发送到终端的文本 \u2014 仅限文本，不支持附件',
+    terminalComposerLabel: '发送到终端的文本或文件路径',
     terminalComposerPlaceholder: '发送到终端的文本',
     terminalComposerBlocked: '请在终端中回复',
     terminalComposerBlockedLabel: '终端正在等待回答 \u2014 请在终端中回复',
