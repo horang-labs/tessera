@@ -1091,6 +1091,9 @@ export const en: I18nMessages = {
     allProjects: 'All Projects',
     allProjectsDisabledPopout: 'All Projects is unavailable while the board pop-out is open',
     addProject: 'Add Project',
+    githubStar: 'Star Tessera on GitHub',
+    githubStarFallback: 'Could not star automatically. Click again to open GitHub.',
+    githubStarSuccess: 'Thanks for starring Tessera!',
   },
   gitPanel: {
     tabs: {

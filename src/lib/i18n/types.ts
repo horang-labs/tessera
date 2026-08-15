@@ -1073,6 +1073,9 @@ export interface I18nMessages {
     allProjects: string;
     allProjectsDisabledPopout: string;
     addProject: string;
+    githubStar: string;
+    githubStarFallback: string;
+    githubStarSuccess: string;
   };
   gitPanel: {
     tabs: {
