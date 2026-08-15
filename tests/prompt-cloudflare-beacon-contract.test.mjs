@@ -12,24 +12,26 @@ test('every privacy-safe prompt submission also emits the opt-out-independent be
     /export function captureTelemetryPromptSubmitted\([\s\S]*?\n}\n/,
   )?.[0] ?? '';
 
-  assert.match(helper, /captureCloudflarePromptBeacon\(properties\.provider_id\);/);
+  assert.match(helper, /captureCloudflarePromptBeacon\(properties\.provider_id, properties\.source\);/);
   assert.ok(
-    helper.indexOf('captureCloudflarePromptBeacon(properties.provider_id);') < helper.indexOf('isTelemetryReady()'),
+    helper.indexOf('captureCloudflarePromptBeacon(properties.provider_id, properties.source);') < helper.indexOf('isTelemetryReady()'),
     'the Cloudflare beacon must not be gated by PostHog readiness or opt-out',
   );
 });
 
-test('the browser beacon and server route carry only a closed provider dimension', () => {
+test('the browser beacon and server route carry only closed provider and source dimensions', () => {
   const client = source('src/lib/telemetry/client.ts');
-  const beacon = client.match(/function captureCloudflarePromptBeacon\(provider: unknown\)[\s\S]*?\n}\n/)?.[0] ?? '';
+  const beacon = client.match(/function captureCloudflarePromptBeacon\(provider: unknown, source: unknown\)[\s\S]*?\n}\n/)?.[0] ?? '';
   const route = source('src/app/api/telemetry/prompt-beacon/route.ts');
 
   assert.match(beacon, /fetch\('\/api\/telemetry\/prompt-beacon', \{/);
   assert.match(beacon, /method: 'POST'/);
   assert.doesNotMatch(beacon, /body\s*:|properties|correlationKey/);
   assert.match(beacon, /'X-Tessera-Provider': normalizeTelemetryProvider\(provider\)/);
+  assert.match(beacon, /'X-Tessera-Source': normalizeTelemetryPromptSource\(source\)/);
   assert.match(route, /normalizeTelemetryProvider\(req\.headers\.get\('x-tessera-provider'\)\)/);
-  assert.match(route, /triggerModelConfigRefresh\('prompt', \{ provider \}\)/);
+  assert.match(route, /normalizeTelemetryPromptSource\(req\.headers\.get\('x-tessera-source'\)\)/);
+  assert.match(route, /triggerModelConfigRefresh\('prompt', \{ provider, source \}\)/);
   assert.doesNotMatch(route, /req\.(?:json|text|formData)\(|body\s*:/);
 });
 
@@ -42,4 +44,5 @@ test('the Worker request supports a dedicated prompt event', () => {
   assert.match(remoteConfig, /'X-Tessera-Event': reason/);
   assert.match(remoteConfig, /'X-Tessera-Platform': String\(hostInfo\.platform\)/);
   assert.match(remoteConfig, /headers\['X-Tessera-Provider'\] = normalizeTelemetryProvider/);
+  assert.match(remoteConfig, /headers\['X-Tessera-Source'\] = normalizeTelemetryPromptSource/);
 });

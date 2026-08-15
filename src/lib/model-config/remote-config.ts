@@ -11,7 +11,9 @@ import type {
   ProviderReasoningEffortOption,
 } from '@/lib/cli/provider-session-option-types';
 import {
+  normalizeTelemetryPromptSource,
   normalizeTelemetryProvider,
+  type TelemetryPromptSource,
   type TelemetryProvider,
 } from '@/lib/telemetry/usage-dimensions';
 
@@ -238,7 +240,7 @@ export async function ensureModelConfigReady(): Promise<void> {
 async function buildRequestHeaders(
   hostInfo: ServerHostInfo,
   reason: ModelConfigFetchReason,
-  dimensions: { provider?: TelemetryProvider },
+  dimensions: { provider?: TelemetryProvider; source?: TelemetryPromptSource },
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -251,6 +253,7 @@ async function buildRequestHeaders(
   };
   if (reason === 'prompt') {
     headers['X-Tessera-Provider'] = normalizeTelemetryProvider(dimensions.provider);
+    headers['X-Tessera-Source'] = normalizeTelemetryPromptSource(dimensions.source);
   }
   // install_id is a random UUID (never PII); it's what lets the Worker de-dupe launches
   // into unique installs. Sent unconditionally — the config fetch IS the launch count.
@@ -274,7 +277,7 @@ async function buildRequestHeaders(
 export function refreshRemoteModelConfig(
   reason: ModelConfigFetchReason,
   deps: { fetchImpl?: typeof fetch; hostInfo?: ServerHostInfo } = {},
-  dimensions: { provider?: TelemetryProvider } = {},
+  dimensions: { provider?: TelemetryProvider; source?: TelemetryPromptSource } = {},
 ): Promise<{ changed: boolean }> {
   const promise = doRefresh(reason, deps, dimensions);
   inFlightRefresh = promise;
@@ -287,7 +290,7 @@ export function refreshRemoteModelConfig(
 async function doRefresh(
   reason: ModelConfigFetchReason,
   deps: { fetchImpl?: typeof fetch; hostInfo?: ServerHostInfo },
-  dimensions: { provider?: TelemetryProvider },
+  dimensions: { provider?: TelemetryProvider; source?: TelemetryPromptSource },
 ): Promise<{ changed: boolean }> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const hostInfo = deps.hostInfo ?? getServerHostInfo();

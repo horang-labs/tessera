@@ -166,11 +166,12 @@ test('a prompt-triggered refresh is content-free and carries closed usage dimens
   await refreshRemoteModelConfig(
     'prompt',
     { fetchImpl: fn, hostInfo: { ...HOST, platform: 'win32' } },
-    { provider: 'codex' },
+    { provider: 'codex', source: 'pty_chat_view' },
   );
   const headers = calls[0].init.headers as Record<string, string>;
   assert.equal(headers['X-Tessera-Event'], 'prompt');
   assert.equal(headers['X-Tessera-Provider'], 'codex');
+  assert.equal(headers['X-Tessera-Source'], 'pty_chat_view');
   assert.equal(headers['X-Tessera-Platform'], 'win32');
   assert.ok(headers['X-Tessera-Install-Id'], 'prompt events still carry the install id');
   assert.equal(calls[0].init.body, undefined, 'prompt content must never reach the Worker');
@@ -182,10 +183,14 @@ test('an unrecognized prompt provider is reduced to unknown', async () => {
   await refreshRemoteModelConfig(
     'prompt',
     { fetchImpl: fn, hostInfo: HOST },
-    { provider: 'user-authored-value' as never },
+    {
+      provider: 'user-authored-value' as never,
+      source: 'user-authored-value' as never,
+    },
   );
   const headers = calls[0].init.headers as Record<string, string>;
   assert.equal(headers['X-Tessera-Provider'], 'unknown');
+  assert.equal(headers['X-Tessera-Source'], 'unknown');
 });
 
 test('install_id is sent even when telemetry is disabled by env (full count, no gating)', async () => {
