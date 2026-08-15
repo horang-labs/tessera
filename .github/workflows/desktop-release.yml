@@ -284,13 +284,18 @@ jobs:
       GH_REPO: ${{ github.repository }}
 
     steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
       - name: Download desktop artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Create or update release
+      - name: Upload and publish GitHub Release
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -301,16 +306,36 @@ jobs:
             exit 1
           fi
 
+          if [[ ! -s RELEASE_NOTES_DRAFT.md ]] || grep -Fq 'vNEXT' RELEASE_NOTES_DRAFT.md; then
+            echo "RELEASE_NOTES_DRAFT.md is missing, empty, or still contains vNEXT."
+            exit 1
+          fi
+
           release_args=()
           if [[ "$RELEASE_TAG" == *alpha* || "$RELEASE_TAG" == *beta* || "$RELEASE_TAG" == *rc* ]]; then
             release_args+=(--prerelease)
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "Release $RELEASE_TAG already exists and is public; refusing to modify it."
+              exit 1
+            fi
           else
-            gh release create "$RELEASE_TAG" "${assets[@]}" \
+            gh release create "$RELEASE_TAG" \
+              --draft \
               --title "$RELEASE_TAG" \
-              --generate-notes \
+              --notes-file RELEASE_NOTES_DRAFT.md \
               "${release_args[@]}"
           fi
+
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+
+          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
+          actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
+          printf '%s\n' "${assets[@]##*/}" | sort > "$expected_assets"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > "$actual_assets"
+          diff -u "$expected_assets" "$actual_assets"
+
+          gh release edit "$RELEASE_TAG" --draft=false
