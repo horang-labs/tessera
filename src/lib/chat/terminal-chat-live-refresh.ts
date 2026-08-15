@@ -96,13 +96,17 @@ export function reconcilePendingTerminalChatMessages(
  * The chat view has no stream of its own, so without this the send appears to
  * do nothing until the agent finishes its turn.
  */
-export function registerPendingTerminalChatMessage(sessionId: string, text: string): void {
+export function registerPendingTerminalChatMessage(
+  sessionId: string,
+  text: string,
+  submittedAt: string,
+): void {
   const message: EnhancedMessage = {
     id: `terminal-chat-pending-${Date.now()}`,
     type: 'text',
     role: 'user',
     content: text,
-    timestamp: new Date().toISOString(),
+    timestamp: submittedAt,
   };
 
   const queue = pendingSends.get(sessionId) ?? [];

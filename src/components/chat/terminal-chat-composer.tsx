@@ -107,7 +107,11 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
   const [pendingImageUploads, setPendingImageUploads] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const retrySubmissionRef = useRef<{ text: string; id: string } | null>(null);
+  const retrySubmissionRef = useRef<{
+    text: string;
+    id: string;
+    submittedAt: string;
+  } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const isDragOver = dragDepth > 0;
@@ -227,7 +231,11 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     try {
       const submission = retrySubmissionRef.current?.text === text
         ? retrySubmissionRef.current
-        : { text, id: uuidv4() };
+        : {
+            text,
+            id: uuidv4(),
+            submittedAt: new Date().toISOString(),
+          };
       retrySubmissionRef.current = submission;
       const result = await sendTerminalChatMessage(sessionId, text, submission.id);
       if (!result.accepted) {
@@ -240,7 +248,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       // 서버가 같은 PTY runtime에 본문과 Enter를 모두 쓴 뒤에만 표시한다.
       // 에이전트는 턴이 끝나야 transcript를 flush하므로(codex 실측 ~35초),
       // 실제 기록에 나타날 때까지 pending 목록이 새로고침 사이에서도 유지한다.
-      registerPendingTerminalChatMessage(sessionId, text);
+      registerPendingTerminalChatMessage(sessionId, text, submission.submittedAt);
 
       setValue((current) => current === text ? '' : current);
     } finally {
