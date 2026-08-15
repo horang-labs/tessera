@@ -64,3 +64,19 @@ test('no fastMode and no ultracode: no --settings injected', () => {
   });
   assert.equal(valuesOf(args, '--settings').length, 0);
 });
+
+test('a managed GUI launch adds only its session-scoped Claude plugin directory', () => {
+  const args = claudeCodeAdapter.getCliArgs({
+    sessionId: '55555555-5555-5555-5555-555555555555',
+    managedLaunch: {
+      environment: {},
+      guestEnvironment: {},
+      skillOverlay: {
+        rootDir: '/tmp/tessera-managed-plugin',
+        skillsDir: '/tmp/tessera-managed-plugin/skills',
+      },
+    },
+  });
+
+  assert.deepEqual(valuesOf(args, '--plugin-dir'), ['/tmp/tessera-managed-plugin']);
+});

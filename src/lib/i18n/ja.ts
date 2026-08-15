@@ -294,6 +294,12 @@ export const ja: I18nMessages = {
         not_installed: '未インストール',
       },
     },
+    tesseraCli: {
+      title: 'Tessera CLI',
+      description: 'オンにしても別途インストールされません。Tessera が起動した GUI または PTY のエージェントセッションにだけ、Tessera CLI スキルと接続ブリッジが一時的に自動注入されます。',
+      enabled: '管理対象のエージェントセッションで Tessera CLI を使用',
+      existingSessions: '次回エージェントプロセスを開始または再開するときに適用されます。実行中のセッションは変わりません。',
+    },
     cliDiagnostics: {
       title: 'CLI 診断',
       run: '診断を実行',
@@ -532,6 +538,8 @@ export const ja: I18nMessages = {
     executionModeTitle: 'エージェントをどの画面で開きますか？',
     executionModeDescription: '新しいセッションの既定の画面を選択します。後から設定で変更できます。',
     executionModeNote: '作成済みのセッションは、作成時に選択した画面を維持します。',
+    tesseraCliTitle: 'エージェントセッションで Tessera CLI を使用',
+    tesseraCliDescription: '別途インストールされません。Tessera が起動した GUI または PTY のエージェントセッションにだけ、スキルと接続ブリッジが一時的に自動注入されます。',
     telemetryTitle: '匿名の利用データを共有',
     telemetryDescription: '利用された名前付きコントロールや機能を含む、匿名の製品操作テレメトリを共有します。テレメトリは PostHog で収集され、米国リージョンに保存されます。画面上のテキスト、IP アドレス、プロンプト、メッセージ、ファイルパス、コマンド出力は一切収集しません。',
     aiCli: 'Claude Code / Codex',

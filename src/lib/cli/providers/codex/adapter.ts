@@ -14,8 +14,8 @@
  *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
  *  3. Await response id=1 (server confirms protocol)
  *  4. Write initialized notification
- *  5. Write thread/start request (id=2)
- *  6. Await response id=2 (server returns threadId)
+ *  5. Optionally register Tessera's session-scoped skill root
+ *  6. Write thread/start request and await its response
  *  7. For each user turn: write turn/start notification with user input text
  */
 
@@ -225,11 +225,10 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
 export class CodexAdapter implements CliProvider {
   /**
    * Counter for JSON-RPC request IDs used by sendMessage / sendInterrupt.
-   * Starts at 3 because the handshake reserves local ids 1 and 2 (initialize
-   * and thread/start|resume). This avoids id collisions when the handshake
-   * response is still being parsed.
+   * Starts at 4 because a managed handshake can reserve local ids 1 through 3
+   * (initialize, skills/extraRoots/set, and thread/start|resume).
    */
-  private _nextRequestId = 3;
+  private _nextRequestId = 4;
 
   /**
    * Maps a CLI child process to its Codex threadId (set during handshake).
@@ -452,8 +451,8 @@ export class CodexAdapter implements CliProvider {
    *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
    *  3. Await response id=1
    *  4. Write initialized notification
-   *  5. Write thread/start request (id=2)
-   *  6. Await response id=2, extract threadId
+   *  5. Optionally register a session-scoped skill root
+   *  6. Write thread/start request, await its response, and extract threadId
    *  7. Store threadId on the protocol parser
    *
    * The sessionId in SpawnOptions is used to key the parser's per-session state.
@@ -464,13 +463,19 @@ export class CodexAdapter implements CliProvider {
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
 
+    const spawnEnv: Record<string, string | undefined> = {
+      ...process.env,
+      ...(options.managedLaunch?.environment ?? {}),
+    };
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
       shell: false,
-      env: process.env as NodeJS.ProcessEnv,
+      env: spawnEnv as NodeJS.ProcessEnv,
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
-    }, agentEnv);
+    }, agentEnv, {
+      guestEnvironment: options.managedLaunch?.guestEnvironment,
+    });
     this._attachRawLog(cliProcess, options.rawLog, {
       providerId: PROVIDER_ID,
       command,
@@ -1051,11 +1056,11 @@ export class CodexAdapter implements CliProvider {
    *  1. Writes initialize request (id=1)
    *  2. Awaits success response with id=1
    *  3. Writes initialized notification
-   *  4. Determines thread method: thread/resume (if options.resume && options.threadId)
+   *  4. Optionally registers session-scoped skill roots
+   *  5. Determines thread method: thread/resume (if options.resume && options.threadId)
    *     or thread/start (new session or fallback when threadId is missing)
-   *  5. Writes the thread request (id=2)
-   *  6. Awaits response with id=2 and extracts threadId
-   *  7. Stores threadId on the protocol parser for the given sessionId
+   *  6. Writes the thread request and awaits its response
+   *  7. Extracts and stores threadId on the protocol parser for the given sessionId
    *
    * Uses a local nextId counter (starting at 1) to avoid interleaving with the
    * singleton this._nextRequestId used by sendMessage / sendInterrupt.
@@ -1065,7 +1070,7 @@ export class CodexAdapter implements CliProvider {
     sessionId: string,
     options?: SpawnOptions,
   ): Promise<void> {
-    // Local counter: ids 1 and 2 are reserved for handshake steps.
+    // Local counter: ids are reserved for the complete handshake sequence.
     // Using a local counter prevents id interleaving when multiple spawns
     // happen concurrently before any sendMessage calls.
     let nextId = 1;
@@ -1099,6 +1104,32 @@ export class CodexAdapter implements CliProvider {
     };
     this._writeStdin(proc, 'handshake_initialized', `${JSON.stringify(initializedNotification)}\n`);
     logger.info('CodexAdapter: sent initialized notification', { sessionId });
+
+    if (options?.managedLaunch?.skillOverlay) {
+      const skillsRequestId = nextId++;
+      const skillsRequest: JsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: skillsRequestId,
+        method: 'skills/extraRoots/set',
+        params: { extraRoots: [options.managedLaunch.skillOverlay.skillsDir] },
+      };
+      codexProtocolParser.trackPendingRequest(
+        sessionId,
+        skillsRequestId,
+        'skills/extraRoots/set',
+      );
+      this._writeStdin(
+        proc,
+        'handshake_skills_extra_roots',
+        `${JSON.stringify(skillsRequest)}\n`,
+      );
+      await this._awaitResponse(
+        proc,
+        skillsRequestId,
+        'skills/extraRoots/set',
+        startupTimeoutMs,
+      );
+    }
 
     // Step 4: Determine whether to resume an existing thread or start a new one
     const isResume = options?.resume === true && !!options?.threadId;

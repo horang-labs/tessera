@@ -95,6 +95,9 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   const [selectedExecutionMode, setSelectedExecutionMode] = useState<AgentExecutionMode>(
     settings.agentExecutionMode,
   );
+  const [selectedTesseraCliEnabled, setSelectedTesseraCliEnabled] = useState(
+    settings.tesseraCliEnabled,
+  );
   const [isProceeding, setIsProceeding] = useState(false);
   const [needsAccountSetup, setNeedsAccountSetup] = useState<boolean | null>(initialNeedsAccountSetup);
   const [accountUsername, setAccountUsername] = useState('');
@@ -107,7 +110,8 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
 
   useEffect(() => {
     setSelectedExecutionMode(settings.agentExecutionMode);
-  }, [settings.agentExecutionMode]);
+    setSelectedTesseraCliEnabled(settings.tesseraCliEnabled);
+  }, [settings.agentExecutionMode, settings.tesseraCliEnabled]);
 
   const startSetupDiagnostics = useCallback((
     trigger: SetupTelemetryTrigger,
@@ -262,6 +266,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
       const completionSettings = buildSetupCompletionSettings({
         setup: settings.setup,
         agentExecutionMode: selectedExecutionMode,
+        tesseraCliEnabled: selectedTesseraCliEnabled,
         isFullyReady: status?.isFullyReady ?? false,
         now: new Date().toISOString(),
       });
@@ -290,6 +295,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
     pendingSaveCount,
     router,
     selectedExecutionMode,
+    selectedTesseraCliEnabled,
     settings.agentEnvironment,
     settings.setup,
     status?.activeEnvironment,
@@ -450,6 +456,12 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                 recommendedMode="pty"
               />
 
+              <SetupTesseraCliConsent
+                enabled={selectedTesseraCliEnabled}
+                disabled={isProceeding}
+                onChange={setSelectedTesseraCliEnabled}
+              />
+
               <div className="divide-y divide-(--divider) border-y border-(--divider)">
                 {getSupportedProviders(status.summary.providers).map((provider) => (
                   <ProviderRow
@@ -541,6 +553,45 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
         </section>
         </div>
       </main>
+    </div>
+  );
+}
+
+function SetupTesseraCliConsent({
+  enabled,
+  disabled,
+  onChange,
+}: {
+  enabled: boolean;
+  disabled: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div
+      className="rounded-lg border border-(--divider) bg-(--sidebar-bg) px-4 py-3"
+      data-testid="setup-tessera-cli-consent"
+    >
+      <label htmlFor="setup-tessera-cli-enabled" className="flex cursor-pointer items-start gap-3">
+        <input
+          {...telemetryClickAttributes('setup.tessera_cli_enabled', 'setup')}
+          id="setup-tessera-cli-enabled"
+          type="checkbox"
+          checked={enabled}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          className="mt-1 h-4 w-4 accent-(--accent) disabled:cursor-not-allowed disabled:opacity-60"
+        />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-(--text-primary)">
+            {t('setup.tesseraCliTitle')}
+          </span>
+          <span className="mt-1 block text-xs leading-5 text-(--text-muted)">
+            {t('setup.tesseraCliDescription')}
+          </span>
+        </span>
+      </label>
     </div>
   );
 }
