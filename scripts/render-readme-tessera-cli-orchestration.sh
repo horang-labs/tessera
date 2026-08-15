@@ -45,6 +45,18 @@ keyframes=(
   "03-board-three.png"
 )
 
+captions=(
+  "Delegate one task from Codex"
+  "Create three focused sessions"
+  "Watch parallel work on the Board"
+  "Open any session for its result"
+  "Track every session at a glance"
+)
+
+# Keep the opening and result frames readable while moving through the middle
+# of the story quickly. Delays are GIF centiseconds.
+scene_delays=(150 110 130 110 150)
+
 for index in "${!keyframes[@]}"; do
   source_path="$KEYFRAME_DIR/${keyframes[$index]}"
   source_geometry="$(identify -format '%wx%h' "$source_path")"
@@ -57,6 +69,16 @@ for index in "${!keyframes[@]}"; do
     -filter Lanczos \
     -resize 1280x \
     -strip \
+    "$TMP_DIR/scene-raw-$index.png"
+
+  convert "$TMP_DIR/scene-raw-$index.png" \
+    -gravity South \
+    -font DejaVu-Sans \
+    -pointsize 28 \
+    -fill white \
+    -undercolor '#111827CC' \
+    -annotate +0+28 "  ${captions[$index]}  " \
+    -strip \
     "$TMP_DIR/scene-$index.png"
 
   output_geometry="$(identify -format '%wx%h' "$TMP_DIR/scene-$index.png")"
@@ -66,28 +88,34 @@ for index in "${!keyframes[@]}"; do
   fi
 done
 
-# Four 200 ms crossfades, split into five equal frames. The scene holds total
-# 11 seconds, so the complete loop is 11.8 seconds.
+# Four 150 ms crossfades, split into five equal frames. The full story is about
+# seven seconds rather than forcing readers through a slow 11.8-second loop.
 for transition in 0 1 2 3; do
   next_scene=$((transition + 1))
   for blend in 17 33 50 67 83; do
-    convert "$TMP_DIR/scene-$transition.png" "$TMP_DIR/scene-$next_scene.png" \
+    convert "$TMP_DIR/scene-raw-$transition.png" "$TMP_DIR/scene-raw-$next_scene.png" \
       -define compose:args="$blend" \
       -compose blend \
       -composite \
+      -gravity South \
+      -font DejaVu-Sans \
+      -pointsize 28 \
+      -fill white \
+      -undercolor '#111827CC' \
+      -annotate +0+28 "  ${captions[$next_scene]}  " \
       -strip \
       "$TMP_DIR/transition-$transition-$blend.png"
   done
 done
 
 gif_args=(
-  -delay 220 "$TMP_DIR/scene-0.png"
+  -delay "${scene_delays[0]}" "$TMP_DIR/scene-0.png"
 )
 for transition in 0 1 2 3; do
   for blend in 17 33 50 67 83; do
-    gif_args+=( -delay 4 "$TMP_DIR/transition-$transition-$blend.png" )
+    gif_args+=( -delay 3 "$TMP_DIR/transition-$transition-$blend.png" )
   done
-  gif_args+=( -delay 220 "$TMP_DIR/scene-$((transition + 1)).png" )
+  gif_args+=( -delay "${scene_delays[$((transition + 1))]}" "$TMP_DIR/scene-$((transition + 1)).png" )
 done
 
 mkdir -p "$(dirname "$OUTPUT")"
