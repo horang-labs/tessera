@@ -10,6 +10,7 @@ import {
 } from "@/hooks/use-workspace-files-live-sync";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { gitPanelDiffPath } from '@/lib/git/git-panel-read';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { wsClient } from "@/lib/ws/client";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -156,6 +157,7 @@ export function WorkspaceFileTab({
   const requestSeqRef = useRef(0);
   const activeLoadsRef = useRef(0);
   const dirtyRef = useRef(false);
+  const editTelemetryCapturedRef = useRef(false);
 
   const fileData = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
   // A truncated buffer holds only the first 512 KB: saving it back would delete
@@ -359,9 +361,19 @@ export function WorkspaceFileTab({
 
   useEffect(() => {
     const abortController = new AbortController();
+    editTelemetryCapturedRef.current = false;
     void loadFile({ signal: abortController.signal });
     return () => abortController.abort();
   }, [loadFile]);
+
+  const handleDraftChange = useCallback((nextDraft: string) => {
+    setDraft(nextDraft);
+    if (editTelemetryCapturedRef.current) return;
+    editTelemetryCapturedRef.current = true;
+    void captureTelemetryEvent('workspace_file_edit_started', {
+      entry_kind: 'file',
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -440,6 +452,11 @@ export function WorkspaceFileTab({
       if (response.status === 409) {
         if (sourceSessionId) clearSelfWrite(sourceSessionId, path);
         setConflict(true);
+        void captureTelemetryEvent('workspace_file_action_result', {
+          file_action: 'save',
+          entry_kind: 'file',
+          result: 'conflict',
+        });
         return;
       }
       if (!response.ok) {
@@ -465,12 +482,23 @@ export function WorkspaceFileTab({
       // may have kept typing while the PUT was in flight.
       setDraft((current) => (current === draft ? null : current));
       setConflict(false);
+      editTelemetryCapturedRef.current = false;
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'save',
+        entry_kind: 'file',
+        result: 'success',
+      });
       toast.success(`Saved ${path}`);
     } catch (error) {
       if (sourceSessionId) clearSelfWrite(sourceSessionId, path);
       const message = isTimeoutError(error)
         ? "The file did not save in time. The workspace filesystem may be unresponsive."
         : error instanceof Error ? error.message : "Failed to save file.";
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'save',
+        entry_kind: 'file',
+        result: 'failed',
+      });
       toast.error(message);
     } finally {
       setSaving(false);
@@ -488,7 +516,7 @@ export function WorkspaceFileTab({
       loading={state.loading}
       mode={fileRef.kind}
       onCancelConflict={() => setConflict(false)}
-      onDraftChange={setDraft}
+      onDraftChange={handleDraftChange}
       onOverwrite={() => void saveFile({ overwrite: true })}
       onReload={() => void loadFile()}
       onSave={() => void saveFile()}

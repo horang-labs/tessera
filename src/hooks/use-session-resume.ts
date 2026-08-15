@@ -9,7 +9,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
-import { wsClient } from '@/lib/ws/client';
+import { wsClient, type SendMessageOptions } from '@/lib/ws/client';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import {
   applyProviderSessionRuntimeOverrides,
@@ -105,7 +105,13 @@ export function useSessionResume() {
    * Used when user sends a message to a read-only session.
    */
   const resumeAndSend = useCallback(
-    async (sessionId: string, content: string | ContentBlock[], skillName?: string, displayContent?: string | ContentBlock[], options?: { forceTranslateInput?: boolean }) => {
+    async (
+      sessionId: string,
+      content: string | ContentBlock[],
+      skillName?: string,
+      displayContent?: string | ContentBlock[],
+      options?: SendMessageOptions,
+    ) => {
       setIsResuming(true);
 
       try {

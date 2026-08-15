@@ -10,6 +10,7 @@ import {
 
 export type TelemetryEventName =
   | 'first_run_started'
+  | 'setup_completed'
   | 'app_started'
   | 'app_usage_heartbeat'
   | 'agent_session_started'
@@ -26,6 +27,11 @@ export type TelemetryEventName =
   | 'git_action_triggered'
   | 'ai_title_generation_result'
   | 'prompt_submitted'
+  | 'prompt_turn_finished'
+  | 'keyboard_shortcut_used'
+  | 'workspace_item_moved'
+  | 'workspace_file_edit_started'
+  | 'workspace_file_action_result'
   | 'ui_control_clicked'
   | 'provider_selected'
   | 'telemetry_opt_out';
@@ -56,6 +62,7 @@ const uiHost = process.env.NEXT_PUBLIC_POSTHOG_UI_HOST || 'https://us.posthog.co
 
 const allowedEvents = new Set<TelemetryEventName>([
   'first_run_started',
+  'setup_completed',
   'app_started',
   'app_usage_heartbeat',
   'agent_session_started',
@@ -72,6 +79,11 @@ const allowedEvents = new Set<TelemetryEventName>([
   'git_action_triggered',
   'ai_title_generation_result',
   'prompt_submitted',
+  'prompt_turn_finished',
+  'keyboard_shortcut_used',
+  'workspace_item_moved',
+  'workspace_file_edit_started',
+  'workspace_file_action_result',
   'ui_control_clicked',
   'provider_selected',
   'telemetry_opt_out',
@@ -113,6 +125,22 @@ const allowedProperties = new Set([
   'surface',
   'failure_kind',
   'file_count',
+  'shortcut',
+  'item_type',
+  'move_kind',
+  'item_count',
+  'has_skill',
+  'has_attachment',
+  'attachment_count',
+  'has_session_reference',
+  'translation_requested',
+  'used_voice_input',
+  'duration_bucket',
+  'session_kind',
+  'readiness',
+  'execution_mode',
+  'file_action',
+  'entry_kind',
 ]);
 
 const allowedSources = new Set([
@@ -178,7 +206,22 @@ const allowedProviderIssueStatuses = new Set<TelemetryProviderSetupIssueStatus>(
   'needs_login',
   'unavailable',
 ]);
-const allowedResults = new Set(['success', 'failed', 'fallback', 'no_conversation']);
+const allowedResults = new Set([
+  'success',
+  'failed',
+  'fallback',
+  'no_conversation',
+  'cancelled',
+  'stopped',
+  'input_required',
+  'conflict',
+]);
+const allowedDurationBuckets = new Set([
+  'under_10s',
+  '10_to_30s',
+  '30_to_120s',
+  'over_120s',
+]);
 const allowedProjectImportErrorCodes = new Set([
   'environment_mismatch',
   'permission_denied',
@@ -223,11 +266,56 @@ const allowedSettings = new Set([
   'shortcutOverrides',
   'gitConfig',
 ]);
+const allowedShortcuts = new Set([
+  'new-tab',
+  'close-tab',
+  'toggle-sidebar',
+  'toggle-view',
+  'toggle-terminal-view',
+  'split-right',
+  'split-down',
+  'toggle-terminal',
+  'focus-panel-left',
+  'focus-panel-right',
+  'focus-panel-up',
+  'focus-panel-down',
+  'voice-input',
+  'toggle-plan-mode',
+  'toggle-fast-mode',
+  'open-model-selector',
+  'open-reasoning-selector',
+  'save-memory-file',
+  'save-workspace-file',
+]);
+const allowedWorkspaceItemTypes = new Set([
+  'project',
+  'tab',
+  'task',
+  'chat',
+  'session',
+  'collection',
+]);
+const allowedWorkspaceMoveKinds = new Set([
+  'reorder',
+  'workflow_status',
+  'collection',
+  'panel',
+  'reference',
+]);
+const allowedSessionKinds = new Set(['chat', 'terminal']);
+const allowedReadiness = new Set(['ready', 'limited']);
+const allowedExecutionModes = new Set(['gui', 'pty']);
+const allowedFileActions = new Set(['create', 'save', 'rename', 'delete']);
+const allowedEntryKinds = new Set(['file', 'directory']);
 
 let telemetryContext: TelemetryRuntimeContext | null = null;
 let telemetryEnabled = false;
 let posthogClient: PostHogClient | null = null;
 let posthogPromise: Promise<PostHogClient | null> | null = null;
+const pendingPromptTurns = new Map<string, {
+  source: 'gui' | 'pty_chat_view' | 'pty_direct';
+  startedAt: number;
+}>();
 
 type PostHogClient = typeof import('posthog-js')['default'];
 
@@ -241,6 +329,7 @@ export function configureTelemetry(
 ): void {
   telemetryContext = context;
   telemetryEnabled = Boolean(context && enabled && projectToken && !isBrowserDntEnabled());
+  if (!telemetryEnabled) pendingPromptTurns.clear();
 
   if (!posthogClient) return;
 
@@ -283,6 +372,37 @@ export async function captureTelemetryEvent(
     },
     { transport: 'sendBeacon', ...options },
   );
+}
+
+export function captureTelemetryPromptSubmitted(
+  correlationKey: string,
+  properties: TelemetryEventProperties,
+): Promise<void> {
+  const source = properties.source;
+  if (
+    isTelemetryReady()
+    && correlationKey.length > 0
+    && typeof source === 'string'
+    && (source === 'gui' || source === 'pty_chat_view' || source === 'pty_direct')
+  ) {
+    pendingPromptTurns.set(correlationKey, { source, startedAt: Date.now() });
+  }
+  return captureTelemetryEvent('prompt_submitted', properties);
+}
+
+export function captureTelemetryPromptTurnFinished(
+  correlationKey: string,
+  result: 'success' | 'failed' | 'cancelled' | 'stopped' | 'input_required',
+): Promise<void> {
+  const pending = pendingPromptTurns.get(correlationKey);
+  if (!pending) return Promise.resolve();
+  pendingPromptTurns.delete(correlationKey);
+
+  return captureTelemetryEvent('prompt_turn_finished', {
+    source: pending.source,
+    result,
+    duration_bucket: getTelemetryDurationBucket(Date.now() - pending.startedAt),
+  });
 }
 
 export function captureTelemetryUiControl(
@@ -365,6 +485,15 @@ export function sanitizeTelemetryProperties(
       && (typeof value !== 'string' || !allowedClientFormFactors.has(value as TelemetryClientFormFactor))
     ) continue;
     if (key === 'setting' && (typeof value !== 'string' || !allowedSettings.has(value))) continue;
+    if (key === 'shortcut' && (typeof value !== 'string' || !allowedShortcuts.has(value))) continue;
+    if (key === 'item_type' && (typeof value !== 'string' || !allowedWorkspaceItemTypes.has(value))) continue;
+    if (key === 'move_kind' && (typeof value !== 'string' || !allowedWorkspaceMoveKinds.has(value))) continue;
+    if (key === 'duration_bucket' && (typeof value !== 'string' || !allowedDurationBuckets.has(value))) continue;
+    if (key === 'session_kind' && (typeof value !== 'string' || !allowedSessionKinds.has(value))) continue;
+    if (key === 'readiness' && (typeof value !== 'string' || !allowedReadiness.has(value))) continue;
+    if (key === 'execution_mode' && (typeof value !== 'string' || !allowedExecutionModes.has(value))) continue;
+    if (key === 'file_action' && (typeof value !== 'string' || !allowedFileActions.has(value))) continue;
+    if (key === 'entry_kind' && (typeof value !== 'string' || !allowedEntryKinds.has(value))) continue;
     if (key === 'control' && !isTelemetryUiControl(value)) continue;
     if (key === 'surface' && !isTelemetryUiSurface(value)) continue;
 
@@ -562,4 +691,11 @@ function randomId(): string {
   }
 
   return `anon-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function getTelemetryDurationBucket(durationMs: number): string {
+  if (durationMs < 10_000) return 'under_10s';
+  if (durationMs < 30_000) return '10_to_30s';
+  if (durationMs < 120_000) return '30_to_120s';
+  return 'over_120s';
 }

@@ -214,13 +214,19 @@ test('PostHog transport keeps its public project token while dropping private SD
   assert.doesNotMatch(JSON.stringify(result), /private prompt|localhost\/private|sdk-token/);
 });
 
-test('prompt submission telemetry keeps only the static input source', () => {
+test('prompt submission telemetry keeps only privacy-safe composition metadata', () => {
   const result = prepareTelemetryCaptureForTransport(
     {
       event: 'prompt_submitted',
       properties: {
         token: 'sdk-token-that-must-not-be-trusted',
         source: 'pty_chat_view',
+        has_skill: true,
+        has_attachment: true,
+        attachment_count: 2,
+        has_session_reference: true,
+        translation_requested: false,
+        used_voice_input: false,
         prompt: 'the private user prompt',
         content: [{ type: 'text', text: 'another private prompt' }],
         message: 'private message',
@@ -241,6 +247,48 @@ test('prompt submission telemetry keeps only the static input source', () => {
 
   assert.equal(result?.event, 'prompt_submitted');
   assert.equal(result?.properties?.source, 'pty_chat_view');
+  assert.equal(result?.properties?.has_skill, true);
+  assert.equal(result?.properties?.has_attachment, true);
+  assert.equal(result?.properties?.attachment_count, 2);
+  assert.equal(result?.properties?.has_session_reference, true);
   assert.equal(result?.properties?.token, 'phc-public-project-token');
   assert.doesNotMatch(JSON.stringify(result), /private|display content|sdk-token/);
+});
+
+test('shortcut, movement, and prompt outcome dimensions reject free-form values', () => {
+  assert.deepEqual(sanitizeTelemetryProperties({
+    shortcut: 'toggle-view',
+    item_type: 'task',
+    move_kind: 'workflow_status',
+    item_count: 3,
+    duration_bucket: '30_to_120s',
+    session_kind: 'terminal',
+    readiness: 'ready',
+    execution_mode: 'pty',
+    file_action: 'save',
+    entry_kind: 'file',
+  }), {
+    shortcut: 'toggle-view',
+    item_type: 'task',
+    move_kind: 'workflow_status',
+    item_count: 3,
+    duration_bucket: '30_to_120s',
+    session_kind: 'terminal',
+    readiness: 'ready',
+    execution_mode: 'pty',
+    file_action: 'save',
+    entry_kind: 'file',
+  });
+
+  assert.deepEqual(sanitizeTelemetryProperties({
+    shortcut: 'custom-private-shortcut',
+    item_type: 'private-task-name',
+    move_kind: '/home/private',
+    duration_bucket: '12.345 seconds',
+    session_kind: 'private-kind',
+    readiness: 'private-readiness',
+    execution_mode: 'private-mode',
+    file_action: 'save-private-file',
+    entry_kind: '/private/file.txt',
+  }), {});
 });

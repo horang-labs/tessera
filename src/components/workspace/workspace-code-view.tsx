@@ -17,6 +17,7 @@ import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import type { WorkspaceTarget } from '@/types/worktree';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 type MarkdownViewMode = "preview" | "source";
 
@@ -290,7 +291,10 @@ export function WorkspaceCodeView({
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
     if (!editable) return;
     event.preventDefault();
-    if (dirty && !saving) onSave?.();
+    if (dirty && !saving) {
+      void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'save-workspace-file' });
+      onSave?.();
+    }
   }, [dirty, editable, onSave, saving]);
 
   async function copyContent() {

@@ -30,6 +30,7 @@ import { i18n } from '@/lib/i18n';
 import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { captureTelemetryPromptTurnFinished } from '@/lib/telemetry/client';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
@@ -135,6 +136,7 @@ export function handleIncomingServerMessage({
       sessionStore.markSessionStopped(msg.sessionId);
       useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, false);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      void captureTelemetryPromptTurnFinished(msg.sessionId, 'stopped');
       // The session was stopped, so any workflow still flagged running can no
       // longer emit its terminal task_notification — settle it instead of
       // leaving the card spinning forever.
@@ -177,9 +179,11 @@ export function handleIncomingServerMessage({
       handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'success');
         sessionStore.updateSessionStatus(msg.sessionId, 'completed');
       } else if (msg.event === 'input_required') {
         stopTurnInFlight(msg.sessionId);
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'input_required');
         sessionStore.updateSessionStatus(msg.sessionId, 'running');
       }
       applySessionReplayEventsToStores(
@@ -203,6 +207,9 @@ export function handleIncomingServerMessage({
         if (location) useTabStore.getState().pinTab(location.tabId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
+        const result = msg.status === 'completed' ? 'success' : 'input_required';
+        void captureTelemetryPromptTurnFinished(msg.sessionId, result);
+        void captureTelemetryPromptTurnFinished(msg.terminalId, result);
         handleTerminalSessionStateMessage(
           msg,
           getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
@@ -327,6 +334,7 @@ export function handleIncomingServerMessage({
       );
       if (msg.sessionId) {
         stopTurnInFlight(msg.sessionId);
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'failed');
         // The compacting bar is opened optimistically for providers that only
         // report a finished compaction (Codex). If the server refused the
         // request there is no completion event coming, so close it here rather
@@ -341,6 +349,7 @@ export function handleIncomingServerMessage({
     case 'cli_down':
       applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      void captureTelemetryPromptTurnFinished(msg.sessionId, 'failed');
       // The CLI parser now synthesizes a failed workflow_event on exit
       // (protocol-parser.handleProcessExit), which is the durable fix. This
       // in-memory settle is a belt-and-suspenders backup covering the rare case

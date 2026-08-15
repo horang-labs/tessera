@@ -38,6 +38,7 @@ import {
   isNativeFileDrag,
 } from '@/lib/dnd/native-file-drop';
 import { focusPanelControl } from '@/lib/session/focus-session-panel';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 /**
  * Drags that rearrange panes. They also carry `SESSION_DRAG_MIME`, so a
@@ -332,6 +333,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
             if (!inserted) return;
             usePanelStore.getState().setActivePanelId(panelId);
             focusPanelControl(panelId);
+            void captureTelemetryEvent('workspace_item_moved', {
+              item_type: 'session',
+              move_kind: 'reference',
+              item_count: 1,
+            });
           })
           .catch(() => toast.error(t('errors.sessionExportFailed')));
       }
@@ -382,6 +388,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       if (session) {
         viewSession(session, { forceReload: true });
       }
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'panel',
+        item_count: 1,
+      });
       return;
     }
 
@@ -431,6 +442,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
         if (session) {
           viewSession(session, { forceReload: true });
         }
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'session',
+          move_kind: 'panel',
+          item_count: 1,
+        });
         return;
       }
 
@@ -447,6 +463,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       const newPanelId = usePanelStore.getState().splitPanel(panelId, direction, droppedSessionId, position);
       if (newPanelId) {
         useTabStore.getState().pinTab(currentTabId);
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'session',
+          move_kind: 'panel',
+          item_count: 1,
+        });
       }
 
       const session = projectViewWorkspaceState.resolveSession(droppedSessionId);
@@ -478,6 +499,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
         if (session) {
           viewSession(session, { forceReload: true });
         }
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'session',
+          move_kind: 'panel',
+          item_count: 1,
+        });
       }
       return;
     }
@@ -506,9 +532,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
     // Re-read fresh state after source-clearing mutation
     const freshState = usePanelStore.getState();
+    let didMoveSession = false;
     if (currentEdge === 'center') {
       // Center zone — replace/assign session (no split)
       freshState.assignSession(panelId, droppedSessionId);
+      didMoveSession = true;
     } else {
       // Edge zone — split the target panel, including empty panels.
       const direction: 'horizontal' | 'vertical' =
@@ -519,7 +547,16 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       if (newPanelId) {
         const tabStore = useTabStore.getState();
         tabStore.pinTab(tabStore.activeTabId);
+        didMoveSession = true;
       }
+    }
+
+    if (didMoveSession) {
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'session',
+        move_kind: 'panel',
+        item_count: 1,
+      });
     }
 
     // Load session history
