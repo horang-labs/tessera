@@ -207,6 +207,9 @@ function GitDesktopCommitControlView({
     files: stats?.changedFiles ?? 0,
   });
   const pending = controller.pendingVerb !== null;
+  const allCommitFilesSelected = data !== null
+    && data.changedFiles.length > 0
+    && controller.commitTotals.files === data.changedFiles.length;
   const actionLabelKey = controller.pendingVerb
     ? resolvePendingLabelKey(controller.primaryAction, controller.pendingVerb)
     : controller.primaryAction.labelKey;
@@ -358,9 +361,22 @@ function GitDesktopCommitControlView({
                 totals={controller.commitTotals}
               >
                 <div className="max-h-40 overflow-y-auto rounded-md border border-(--divider) bg-(--sidebar-bg)">
-                  <p className="border-b border-(--divider) px-2 py-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-(--text-muted)">
-                    {t("gitPanel.commit.changedFiles")}
-                  </p>
+                  <div className="flex items-center justify-between gap-2 border-b border-(--divider) px-2 py-1">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-(--text-muted)">
+                      {t("gitPanel.commit.changedFiles")}
+                    </p>
+                    <button
+                      {...telemetryClickAttributes('git.commit_file.toggle_all', 'git_panel')}
+                      type="button"
+                      disabled={pending}
+                      onClick={() => controller.setAllCommitFilesSelected(!allCommitFilesSelected)}
+                      className="rounded px-1 py-0.5 text-[10px] font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {t(allCommitFilesSelected
+                        ? "gitPanel.commit.deselectAll"
+                        : "gitPanel.commit.selectAll")}
+                    </button>
+                  </div>
                   {(data?.changedFiles ?? []).map((file) => (
                     <label
                       key={file.path}

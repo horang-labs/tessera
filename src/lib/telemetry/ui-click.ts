@@ -125,6 +125,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'git.worktree_path.copy',
   'git.branch.copy',
   'git.commit_file.toggle',
+  'git.commit_file.toggle_all',
   'git.file.diff_open',
   'git.file.open',
   'git.file.copy_path',

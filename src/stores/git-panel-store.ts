@@ -32,6 +32,11 @@ interface GitPanelStoreState {
 
   setCommitMessage: (worktreeKey: string, message: string) => void;
   toggleCommitFile: (worktreeKey: string, path: string) => void;
+  setCommitFilesSelected: (
+    worktreeKey: string,
+    paths: readonly string[],
+    selected: boolean,
+  ) => void;
   clearDraft: (worktreeKey: string) => void;
   markPending: (worktreeKey: string, verb: GitPendingVerb | null) => void;
   setActionFailure: (
@@ -154,6 +159,23 @@ export const useGitPanelStore = create<GitPanelStoreState>((set) => ({
       const deselectedPaths = new Set(current.deselectedPaths);
       if (deselectedPaths.has(path)) deselectedPaths.delete(path);
       else deselectedPaths.add(path);
+      return {
+        deliveryByWorktree: {
+          ...state.deliveryByWorktree,
+          [worktreeKey]: { ...current, deselectedPaths },
+        },
+      };
+    });
+  },
+
+  setCommitFilesSelected: (worktreeKey, paths, selected) => {
+    set((state) => {
+      const current = state.deliveryByWorktree[worktreeKey] ?? emptyDeliveryState();
+      const deselectedPaths = new Set(current.deselectedPaths);
+      for (const path of paths) {
+        if (selected) deselectedPaths.delete(path);
+        else deselectedPaths.add(path);
+      }
       return {
         deliveryByWorktree: {
           ...state.deliveryByWorktree,

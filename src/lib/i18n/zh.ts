@@ -1116,6 +1116,8 @@ export const zh: I18nMessages = {
       worktreeFallback: '当前工作树',
       selectionSummary: '已选择 {{files}} 个',
       includeFile: '将 {{path}} 包含在提交中',
+      selectAll: '全选',
+      deselectAll: '取消全选',
       button: '提交',
       buttonPending: '提交中…',
       menuButtonCount: '提交 ({{count}})',

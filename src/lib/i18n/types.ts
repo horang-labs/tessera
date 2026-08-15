@@ -1098,6 +1098,8 @@ export interface I18nMessages {
       worktreeFallback: string;
       selectionSummary: string;
       includeFile: string;
+      selectAll: string;
+      deselectAll: string;
       button: string;
       buttonPending: string;
       menuButtonCount: string;

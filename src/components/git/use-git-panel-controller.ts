@@ -181,6 +181,9 @@ export function useGitPanelController(
   const toggleWorktreeCommitFile = useGitPanelStore(
     (state) => state.toggleCommitFile,
   );
+  const setWorktreeCommitFilesSelected = useGitPanelStore(
+    (state) => state.setCommitFilesSelected,
+  );
   const clearWorktreeDraft = useGitPanelStore((state) => state.clearDraft);
   const markWorktreePending = useGitPanelStore((state) => state.markPending);
   const setWorktreeActionFailure = useGitPanelStore(
@@ -616,6 +619,15 @@ export function useGitPanelController(
     if (!worktreeKey) return;
     toggleWorktreeCommitFile(worktreeKey, path);
   }, [toggleWorktreeCommitFile, worktreeKey]);
+
+  const setAllCommitFilesSelected = useCallback((selected: boolean) => {
+    if (!worktreeKey) return;
+    setWorktreeCommitFilesSelected(
+      worktreeKey,
+      (panelData?.changedFiles ?? []).map((file) => file.path),
+      selected,
+    );
+  }, [panelData, setWorktreeCommitFilesSelected, worktreeKey]);
 
   const changeCommitMessage = useCallback((value: string) => {
     if (!worktreeKey) return;
@@ -1274,6 +1286,7 @@ export function useGitPanelController(
     selectedFile,
     selectedFileIndex,
     selectedPath,
+    setAllCommitFilesSelected,
     setCommitMessage: changeCommitMessage,
     setSelectedPath,
     toggleCommitFile,
