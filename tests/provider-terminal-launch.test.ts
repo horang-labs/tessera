@@ -20,6 +20,40 @@ test('Codex PTY starts with pre-trusted overlay hooks and no trust-bypass warnin
   );
 });
 
+test('Codex PTY starts with the requested model and reasoning effort', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'codex',
+      sessionId: 'tessera-session',
+      resume: false,
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'high',
+    }),
+    {
+      command: 'codex',
+      args: [
+        '--model', 'gpt-5.6-sol',
+        '--config', 'model_reasoning_effort="high"',
+      ],
+    },
+  );
+});
+
+test('Codex PTY starts with the requested fast service tier', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'codex',
+      sessionId: 'tessera-session',
+      resume: false,
+      serviceTier: 'fast',
+    }),
+    {
+      command: 'codex',
+      args: ['--config', 'service_tier="fast"'],
+    },
+  );
+});
+
 test('Claude PTY starts an empty Tessera session with --session-id', () => {
   assert.deepEqual(
     buildProviderTerminalLaunch({
@@ -35,6 +69,47 @@ test('Claude PTY starts an empty Tessera session with --session-id', () => {
   );
 });
 
+test('Claude PTY merges the requested model and mutable effort with hook settings', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'claude-code',
+      sessionId: 'tessera-session',
+      resume: false,
+      settingsJson: '{"hooks":{"Stop":[]}}',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'high',
+    }),
+    {
+      command: 'claude',
+      args: [
+        '--session-id', 'tessera-session',
+        '--model', 'claude-opus-4-8',
+        '--settings', '{"hooks":{"Stop":[]},"effortLevel":"high"}',
+      ],
+    },
+  );
+});
+
+test('Claude PTY uses the spawn-only flag for max effort', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'claude-code',
+      sessionId: 'tessera-session',
+      resume: false,
+      settingsJson: '{"hooks":{}}',
+      reasoningEffort: 'max',
+    }),
+    {
+      command: 'claude',
+      args: [
+        '--session-id', 'tessera-session',
+        '--effort', 'max',
+        '--settings', '{"hooks":{}}',
+      ],
+    },
+  );
+});
+
 test('Codex PTY resumes with pre-trusted overlay hooks and no trust-bypass warning flag', () => {
   assert.deepEqual(
     buildProviderTerminalLaunch({
@@ -46,6 +121,46 @@ test('Codex PTY resumes with pre-trusted overlay hooks and no trust-bypass warni
     {
       command: 'codex',
       args: ['resume', 'thread_123'],
+    },
+  );
+});
+
+test('Codex PTY reapplies the persisted model and reasoning effort when it resumes', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'codex',
+      sessionId: 'tessera-session',
+      resume: true,
+      codexResumeId: 'thread_123',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'xhigh',
+    }),
+    {
+      command: 'codex',
+      args: [
+        '--model', 'gpt-5.6-sol',
+        '--config', 'model_reasoning_effort="xhigh"',
+        'resume', 'thread_123',
+      ],
+    },
+  );
+});
+
+test('Codex PTY explicitly disables fast mode when it resumes', () => {
+  assert.deepEqual(
+    buildProviderTerminalLaunch({
+      providerId: 'codex',
+      sessionId: 'tessera-session',
+      resume: true,
+      codexResumeId: 'thread_123',
+      serviceTier: 'default',
+    }),
+    {
+      command: 'codex',
+      args: [
+        '--config', 'service_tier="default"',
+        'resume', 'thread_123',
+      ],
     },
   );
 });

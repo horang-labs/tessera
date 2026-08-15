@@ -4,9 +4,7 @@
  * High-level server-side session lifecycle coordinator.
  */
 
-import path from 'path';
 import { ProcessManager } from '../cli/process-manager';
-import * as dbProjects from '../db/projects';
 import * as dbSessions from '../db/sessions';
 import {
   SessionCreateResult,
@@ -20,9 +18,6 @@ import {
 } from './session-orchestrator-lifecycle';
 import logger from '../logger';
 import { sessionHistory } from '../session-history';
-import { getAgentEnvironment } from '../cli/spawn-cli';
-import { createGitRunner } from '../worktrees/git-runner';
-import { isManagedWorktreePath, removeManagedWorktree } from '../worktrees/managed';
 import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import { clearCachedSessionPr } from '../github/session-pr-sync';
 import {
@@ -184,34 +179,6 @@ export class SessionOrchestrator {
         await syncCodexThreadDelete(session, userId);
         dbSessions.softDeleteSession(sessionId);
 
-        const sourceProjectDir =
-          (session.project_id ? dbProjects.getProject(session.project_id)?.decoded_path : undefined)
-          ?? (path.isAbsolute(session.project_id) ? session.project_id : null);
-
-        if (
-          session.worktree_branch &&
-          session.work_dir &&
-          !session.worktree_deleted_at &&
-          sourceProjectDir &&
-          (session.worktree_managed === 1 || isManagedWorktreePath(session.work_dir))
-        ) {
-          // Only remove the physical worktree if no other sessions share the same work_dir
-          const otherCount = dbSessions.countOtherSessionsByWorkDir(session.work_dir, sessionId);
-          if (otherCount === 0) {
-            const runGit = createGitRunner(await getAgentEnvironment(userId));
-            try {
-              await removeManagedWorktree(sourceProjectDir, session.work_dir, runGit);
-              logger.info({ userId, sessionId, worktreePath: session.work_dir }, 'Managed worktree removed');
-            } catch (error) {
-              logger.warn({ userId, sessionId, worktreePath: session.work_dir, error }, 'Session deleted but worktree cleanup failed');
-            }
-          } else {
-            logger.info(
-              { userId, sessionId, worktreePath: session.work_dir, otherSessionCount: otherCount },
-              'Skipped worktree removal — other sessions still reference it'
-            );
-          }
-        }
         try {
           await sessionHistory.deleteSession(sessionId);
         } catch (error) {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useTaskStore } from '@/stores/task-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useBoardStore } from '@/stores/board-store';
@@ -23,7 +24,7 @@ export async function reloadBoardData(): Promise<void> {
   await useSessionStore.getState().loadProjects();
 
   const selectedProjectDir = useBoardStore.getState().selectedProjectDir;
-  const projects = useSessionStore.getState().projects;
+  const projects = projectViewWorkspaceState.getLoadedProjectViews();
 
   const targetProjectIds =
     selectedProjectDir === ALL_PROJECTS_SENTINEL || selectedProjectDir === null

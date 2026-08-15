@@ -1,22 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
+import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
+import {
+  hasPresentedCredential,
+  requestGateLogContext,
+} from '@/lib/auth/request-gate';
+import { isOriginAllowed } from '@/lib/auth/allowed-origins';
+import logger from '@/lib/logger';
 
 /**
  * Proxy — runs on Node.js runtime (Next.js 16+).
  *
- * Only checks for token cookie existence (lightweight).
- * Full JWT verification happens in API route handlers.
+ * Translates protected Next.js requests into the shared request gate.
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const input = requestGateInputFromNextRequest(request);
 
-  if (isElectronAuthBypassEnabled()) {
-    return NextResponse.next();
+  if (!await isOriginAllowed(input)) {
+    logger.warn(requestGateLogContext(input), 'HTTP Origin rejected');
+    return NextResponse.json(
+      { error: 'Origin not allowed' },
+      { status: 403 },
+    );
   }
 
   // Skip auth routes and static assets
   if (
     pathname.startsWith('/api/auth') ||
+    (pathname === '/api/pairing/requests'
+      || pathname.startsWith('/api/pairing/requests/')) ||
+    pathname === '/pair' ||
+    pathname.startsWith('/pair/') ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
@@ -24,22 +38,22 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get('jwt')?.value;
-
-  if (!token) {
-    // No token - redirect to login for pages, return 401 for API
+  if (!hasPresentedCredential(input)) {
     if (pathname.startsWith('/api/')) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 },
+      );
     }
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // Token exists - pass through (full verification in API handlers)
   return NextResponse.next();
 }
 
 export const config = {
   matcher: [
+    '/pair/:path*',
     '/chat/:path*',
     '/api/:path*',
   ],

@@ -4,8 +4,10 @@ import type { ITheme, IUnicodeHandling } from '@xterm/xterm';
 import { v4 as uuidv4 } from 'uuid';
 import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import type { TerminalInterruptInputPolicy } from '@/lib/cli/providers/types';
 import { useSessionStore } from '@/stores/session-store';
 import { useNotificationStore } from '@/stores/notification-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import {
   setPendingTerminalLaunch,
   takePendingTerminalLaunch,
@@ -43,6 +45,15 @@ import {
   type TerminalScrollTarget,
 } from './terminal-scroll-controller';
 import { LayoutSettleRunner } from './layout-settle-runner';
+import {
+  waitForStableStartupGrid,
+  type TerminalGridDimensions,
+} from './terminal-startup-grid-settle';
+import {
+  reconcileTerminalGrid,
+  type TerminalGridAck,
+  type TerminalGridReconcileHandle,
+} from './terminal-grid-reconcile';
 import { createTerminalExternalLinkHandlers } from './terminal-external-link';
 import {
   QuietTerminalRenderRecovery,
@@ -60,6 +71,10 @@ import {
 } from './terminal-mouse-wheel';
 import { activateTesseraTerminalUnicodeProvider } from './terminal-unicode-provider';
 import { buildTerminalSnapshotReplay } from './terminal-snapshot-replay';
+import {
+  sanitizeXtermGeneratedData,
+  type TerminalKeyboardOwner,
+} from './terminal-input-policy';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
@@ -84,12 +99,21 @@ export interface TerminalSurfaceOptions {
   previewOwned?: boolean;
 }
 
+/**
+ * Rows around the cursor that belong to the CLI's input box — its border above,
+ * and the border plus hint/status line below (Claude Code and Codex both draw
+ * roughly this shape).
+ */
+const PROMPT_BOX_ROWS_ABOVE = 2;
+const PROMPT_BOX_ROWS_BELOW = 2;
+
 type XtermLike = TerminalScrollTarget & {
   cols: number;
   rows: number;
   options: { theme?: ITheme; fontSize?: number };
   unicode: IUnicodeHandling;
   modes: { sendFocusMode: boolean };
+  textarea?: HTMLTextAreaElement;
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean): void;
   element?: HTMLElement;
@@ -106,6 +130,13 @@ type XtermLike = TerminalScrollTarget & {
   onData(callback: (data: string) => void): { dispose(): void };
   onScroll(callback: (viewportY: number) => void): { dispose(): void };
   dispose(): void;
+};
+
+type XtermTextareaState = {
+  readOnly: boolean;
+  tabIndex: number;
+  inputMode: string | null;
+  inert: boolean;
 };
 
 type FitAddonLike = {
@@ -211,6 +242,16 @@ let parkingLot: HTMLElement | null = null;
  */
 const COLD_PARK_DELAY_MS = 30_000;
 const TERMINAL_RESIZE_SETTLE_DELAY_MS = 150;
+const SNAPSHOT_REPLAY_STALL_TIMEOUT_MS = 4_000;
+
+type SnapshotReplayState =
+  | { epoch: number; phase: 'parsing'; watchdogTimerId: number | null }
+  | { epoch: number; phase: 'fitting' };
+
+function hasFrameClock(): boolean {
+  return typeof requestAnimationFrame === 'function'
+    && typeof cancelAnimationFrame === 'function';
+}
 
 function getParkingLot(): HTMLElement {
   if (parkingLot?.isConnected) return parkingLot;
@@ -295,19 +336,30 @@ export class TerminalSurface {
   private pendingFitFrameId: number | null = null;
   private pendingFitClaim = false;
   private resizeSettleTimerId: number | null = null;
+  /** Last grid the server reported the PTY at; null until the first echo. */
+  private appliedGrid: TerminalGridAck | null = null;
+  /** Grid sent with the last create request — where reconcile starts counting. */
+  private lastRequestedGrid: TerminalGridDimensions | null = null;
+  private gridReconcile: TerminalGridReconcileHandle | null = null;
+  private startupGridPromise: Promise<TerminalGridDimensions | undefined> | null = null;
   private initializePromise: Promise<boolean> | null = null;
   private coldParkTimerId: number | null = null;
   private attachedConnectionGeneration = 0;
   private pendingLaunch: PendingTerminalLaunch | null = null;
   private serverGeneration: number | null = null;
+  private interruptInputPolicy: TerminalInterruptInputPolicy = 'none';
   private lastSequence = 0;
-  private replaying = false;
+  // xterm's write queue is the output-ordering boundary. This state only
+  // blocks onData while snapshot bytes are parsing and remembers the fit that
+  // must follow; live PTY output continues into xterm's FIFO immediately.
+  private snapshotReplay: SnapshotReplayState | null = null;
   private replayEpoch = 0;
-  private pendingReplayFitEpoch: number | null = null;
-  private pendingReplayOutput: Array<{ data: string; generation: number; seq: number }> = [];
+  private snapshotReplayRecoveryAttempted = false;
   private onInput: (() => void) | null = null;
   private terminalInputOriginArmed = false;
   private terminalInputOriginEpoch = 0;
+  private keyboardOwner: TerminalKeyboardOwner = 'xterm';
+  private xtermTextareaState: XtermTextareaState | null = null;
   private disposed = false;
   private autoConnect = true;
   private sessionWasPresent = false;
@@ -323,11 +375,11 @@ export class TerminalSurface {
       this.handleServerMessage(message);
     });
     this.sessionWasPresent = Boolean(
-      options.sessionId && useSessionStore.getState().getSession(options.sessionId),
+      options.sessionId && projectViewWorkspaceState.resolveSession(options.sessionId),
     );
     this.unsubscribeSessionStore = options.sessionId
       ? useSessionStore.subscribe((state) => {
-          const present = Boolean(state.getSession(options.sessionId!));
+          const present = Boolean(projectViewWorkspaceState.resolveSession(options.sessionId!));
           if (this.sessionWasPresent && !present) {
             // The REST/WS session-close path owns PTY termination. This only
             // releases the renderer surface and its subscriber.
@@ -372,6 +424,7 @@ export class TerminalSurface {
     this.setThemeRestartRequired(false);
     this.themeRestartPending = true;
     this.autoConnect = true;
+    this.snapshotReplayRecoveryAttempted = false;
     this.cancelSnapshotReplay();
     this.updateState('starting', 'Restarting terminal to apply theme...');
     wsClient.closeTerminal(this.actualTerminalId);
@@ -387,6 +440,16 @@ export class TerminalSurface {
 
   setInputListener(listener: (() => void) | null): void {
     this.onInput = listener;
+  }
+
+  setKeyboardOwner(owner: TerminalKeyboardOwner): void {
+    if (this.keyboardOwner === owner) return;
+    this.keyboardOwner = owner;
+    if (owner === 'input-bar') {
+      this.terminalInputOriginArmed = false;
+      this.terminalInputOriginEpoch += 1;
+    }
+    this.applyKeyboardOwnership();
   }
 
   async mount(host: HTMLElement): Promise<void> {
@@ -456,7 +519,13 @@ export class TerminalSurface {
       return true;
     }
 
-    const dimensions = this.getDimensions();
+    // The grid measured here becomes the PTY's size, and for a session that is
+    // never revealed afterwards it stays that size for the runtime's whole life.
+    // A pane measured mid-layout hands over a grid no viewport ever had, so wait
+    // for the measurement to stop moving before committing to it.
+    const dimensions = await this.settleStartupGrid();
+    if (this.disposed || !this.autoConnect) return false;
+    this.lastRequestedGrid = dimensions ?? null;
     const pendingLaunch = takePendingTerminalLaunch(this.options.terminalId);
     if (pendingLaunch) this.pendingLaunch = pendingLaunch;
     if (pendingLaunch?.locksSourceSession && pendingLaunch.intent) {
@@ -495,8 +564,48 @@ export class TerminalSurface {
   }
 
   sendInput(data: string): boolean {
-    if (this.disposed || this.replaying || this.state.status === 'exited') return false;
+    if (
+      this.disposed
+      || this.snapshotReplay?.phase === 'parsing'
+      || this.state.status === 'exited'
+    ) return false;
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
+  }
+
+  supportsEscapeInterrupt(): boolean {
+    return !this.disposed && this.interruptInputPolicy === 'single-escape';
+  }
+
+  /** Sends input that came from an explicit user-facing control. */
+  sendUserInput(data: string): boolean {
+    const delivered = this.sendInput(data);
+    if (delivered) this.notifyTerminalInput();
+    return delivered;
+  }
+
+  /**
+   * Writes text the way a paste would, not a keystroke run.
+   *
+   * xterm decides here whether the TUI has bracketed paste enabled and wraps the
+   * payload accordingly. That matters for multi-line text: sent raw, every
+   * newline reads as a separate submit and one message goes out in fragments.
+   */
+  pasteInput(data: string): boolean {
+    if (
+      this.disposed
+      || this.snapshotReplay?.phase === 'parsing'
+      || this.state.status === 'exited'
+    ) return false;
+    if (!this.terminal) return false;
+    this.terminal.paste(data);
+    return true;
+  }
+
+  /** Pastes data that came from an explicit user-facing control. */
+  pasteUserInput(data: string): boolean {
+    const delivered = this.pasteInput(data);
+    if (delivered) this.notifyTerminalInput();
+    return delivered;
   }
 
   /** Ask the server to close only a runtime created by this preview token. */
@@ -520,6 +629,33 @@ export class TerminalSurface {
 
   matchesTerminal(terminalId: string): boolean {
     return this.options.terminalId === terminalId || this.actualTerminalId === terminalId;
+  }
+
+  /**
+   * Client-coordinate band covering the CLI's input box, or null when the
+   * terminal is not mounted. A TUI frames its prompt with a border and a status
+   * line around the cursor row, and parks the whole thing wherever the content
+   * ends — so a drop target aimed at "the input area" has to follow the cursor
+   * and span the rows around it.
+   */
+  getPromptBounds(): { top: number; bottom: number } | null {
+    const terminal = this.terminal;
+    const element = terminal?.element;
+    if (!terminal || !element || terminal.rows <= 0) return null;
+
+    const rect = element.getBoundingClientRect();
+    if (rect.height <= 0) return null;
+
+    const rowHeight = rect.height / terminal.rows;
+    const cursorRow = Math.min(terminal.buffer.active.cursorY, terminal.rows - 1);
+    const cursorTop = rect.top + cursorRow * rowHeight;
+    return {
+      top: Math.max(cursorTop - rowHeight * PROMPT_BOX_ROWS_ABOVE, rect.top),
+      bottom: Math.min(
+        cursorTop + rowHeight * (1 + PROMPT_BOX_ROWS_BELOW),
+        rect.bottom,
+      ),
+    };
   }
 
   resetWebglTextureAtlas(): void {
@@ -627,6 +763,7 @@ export class TerminalSurface {
   async restart(): Promise<boolean> {
     if (this.disposed) return false;
     this.autoConnect = true;
+    this.snapshotReplayRecoveryAttempted = false;
     this.serverGeneration = null;
     this.lastSequence = 0;
     this.cancelSnapshotReplay();
@@ -652,6 +789,11 @@ export class TerminalSurface {
     if (!this.terminal && this.mountedHost) void this.mount(this.mountedHost);
     requestAnimationFrame(() => {
       if (this.disposed || !this.isMountedHostVisible()) return;
+      // A snapshot can finish parsing while its retained tab is hidden. Its
+      // fit request deliberately cannot measure then, so reveal must retry it
+      // even when WebGL stayed attached (retryWebglAttachOnReveal otherwise
+      // returns early and never requests a fit).
+      this.requestStableFit(false);
       this.retryWebglAttachOnReveal();
       recoverAllTerminalRenderers();
     });
@@ -662,7 +804,7 @@ export class TerminalSurface {
     requestAnimationFrame(() => {
       if (!this.isMountedHostVisible()) return;
       this.requestStableFit(true);
-      this.terminal?.focus();
+      if (this.keyboardOwner === 'xterm') this.terminal?.focus();
     });
   }
 
@@ -670,6 +812,8 @@ export class TerminalSurface {
     if (this.disposed) return;
     this.disposed = true;
     this.cancelColdPark();
+    this.gridReconcile?.cancel();
+    this.gridReconcile = null;
     if (options.detach !== false && this.attachedConnectionGeneration > 0) {
       wsClient.detachTerminal(this.actualTerminalId, this.surfaceId);
     }
@@ -695,6 +839,11 @@ export class TerminalSurface {
       wsClient.detachTerminal(this.actualTerminalId, this.surfaceId);
       this.attachedConnectionGeneration = 0;
     }
+    // The PTY outlives the park, but this surface's measurements do not: the
+    // grid it settles on next belongs to the next attach, not this one.
+    this.gridReconcile?.cancel();
+    this.gridReconcile = null;
+    this.appliedGrid = null;
     this.releaseRenderResources();
   }
 
@@ -744,6 +893,7 @@ export class TerminalSurface {
     this.fitAddon = null;
     this.terminal?.dispose();
     this.terminal = null;
+    this.xtermTextareaState = null;
     this.root?.remove();
     this.root = null;
   }
@@ -842,6 +992,7 @@ export class TerminalSurface {
       this.root = root;
       this.terminal = terminal;
       this.fitAddon = fitAddon;
+      this.applyKeyboardOwnership();
       const scrollController = new TerminalScrollController(terminal);
       this.scrollController = scrollController;
       this.unsubscribeScrollController = scrollController.subscribe(() => {
@@ -858,6 +1009,10 @@ export class TerminalSurface {
         // App-level shortcuts must bubble to the window listener instead of
         // being cancelled by xterm or encoded into PTY input.
         if (isGlobalShortcutKeydown(event)) return false;
+
+        // On a phone the visible input bar owns software and hardware keyboard input.
+        // Returning false leaves xterm's parser and pointer/touch reporting enabled.
+        if (this.keyboardOwner === 'input-bar') return false;
 
         if (
           event.type === 'keydown'
@@ -936,6 +1091,17 @@ export class TerminalSurface {
           this.terminalInputOriginArmed = false;
           this.notifyTerminalInput();
         }
+        if (this.keyboardOwner === 'input-bar') {
+          const sanitized = sanitizeXtermGeneratedData(data);
+          if (sanitized.droppedMouseReports > 0) {
+            console.warn('[terminal] Dropped malformed xterm mouse report', {
+              terminalId: this.actualTerminalId,
+              count: sanitized.droppedMouseReports,
+            });
+          }
+          if (sanitized.data) this.sendInput(sanitized.data);
+          return;
+        }
         this.sendInput(data);
       });
       this.scrollDisposable = terminal.onScroll(() => {
@@ -944,6 +1110,11 @@ export class TerminalSurface {
       });
       this.syncScrollStateFromController();
       this.pasteListener = (event) => {
+        if (this.keyboardOwner === 'input-bar') {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (this.consumeNativePasteSuppression(event)) return;
         if (event.clipboardData?.getData('text/plain')) {
           this.armTerminalInputOrigin();
@@ -961,7 +1132,7 @@ export class TerminalSurface {
       };
       root.addEventListener('paste', this.pasteListener, true);
       this.compositionEndListener = (event) => {
-        if (event.data) this.notifyTerminalInput();
+        if (this.keyboardOwner === 'xterm' && event.data) this.notifyTerminalInput();
       };
       root.addEventListener('compositionend', this.compositionEndListener, true);
     } catch (error) {
@@ -1004,6 +1175,36 @@ export class TerminalSurface {
 
   private notifyTerminalInput(): void {
     this.onInput?.();
+  }
+
+  private applyKeyboardOwnership(): void {
+    const textarea = this.terminal?.textarea;
+    if (!textarea) return;
+
+    if (!this.xtermTextareaState) {
+      this.xtermTextareaState = {
+        readOnly: textarea.readOnly,
+        tabIndex: textarea.tabIndex,
+        inputMode: textarea.getAttribute('inputmode'),
+        inert: textarea.inert,
+      };
+    }
+
+    if (this.keyboardOwner === 'input-bar') {
+      if (textarea.ownerDocument.activeElement === textarea) textarea.blur();
+      textarea.readOnly = true;
+      textarea.tabIndex = -1;
+      textarea.setAttribute('inputmode', 'none');
+      textarea.inert = true;
+      return;
+    }
+
+    const baseline = this.xtermTextareaState;
+    textarea.readOnly = baseline.readOnly;
+    textarea.tabIndex = baseline.tabIndex;
+    textarea.inert = baseline.inert;
+    if (baseline.inputMode === null) textarea.removeAttribute('inputmode');
+    else textarea.setAttribute('inputmode', baseline.inputMode);
   }
 
   private armNativePasteSuppression(): void {
@@ -1058,6 +1259,14 @@ export class TerminalSurface {
   private handleServerMessage(message: ServerTransportMessage): void {
     if (this.disposed || !('terminalId' in message)) return;
 
+    // No PTY exists yet — the agent is being held until the worktree finishes
+    // its blocking preparation — so the surface says so where the terminal
+    // would otherwise sit blank. `terminal_started` replaces this.
+    if (message.type === 'terminal_awaiting_preparation' && message.surfaceId === this.surfaceId) {
+      this.updateState('starting', 'Waiting for preparation to finish before starting the agent...');
+      return;
+    }
+
     if (message.terminalId === this.actualTerminalId && message.type === 'terminal_prefill_written') {
       this.finishPendingLaunch('started');
       return;
@@ -1086,6 +1295,7 @@ export class TerminalSurface {
 
     if (message.type === 'terminal_started') {
       this.actualTerminalId = message.terminalId;
+      this.interruptInputPolicy = message.interruptInputPolicy ?? 'none';
       if (this.serverGeneration !== message.generation) {
         this.cancelSnapshotReplay();
         this.serverGeneration = message.generation;
@@ -1109,6 +1319,16 @@ export class TerminalSurface {
           this.toAppearance(requested.theme, requested.mode),
         );
       }
+      this.startGridReconcile();
+      return;
+    }
+
+    if (message.type === 'terminal_grid') {
+      this.appliedGrid = {
+        cols: message.cols,
+        rows: message.rows,
+        accepted: message.accepted,
+      };
       return;
     }
 
@@ -1132,9 +1352,8 @@ export class TerminalSurface {
       this.serverGeneration = message.generation;
       this.lastSequence = message.seq;
       const replayEpoch = ++this.replayEpoch;
-      this.replaying = true;
-      this.pendingReplayFitEpoch = null;
-      this.pendingReplayOutput = [];
+      this.clearSnapshotReplayWatchdog();
+      this.snapshotReplay = { epoch: replayEpoch, phase: 'parsing', watchdogTimerId: null };
       const restorePoint = this.scrollController?.captureRestorePoint();
       // Recovery after a replay is unconditional (see onParsed below), but the
       // detector still consumes the chunk to keep its cross-chunk scan state.
@@ -1156,49 +1375,60 @@ export class TerminalSurface {
         return;
       }
       const replayData = buildTerminalSnapshotReplay(message);
-      writeForegroundTerminalChunk(this.terminal, replayData, {
+      const replayTerminal = this.terminal;
+      const finishParsing = (): void => {
+        if (
+          this.replayEpoch !== replayEpoch
+          || this.serverGeneration !== message.generation
+          || this.snapshotReplay?.epoch !== replayEpoch
+          || this.snapshotReplay.phase !== 'parsing'
+        ) return;
+        this.clearSnapshotReplayWatchdog();
+        this.snapshotReplay = { epoch: replayEpoch, phase: 'fitting' };
+        this.snapshotReplayRecoveryAttempted = false;
+        if (restorePoint) this.scrollController?.restore(restorePoint);
+        this.scheduleScrollRebuildSettle();
+        this.scheduleSurfaceScrollStateSync();
+        // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
+        // whatever renderer state preceded the reveal, and that state stays
+        // subtly wrong until an atlas recovery re-rasterizes it.
+        this.requestStableFit(false);
+        this.retryWebglAttachOnReveal();
+        this.recoverRendererPresentation();
+      };
+      const replayWriteAccepted = writeForegroundTerminalChunk(replayTerminal, replayData, {
         forceViewportRefresh: true,
         // A snapshot replay rewrites the whole grid; always follow up on the
         // settled frame in case the immediate repaint raced layout.
         followupViewportRefresh: true,
         shouldRefreshViewportSynchronously: () => !this.webglAddon,
-        onParsed: () => {
+        onParsed: finishParsing,
+        onWriteFailure: () => {
           if (
-            this.replayEpoch !== replayEpoch
-            || this.serverGeneration !== message.generation
-          ) return;
-          if (restorePoint) this.scrollController?.restore(restorePoint);
-          this.scheduleScrollRebuildSettle();
-          // Keep live output and user input behind the replay barrier until the
-          // destination grid is fitted and the PTY receives its repaint resize.
-          this.pendingReplayFitEpoch = replayEpoch;
-          this.scheduleSurfaceScrollStateSync();
-          // Unconditional, not SGR-gated: a replay rasterizes CJK glyphs into
-          // whatever renderer state preceded the reveal, and that state stays
-          // subtly wrong (whole-pane Korean layout visibly shifts once a later
-          // atlas recovery re-rasterizes it, which is also the moment IME
-          // composition stops garbling). An idle session never gets that
-          // accidental recovery — schedule it deterministically after every
-          // replay instead of waiting for the next output or focus cycle.
-          this.requestStableFit(false);
-          this.retryWebglAttachOnReveal();
-          this.recoverRendererPresentation();
+            this.replayEpoch === replayEpoch
+            && this.serverGeneration === message.generation
+          ) {
+            this.cancelSnapshotReplay();
+          }
         },
       });
+      if (replayWriteAccepted) {
+        // A zero-byte FIFO fence covers the narrow case where xterm accepts and
+        // parses the snapshot but loses that write's completion callback. If
+        // the whole WriteBuffer is wedged, the watchdog below cold-remounts the
+        // renderer while leaving the PTY alive.
+        writeForegroundTerminalChunk(replayTerminal, '', { onParsed: finishParsing });
+        this.armSnapshotReplayWatchdog(replayEpoch);
+      }
       return;
     }
 
     if (message.type === 'terminal_output') {
       if (message.generation !== this.serverGeneration || message.seq <= this.lastSequence) return;
       this.lastSequence = message.seq;
-      if (this.replaying) {
-        this.pendingReplayOutput.push({
-          data: message.data,
-          generation: message.generation,
-          seq: message.seq,
-        });
-        return;
-      }
+      // xterm serializes writes. A frame received during snapshot parsing is
+      // naturally queued after the snapshot, without a second buffer that can
+      // strand visible output behind a missed fit.
       this.applyTerminalOutput(message.data);
       return;
     }
@@ -1247,35 +1477,81 @@ export class TerminalSurface {
   }
 
   private cancelSnapshotReplay(): void {
+    this.clearSnapshotReplayWatchdog();
     this.replayEpoch += 1;
-    this.replaying = false;
-    this.pendingReplayFitEpoch = null;
-    this.pendingReplayOutput = [];
+    this.snapshotReplay = null;
   }
 
   private finishSnapshotReplay(replayEpoch: number): void {
-    if (this.replayEpoch !== replayEpoch || this.pendingReplayFitEpoch !== replayEpoch) return;
-
-    const pendingOutput = this.pendingReplayOutput;
-    this.pendingReplayOutput = [];
-    this.pendingReplayFitEpoch = null;
-    this.replaying = false;
-    for (const frame of pendingOutput) {
-      if (frame.generation === this.serverGeneration) this.applyTerminalOutput(frame.data);
-    }
+    if (
+      this.replayEpoch !== replayEpoch
+      || this.snapshotReplay?.epoch !== replayEpoch
+      || this.snapshotReplay.phase !== 'fitting'
+    ) return;
+    this.snapshotReplay = null;
 
     const terminal = this.terminal;
-    const activeElement = document.activeElement;
+    if (!terminal) return;
+    // Live output may already be queued behind the snapshot. Put focus
+    // reporting behind a FIFO fence so mode changes in those writes are parsed
+    // before modes.sendFocusMode is read.
+    writeForegroundTerminalChunk(terminal, '', {
+      onParsed: () => {
+        const activeElement = document.activeElement;
+        if (
+          this.terminal === terminal
+          && terminal.modes.sendFocusMode
+          && activeElement
+          && terminal.element?.contains(activeElement)
+        ) {
+          wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, '\x1b[I');
+        }
+      },
+    });
+  }
+
+  private clearSnapshotReplayWatchdog(): void {
+    const replay = this.snapshotReplay;
+    if (replay?.phase !== 'parsing' || replay.watchdogTimerId === null) return;
+    window.clearTimeout(replay.watchdogTimerId);
+    replay.watchdogTimerId = null;
+  }
+
+  private armSnapshotReplayWatchdog(replayEpoch: number): void {
+    const replay = this.snapshotReplay;
+    if (replay?.phase !== 'parsing' || replay.epoch !== replayEpoch) return;
+    this.clearSnapshotReplayWatchdog();
+    replay.watchdogTimerId = window.setTimeout(() => {
+      if (
+        this.snapshotReplay?.phase !== 'parsing'
+        || this.snapshotReplay.epoch !== replayEpoch
+      ) return;
+      this.recoverStalledSnapshotReplay(replayEpoch);
+    }, SNAPSHOT_REPLAY_STALL_TIMEOUT_MS);
+  }
+
+  private recoverStalledSnapshotReplay(replayEpoch: number): void {
     if (
-      terminal?.modes.sendFocusMode
-      && activeElement
-      && terminal.element?.contains(activeElement)
-    ) {
-      // Focus may have happened before replay restored ?1004h. Re-send the
-      // event once after the snapshot barrier so fullscreen TUIs always learn
-      // that this newly attached surface is active.
-      wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, '\x1b[I');
+      this.snapshotReplay?.phase !== 'parsing'
+      || this.snapshotReplay.epoch !== replayEpoch
+    ) return;
+    const host = this.mountedHost;
+    const wasVisible = this.isMountedHostVisible();
+    if (this.snapshotReplayRecoveryAttempted) {
+      this.autoConnect = false;
+      this.coldPark();
+      this.updateState('error', 'Terminal renderer stalled while restoring. Restart to retry.');
+      return;
     }
+    this.snapshotReplayRecoveryAttempted = true;
+    this.coldPark();
+    if (!host || !wasVisible || this.disposed) return;
+    void this.mount(host).then(() => {
+      if (this.disposed) return;
+      void this.ensureConnected().then((connected) => {
+        if (connected && this.isMountedHostVisible()) this.activate();
+      });
+    });
   }
 
   private recoverRendererPresentation(): void {
@@ -1310,6 +1586,8 @@ export class TerminalSurface {
     controller: TerminalScrollController,
   ): () => void {
     let pointerScrollActive = false;
+    let touchScrollActive = false;
+    let previousTouchY: number | null = null;
     const isScrollbarTarget = (target: EventTarget | null): boolean => (
       target instanceof Element
       && target.closest('.xterm-viewport, .xterm-scrollbar, .xterm-slider') !== null
@@ -1330,22 +1608,55 @@ export class TerminalSurface {
       pointerScrollActive = false;
       controller.syncFromViewport();
     };
+    const onTouchStart = (event: TouchEvent) => {
+      touchScrollActive = true;
+      previousTouchY = event.touches[0]?.clientY ?? null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const currentY = event.touches[0]?.clientY;
+      if (
+        touchScrollActive
+        && previousTouchY !== null
+        && currentY !== undefined
+        && currentY > previousTouchY
+      ) {
+        // A downward finger drag means the reader is moving into history.
+        // Claim that intent before xterm applies the viewport change so a PTY
+        // chunk queued behind this event cannot restore stale follow-output.
+        controller.pinViewport();
+      }
+      previousTouchY = currentY ?? previousTouchY;
+    };
+    const onTouchDone = () => {
+      if (!touchScrollActive) return;
+      touchScrollActive = false;
+      previousTouchY = null;
+      controller.syncFromViewport();
+    };
     const onScroll = () => {
       controller.notifyViewportChanged();
-      if (pointerScrollActive) controller.syncFromViewport();
+      if (pointerScrollActive || touchScrollActive) controller.syncFromViewport();
     };
 
     root.addEventListener('wheel', onWheel, { capture: true, passive: true });
     root.addEventListener('pointerdown', onPointerDown, true);
+    root.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+    root.addEventListener('touchmove', onTouchMove, { capture: true, passive: true });
     root.addEventListener('scroll', onScroll, true);
     window.addEventListener('pointerup', onPointerDone, true);
     window.addEventListener('pointercancel', onPointerDone, true);
+    window.addEventListener('touchend', onTouchDone, true);
+    window.addEventListener('touchcancel', onTouchDone, true);
     return () => {
       root.removeEventListener('wheel', onWheel, true);
       root.removeEventListener('pointerdown', onPointerDown, true);
+      root.removeEventListener('touchstart', onTouchStart, true);
+      root.removeEventListener('touchmove', onTouchMove, true);
       root.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('pointerup', onPointerDone, true);
       window.removeEventListener('pointercancel', onPointerDone, true);
+      window.removeEventListener('touchend', onTouchDone, true);
+      window.removeEventListener('touchcancel', onTouchDone, true);
     };
   }
 
@@ -1426,10 +1737,12 @@ export class TerminalSurface {
 
   private fitAndResize(claim: boolean, shouldFit = true): void {
     if (!this.isMountedHostVisible() || !this.fitAddon || !this.terminal) return;
-    const replayFitEpoch = this.pendingReplayFitEpoch;
+    const replayFitEpoch = this.snapshotReplay?.phase === 'fitting'
+      ? this.snapshotReplay.epoch
+      : null;
     // A ResizeObserver/activation fit can race snapshot parsing. Preserve the
     // exact source grid until the replay write callback establishes a barrier.
-    if (this.replaying && replayFitEpoch === null) return;
+    if (this.snapshotReplay?.phase === 'parsing') return;
     let didFit = false;
     let fitCompleted = !shouldFit;
     let restorePoint: TerminalScrollRestorePoint | null = null;
@@ -1499,6 +1812,94 @@ export class TerminalSurface {
     if (this.mountedHost.closest('[aria-hidden="true"]')) return false;
     const rect = this.mountedHost.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
+  }
+
+  /**
+   * Resolve the grid to spawn or attach at, once layout has stopped moving.
+   *
+   * Never hangs: the settle loop always calls back — including for a surface
+   * disposed mid-wait — and a pane that cannot be measured at all resolves
+   * immediately with whatever dimensions are already known.
+   */
+  private settleStartupGrid(): Promise<TerminalGridDimensions | undefined> {
+    if (this.startupGridPromise) return this.startupGridPromise;
+    if (!hasFrameClock() || !this.isMountedHostVisible()) {
+      return Promise.resolve(this.getDimensions());
+    }
+    const promise = new Promise<TerminalGridDimensions | undefined>((resolve) => {
+      waitForStableStartupGrid({
+        isAlive: () => !this.disposed,
+        measure: () => this.measureProposedGrid(),
+        onSettled: (grid) => {
+          this.startupGridPromise = null;
+          resolve(grid ?? this.getDimensions());
+        },
+        requestFrame: (callback) => requestAnimationFrame(callback),
+        cancelFrame: (handle) => cancelAnimationFrame(handle),
+      });
+    });
+    this.startupGridPromise = promise;
+    return promise;
+  }
+
+  /**
+   * The grid the container currently wants, or null while it cannot be read.
+   *
+   * Blind only while the snapshot is *parsing*, matching `fitAndResize`: the
+   * replay holds xterm at the source grid until the write barrier lands, and a
+   * measurement taken then would describe the grid the snapshot came from.
+   *
+   * Not blind during the `fitting` phase that follows, deliberately. That phase
+   * ends when a fit completes, and the fit it waits on is a plain
+   * `requestStableFit` that silently returns early whenever a chain is already
+   * in flight. If that one request is lost, the replay never finishes and xterm
+   * stays on the snapshot's grid — so this is exactly the state the reconcile
+   * has to be able to see and act on.
+   */
+  private measureProposedGrid(): TerminalGridDimensions | null {
+    if (this.snapshotReplay?.phase === 'parsing' || !this.isMountedHostVisible()) return null;
+    const proposed = this.getProposedDimensions();
+    if (!proposed || proposed.cols <= 2 || proposed.rows <= 1) return null;
+    return proposed;
+  }
+
+  /**
+   * Drive this surface's grid and the PTY's to the same value, and verify it.
+   *
+   * Runs on every attach rather than only on a detected mismatch: from
+   * `terminal_started` alone the surface cannot tell whether the runtime it
+   * joined was spawned at a sane grid, and the snapshot it is about to replay
+   * was serialized at whatever that grid was.
+   */
+  private startGridReconcile(): void {
+    // Both loops are frame-driven, and terminal_started can land in a context
+    // that has no frame clock at all. There is nothing to reconcile across then.
+    if (!hasFrameClock()) return;
+    this.gridReconcile?.cancel();
+    // A stale echo describes the previous attachment's PTY, not this one's.
+    this.appliedGrid = null;
+    this.gridReconcile = reconcileTerminalGrid({
+      initialGrid: this.lastRequestedGrid ?? { cols: 0, rows: 0 },
+      isAlive: () => !this.disposed && this.attachedConnectionGeneration > 0,
+      isAuthoritative: () => (
+        this.isMountedHostVisible() && this.snapshotReplay?.phase !== 'parsing'
+      ),
+      measure: () => this.measureProposedGrid(),
+      getRendererGrid: () => (
+        this.terminal ? { cols: this.terminal.cols, rows: this.terminal.rows } : null
+      ),
+      // fitAndResize is the one place that resizes xterm and forwards the result
+      // together. Sending behind its back would let the reconcile correct the
+      // PTY while xterm stayed stale — the same split-grid state it exists to
+      // prevent, just mirrored.
+      forward: () => this.fitAndResize(false, true),
+      getAppliedGrid: () => this.appliedGrid,
+      requestFrame: (callback) => requestAnimationFrame(callback),
+      cancelFrame: (handle) => cancelAnimationFrame(handle),
+      onSettled: () => {
+        this.gridReconcile = null;
+      },
+    });
   }
 
   private getDimensions(): { cols: number; rows: number } | undefined {
@@ -1634,6 +2035,39 @@ export function sendInputToTerminal(terminalId: string, data: string): boolean {
   return candidates.some((surface) => surface.sendInput(data));
 }
 
+/** Whether the provider attached behind this terminal declares one-Escape cancellation. */
+export function terminalSupportsEscapeInterrupt(terminalId: string): boolean {
+  return [...surfaces.values()].some(
+    (surface) => surface.matchesTerminal(terminalId) && surface.supportsEscapeInterrupt(),
+  );
+}
+
+/** Paste-mode counterpart of sendInputToTerminal (see TerminalSurface.pasteInput). */
+export function pasteInputToTerminal(terminalId: string, data: string): boolean {
+  const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
+  for (const surface of candidates) {
+    if (surface.getSnapshot().status === 'running' && surface.pasteInput(data)) return true;
+  }
+  return candidates.some((surface) => surface.pasteInput(data));
+}
+
 export function getSessionTerminalId(sessionId: string): string {
   return `session-${sessionId}`;
+}
+
+/** Where the input box currently sits on screen, preferring the running surface. */
+export function getTerminalPromptBounds(
+  terminalId: string,
+): { top: number; bottom: number } | null {
+  const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
+  for (const surface of candidates) {
+    if (surface.getSnapshot().status !== 'running') continue;
+    const bounds = surface.getPromptBounds();
+    if (bounds) return bounds;
+  }
+  for (const surface of candidates) {
+    const bounds = surface.getPromptBounds();
+    if (bounds) return bounds;
+  }
+  return null;
 }

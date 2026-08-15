@@ -9,6 +9,11 @@ export interface WorktreeBaseRef {
   current: boolean;
 }
 
+export interface WorktreeCheckoutTarget {
+  branchName: string;
+  selectedRef: string;
+}
+
 interface ParsedRef {
   name: string;
   kind: Exclude<WorktreeBaseRefKind, 'detached'>;
@@ -75,17 +80,24 @@ export async function validateWorktreeBaseRef(
   }
 }
 
-export function buildGitWorktreeAddArgs(
-  cwd: string,
-  worktreePath: string,
-  branchName: string,
-  baseRef: string | null,
-): string[] {
-  const args = ['-C', cwd, 'worktree', 'add', worktreePath, '-b', branchName];
-  if (baseRef) {
-    args.push(baseRef);
+/** Resolve the selected picker ref to the local branch name Git must check out. */
+export function resolveWorktreeCheckoutTarget(
+  selectedRef: string,
+  availableRefs: WorktreeBaseRef[],
+): WorktreeCheckoutTarget | null {
+  const trimmed = selectedRef.trim();
+  const match = availableRefs.find((ref) => ref.name === trimmed);
+  if (!match) return null;
+  if (match.kind === 'local') {
+    return { branchName: match.name, selectedRef: match.name };
   }
-  return args;
+
+  const separator = match.name.indexOf('/');
+  if (separator <= 0 || separator === match.name.length - 1) return null;
+  return {
+    branchName: match.name.slice(separator + 1),
+    selectedRef: match.name,
+  };
 }
 
 async function readCurrentBranch(

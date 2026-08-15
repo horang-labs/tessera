@@ -1,6 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { spawn } from 'child_process';
 import {
   buildManagedWorktreeName,
   buildManagedWorktreeRelativePath,
@@ -12,11 +11,11 @@ import { getTesseraDataPath } from '../tessera-data-dir';
 import {
   getWslHostedWindowsHomeMountPath,
   getWindowsHostedWslRootFilesystemPath,
-  isWslFilesystemPath,
+  resolveAgentHomeFilesystemPath,
 } from '../filesystem/path-environment';
 import { resolvePathForHostFilesystem } from '../filesystem/host-path';
 import type { AgentEnvironment } from '../settings/types';
-import { createGitRunner, type GitRunner } from './git-runner';
+import type { GitRunner } from './git-runner';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import { isRunningInWsl } from '../cli/cli-exec';
 
@@ -25,6 +24,18 @@ export const MANAGED_WORKTREE_ROOT = getTesseraDataPath('worktrees');
 interface ManagedWorktreeAllocation {
   branchName: string;
   worktreePath: string;
+}
+
+export class ExplicitManagedWorktreeAllocationError extends Error {
+  constructor(
+    readonly code: 'branch_already_exists' | 'path_unavailable',
+    message: string,
+    readonly branchName: string,
+    readonly worktreePath?: string,
+  ) {
+    super(message);
+    this.name = 'ExplicitManagedWorktreeAllocationError';
+  }
 }
 
 export class ManagedWorktreeAllocationError extends Error {
@@ -40,20 +51,20 @@ export class ManagedWorktreeAllocationError extends Error {
 
 export async function allocateManagedWorktree(
   projectDir: string,
-  branchPrefix?: string | null,
-  branchSlug?: string | null,
+  branchPrefix: string | null | undefined,
+  branchSlug: string | null | undefined,
   options: {
     allowCollisionSuffix?: boolean;
     rootDir?: string;
-    runGit?: GitRunner;
+    /** Required: Git only ever runs through the one runner (ADR 0006). */
+    runGit: GitRunner;
     pathTemplate?: string | null;
     agentEnvironment?: AgentEnvironment;
-  } = {}
+  }
 ): Promise<ManagedWorktreeAllocation> {
   const rootDir = options.rootDir ?? MANAGED_WORKTREE_ROOT;
   const pathTemplate = options.pathTemplate?.trim() ?? '';
   const usesPathTemplate = pathTemplate.length > 0;
-  const pathModule = getPathModule(rootDir);
   if (!usesPathTemplate) {
     await fs.mkdir(await resolvePathForHostFilesystem(rootDir), {
       recursive: true,
@@ -68,29 +79,24 @@ export async function allocateManagedWorktree(
   let firstCollision: ManagedWorktreeAllocation | null = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const branchName = buildManagedWorktreeName(projectDir, attempt, now, branchPrefix, baseSlug);
-    const worktreePath = usesPathTemplate
-      ? resolveManagedWorktreePathTemplate(pathTemplate, {
-          agentEnvironment: options.agentEnvironment,
-          projectDir,
-          branchName,
-        })
-      : pathModule.join(
-          rootDir,
-          ...buildManagedWorktreeRelativePath(projectDir, branchName).split('/')
-        );
-    const worktreePathModule = getPathModule(worktreePath);
+    const worktreePath = resolveAllocatedWorktreePath(projectDir, branchName, {
+      rootDir,
+      pathTemplate,
+      agentEnvironment: options.agentEnvironment,
+    });
 
-    const branchExists = await localBranchExists(projectDir, branchName, options.runGit);
-    const worktreePathExists = await pathExists(worktreePath);
+    const { branchExists, worktreePathExists } = await findAllocationCollision(
+      projectDir,
+      branchName,
+      worktreePath,
+      options.runGit,
+    );
     if (branchExists || worktreePathExists) {
       firstCollision ??= { branchName, worktreePath };
       continue;
     }
 
-    await fs.mkdir(
-      await resolvePathForHostFilesystem(worktreePathModule.dirname(worktreePath)),
-      { recursive: true, mode: 0o700 },
-    );
+    await ensureManagedWorktreeParent(worktreePath);
     return { branchName, worktreePath };
   }
 
@@ -106,6 +112,119 @@ export async function allocateManagedWorktree(
   throw new ManagedWorktreeAllocationError(
     'allocation_failed',
     'Failed to allocate managed worktree name'
+  );
+}
+
+export async function allocateExplicitManagedWorktree(
+  projectDir: string,
+  branchName: string,
+  options: {
+    rootDir: string;
+    runGit: GitRunner;
+    pathTemplate?: string | null;
+    agentEnvironment: AgentEnvironment;
+  },
+): Promise<ManagedWorktreeAllocation> {
+  const worktreePath = resolveAllocatedWorktreePath(projectDir, branchName, options);
+  const collision = await findAllocationCollision(
+    projectDir,
+    branchName,
+    worktreePath,
+    options.runGit,
+  );
+
+  if (collision.branchExists) {
+    throw new ExplicitManagedWorktreeAllocationError(
+      'branch_already_exists',
+      `Branch already exists: ${branchName}`,
+      branchName,
+      worktreePath,
+    );
+  }
+  if (collision.worktreePathExists) {
+    throw new ExplicitManagedWorktreeAllocationError(
+      'path_unavailable',
+      `The managed Worktree path already exists: ${worktreePath}`,
+      branchName,
+      worktreePath,
+    );
+  }
+
+  await ensureManagedWorktreeParent(worktreePath);
+  return { branchName, worktreePath };
+}
+
+/** Allocate only the path: an existing branch is the expected input here. */
+export async function allocateCheckoutManagedWorktree(
+  projectDir: string,
+  branchName: string,
+  options: {
+    rootDir: string;
+    runGit: GitRunner;
+    pathTemplate?: string | null;
+    agentEnvironment: AgentEnvironment;
+  },
+): Promise<ManagedWorktreeAllocation> {
+  const worktreePath = resolveAllocatedWorktreePath(projectDir, branchName, options);
+  const collision = await findAllocationCollision(
+    projectDir,
+    branchName,
+    worktreePath,
+    options.runGit,
+  );
+  if (collision.worktreePathExists) {
+    throw new ExplicitManagedWorktreeAllocationError(
+      'path_unavailable',
+      `The managed Worktree path already exists: ${worktreePath}`,
+      branchName,
+      worktreePath,
+    );
+  }
+
+  await ensureManagedWorktreeParent(worktreePath);
+  return { branchName, worktreePath };
+}
+
+function resolveAllocatedWorktreePath(
+  projectDir: string,
+  branchName: string,
+  options: {
+    rootDir: string;
+    pathTemplate?: string | null;
+    agentEnvironment?: AgentEnvironment;
+  },
+): string {
+  const pathTemplate = options.pathTemplate?.trim() ?? '';
+  if (pathTemplate) {
+    return resolveManagedWorktreePathTemplate(pathTemplate, {
+      agentEnvironment: options.agentEnvironment,
+      projectDir,
+      branchName,
+    });
+  }
+  return getPathModule(options.rootDir).join(
+    options.rootDir,
+    ...buildManagedWorktreeRelativePath(projectDir, branchName).split('/'),
+  );
+}
+
+async function findAllocationCollision(
+  projectDir: string,
+  branchName: string,
+  worktreePath: string,
+  runGit: GitRunner,
+): Promise<{ branchExists: boolean; worktreePathExists: boolean }> {
+  const [branchExists, worktreePathExists] = await Promise.all([
+    localBranchExists(projectDir, branchName, runGit),
+    pathExists(worktreePath),
+  ]);
+  return { branchExists, worktreePathExists };
+}
+
+async function ensureManagedWorktreeParent(worktreePath: string): Promise<void> {
+  await fs.mkdir(
+    await resolvePathForHostFilesystem(getPathModule(worktreePath).dirname(worktreePath)),
+    { recursive: true, mode: 0o700 },
   );
 }
 
@@ -151,15 +270,20 @@ export function getManagedWorktreeRelativeDisplayPath(candidate: string): string
 export async function resolveManagedWorktreeRoot(
   projectDir: string,
   agentEnvironment: AgentEnvironment,
+  options: { agentHomeFilesystemPath?: string } = {},
 ): Promise<string> {
   if (agentEnvironment === 'wsl') {
-    return (
+    const projectDerivedRoot = (
       resolveWslHomeManagedWorktreeRoot(projectDir)
       ?? resolveWslFallbackManagedWorktreeRoot(projectDir)
       ?? resolveWslPosixHomeManagedWorktreeRoot(projectDir)
       ?? resolveWslPosixFallbackManagedWorktreeRoot(projectDir)
-      ?? MANAGED_WORKTREE_ROOT
     );
+    if (projectDerivedRoot) return projectDerivedRoot;
+
+    const agentHome = options.agentHomeFilesystemPath
+      ?? await resolveAgentHomeFilesystemPath(agentEnvironment);
+    return getPathModule(agentHome).join(agentHome, '.tessera', 'worktrees');
   }
 
   if (getRuntimePlatform() === 'linux' && isRunningInWsl()) {
@@ -169,10 +293,11 @@ export async function resolveManagedWorktreeRoot(
   return MANAGED_WORKTREE_ROOT;
 }
 
+/** `runGit` is required: callers name their environment via ADR 0006. */
 export async function removeManagedWorktree(
   projectDir: string,
   worktreePath: string,
-  runGit: GitRunner = createGitRunner(inferManagedGitEnvironment(projectDir, worktreePath)),
+  runGit: GitRunner,
 ): Promise<void> {
   await runGit(
     ['-C', projectDir, 'worktree', 'remove', '--force', worktreePath],
@@ -187,7 +312,7 @@ export async function removeManagedWorktree(
 async function localBranchExists(
   projectDir: string,
   branchName: string,
-  runGit: GitRunner = runGitCommand,
+  runGit: GitRunner,
 ): Promise<boolean> {
   try {
     await runGit(['-C', projectDir, 'show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
@@ -204,36 +329,6 @@ async function pathExists(candidate: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function runGitCommand(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('git', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-
-    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
-
-    child.on('close', (code) => {
-      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim();
-      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
-
-      if (code === 0) {
-        resolve({ stdout, stderr });
-        return;
-      }
-
-      reject(new Error(stderr || `git exited with code ${code}`));
-    });
-
-    child.on('error', (error) => {
-      reject(error);
-    });
-  });
 }
 
 function resolveWslHomeManagedWorktreeRoot(candidate: string): string | null {
@@ -270,15 +365,6 @@ function resolveWslPosixFallbackManagedWorktreeRoot(candidate: string): string |
   return normalized.startsWith('/var/tmp/tessera-worktrees')
     ? '/var/tmp/tessera-worktrees'
     : null;
-}
-
-function inferManagedGitEnvironment(
-  projectDir: string,
-  worktreePath: string,
-): AgentEnvironment {
-  return isWslFilesystemPath(projectDir) || isWslFilesystemPath(worktreePath)
-    ? 'wsl'
-    : 'native';
 }
 
 function getRelativePathIfInside(rootDir: string, candidate: string): string | null {

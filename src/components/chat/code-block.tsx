@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, useEffect, useMemo, memo, useCallback } from 'react';
 import type { Highlighter } from 'shiki';
 import { useI18n } from '@/lib/i18n';
@@ -69,6 +71,7 @@ export const CodeBlock = memo(function CodeBlock({ code, language, filename }: C
         </div>
 
         <button
+          {...telemetryClickAttributes('message.code.copy', 'message')}
           onClick={handleCopy}
           className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] text-(--text-muted) hover:text-(--text-primary) hover:bg-(--sidebar-hover) rounded transition-colors"
         >

@@ -26,6 +26,8 @@ function isUnderRoot(absPath) {
 
 function shouldSkip(relativePath) {
   if (!relativePath) return true;
+  const bundledSkillMarkdown = relativePath.startsWith('skills/')
+    && relativePath.endsWith('.md');
 
   return (
     relativePath.startsWith('.electron-runtime/') ||
@@ -64,7 +66,7 @@ function shouldSkip(relativePath) {
     relativePath === 'temp' ||
     relativePath.endsWith('.map') ||
     relativePath.endsWith('.d.ts') ||
-    relativePath.endsWith('.md')
+    (relativePath.endsWith('.md') && !bundledSkillMarkdown)
   );
 }
 
@@ -310,6 +312,8 @@ async function main() {
   await fs.rm(runtimeDir, { recursive: true, force: true });
 
   await addFile(path.join(rootDir, 'next.config.mjs'), files);
+  await addDirectory('bin', files);
+  await addDirectory('skills', files);
   await addDirectory('assets', files);
   await addDirectory('public', files);
   await addDirectory('dist-electron', files);

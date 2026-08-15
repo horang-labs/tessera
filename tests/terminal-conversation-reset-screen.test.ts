@@ -25,6 +25,14 @@ const CODEX_MID_CONVERSATION = [
   '  gpt-5.6-sol low fast · Context 2% used · Fast on',
 ].join('\n');
 
+// Captured from codex-cli 0.147.0 right after `/fork`. Codex prints the same
+// resume hint as `/clear`, but the fork banner means the PTY moved to a child
+// conversation rather than resetting the parent to an empty one.
+const CODEX_AFTER_FORK = [
+  `Thread forked from ${CODEX_SESSION_ID}`,
+  `To continue this session, run codex resume ${CODEX_SESSION_ID}`,
+].join('\n');
+
 // Captured from opencode 1.14.48 right after /new.
 const OPENCODE_AFTER_RESET = [
   '                     ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▄ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀',
@@ -59,6 +67,13 @@ test('codex mid-conversation screens and other sessions never match', () => {
   assert.equal(codexScreenShowsConversationReset({
     visibleText: CODEX_AFTER_RESET,
     currentProviderSessionId: '',
+  }), false);
+});
+
+test('codex fork screen is not mistaken for an empty conversation reset', () => {
+  assert.equal(codexScreenShowsConversationReset({
+    visibleText: CODEX_AFTER_FORK,
+    currentProviderSessionId: CODEX_SESSION_ID,
   }), false);
 });
 

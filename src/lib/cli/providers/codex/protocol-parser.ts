@@ -32,7 +32,7 @@ import { CODEX_THREAD_ID_RE } from '../../../validation/path';
 import logger from '../../../logger';
 import { inferToolCallKindFromToolName, type ToolCallKind } from '@/types/tool-call-kind';
 import type { CommandExecutionToolResult } from '@/types/tool-result';
-import { buildImageToolResult, isImagePath } from '@/lib/tool-results/tool-image';
+import { buildImageToolResult, extractImageToolResult, isImagePath } from '@/lib/tool-results/tool-image';
 import type { AskUserQuestionItem, AskUserQuestionOption } from '@/types/cli-jsonl-schemas';
 import { buildCodexRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import { buildToolDisplay } from '@/lib/tool-display';
@@ -1080,6 +1080,14 @@ export class CodexProtocolParser {
       case 'account/rateLimits/updated':
         return [this.buildRateLimitUpdateMessage(params.rateLimits)];
 
+      case 'skills/changed':
+        return [{
+          serverMessage: {
+            type: 'skills_changed',
+            sessionId,
+          },
+        }];
+
       case 'error': {
         // Codex sends turn errors as:
         //   { method: 'error', params: { error: { message, codexErrorInfo, additionalDetails }, willRetry, threadId, turnId } }
@@ -1636,6 +1644,7 @@ export class CodexProtocolParser {
     if (itemType === 'dynamicToolCall') {
       const { toolName, toolKind, toolParams } = this.buildDynamicToolMetadata(item);
       const output = this.buildDynamicToolOutput(item);
+      const imageToolUseResult = extractImageToolResult(item.contentItems);
       const isError = this.isDynamicToolCallError(item);
 
       logger.info('Codex: dynamicToolCall completed', {
@@ -1657,6 +1666,7 @@ export class CodexProtocolParser {
           status: isError ? 'error' : 'completed',
           output: isError ? undefined : output,
           error: isError ? output || 'Dynamic tool call failed' : undefined,
+          ...(!isError && imageToolUseResult !== undefined ? { toolUseResult: imageToolUseResult } : {}),
           timestamp,
         },
         sideEffect: { type: 'remove_pending_tool_call', toolUseId: itemId },

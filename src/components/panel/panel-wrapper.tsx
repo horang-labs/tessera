@@ -4,30 +4,60 @@ import { memo, useCallback, useContext, useEffect, useRef, useState } from 'reac
 import { cn } from '@/lib/utils';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
-import { toast, useNotificationStore } from '@/stores/notification-store';
+import { toast } from '@/stores/notification-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
-import { wsClient } from '@/lib/ws/client';
+import { useProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { PanelDropZone, type DropEdge } from './panel-drop-zone';
-import { PANEL_NODE_DRAG_MIME, SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
+import {
+  PANEL_NODE_DRAG_MIME,
+  PANEL_SESSION_DRAG_MIME,
+  SESSION_DRAG_MIME,
+  TAB_DRAG_MIME,
+  TAB_PANEL_TREE_DND_MIME,
+} from '@/types/panel';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import {
   getWorkspaceFileDragAbsolutePath,
   hasWorkspaceFileDragData,
   isPathInsertOnlyDragData,
+  isSessionReferenceDragData,
   parsePanelNodeDragData,
   parsePanelTitleDragData,
 } from '@/lib/dnd/panel-session-drag';
+import { insertSessionReferenceIntoTerminal } from '@/lib/session/session-reference';
 import {
   insertFilePathIntoTerminal,
   resolvePanelTerminalId,
 } from '@/lib/terminal/terminal-file-path-insert';
+import { getTerminalPromptBounds } from '@/lib/terminal/terminal-surface-registry';
 import {
   getNativeFileDropAbsolutePaths,
   isNativeFileDrag,
 } from '@/lib/dnd/native-file-drop';
 import { focusPanelControl } from '@/lib/session/focus-session-panel';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
+
+/**
+ * Drags that rearrange panes. They also carry `SESSION_DRAG_MIME`, so a
+ * terminal pane must not mistake them for a context reference.
+ */
+const LAYOUT_DRAG_MIMES = [
+  PANEL_SESSION_DRAG_MIME,
+  PANEL_NODE_DRAG_MIME,
+  TAB_DRAG_MIME,
+  TAB_PANEL_TREE_DND_MIME,
+] as const;
+
+/**
+ * A session dropped on the CLI's input box becomes a context reference;
+ * everywhere else in the pane keeps the normal split/replace behaviour, which
+ * is by far the more common drop. Used as the strip's height only when the
+ * prompt cannot be located.
+ */
+const SESSION_INSERT_ZONE_FALLBACK_HEIGHT = 56;
 
 /** Edge zone threshold — the outer 25% of each edge triggers a split. */
 const EDGE_THRESHOLD = 0.25;
@@ -81,28 +111,24 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   // --- DnD state ---
   const [dropEdge, setDropEdge] = useState<DropEdge | null>(null);
   const [insertPathHint, setInsertPathHint] = useState(false);
+  /** Insert strip geometry relative to the pane; null when inactive. */
+  const [sessionInsertZone, setSessionInsertZone] = useState<
+    { top: number; height: number } | null
+  >(null);
+  const sessionInsertZoneRef = useRef(false);
   const dropEdgeRef = useRef<DropEdge | null>(null);
   const dragCounterRef = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   // REQ-5: get sessionId for unread clearing
   const sessionId = usePanelStore((s) => s.tabPanels[tabId]?.panels[panelId]?.sessionId ?? null);
-  const sessionUnreadCount = useSessionStore((state) => {
-    if (!sessionId) return 0;
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sessionId);
-      if (session) return session.unreadCount ?? 0;
-    }
-    return 0;
-  });
+  const hasSessionUnread = useProjectViewSessionUnread(sessionId);
 
   // REQ-5: Clear unread count when this panel becomes active
-  useEffect(() => {
-    if (!isActive || !sessionId || sessionUnreadCount <= 0) return;
-    useSessionStore.getState().clearUnreadCount(sessionId);
-    useNotificationStore.getState().markSessionAsRead(sessionId);
-    wsClient.sendMarkAsRead(sessionId);
-  }, [isActive, sessionId, sessionUnreadCount]);
+  useEffect(function markActiveSessionRead() {
+    if (!isActive || !sessionId || !hasSessionUnread) return;
+    projectViewWorkspaceState.markSessionRead(sessionId);
+  }, [hasSessionUnread, isActive, sessionId]);
 
   // 패널 활성화 시 포커스 자동 이동
   useEffect(() => {
@@ -129,7 +155,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     const ps = usePanelStore.getState();
     const panel = ps.tabPanels[ps.activeTabId]?.panels[panelId];
     return resolvePanelTerminalId(panel, (id) => (
-      useSessionStore.getState().getSession(id)?.kind === 'terminal'
+      projectViewWorkspaceState.resolveSession(id)?.kind === 'terminal'
     ));
   }, [panelId]);
 
@@ -142,6 +168,30 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   const isNativeFilePathInsertTarget = useCallback((e: React.DragEvent) => (
     isNativeFileDrag(e.dataTransfer) && resolveInsertTargetTerminalId() !== null
   ), [resolveInsertTargetTerminalId]);
+
+  /**
+   * Terminal sessions render no composer, so a session dropped on the pane
+   * itself is how they receive a reference — it is typed into the prompt the
+   * way the composer would have inserted it.
+   *
+   * Layout drags carry the same session MIME but mean "move this pane", so
+   * they keep the split/replace behaviour.
+   */
+  const isTerminalSessionRefTarget = useCallback((e: React.DragEvent) => {
+    if (!isSessionReferenceDragData(e.dataTransfer)) return false;
+    const isLayoutDrag = LAYOUT_DRAG_MIMES.some((mime) => e.dataTransfer.types.includes(mime));
+    return !isLayoutDrag && resolveInsertTargetTerminalId() !== null;
+  }, [resolveInsertTargetTerminalId]);
+
+  /** Client-coordinate band that accepts the reference: the CLI's input box. */
+  const resolveSessionInsertZoneBounds = useCallback((rect: DOMRect) => {
+    const terminalId = resolveInsertTargetTerminalId();
+    const promptBounds = terminalId ? getTerminalPromptBounds(terminalId) : null;
+    return promptBounds ?? {
+      top: rect.bottom - SESSION_INSERT_ZONE_FALLBACK_HEIGHT,
+      bottom: rect.bottom,
+    };
+  }, [resolveInsertTargetTerminalId]);
 
   const isPanelCompatibleDrag = useCallback((e: React.DragEvent) => {
     // OS file drags carry the synthetic 'Files' type and no in-app payload;
@@ -179,6 +229,23 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     const rect = wrapperRef.current?.getBoundingClientRect();
     if (!rect) return;
 
+    const insertBounds = isTerminalSessionRefTarget(e)
+      ? resolveSessionInsertZoneBounds(rect)
+      : null;
+    const inSessionInsertZone = insertBounds !== null
+      && e.clientY >= insertBounds.top
+      && e.clientY <= insertBounds.bottom;
+    sessionInsertZoneRef.current = inSessionInsertZone;
+    setSessionInsertZone(inSessionInsertZone && insertBounds
+      ? { top: insertBounds.top - rect.top, height: insertBounds.bottom - insertBounds.top }
+      : null);
+    if (inSessionInsertZone) {
+      dropEdgeRef.current = null;
+      setDropEdge(null);
+      setInsertPathHint(false);
+      return;
+    }
+
     // Insert-only drags (folders, OS files) have no split behavior, so the
     // whole pane acts as center.
     const edge = isNativeFile || isPathInsertOnlyDragData(e.dataTransfer)
@@ -190,7 +257,13 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       edge === 'center' &&
       (isNativeFile ? isNativeFilePathInsertTarget(e) : isTerminalPathInsertTarget(e)),
     );
-  }, [isPanelCompatibleDrag, isTerminalPathInsertTarget, isNativeFilePathInsertTarget]);
+  }, [
+    isPanelCompatibleDrag,
+    isTerminalPathInsertTarget,
+    isNativeFilePathInsertTarget,
+    isTerminalSessionRefTarget,
+    resolveSessionInsertZoneBounds,
+  ]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
@@ -199,18 +272,23 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     if (dragCounterRef.current <= 0) {
       dragCounterRef.current = 0;
       dropEdgeRef.current = null;
+      sessionInsertZoneRef.current = false;
       setDropEdge(null);
       setInsertPathHint(false);
+      setSessionInsertZone(null);
     }
   }, [isPanelCompatibleDrag]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const currentEdge = dropEdgeRef.current;
+    const droppedInSessionInsertZone = sessionInsertZoneRef.current;
     dragCounterRef.current = 0;
     dropEdgeRef.current = null;
+    sessionInsertZoneRef.current = false;
     setDropEdge(null);
     setInsertPathHint(false);
+    setSessionInsertZone(null);
 
     // OS (Finder/Explorer) file drop → insert each absolute path into the PTY.
     if (currentEdge === 'center' && isNativeFilePathInsertTarget(e)) {
@@ -235,6 +313,33 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       if (filePath && targetTerminalId && insertFilePathIntoTerminal(targetTerminalId, filePath)) {
         usePanelStore.getState().setActivePanelId(panelId);
         focusPanelControl(panelId);
+      }
+      return;
+    }
+
+    // Session dropped on a terminal pane's insert strip → type its export
+    // reference at the prompt, mirroring what the composer does for chat
+    // sessions.
+    if (droppedInSessionInsertZone && isTerminalSessionRefTarget(e)) {
+      const referencedSessionId = e.dataTransfer.getData(SESSION_DRAG_MIME);
+      const targetTerminalId = resolveInsertTargetTerminalId();
+      if (referencedSessionId && targetTerminalId) {
+        const title = projectViewWorkspaceState.resolveSession(referencedSessionId)?.title
+          ?? referencedSessionId.slice(0, 8);
+        // Unlike a path insert this needs a round trip (the session is exported
+        // first), so the focus move waits for the text to actually land.
+        void insertSessionReferenceIntoTerminal(targetTerminalId, referencedSessionId, title)
+          .then((inserted) => {
+            if (!inserted) return;
+            usePanelStore.getState().setActivePanelId(panelId);
+            focusPanelControl(panelId);
+            void captureTelemetryEvent('workspace_item_moved', {
+              item_type: 'session',
+              move_kind: 'reference',
+              item_count: 1,
+            });
+          })
+          .catch(() => toast.error(t('errors.sessionExportFailed')));
       }
       return;
     }
@@ -277,10 +382,17 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       const nextPanelStore = usePanelStore.getState();
       const nextTabData = nextPanelStore.tabPanels[nextPanelStore.activeTabId];
       const nextSessionId = nextTabData?.panels[graftedActivePanelId]?.sessionId ?? null;
-      const session = nextSessionId ? useSessionStore.getState().getSession(nextSessionId) : null;
+      const session = nextSessionId
+        ? projectViewWorkspaceState.resolveSession(nextSessionId)
+        : null;
       if (session) {
         viewSession(session, { forceReload: true });
       }
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'panel',
+        item_count: 1,
+      });
       return;
     }
 
@@ -326,10 +438,15 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
         usePanelStore.getState().setActivePanelId(panelId);
         useTabStore.getState().pinTab(currentTabId);
 
-        const session = useSessionStore.getState().getSession(droppedSessionId);
+        const session = projectViewWorkspaceState.resolveSession(droppedSessionId);
         if (session) {
           viewSession(session, { forceReload: true });
         }
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'session',
+          move_kind: 'panel',
+          item_count: 1,
+        });
         return;
       }
 
@@ -346,9 +463,14 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       const newPanelId = usePanelStore.getState().splitPanel(panelId, direction, droppedSessionId, position);
       if (newPanelId) {
         useTabStore.getState().pinTab(currentTabId);
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'session',
+          move_kind: 'panel',
+          item_count: 1,
+        });
       }
 
-      const session = useSessionStore.getState().getSession(droppedSessionId);
+      const session = projectViewWorkspaceState.resolveSession(droppedSessionId);
       if (session) {
         viewSession(session, { forceReload: true });
       }
@@ -371,10 +493,17 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
         useTabStore.getState().pinTab(currentTabId);
         const nextTabData = usePanelStore.getState().tabPanels[currentTabId];
         const movedSessionId = nextTabData?.panels[movedPanelId]?.sessionId ?? null;
-        const session = movedSessionId ? useSessionStore.getState().getSession(movedSessionId) : null;
+        const session = movedSessionId
+          ? projectViewWorkspaceState.resolveSession(movedSessionId)
+          : null;
         if (session) {
           viewSession(session, { forceReload: true });
         }
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'session',
+          move_kind: 'panel',
+          item_count: 1,
+        });
       }
       return;
     }
@@ -403,9 +532,11 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
     // Re-read fresh state after source-clearing mutation
     const freshState = usePanelStore.getState();
+    let didMoveSession = false;
     if (currentEdge === 'center') {
       // Center zone — replace/assign session (no split)
       freshState.assignSession(panelId, droppedSessionId);
+      didMoveSession = true;
     } else {
       // Edge zone — split the target panel, including empty panels.
       const direction: 'horizontal' | 'vertical' =
@@ -416,15 +547,32 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       if (newPanelId) {
         const tabStore = useTabStore.getState();
         tabStore.pinTab(tabStore.activeTabId);
+        didMoveSession = true;
       }
     }
 
+    if (didMoveSession) {
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'session',
+        move_kind: 'panel',
+        item_count: 1,
+      });
+    }
+
     // Load session history
-    const session = useSessionStore.getState().getSession(droppedSessionId);
+    const session = projectViewWorkspaceState.resolveSession(droppedSessionId);
     if (session) {
       viewSession(session, { forceReload: true });
     }
-  }, [panelId, t, viewSession, isTerminalPathInsertTarget, isNativeFilePathInsertTarget, resolveInsertTargetTerminalId]);
+  }, [
+    panelId,
+    t,
+    viewSession,
+    isTerminalPathInsertTarget,
+    isNativeFilePathInsertTarget,
+    isTerminalSessionRefTarget,
+    resolveInsertTargetTerminalId,
+  ]);
 
   return (
     <div
@@ -456,6 +604,18 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
           edge={dropEdge}
           label={insertPathHint ? t('panel.dropToInsertPath') : undefined}
         />
+      )}
+      {sessionInsertZone && (
+        <div
+          // Solid + denser fill so it never reads as the dashed split overlay.
+          className="pointer-events-none absolute inset-x-1 z-50 flex items-center justify-center rounded-md border-2 border-solid border-(--accent) bg-(--accent)/25"
+          style={{ top: sessionInsertZone.top, height: sessionInsertZone.height }}
+          data-testid="session-insert-drop-zone"
+        >
+          <span className="rounded-md bg-(--accent) px-2 py-1 text-xs font-medium text-white shadow-sm">
+            {t('panel.dropToInsertSessionReference')}
+          </span>
+        </div>
       )}
     </div>
   );

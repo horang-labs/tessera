@@ -85,9 +85,8 @@ export function attachManagedProcessHandlers({
 
   cliProcess.stdout?.on('data', (chunk: Buffer) => {
     const info = processes.get(sessionId);
-    if (info) {
-      info.lastActivityAt = new Date();
-    }
+    if (!info || info.process !== cliProcess) return;
+    info.lastActivityAt = new Date();
 
     stdoutBuffer += chunk.toString();
     const lines = stdoutBuffer.split('\n');
@@ -99,14 +98,17 @@ export function attachManagedProcessHandlers({
   });
 
   cliProcess.stderr?.on('data', (chunk: Buffer) => {
+    if (processes.get(sessionId)?.process !== cliProcess) return;
     logger.error({ sessionId, output: chunk.toString() }, 'CLI stderr');
   });
 
   cliProcess.on('exit', (code, signal) => {
+    if (processes.get(sessionId)?.process !== cliProcess) return;
     handleProcessExit(sessionId, userId, code, signal);
   });
 
   cliProcess.on('error', (error) => {
+    if (processes.get(sessionId)?.process !== cliProcess) return;
     handleProcessError(sessionId, error);
   });
 }

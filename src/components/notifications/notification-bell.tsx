@@ -5,7 +5,9 @@ import { Bell } from 'lucide-react';
 import { useNotificationStore } from '@/stores/notification-store';
 import { NotificationCenter } from './notification-center';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface NotificationBellProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -29,15 +31,19 @@ export function NotificationBell({ direction = 'down' }: NotificationBellProps) 
   return (
     <div className="relative">
       <Button
+        {...telemetryClickAttributes('notifications.open', 'notifications')}
         ref={buttonRef}
+        data-testid="notification-bell"
         variant="ghost"
         size={direction === 'right' ? 'icon-lg' : 'icon'}
         onClick={handleToggle}
         aria-label={t('notifications.title')}
         title={t('notifications.title')}
-        className={direction === 'right' ? 'relative rounded-none h-11 w-9 mx-auto' : 'relative'}
+        className={direction === 'right'
+          ? 'relative rounded-none h-11 w-9 mx-auto max-sm:!h-8 max-sm:!w-8 max-sm:!min-w-0 max-sm:!min-h-0'
+          : 'relative'}
       >
-        <Bell className={direction === 'right' ? 'w-5 h-5' : 'w-4 h-4'} />
+        <Bell className={cn(direction === 'right' ? 'w-5 h-5 max-sm:w-3.5 max-sm:h-3.5' : 'w-4 h-4')} />
         {unreadCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-(--error) text-[10px] font-bold text-white">
             {unreadCount > 9 ? '9+' : unreadCount}

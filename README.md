@@ -165,7 +165,7 @@ Electron build outputs are written under `release/`.
 
 Tessera runs locally, stores app data under `~/.tessera/` by default, and sends provider requests through the Claude Code, Codex, or OpenCode CLI installed on your machine.
 
-Published builds include minimal anonymous usage telemetry that you can disable during onboarding or in Settings. Tessera does not collect prompts, messages, file paths, command output, repository names, or account details.
+Published builds include anonymous product-interaction telemetry that you can disable during onboarding or in Settings. This includes which named controls and features are used, anonymous Tessera CLI operation names, and a coarse mobile-or-desktop classification computed locally, but never visible UI text, prompts, messages, CLI arguments, file paths, command output, repository names, raw device details, or account details.
 
 ## Teams And Design Partners
 

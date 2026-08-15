@@ -15,7 +15,7 @@ import {
   GitPullRequest,
   LoaderCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -24,7 +24,28 @@ import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { useI18n } from "@/lib/i18n";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
-import type { GitChangedFile, GitDiffData, GitPanelData } from "@/types/git";
+import { deriveGitConflictRecovery } from "@/lib/git/git-conflict-recovery";
+import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
+import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
+import type { GitPendingVerb } from "./use-git-panel-controller";
+import type {
+  GitChangedFile,
+  GitConflictOperation,
+  GitDiffData,
+  GitPanelData,
+} from "@/types/git";
+import { useGitStore } from "@/stores/git-store";
+import { isCurrentTaskPr } from '@/types/task-pr-status';
+import { GitActionMenu } from "./git-action-menu";
+import { GitActionFailureBanner } from "./git-action-failure-banner";
+import { GitConflictResolveWithAiButton } from "./git-conflict-ai-button";
+import type { GitActionFailureReport } from "./git-action-report";
+import { GitCommitForm } from "./git-commit-form";
+import { GitPrimaryActionBar } from "./git-primary-action";
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+} from "@/lib/telemetry/ui-click";
 import {
   FILE_STATE_META,
 } from "./git-panel-shared";
@@ -74,15 +95,30 @@ function getGitPanelWorktreeName(data: GitPanelData): string {
     : data.worktreeName;
 }
 
+/**
+ * The recorded base, shortened for a row that is 4.5rem of label and whatever
+ * is left. The remote stays (`origin/dev`, not `dev`) because a base on a
+ * remote and one on a local branch of the same name are different answers, and
+ * this row exists to tell them apart.
+ */
+export function formatGitBaseRefLabel(baseRef: string): string {
+  return baseRef
+    .replace(/^refs\/remotes\//, "")
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/tags\//, "");
+}
+
 function GitSummaryCopyButton({
   ariaLabel,
   disabled,
   onClick,
+  telemetryControl,
   tooltip,
 }: {
   ariaLabel: string;
   disabled?: boolean;
   onClick: () => void;
+  telemetryControl: TelemetryUiControl;
   tooltip: string;
 }) {
   return (
@@ -91,8 +127,12 @@ function GitSummaryCopyButton({
         type="button"
         variant="ghost"
         size="icon"
-        className="pointer-events-none h-6 w-6 shrink-0 rounded text-(--text-muted) opacity-0 transition-opacity hover:text-(--text-primary) group-hover/summary-copy:pointer-events-auto group-hover/summary-copy:opacity-100 group-focus-within/summary-copy:pointer-events-auto group-focus-within/summary-copy:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
+        // Below the Phone viewport step the button is simply present: `hover:` compiles
+        // to `@media (hover: hover)`, so on a phone no rule exists to reveal it. The
+        // reveal is kept from `sm` up (#250).
+        className="pointer-events-auto h-6 w-6 shrink-0 rounded text-(--text-muted) opacity-100 sm:pointer-events-none sm:opacity-0 transition-opacity hover:text-(--text-primary) sm:group-hover/summary-copy:pointer-events-auto sm:group-hover/summary-copy:opacity-100 group-focus-within/summary-copy:pointer-events-auto group-focus-within/summary-copy:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
         onClick={onClick}
+        {...telemetryClickAttributes(telemetryControl, "git_panel")}
         disabled={disabled}
         aria-label={ariaLabel}
       >
@@ -152,6 +192,7 @@ function RecentCommitsSection({ data }: { data: GitPanelData }) {
   return (
     <div className="border-t border-(--chat-header-border) px-3 py-2">
       <button
+        {...telemetryClickAttributes('git.section.toggle', 'git_panel')}
         type="button"
         onClick={() => setExpanded((value) => !value)}
         className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-left text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
@@ -345,6 +386,7 @@ export function DiffPreview({
             {onCopyFilePath ? (
               <Tooltip content="Copy absolute path" side="top">
                 <button
+                  {...telemetryClickAttributes('git.diff.copy', 'git_panel')}
                   type="button"
                   onClick={() => onCopyFilePath(selectedFile.path)}
                   className="rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
@@ -386,13 +428,17 @@ export function GitPanelSummarySection({
   onOpenExternal: (url: string | null | undefined) => void;
   showDetails?: boolean;
 }) {
+  const { t } = useI18n();
   const projectName = data ? getGitPanelProjectName(data) : "Repository";
   const worktreeName = data ? getGitPanelWorktreeName(data) : "worktree";
   const branchName = data?.branch ?? "branch";
   const worktreeTooltip = data?.worktreePath ?? "Worktree path unavailable";
   const prUrl = data?.prStatus?.url ?? data?.github.pullRequest?.url;
+  const historicalPr = data?.prStatus ? !isCurrentTaskPr(data.prStatus) : false;
   const prLabel = data?.prStatus
-    ? data.github.pullRequest?.title
+    ? historicalPr
+      ? t('gitPanel.pr.previousLabel', { number: data.prStatus.number })
+      : data.github.pullRequest?.title
       ? `#${data.prStatus.number} ${data.github.pullRequest.title}`
       : `PR #${data.prStatus.number}`
     : "No PR";
@@ -411,6 +457,7 @@ export function GitPanelSummarySection({
                   type="button"
                   className="inline-flex max-w-full cursor-pointer items-center gap-1.5 truncate text-left hover:text-(--accent)"
                   onClick={() => onOpenExternal(data.repoUrl)}
+                  {...telemetryClickAttributes("git.repository.open", "git_panel")}
                   aria-label={`Open repository ${projectName}`}
                 >
                   <span className="min-w-0 truncate">{projectName}</span>
@@ -442,6 +489,7 @@ export function GitPanelSummarySection({
                   <GitSummaryCopyButton
                     ariaLabel="Copy full worktree path"
                     onClick={onCopyWorktreePath}
+                    telemetryControl="git.worktree_path.copy"
                     tooltip="Copy full worktree path"
                   />
                 ) : null}
@@ -459,11 +507,34 @@ export function GitPanelSummarySection({
                   <GitSummaryCopyButton
                     ariaLabel="Copy branch name"
                     onClick={onCopyBranch}
+                    telemetryControl="git.branch.copy"
                     tooltip="Copy branch name"
                   />
                 ) : null}
               </div>
             </div>
+            {/*
+              Only when there is one. Git records no lineage of its own, so a
+              branch made outside Tessera has no answer here, and an empty row
+              would read as "no base" rather than "not known".
+            */}
+            {data?.baseRef ? (
+              <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2">
+                <span className="text-(--text-muted)">Base</span>
+                <Tooltip
+                  content={`Branched from ${data.baseRef}`}
+                  side="bottom"
+                  wrapperClassName="min-w-0 max-w-full"
+                >
+                  <span
+                    className="block min-w-0 truncate font-mono text-(--text-muted)"
+                    data-testid="git-panel-base-ref"
+                  >
+                    {formatGitBaseRefLabel(data.baseRef)}
+                  </span>
+                </Tooltip>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -497,8 +568,12 @@ export function GitPanelSummarySection({
                   <Tooltip content={`Open PR #${data.prStatus?.number ?? data.github.pullRequest?.number}`} side="top" wrapperClassName="min-w-0">
                     <button
                       type="button"
-                      className="min-w-0 cursor-pointer truncate text-left text-xs font-semibold text-(--text-primary) hover:text-(--accent)"
+                      className={cn(
+                        "min-w-0 cursor-pointer truncate text-left text-xs font-semibold hover:text-(--accent)",
+                        historicalPr ? "text-(--text-muted)" : "text-(--text-primary)",
+                      )}
                       onClick={() => onOpenExternal(prUrl)}
+                      {...telemetryClickAttributes("git.pull_request.open", "git_panel")}
                       aria-label={`Open pull request ${data.prStatus?.number ?? data.github.pullRequest?.number}`}
                     >
                       {prLabel}
@@ -551,11 +626,18 @@ export function GitPanelSummarySection({
 
 export function GitPanelContentSection({
   changedFileCount,
+  commit,
+  conflictHandoff,
   data,
   error,
+  failure,
   loading,
+  menu,
+  primary,
+  phoneScrollableContent,
   selectedPath,
   sessionId,
+  targetSelected = Boolean(sessionId),
   setSelectedPath,
   onCopyFilePath,
   onOpenDiffFile,
@@ -563,11 +645,55 @@ export function GitPanelContentSection({
   onOpenReadOnlyFile,
 }: {
   changedFileCount: number;
+  commit: {
+    draftBlocked: boolean;
+    generateError: string | null;
+    generating: boolean;
+    isSelected: (path: string) => boolean;
+    message: string;
+    onGenerate: () => void;
+    onMessageChange: (value: string) => void;
+    onSetAllSelected: (selected: boolean) => void;
+    onToggleFile: (path: string) => void;
+    totals: { files: number; added: number; removed: number };
+  };
+  conflictHandoff: {
+    available: boolean;
+    pending: boolean;
+    onPrepare: () => void;
+  };
   data: GitPanelData | null;
   error: string | null;
+  /**
+   * The last Git action that failed, or null. Distinct from `error`, which is
+   * the panel failing to load: this one is a panel that reads fine reporting a
+   * command that did not (#248).
+   */
+  failure: {
+    report: GitActionFailureReport | null;
+    onDismiss: () => void;
+  };
   loading: boolean;
+  /** The one Git action this state calls for, and the press that runs it. */
+  primary: {
+    action: GitPrimaryAction;
+    /** What is running here, whether this button or the menu started it. */
+    pendingVerb: GitPendingVerb | null;
+    onRun: () => void;
+  };
+  /** Phone-only content that joins the changed files in one scroll region. */
+  phoneScrollableContent?: {
+    summary: React.ReactNode;
+    commits: React.ReactNode;
+  };
+  /** Every Git action, always, derived independently of the primary (§4). */
+  menu: {
+    actions: readonly GitMenuAction[];
+    onRun: (id: GitMenuActionId) => void;
+  };
   selectedPath: string | null;
   sessionId: string | null;
+  targetSelected?: boolean;
   setSelectedPath: (path: string | null) => void;
   onCopyFilePath: (relativePath: string) => void;
   onOpenDiffFile: (file: GitChangedFile) => void;
@@ -575,171 +701,306 @@ export function GitPanelContentSection({
   onOpenReadOnlyFile: (file: GitChangedFile) => void;
 }) {
   const { t } = useI18n();
+  const recovery = deriveGitConflictRecovery(data);
   const [contextMenu, setContextMenu] = useState<{
     absolutePath: string;
     canOpenFile: boolean;
     position: { x: number; y: number };
   } | null>(null);
 
-  return (
+  // One element, handed to whichever of the two surfaces draws the button: the
+  // menu is the same list either way, and §4 keeps it beside the button on every
+  // rung rather than only on the ones with a commit form under them.
+  const actionMenu = (
+    <GitActionMenu
+      actions={menu.actions}
+      pending={primary.pendingVerb !== null}
+      commitDraftBlocked={commit.draftBlocked}
+      onRun={menu.onRun}
+    />
+  );
+
+  const actionArea = primary.action.kind === "commit" || primary.action.kind === "loading" ? (
+    <GitCommitForm
+      pendingVerb={primary.pendingVerb}
+      generateError={commit.generateError}
+      generating={commit.generating}
+      menu={actionMenu}
+      message={commit.message}
+      onCommit={primary.onRun}
+      onGenerate={commit.onGenerate}
+      onMessageChange={commit.onMessageChange}
+      primaryAction={primary.action}
+      totals={commit.totals}
+    />
+  ) : (
+    <GitPrimaryActionBar
+      action={primary.action}
+      menu={actionMenu}
+      pendingVerb={primary.pendingVerb}
+      onRun={primary.onRun}
+    />
+  );
+  const hasTarget = targetSelected ?? Boolean(sessionId);
+  const allCommitFilesSelected = changedFileCount > 0
+    && commit.totals.files === changedFileCount;
+
+  const contentBody = (
     <>
-    <div className="flex-1 overflow-hidden p-3">
-      {!sessionId && !loading ? (
+      {!hasTarget && !loading ? (
         <EmptyPanelMessage
           title={t("gitPanel.empty.noWorktreeTitle")}
           body={t("gitPanel.empty.noWorktreeBody")}
         />
       ) : null}
 
-      {loading || error || !data ? null : (
-        changedFileCount === 0 ? (
-          <EmptyPanelMessage
-            title={t("gitPanel.empty.cleanTitle")}
-            body={t("gitPanel.empty.cleanBody")}
-            icon="clean"
-          />
-        ) : (
-          <div className="flex h-full flex-col gap-2">
-            <div className="flex items-center justify-between px-1">
-              <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
-                Changed files
-              </span>
-              <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
-                {data.changedFilesTruncated
-                  ? (data.changedFilesTotal ?? `${changedFileCount}+`)
-                  : changedFileCount}
-              </span>
-            </div>
-            <ScrollArea className="flex-1">
-              <div className="flex flex-col">
-                {data.changedFiles.map((file) => {
-                  const isSelected = file.path === selectedPath;
-                  const canOpenReadOnly = file.state !== "deleted";
-                  const absolutePath = toAbsoluteWorkspacePath(data.worktreePath, file.path);
-                  return (
-                    <div
-                      key={file.path}
-                      draggable={Boolean(sessionId)}
-                      onDragStart={(event) => {
-                        if (!sessionId) return;
-                        setSelectedPath(file.path);
-                        setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path, absolutePath);
-                      }}
-                      className={cn(
-                        "group relative border-l-2 transition-colors",
-                        isSelected
-                          ? "border-l-(--accent) bg-(--accent)/10 text-(--text-primary)"
-                          : "border-l-transparent text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
-                      )}
-                      data-testid={`git-panel-file-row-${file.path}`}
-                      onContextMenu={(event) => {
-                        if (!absolutePath) return;
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setSelectedPath(file.path);
-                        setContextMenu({
-                          absolutePath,
-                          canOpenFile: canOpenReadOnly,
-                          position: { x: event.clientX, y: event.clientY },
-                        });
-                      }}
+      {!hasTarget ? null : (
+        <div className={cn("flex flex-col gap-2", !phoneScrollableContent && "h-full")}>
+          {/*
+            The primary action renders on every rung, including the ones where
+            the panel below it has nothing to show — a clean tree still has a
+            push to offer, and a session whose state has not arrived holds a
+            disabled Commit rather than a gap (ADR 0007).
+          */}
+          {phoneScrollableContent ? null : actionArea}
+
+          {/*
+            Directly under the button that raised it, and outside the gate
+            below: a failure has to be readable on a rung with nothing else to
+            show — a clean tree whose push Git refused (#248).
+          */}
+          {failure.report ? (
+            <GitActionFailureBanner
+              report={failure.report}
+              onDismiss={failure.onDismiss}
+            />
+          ) : null}
+
+          {loading || error || !data ? null : recovery ? (
+            <GitConflictRecoverySection
+              data={data}
+              conflictHandoff={conflictHandoff}
+              onOpenDiffFile={onOpenDiffFile}
+              setSelectedPath={setSelectedPath}
+            />
+          ) : (
+            changedFileCount === 0 ? (
+              <EmptyPanelMessage
+                title={t("gitPanel.empty.cleanTitle")}
+                body={t("gitPanel.empty.cleanBody")}
+                icon="clean"
+              />
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-2 px-1">
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
+                    {t("gitPanel.commit.changedFiles")}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={primary.pendingVerb !== null}
+                      onClick={() => commit.onSetAllSelected(!allCommitFilesSelected)}
+                      {...telemetryClickAttributes("git.commit_file.toggle_all", "git_panel")}
+                      className="rounded px-1 py-0.5 text-[10px] font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedPath(file.path);
-                          onOpenDiffFile(file);
-                        }}
-                        onDoubleClick={() => {
-                          setSelectedPath(file.path);
-                          onPinDiffFile(file);
-                        }}
-                        className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left"
-                      >
-                        <FileBadge file={file} />
-                        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-                          {file.path}
-                        </span>
-                        <span className="transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
-                          <FileDiffStats stats={file.diffStats} />
-                        </span>
-                      </button>
-                      <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-                        <Tooltip content="Open diff">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPath(file.path);
-                              onOpenDiffFile(file);
-                            }}
-                            className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-                            aria-label={`Open diff for ${file.path}`}
-                          >
-                            <GitCompare className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                        <Tooltip
-                          content={
-                            canOpenReadOnly
-                              ? "Open file"
-                              : "Deleted file has no working copy"
-                          }
+                      {t(allCommitFilesSelected
+                        ? "gitPanel.commit.deselectAll"
+                        : "gitPanel.commit.selectAll")}
+                    </button>
+                    <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
+                      {data.changedFilesTruncated
+                        ? (data.changedFilesTotal ?? `${changedFileCount}+`)
+                        : changedFileCount}
+                    </span>
+                  </span>
+                </div>
+                <ScrollArea className={cn(phoneScrollableContent ? "overflow-y-visible" : "flex-1")}>
+                  <div className="flex flex-col">
+                    {data.changedFiles.map((file) => {
+                      const isSelected = file.path === selectedPath;
+                      const canOpenReadOnly = file.state !== "deleted";
+                      const absolutePath = toAbsoluteWorkspacePath(data.worktreePath, file.path);
+                      return (
+                        <div
+                          key={file.path}
+                          draggable={Boolean(sessionId)}
+                          onDragStart={(event) => {
+                            if (!sessionId) return;
+                            setSelectedPath(file.path);
+                            setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path, absolutePath);
+                          }}
+                          className={cn(
+                            "group relative border-l-2 transition-colors",
+                            isSelected
+                              ? "border-l-(--accent) bg-(--accent)/10 text-(--text-primary)"
+                              : "border-l-transparent text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+                          )}
+                          data-testid={`git-panel-file-row-${file.path}`}
+                          onContextMenu={(event) => {
+                            if (!absolutePath) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setSelectedPath(file.path);
+                            setContextMenu({
+                              absolutePath,
+                              canOpenFile: canOpenReadOnly,
+                              position: { x: event.clientX, y: event.clientY },
+                            });
+                          }}
                         >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedPath(file.path);
-                              onOpenReadOnlyFile(file);
-                            }}
-                            onDragStart={(event) => {
-                              event.stopPropagation();
-                              if (!sessionId || !canOpenReadOnly) {
-                                event.preventDefault();
-                                return;
+                          <div className="flex w-full min-w-0 items-center">
+                            <input
+                              type="checkbox"
+                              checked={commit.isSelected(file.path)}
+                              // The selection is an input to the commit, so it
+                              // locks with the rest of the form (§7) rather
+                              // than only while a commit is what is running.
+                              disabled={primary.pendingVerb !== null}
+                              onChange={() => commit.onToggleFile(file.path)}
+                              {...telemetryClickAttributes("git.commit_file.toggle", "git_panel")}
+                              aria-label={t("gitPanel.commit.includeFile", {
+                                path: file.path,
+                              })}
+                              data-testid={`git-commit-file-checkbox-${file.path}`}
+                              className="ml-2 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedPath(file.path);
+                                onOpenDiffFile(file);
+                              }}
+                              {...telemetryClickAttributes("git.file.diff_open", "git_panel")}
+                              onDoubleClick={() => {
+                                setSelectedPath(file.path);
+                                onPinDiffFile(file);
+                              }}
+                              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+                            >
+                              <FileBadge file={file} />
+                              <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                                {file.path}
+                              </span>
+                              {/* The inversion of the rule below: the diff stats give way
+                                  to the action overlay. Below the Phone viewport step that
+                                  overlay is always up, so these always give way (#250). */}
+                              <span className="opacity-0 sm:opacity-100 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                                <FileDiffStats stats={file.diffStats} />
+                              </span>
+                            </button>
+                          </div>
+                          {/* Below the Phone viewport step the actions are simply present:
+                              `hover:` compiles to `@media (hover: hover)`, so on a phone no
+                              rule exists to reveal them. Kept hover-revealed from `sm` up. */}
+                          <div className="pointer-events-auto absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-(--sidebar-hover)/95 opacity-100 sm:pointer-events-none sm:opacity-0 shadow-sm transition-opacity sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                            <Tooltip content="Open diff">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedPath(file.path);
+                                  onOpenDiffFile(file);
+                                }}
+                                {...telemetryClickAttributes("git.file.diff_open", "git_panel")}
+                                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                                aria-label={`Open diff for ${file.path}`}
+                              >
+                                <GitCompare className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                            <Tooltip
+                              content={
+                                canOpenReadOnly
+                                  ? "Open file"
+                                  : "Deleted file has no working copy"
                               }
-                              setSelectedPath(file.path);
-                              setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path, absolutePath);
-                            }}
-                            draggable={Boolean(sessionId && canOpenReadOnly)}
-                            disabled={!canOpenReadOnly}
-                            className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-35"
-                            aria-label={`Open file ${file.path}`}
-                          >
-                            <FileText className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                        <Tooltip content="Copy absolute path">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onCopyFilePath(file.path);
-                            }}
-                            className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
-                            aria-label={`Copy absolute path for ${file.path}`}
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
-                        </Tooltip>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </ScrollArea>
-            {data.changedFilesTruncated ? (
-              <div className="px-2 pb-1 text-[10px] leading-snug text-(--text-muted)">
-                {data.changedFilesTotal != null
-                  ? `Showing ${changedFileCount} of ${data.changedFilesTotal} changed files. `
-                  : `Showing the first ${changedFileCount} changed files; the repository has many more. `}
-                Add large or generated folders (e.g. .venv, node_modules) to
-                .gitignore to see the rest.
-              </div>
-            ) : null}
-          </div>
-        )
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedPath(file.path);
+                                  onOpenReadOnlyFile(file);
+                                }}
+                                {...telemetryClickAttributes("git.file.open", "git_panel")}
+                                onDragStart={(event) => {
+                                  event.stopPropagation();
+                                  if (!sessionId || !canOpenReadOnly) {
+                                    event.preventDefault();
+                                    return;
+                                  }
+                                  setSelectedPath(file.path);
+                                  setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path, absolutePath);
+                                }}
+                                draggable={Boolean(sessionId && canOpenReadOnly)}
+                                disabled={!canOpenReadOnly}
+                                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-35"
+                                aria-label={`Open file ${file.path}`}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                            <Tooltip content="Copy absolute path">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onCopyFilePath(file.path);
+                                }}
+                                {...telemetryClickAttributes("git.file.copy_path", "git_panel")}
+                                className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary)"
+                                aria-label={`Copy absolute path for ${file.path}`}
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+                {data.changedFilesTruncated ? (
+                  <div className="px-2 pb-1 text-[10px] leading-snug text-(--text-muted)">
+                    {data.changedFilesTotal != null
+                      ? `Showing ${changedFileCount} of ${data.changedFilesTotal} changed files. `
+                      : `Showing the first ${changedFileCount} changed files; the repository has many more. `}
+                    Add large or generated folders (e.g. .venv, node_modules) to
+                    .gitignore to see the rest.
+                  </div>
+                ) : null}
+              </>
+            )
+          )}
+        </div>
       )}
-    </div>
+    </>
+  );
+
+  return (
+    <>
+    {phoneScrollableContent ? (
+      <>
+        {hasTarget ? (
+          <div
+            className="z-20 shrink-0 border-b border-(--chat-header-border) bg-(--sidebar-bg) px-3 py-3"
+            data-testid="git-panel-fixed-action"
+          >
+            {actionArea}
+          </div>
+        ) : null}
+        <ScrollArea
+          className="min-h-0 flex-1 overscroll-contain"
+          data-testid="git-panel-phone-scroll"
+        >
+          {phoneScrollableContent.summary}
+          <div className="p-3">{contentBody}</div>
+          {phoneScrollableContent.commits}
+          <div aria-hidden style={{ height: "env(safe-area-inset-bottom)" }} />
+        </ScrollArea>
+      </>
+    ) : (
+      <div className="flex-1 overflow-hidden p-3">{contentBody}</div>
+    )}
     {contextMenu ? (
       <WorkspaceFileContextMenu
         absolutePath={contextMenu.absolutePath}
@@ -749,5 +1010,131 @@ export function GitPanelContentSection({
       />
     ) : null}
     </>
+  );
+}
+
+const CONFLICT_OPERATION_LABEL_KEY: Record<
+  GitConflictOperation,
+  | "gitPanel.conflict.mergeOperation"
+  | "gitPanel.conflict.rebaseOperation"
+  | "gitPanel.conflict.cherryPickOperation"
+> = {
+  merge: "gitPanel.conflict.mergeOperation",
+  rebase: "gitPanel.conflict.rebaseOperation",
+  cherry_pick: "gitPanel.conflict.cherryPickOperation",
+};
+
+export function GitConflictRecoverySection({
+  data,
+  conflictHandoff,
+  onOpenDiffFile,
+  setSelectedPath,
+}: {
+  data: GitPanelData;
+  conflictHandoff: {
+    available: boolean;
+    pending: boolean;
+    onPrepare: () => void;
+  };
+  onOpenDiffFile: (file: GitChangedFile) => void;
+  setSelectedPath: (path: string | null) => void;
+}) {
+  const { t } = useI18n();
+  const recovery = deriveGitConflictRecovery(data);
+  const focusRequest = useGitStore((state) => state.conflictRecoveryFocusRequest);
+  const recoveryRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (focusRequest > 0) recoveryRef.current?.focus();
+  }, [focusRequest]);
+
+  if (!recovery) return null;
+
+  const operation = t(CONFLICT_OPERATION_LABEL_KEY[recovery.operation]);
+
+  return (
+    <section
+      ref={recoveryRef}
+      tabIndex={-1}
+      aria-labelledby="git-conflict-recovery-title"
+      data-testid="git-conflict-recovery"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-(--status-warning-border) bg-(--status-warning-bg) outline-none focus-visible:ring-2 focus-visible:ring-(--accent)"
+    >
+      <div className="border-b border-(--status-warning-border) px-3 py-2.5">
+        <div className="flex items-start gap-2">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-(--status-warning-text)" />
+          <div className="min-w-0">
+            <h2
+              id="git-conflict-recovery-title"
+              className="text-xs font-semibold text-(--text-primary)"
+            >
+              {t("gitPanel.conflict.recoveryTitle")}
+            </h2>
+            <p className="mt-0.5 text-[11px] leading-4 text-(--text-secondary)">
+              {t("gitPanel.conflict.operationInProgress", { operation })}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {conflictHandoff.available ? (
+        <GitConflictResolveWithAiButton
+          label={t("gitPanel.conflict.resolveWithAi")}
+          pendingLabel={t("gitPanel.conflict.aiPreparing")}
+          description={t("gitPanel.conflict.aiReviewBoundary")}
+          pending={conflictHandoff.pending}
+          onPrepare={conflictHandoff.onPrepare}
+        />
+      ) : null}
+
+      <div className="flex items-center justify-between px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-(--text-muted)">
+        <span>{t("gitPanel.conflict.unresolvedFiles")}</span>
+        <span className="font-mono tabular-nums">
+          {recovery.unresolvedFiles.length}{recovery.unresolvedFilesTruncated ? '+' : ''}
+        </span>
+      </div>
+
+      {recovery.unresolvedFilesTruncated ? (
+        <p
+          data-testid="git-conflict-files-truncated"
+          className="px-3 pb-2 text-[11px] leading-4 text-(--status-warning-text)"
+        >
+          {t("gitPanel.conflict.unresolvedFilesTruncated")}
+        </p>
+      ) : null}
+
+      {recovery.unresolvedFiles.length === 0 && !recovery.unresolvedFilesTruncated ? (
+        <p className="px-3 pb-3 text-[11px] leading-4 text-(--text-muted)">
+          {t("gitPanel.conflict.noUnresolvedFiles")}
+        </p>
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col pb-2">
+            {recovery.unresolvedFiles.map((file) => (
+              <button
+                {...telemetryClickAttributes('git.file.diff_open', 'git_panel')}
+                key={file.path}
+                type="button"
+                onClick={() => {
+                  setSelectedPath(file.path);
+                  onOpenDiffFile(file);
+                }}
+                data-testid={`git-conflict-file-${file.path}`}
+                className="group flex min-w-0 items-center gap-2 border-l-2 border-l-transparent px-3 py-2 text-left text-(--text-secondary) transition-colors hover:border-l-(--accent) hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              >
+                <FileBadge file={file} />
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                  {file.path}
+                </span>
+                <span className="shrink-0 text-[10px] text-(--text-muted) group-hover:text-(--text-primary)">
+                  {t("gitPanel.conflict.openDiff")}
+                </span>
+                <GitCompare className="h-3.5 w-3.5 shrink-0" />
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
+    </section>
   );
 }

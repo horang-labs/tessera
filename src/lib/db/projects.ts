@@ -2,7 +2,11 @@
  * Project CRUD operations backed by SQLite.
  */
 
+import { normalizePreparationScript } from '@/lib/projects/preparation-script-policy';
+import type { PreparationPhase } from '@/lib/projects/preparation-status-policy';
 import { getDb } from './database';
+import { getWorktree, resolveCanonicalWorktree, type CanonicalWorktree } from './worktrees';
+import { backfillCanonicalProjectViewMembership } from '@/lib/projects/project-view-membership';
 
 export interface ProjectRow {
   id: string;
@@ -11,8 +15,17 @@ export interface ProjectRow {
   provider: string | null;
   visible: number; // 0 | 1
   sort_order: number;
+  /** The `before` stage: what an agent cannot start without. */
+  preparation_script: string | null;
+  /** The `after` stage: what a worktree needs but an agent need not wait for. */
+  preparation_after_script: string | null;
+  project_worktree_id: string | null;
   registered_at: string;
   updated_at: string;
+}
+
+interface RegisterProjectOptions {
+  equivalentFilesystemPaths?: readonly string[];
 }
 
 /**
@@ -24,17 +37,40 @@ export function registerProject(
   decodedPath: string,
   displayName: string,
   provider: string | null = null,
+  options: RegisterProjectOptions = {},
 ): void {
   const db = getDb();
   const now = new Date().toISOString();
+  const projectWorktree = resolveCanonicalWorktree(decodedPath, undefined, options);
   // New projects get sort_order = max + 1 (append to bottom of strip)
   const maxRow = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as max_order FROM projects WHERE visible = 1').get() as { max_order: number };
   const nextOrder = maxRow.max_order + 1;
   db.prepare(`
-    INSERT INTO projects (id, decoded_path, display_name, provider, visible, sort_order, registered_at, updated_at)
-    VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET visible = 1, updated_at = ?
-  `).run(id, decodedPath, displayName, provider, nextOrder, now, now, now);
+    INSERT INTO projects (
+      id, decoded_path, display_name, provider, visible, sort_order,
+      project_worktree_id, registered_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      visible = 1,
+      project_worktree_id = COALESCE(excluded.project_worktree_id, projects.project_worktree_id),
+      updated_at = excluded.updated_at
+  `).run(
+    id,
+    decodedPath,
+    displayName,
+    provider,
+    nextOrder,
+    projectWorktree?.id ?? null,
+    now,
+    now,
+  );
+  backfillCanonicalProjectViewMembership(db, id);
+}
+
+export function getProjectWorktree(projectId: string): CanonicalWorktree | undefined {
+  const row = getProject(projectId);
+  return row?.project_worktree_id ? getWorktree(row.project_worktree_id) : undefined;
 }
 
 /**
@@ -49,6 +85,18 @@ export function removeProject(id: string): void {
  */
 export function getVisibleProjects(): ProjectRow[] {
   return getDb().prepare('SELECT * FROM projects WHERE visible = 1 ORDER BY sort_order, display_name').all() as ProjectRow[];
+}
+
+/**
+ * Get every registered project for read-only Control inspection, including
+ * projects hidden from the active sidebar.
+ */
+export function getAllProjects(): ProjectRow[] {
+  return getDb().prepare(`
+    SELECT *
+    FROM projects
+    ORDER BY visible DESC, sort_order, display_name
+  `).all() as ProjectRow[];
 }
 
 /**
@@ -100,4 +148,30 @@ export function isRegistered(id: string): boolean {
  */
 export function getProject(id: string): ProjectRow | undefined {
   return getDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
+}
+
+/**
+ * Write one of a project's preparation scripts and return what was stored.
+ * A blank script is stored as no script at all.
+ */
+export function setPreparationScript(
+  id: string,
+  script: string | null,
+  phase: PreparationPhase = 'before',
+): string | null {
+  const normalized = normalizePreparationScript(script);
+  // The column is chosen from a closed set, never from anything a caller sends.
+  const column = phase === 'after' ? 'preparation_after_script' : 'preparation_script';
+  getDb()
+    .prepare(`UPDATE projects SET ${column} = ?, updated_at = ? WHERE id = ?`)
+    .run(normalized, new Date().toISOString(), id);
+  return normalized;
+}
+
+/** The script a stage runs, or null when that stage has nothing to do. */
+export function readProjectPreparationScript(
+  project: Pick<ProjectRow, 'preparation_script' | 'preparation_after_script'>,
+  phase: PreparationPhase,
+): string | null {
+  return phase === 'after' ? project.preparation_after_script : project.preparation_script;
 }

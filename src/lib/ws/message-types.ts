@@ -8,6 +8,9 @@ import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type { PreparationStatus } from '@/lib/projects/preparation-status-policy';
+import type { WorkflowStatus } from '@/types/task-entity';
+import type { TerminalInterruptInputPolicy } from '@/lib/cli/providers/types';
 import type {
   TerminalAppearance,
   TerminalLaunchIntent,
@@ -113,6 +116,13 @@ export type ClientMessage =
       previewOwnerToken: string;
     }
   | { type: 'terminal_input'; requestId: string; terminalId: string; surfaceId: string; data: string }
+  | {
+      type: 'terminal_prompt';
+      requestId: string;
+      submissionId: string;
+      sessionId: string;
+      text: string;
+    }
   | {
       type: 'terminal_set_appearance';
       requestId: string;
@@ -249,7 +259,7 @@ export type ModelUsageEntry = {
 };
 
 export type AppServerMessage =
-  | ({ type: 'session_created'; sessionId: string; status: 'ready'; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
+  | ({ type: 'session_created'; sessionId: string; status: 'ready'; projectId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
   | ({ type: 'session_started'; sessionId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'session_closed'; sessionId: string }
   | {
@@ -289,6 +299,8 @@ export type AppServerMessage =
       status: 'running' | 'completed' | 'input_required' | 'idle';
       hookEvent: string;
       preview?: string;
+      /** Provider-declared input gesture available while this terminal turn is active. */
+      interruptInputPolicy?: TerminalInterruptInputPolicy;
       /** Active child work prevents an Escape fallback from settling the turn. */
       hasWorkingSubagents?: boolean;
       /**
@@ -297,6 +309,25 @@ export type AppServerMessage =
        * 같은 완료가 다시 도착해도 알림이 중복 발화하지 않게 한다.
        */
       stateAt?: number;
+    }
+  | {
+      /**
+       * Live-only liveness tick for an in-flight tool call (Claude Code
+       * `tool_progress` stdout messages). Deliberately NOT replay-transported
+       * and NOT persisted to session history — heartbeats fire every 30s and
+       * would bloat the transcript; on replay the card just shows the final
+       * tool_call status.
+       */
+      type: 'tool_progress';
+      sessionId: string;
+      toolUseId: string;
+      toolName?: string;
+      elapsedTimeSeconds: number;
+      /** True for the 30s keep-alive heartbeat variant (vs output-driven ticks). */
+      heartbeat?: boolean;
+      /** Background task id, present on bash/powershell progress ticks. */
+      taskId?: string;
+      timestamp: string;
     }
   | {
       type: 'terminal_session_runtime';
@@ -320,6 +351,26 @@ export type AppServerMessage =
       }>;
     }
   | { type: 'error'; sessionId?: string; code: string; message: string; requestId?: string }
+  | {
+      type: 'terminal_prompt_accepted';
+      requestId: string;
+      sessionId: string;
+    }
+  /**
+   * The message landed, but the agent it is for cannot start yet: the
+   * worktree's blocking preparation is still running. Sent only when a message
+   * is actually held, so a session that never waits never hears about
+   * preparation at all.
+   */
+  | { type: 'session_awaiting_preparation'; sessionId: string }
+  /** The wait is over, either way; the agent is starting. */
+  | { type: 'session_preparation_settled'; sessionId: string }
+  /**
+   * The terminal was asked for, but the agent in it is waiting on the
+   * worktree's blocking preparation. No PTY exists yet, so the surface says so
+   * itself; `terminal_started` follows once the wait is over.
+   */
+  | { type: 'terminal_awaiting_preparation'; terminalId: string; surfaceId: string }
   | { type: 'terminal_prefill_written'; terminalId: string }
   | { type: 'terminal_prefill_cancelled'; terminalId: string; message: string }
   | {
@@ -340,6 +391,8 @@ export type AppServerMessage =
       shell: string;
       reattached: boolean;
       appearance?: TerminalAppearance;
+      /** Provider-declared input gesture for cancelling an active terminal turn. */
+      interruptInputPolicy?: TerminalInterruptInputPolicy;
     }
   | {
       type: 'terminal_snapshot';
@@ -354,6 +407,24 @@ export type AppServerMessage =
       alternateScreen?: boolean;
       scrollbackAnsi?: string;
       pendingEscapeTailAnsi?: string;
+    }
+  /**
+   * The grid the PTY has actually applied, echoed after every terminal_resize.
+   *
+   * `terminal_resize` is fire-and-forget: a surface that is not the viewport
+   * owner has its request dropped, and a request that races a detach never
+   * reaches the PTY at all. Without a readback the client settles on a size the
+   * PTY never took — xterm renders one grid while the TUI draws another, which
+   * is the garbled-until-manual-resize failure. This is the readback.
+   */
+  | {
+      type: 'terminal_grid';
+      terminalId: string;
+      surfaceId: string;
+      cols: number;
+      rows: number;
+      /** False when another surface owns the viewport and this request was dropped. */
+      accepted: boolean;
     }
   | {
       type: 'terminal_output';
@@ -475,6 +546,10 @@ export type AppServerMessage =
       timestamp?: string;
     }
   | {
+      type: 'skills_changed';
+      sessionId: string;
+    }
+  | {
       type: 'skill_analysis_progress';
       status: 'scanning' | 'analyzing' | 'completed' | 'failed';
       skillCount?: number;
@@ -514,6 +589,7 @@ export type AppServerMessage =
       type: 'task_pr_status_update';
       taskId: string;
       prStatus?: import('@/types/task-pr-status').TaskPrStatus;
+      prStatusKnown: boolean;
       prUnsupported: boolean;
       remoteBranchExists?: boolean;
     }
@@ -521,6 +597,7 @@ export type AppServerMessage =
       type: 'session_pr_status_update';
       sessionId: string;
       prStatus?: import('@/types/task-pr-status').TaskPrStatus;
+      prStatusKnown: boolean;
       prUnsupported: boolean;
       remoteBranchExists?: boolean;
     }
@@ -554,12 +631,23 @@ export type AppServerMessage =
       kind: 'created' | 'updated' | 'deleted' | 'reordered' | 'project_reordered' | 'project_deleted';
       originClientId?: string;
       projectId?: string;
+      sessionId?: string;
+      taskId?: string;
+      archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'task_mutated';
       kind: 'created' | 'updated' | 'deleted' | 'reordered';
       originClientId?: string;
       projectId: string;
+      taskId?: string;
+      sessionId?: string;
+      title?: string;
+      workflowStatus?: WorkflowStatus;
+      preparationStatus?: PreparationStatus;
+      archived?: boolean;
+      affectedProjectIds?: string[];
     }
   | {
       type: 'collection_mutated';

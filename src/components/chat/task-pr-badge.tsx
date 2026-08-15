@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 /**
  * Task card status indicators:
  *
@@ -25,7 +27,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { WorkflowStatus } from '@/types/task-entity';
-import type { TaskPrStatus } from '@/types/task-pr-status';
+import { isCurrentTaskPr, type TaskPrStatus } from '@/types/task-pr-status';
 import { useI18n } from '@/lib/i18n';
 
 type TranslateFn = (key: string, options?: Record<string, unknown>) => string;
@@ -46,13 +48,14 @@ export function detectPrMismatch(
   workflowStatus: WorkflowStatus,
   prStatus: TaskPrStatus | undefined,
 ): MismatchKind {
+  const currentPr = prStatus && isCurrentTaskPr(prStatus) ? prStatus : undefined;
   if (workflowStatus === 'in_review') {
-    if (!prStatus) return 'review_missing';
+    if (!currentPr) return 'review_missing';
     return null;
   }
   if (workflowStatus === 'done') {
-    if (!prStatus) return 'done_missing';
-    if (prStatus.state === 'open') return 'done_open';
+    if (!currentPr) return 'done_missing';
+    if (currentPr.state === 'open') return 'done_open';
     return null;
   }
   return null;
@@ -111,6 +114,7 @@ function RemoteBranchIcon({
 function PrIndicator({ prStatus }: { prStatus: TaskPrStatus | undefined }) {
   const { t, language } = useI18n();
   if (!prStatus) return null;
+  const historical = !isCurrentTaskPr(prStatus);
 
   // Match task workflow colors: open PR belongs with Review, merged with Done,
   // closed with error.
@@ -137,20 +141,24 @@ function PrIndicator({ prStatus }: { prStatus: TaskPrStatus | undefined }) {
 
   return (
     <a
+      {...telemetryClickAttributes('message.pr.open', 'message')}
       href={prStatus.url}
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
       className={cn(
         'inline-flex items-center gap-1 text-[0.6875rem] font-medium leading-none no-underline cursor-pointer opacity-90',
-        textClass,
+        historical ? 'text-(--text-muted) opacity-65' : textClass,
       )}
       title={`${t('task.prStatus.title', { number: prStatus.number, state: stateLabel })}${mergedLine}${syncedLine}`}
       data-testid="task-pr-indicator"
       data-state={prStatus.state}
+      data-relation={historical ? 'historical' : 'current'}
     >
       <Icon className="h-3.5 w-3.5" strokeWidth={2} />
-      <span>#{prStatus.number}</span>
+      <span>
+        {historical ? `${t('task.prStatus.previous')} ` : ''}#{prStatus.number}
+      </span>
     </a>
   );
 }
@@ -162,6 +170,7 @@ function PrIndicator({ prStatus }: { prStatus: TaskPrStatus | undefined }) {
 interface TaskPrBadgeProps {
   workflowStatus: WorkflowStatus;
   prStatus?: TaskPrStatus;
+  prStatusKnown?: boolean;
   prUnsupported?: boolean;
   /**
    * Server-reported presence of the task's branch on origin. `undefined`
@@ -177,6 +186,7 @@ interface TaskPrBadgeProps {
 function TaskPrBadgeImpl({
   workflowStatus,
   prStatus,
+  prStatusKnown,
   prUnsupported,
   remoteBranchExists,
   branchName,
@@ -186,7 +196,9 @@ function TaskPrBadgeImpl({
   // Non-GitHub / gh-missing tasks: render nothing (status layer opts out).
   if (prUnsupported) return null;
 
-  const mismatch = detectPrMismatch(workflowStatus, prStatus);
+  const mismatch = prStatusKnown === false
+    ? null
+    : detectPrMismatch(workflowStatus, prStatus);
 
   // Remote branch display rules:
   //  - Present: always show the Cloud icon (reassures branch is pushed).
@@ -201,7 +213,9 @@ function TaskPrBadgeImpl({
     };
   } else if (
     remoteBranchExists === false &&
-    (prStatus?.state === 'open' || prStatus?.state === 'merged')
+    prStatus &&
+    isCurrentTaskPr(prStatus) &&
+    (prStatus.state === 'open' || prStatus.state === 'merged')
   ) {
     const why =
       prStatus.state === 'open'

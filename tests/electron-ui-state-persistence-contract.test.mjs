@@ -22,14 +22,30 @@ const tabStoreSource = fs.readFileSync(
   new URL('../src/stores/tab-store.ts', import.meta.url),
   'utf8',
 );
+const settingsStoreSource = fs.readFileSync(
+  new URL('../src/stores/settings-store.ts', import.meta.url),
+  'utf8',
+);
+const gitStoreSource = fs.readFileSync(
+  new URL('../src/stores/git-store.ts', import.meta.url),
+  'utf8',
+);
 
-test('packaged Electron prefers a stable local server port', () => {
+test('packaged Electron always uses the fixed local server port', () => {
   assert.match(electronMainSource, /const ELECTRON_DEFAULT_PORT = 32123;/);
-  assert.match(electronMainSource, /const ELECTRON_PORT_SCAN_LIMIT = 100;/);
-  assert.match(electronMainSource, /async function findStablePort\(\): Promise<number>/);
-  assert.match(electronMainSource, /const candidate = ELECTRON_DEFAULT_PORT \+ offset;/);
-  assert.match(electronMainSource, /const port = await findStablePort\(\);/);
-  assert.doesNotMatch(electronMainSource, /srv\.listen\(0, '127\.0\.0\.1'/);
+  assert.match(
+    electronMainSource,
+    /const port = resolveElectronServerPort\(ELECTRON_DEFAULT_PORT, electronTestInstance\);/,
+  );
+  assert.doesNotMatch(electronMainSource, /PORT_SCAN_LIMIT/);
+  assert.doesNotMatch(electronMainSource, /findStablePort/);
+  assert.doesNotMatch(electronMainSource, /isPortAvailable/);
+});
+
+test('Electron development keeps an explicitly configured server port', () => {
+  assert.match(electronMainSource, /const devPort = process\.env\.TESSERA_DEV_PORT;/);
+  assert.match(electronMainSource, /serverPort = parseInt\(devPort, 10\);/);
+  assert.match(electronMainSource, /return serverPort;/);
 });
 
 test('Electron UI storage is persisted by main process outside the page origin', () => {
@@ -66,4 +82,18 @@ test('board and tab stores avoid direct origin-scoped localStorage access', () =
   assert.doesNotMatch(tabStoreSource, /\blocalStorage\./);
   assert.match(tabStoreSource, /readUiStorageItem\(TAB_STORE_KEY\)/);
   assert.match(tabStoreSource, /writeUiStorageItem\(TAB_STORE_KEY, JSON\.stringify\(data\)\)/);
+});
+
+test('persisted workspace stores share the origin-independent Electron adapter', () => {
+  assert.match(settingsStoreSource, /storage: createUiJsonStorage<PersistedSettingsState>\(\)/);
+  assert.match(gitStoreSource, /storage: createUiJsonStorage<PersistedGitPanelUIState>\(\)/);
+  assert.doesNotMatch(settingsStoreSource, /\blocalStorage\./);
+  assert.doesNotMatch(gitStoreSource, /\blocalStorage\./);
+});
+
+test('Electron restores the saved native window set and geometry', () => {
+  assert.match(electronMainSource, /WINDOW_LAYOUT_STORAGE_KEY = 'tessera:electron-window-layout'/);
+  assert.match(electronMainSource, /persistWindowLayoutNow\(\);[\s\S]*isQuitRequested = true/);
+  assert.match(electronMainSource, /createWindow\(port, restoredLayout\.main \?\? undefined\)/);
+  assert.match(electronMainSource, /createPopoutWindow\(port, popout\.route, popout\)/);
 });

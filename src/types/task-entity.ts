@@ -38,12 +38,25 @@ export const CHAT_WORKFLOW_ICON_FILL: Record<WorkflowStatus, string> = {
 
 export interface TaskEntity {
   id: string;              // 'task_<uuid>'
+  /** Stable identity of the linked Worktree represented by this task. */
+  worktreeId?: string;
+  /** Stable representative origin Project; Project View membership comes from creationScope. */
   projectId: string;
+  /** Project View currently projecting this Worktree; never persisted as ownership. */
+  projectViewId: string;
   title: string;
   collectionId?: string;   // FK -> collections.id
   workflowStatus: WorkflowStatus;
   worktreeBranch?: string;
-  workDir?: string;        // Working directory (from first session's work_dir)
+  workDir?: string;        // Parent-owned checkout path (legacy child fallback during migration)
+  /** Immutable Project-view placement captured when the Worktree was created. */
+  creationScope?: {
+    originWorktreeId: string;
+    /** Null keeps pre-scope Worktrees visible on every branch. */
+    branch: string | null;
+  };
+  /** Git provenance only; never used to decide Project-view placement. */
+  startPoint?: string;
   /** True when Tessera recorded this worktree as app-managed. */
   worktreeManaged?: boolean;
   archived?: boolean;
@@ -60,8 +73,12 @@ export interface TaskEntity {
   diffStats?: import('./worktree-diff-stats').WorktreeDiffStats | null;
   /** Latest known GitHub PR for the task branch. */
   prStatus?: import('./task-pr-status').TaskPrStatus;
+  /** False while the current GitHub/topology probe is unknown or transient. */
+  prStatusKnown?: boolean;
   /** True when PR sync is not applicable (not GitHub, gh missing, no branch). */
   prUnsupported?: boolean;
+  /** How far the worktree's preparation has progressed, and whether it succeeded. */
+  preparationStatus?: import('@/lib/projects/preparation-status-policy').PreparationStatus;
   /**
    * Whether the worktree's branch still exists on origin. `undefined` means we
    * haven't probed yet (first sync not complete) — UI should treat as unknown
@@ -78,12 +95,23 @@ export interface TaskEntity {
 
 export interface TaskSession {
   id: string;
+  /** Stable representative Project, independent of the Project currently showing it. */
+  originProjectId: string;
   title: string;
   provider?: string;
   lastModified: string;
   isRunning: boolean;
+  /** Preserved only when an archive projection intentionally includes inactive children. */
+  archived?: boolean;
+  /** Live canonical unread state when the Session is present in client workspace state. */
+  unreadCount?: number;
   /** Fixed execution surface inherited from the linked session. */
   kind?: 'chat' | 'terminal';
+  /**
+   * Display order within the task. Starts out as creation order (a new session
+   * is inserted at 0 and pushes the rest down) and survives manual drag-reorder.
+   */
+  sortOrder: number;
 }
 
 export function generateTaskId(): string {

@@ -175,7 +175,7 @@ export async function resolveSessionMemoryDir(
   if (!session) return null;
 
   const candidates: Array<{ root: MemoryRootKey; workspaceRoot: string }> = [];
-  const workDir = session.work_dir?.trim();
+  const workDir = dbSessions.getSessionWorktreeContext(sessionId)?.workDir?.trim();
   if (workDir) candidates.push({ root: "workDir", workspaceRoot: workDir });
   const projectPath = dbProjects.getProject(session.project_id)?.decoded_path?.trim();
   const projectId = session.project_id?.trim();
@@ -249,7 +249,9 @@ export async function resolveGuidelineTargets(
     absolutePath: path.join(configDir, "CLAUDE.md"),
   });
 
-  const workspaceRoot = await resolveSessionWorkspaceFilesystemRoot(sessionId);
+  const workspaceRoot = await resolveSessionWorkspaceFilesystemRoot(sessionId, {
+    agentEnvironment: environment,
+  });
   if (workspaceRoot) {
     targets.push({
       kind: "project-guideline",

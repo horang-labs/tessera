@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderGit2, MessageSquare, ListTodo, X as XIcon } from 'lucide-react';
+import { FolderGit2, MessageSquare, X as XIcon } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSessionCrud } from '@/hooks/use-session-crud';
@@ -18,6 +18,7 @@ import {
 } from '@/lib/worktrees/naming';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { Collection } from '@/types/collection';
+import type { NewSessionDefaultKind } from '@/lib/settings/types';
 import type { WorkflowStatus } from '@/types/task-entity';
 import {
   CliProviderChipSelector,
@@ -25,6 +26,13 @@ import {
 } from './cli-provider-chip-selector';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import {
+  ANCHORED_VIEWPORT_MARGIN,
+  resolveAnchoredAlignedLeft,
+  resolveAnchoredSideLeft,
+} from '@/lib/ui/anchored-viewport';
 
 type QuickCreateMode = 'chat' | 'task';
 type QuickCreatePlacement = 'side' | 'top';
@@ -35,6 +43,7 @@ interface CollectionQuickCreateSheetProps {
   collections?: Collection[];
   projectDir: string;
   projectId: string;
+  /** Omit to follow the user's `defaultNewSessionKind` setting. */
   initialMode?: QuickCreateMode;
   availableModes?: QuickCreateMode[];
   workflowStatus?: WorkflowStatus;
@@ -52,7 +61,6 @@ interface CollectionQuickCreateSheetProps {
 
 const ANCHORED_SHEET_WIDTH = 272;
 const ANCHORED_SHEET_GAP = 8;
-const ANCHORED_VIEWPORT_MARGIN = 12;
 
 interface CollectionQuickCreateModeShortcutInput {
   key: string;
@@ -80,12 +88,34 @@ export function shouldSubmitCollectionQuickCreateFromModeShortcut({
   );
 }
 
+/**
+ * Which entry the sheet opens on. Callers that derive the kind from their own
+ * context (a Kanban column) pass `initialMode` and keep winning; everyone else
+ * follows the user's `defaultNewSessionKind` setting. A task default still
+ * degrades to chat in a sheet that cannot create tasks.
+ */
+export function resolveQuickCreateInitialMode({
+  initialMode,
+  defaultNewSessionKind,
+  availableModes,
+  allowedModes,
+}: {
+  initialMode: QuickCreateMode | undefined;
+  defaultNewSessionKind: NewSessionDefaultKind;
+  availableModes: QuickCreateMode[];
+  allowedModes: Array<'chat' | 'task'>;
+}): QuickCreateMode {
+  const requested = initialMode ?? defaultNewSessionKind;
+  if (requested !== 'task') return 'chat';
+  return availableModes.includes('task') && allowedModes.includes('task') ? 'task' : 'chat';
+}
+
 export function CollectionQuickCreateSheet({
   collection,
   collections = [],
   projectDir,
   projectId,
-  initialMode = 'chat',
+  initialMode,
   availableModes = ['chat', 'task'],
   workflowStatus,
   allowCollectionSelection = false,
@@ -105,10 +135,17 @@ export function CollectionQuickCreateSheet({
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
+  const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
+  const resolvedInitialMode = resolveQuickCreateInitialMode({
+    initialMode,
+    defaultNewSessionKind,
+    availableModes,
+    allowedModes,
+  });
   const [selectedProvider, setSelectedProvider] = useState('');
   const [executionMode, setExecutionModeState] = useState(defaultExecutionMode);
   const executionModeTouchedRef = useRef(false);
-  const [isTaskExpanded, setIsTaskExpanded] = useState(initialMode === 'task');
+  const [isTaskExpanded, setIsTaskExpanded] = useState(resolvedInitialMode === 'task');
   const [taskTitle, setTaskTitle] = useState('');
   const [branchSlug, setBranchSlug] = useState(() => buildManagedWorktreeSlug());
   const [branchSlugEdited, setBranchSlugEdited] = useState(false);
@@ -154,12 +191,12 @@ export function CollectionQuickCreateSheet({
   }, [canSelectCollection, collection?.id]);
 
   useEffect(() => {
-    if (!canCreateTask || initialMode !== 'task') return;
+    if (!canCreateTask || resolvedInitialMode !== 'task') return;
     requestAnimationFrame(() => titleInputRef.current?.focus());
-  }, [canCreateTask, initialMode]);
+  }, [canCreateTask, resolvedInitialMode]);
 
   useEffect(() => {
-    const handleMouseDown = (event: MouseEvent) => {
+    const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       const sheetElement = containerRef.current;
       if (sheetElement?.contains(target)) return;
@@ -172,10 +209,15 @@ export function CollectionQuickCreateSheet({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
-    document.addEventListener('mousedown', handleMouseDown);
+    // Dismiss from the physical interaction boundary, not the compatibility
+    // mouse event. The pointerdown that opened this sheet necessarily happened
+    // before the click mounted it, while Android Chrome may emit a delayed
+    // compatibility mousedown afterwards and retarget it to document.body.
+    // Listening to that tail made the sheet open and immediately disappear.
+    document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [anchorRef, boundaryRef, onClose]);
@@ -193,24 +235,24 @@ export function CollectionQuickCreateSheet({
     let top: number;
 
     if (anchorPlacement === 'top') {
-      const maxLeft = Math.max(ANCHORED_VIEWPORT_MARGIN, viewportWidth - sheetWidth - ANCHORED_VIEWPORT_MARGIN);
       const maxTop = Math.max(ANCHORED_VIEWPORT_MARGIN, viewportHeight - sheetHeight - ANCHORED_VIEWPORT_MARGIN);
-      left = Math.min(
-        Math.max(ANCHORED_VIEWPORT_MARGIN, rect.right - sheetWidth),
-        maxLeft,
-      );
+      left = resolveAnchoredAlignedLeft({
+        anchorRight: rect.right,
+        elementWidth: sheetWidth,
+        viewportWidth,
+      });
       top = rect.top - sheetHeight - ANCHORED_SHEET_GAP;
       if (top < ANCHORED_VIEWPORT_MARGIN) {
         top = Math.min(rect.bottom + ANCHORED_SHEET_GAP, maxTop);
       }
     } else {
-      left = rect.right + ANCHORED_SHEET_GAP;
-      if (left + sheetWidth > viewportWidth - ANCHORED_VIEWPORT_MARGIN) {
-        const fallbackLeft = rect.left - sheetWidth - ANCHORED_SHEET_GAP;
-        left = fallbackLeft >= ANCHORED_VIEWPORT_MARGIN
-          ? fallbackLeft
-          : Math.max(ANCHORED_VIEWPORT_MARGIN, viewportWidth - sheetWidth - ANCHORED_VIEWPORT_MARGIN);
-      }
+      left = resolveAnchoredSideLeft({
+        anchorLeft: rect.left,
+        anchorRight: rect.right,
+        elementWidth: sheetWidth,
+        viewportWidth,
+        gap: ANCHORED_SHEET_GAP,
+      });
 
       top = rect.top;
       if (top + sheetHeight > viewportHeight - ANCHORED_VIEWPORT_MARGIN) {
@@ -249,9 +291,10 @@ export function CollectionQuickCreateSheet({
   const {
     refs: baseRefs,
     selectedBaseRef,
-    selectedBaseRefForCreate,
-    selectedRef,
     setSelectedBaseRef,
+    creationMode: worktreeCreationMode,
+    setCreationMode: setWorktreeCreationMode,
+    worktreeSourceForCreate,
     isLoading: isLoadingBaseRefs,
     error: baseRefError,
   } = useWorktreeBaseRefs(canCreateTask ? projectDir : null);
@@ -270,6 +313,7 @@ export function CollectionQuickCreateSheet({
     try {
       const sessionId = await createSession({
         workDir: projectDir,
+        parentProjectId: projectId,
         providerId: selectedProvider,
         collectionId: selectedCollection?.id,
         executionMode,
@@ -278,10 +322,22 @@ export function CollectionQuickCreateSheet({
 
       await onSessionCreated?.(sessionId);
       onClose();
+      // #258: creating is a stronger statement of intent than selecting —
+      // nobody creates a session in order to keep browsing the list, and on a
+      // phone the sidebar covers the session that was just made (three taps to
+      // reach it was the worst case in the QA report). Last, after the sheet
+      // has closed by its own path: `left-panel.tsx` renders this whole subtree
+      // behind `!collapsed`, so collapsing mid-await would unmount the sheet
+      // from under the rest of this function and take the error surface with
+      // it. Above the Phone viewport step this is a no-op, which is also what
+      // makes it harmless on the other surfaces that mount this sheet — the
+      // composer, the message list, the board — where the sidebar is not what
+      // the user is looking at.
+      stepAsidePhoneSidebar();
     } finally {
       setSubmittingMode(null);
     }
-  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, selectedCollection?.id, selectedProvider, t]);
+  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, projectId, selectedCollection?.id, selectedProvider, t]);
 
   const handleCreateTask = useCallback(async () => {
     setError(null);
@@ -294,18 +350,27 @@ export function CollectionQuickCreateSheet({
       return;
     }
     const trimmedTaskTitle = taskTitle.trim();
-    const rawBranchSlug = branchSlug.trim();
-    if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
-      setError(t('task.creation.errorInvalidBranchSlug'));
+    if (!worktreeSourceForCreate) {
+      setError(t('task.creation.errorCheckoutBranchRequired'));
       return;
     }
-    const normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
-    if (!normalizedBranchSlug) {
-      setError(t('task.creation.errorEmptyBranchSlug'));
-      return;
+
+    let normalizedBranchSlug: string | undefined;
+    if (worktreeSourceForCreate.mode === 'branch-off') {
+      const rawBranchSlug = branchSlug.trim();
+      if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
+        setError(t('task.creation.errorInvalidBranchSlug'));
+        return;
+      }
+      normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
+      if (!normalizedBranchSlug) {
+        setError(t('task.creation.errorEmptyBranchSlug'));
+        return;
+      }
     }
     setSubmittingMode('task');
     let shouldClose = false;
+    let createdSessionId: string | null = null;
     try {
       const result = await createWorktreeSession({
         projectDir,
@@ -314,9 +379,11 @@ export function CollectionQuickCreateSheet({
         executionMode,
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
-        branchSlug: normalizedBranchSlug,
-        baseRef: selectedBaseRefForCreate,
-        allowBranchSlugSuffix: !branchSlugEdited,
+        worktreeSource: worktreeSourceForCreate,
+        ...(worktreeSourceForCreate.mode === 'branch-off' && {
+          branchSlug: normalizedBranchSlug,
+          allowBranchSlugSuffix: !branchSlugEdited,
+        }),
         suppressErrorToast: true,
         collectionId: selectedCollection?.id ?? undefined,
         workflowStatus,
@@ -331,6 +398,7 @@ export function CollectionQuickCreateSheet({
         return;
       }
       if (result.sessionId) {
+        createdSessionId = result.sessionId;
         await onSessionCreated?.(result.sessionId);
       }
       shouldClose = true;
@@ -339,6 +407,8 @@ export function CollectionQuickCreateSheet({
     }
     if (shouldClose) {
       onClose();
+      // #258, same rule as the chat path above, and last for the same reason.
+      if (createdSessionId) stepAsidePhoneSidebar();
     }
   }, [
     createWorktreeSession,
@@ -350,13 +420,13 @@ export function CollectionQuickCreateSheet({
     branchSlugEdited,
     projectDir,
     projectId,
-    selectedBaseRefForCreate,
     selectedCollection?.id,
     selectedProvider,
     t,
     taskTitle,
     taskTelemetrySource,
     workflowStatus,
+    worktreeSourceForCreate,
   ]);
 
   const handleSheetKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -383,7 +453,13 @@ export function CollectionQuickCreateSheet({
 
   const sheetContainerClassName = useAnchoredPortal
     ? cn(
-        'fixed z-[10001] w-[17rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl',
+        // 17rem is a desktop width beside a sidebar, and it is `rem`, so at the
+        // smallest font scale it resolves to 221px — a sheet that leaves 115px of a
+        // 360px screen unused and wraps its own labels to pay for it (#262). Below
+        // the Phone viewport step the sheet takes the width the screen has; from
+        // `sm` up nothing changes. `updateAnchoredPosition` reads the rendered
+        // width, so the clamp follows on its own.
+        'fixed z-[10001] w-[calc(100vw-1.5rem)] sm:w-[17rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl',
         'border border-[color-mix(in_srgb,var(--accent)_38%,var(--divider))]',
         'bg-[color-mix(in_srgb,var(--input-bg)_80%,var(--accent)_20%)]',
         'shadow-[0_24px_60px_rgba(0,0,0,0.46),0_0_0_1px_color-mix(in_srgb,var(--accent)_24%,transparent),0_0_34px_color-mix(in_srgb,var(--accent)_10%,transparent)] backdrop-blur-xl',
@@ -405,6 +481,7 @@ export function CollectionQuickCreateSheet({
 
   const sheetMarkup = (
     <div
+      data-telemetry-ignore="event_boundary"
       ref={containerRef}
       className={sheetContainerClassName}
       style={sheetStyle}
@@ -424,6 +501,7 @@ export function CollectionQuickCreateSheet({
           </p>
         </div>
         <button
+          {...telemetryClickAttributes('creation.sheet.close', 'collection_create')}
           type="button"
           onClick={onClose}
           className="rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)"
@@ -440,9 +518,10 @@ export function CollectionQuickCreateSheet({
               <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
                 {t('settings.provider.label')}
               </span>
-              <CliProviderRefreshButton />
+              <CliProviderRefreshButton telemetrySurface="collection_create" />
             </div>
             <CliProviderChipSelector
+              telemetrySurface="collection_create"
               value={selectedProvider}
               onChange={setSelectedProvider}
               executionMode={executionMode}
@@ -471,6 +550,7 @@ export function CollectionQuickCreateSheet({
                 {t('task.creation.collectionLabel')}
               </span>
               <select
+                {...telemetryClickAttributes('creation.collection.input', 'collection_create')}
                 value={rawSelectedCollectionId ?? ''}
                 onChange={(event) => setSelectedCollectionId(event.target.value || null)}
                 className="w-full rounded-lg border border-(--divider) bg-(--input-bg) px-2.5 py-1.5 text-[13px] text-(--sidebar-text-active) outline-none transition-colors focus:border-(--accent)"
@@ -498,6 +578,7 @@ export function CollectionQuickCreateSheet({
               <button
                 type="button"
                 onClick={handleCreateChat}
+                {...telemetryClickAttributes('creation.submit.chat', 'collection_create')}
                 disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className={cn(
                   'flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
@@ -528,6 +609,7 @@ export function CollectionQuickCreateSheet({
                   setIsTaskExpanded(true);
                   requestAnimationFrame(() => titleInputRef.current?.focus());
                 }}
+                {...telemetryClickAttributes('creation.mode.task', 'collection_create')}
                 disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className={cn(
                   'flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
@@ -537,7 +619,7 @@ export function CollectionQuickCreateSheet({
                 )}
                 data-testid={`collection-quick-create-task-${resolvedScopeId}`}
               >
-                <ListTodo className="h-3.5 w-3.5 text-(--accent-hover)" />
+                <FolderGit2 className="h-3.5 w-3.5 text-(--accent-hover)" />
                 <span className="mt-1.5 block text-[13px] font-semibold text-(--sidebar-text-active)">
                   {isContinuation ? t('task.creation.continueTaskLabel') : t('task.newChat.newTask')}
                 </span>
@@ -559,6 +641,7 @@ export function CollectionQuickCreateSheet({
                 {t('task.creation.titleLabel')}
               </label>
               <input
+                {...telemetryClickAttributes('creation.task.title_input', 'collection_create')}
                 ref={titleInputRef}
                 id={`collection-task-title-${resolvedScopeId}`}
                 type="text"
@@ -576,7 +659,8 @@ export function CollectionQuickCreateSheet({
               />
             </div>
 
-            <div className="space-y-1">
+            {worktreeCreationMode === 'branch-off' ? (
+              <div className="space-y-1">
               <label
                 htmlFor={`collection-task-branch-slug-${resolvedScopeId}`}
                 className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)"
@@ -594,6 +678,7 @@ export function CollectionQuickCreateSheet({
                   </span>
                 ) : null}
                 <input
+                  {...telemetryClickAttributes('creation.task.branch_input', 'collection_create')}
                   id={`collection-task-branch-slug-${resolvedScopeId}`}
                   type="text"
                   value={branchSlug}
@@ -619,18 +704,20 @@ export function CollectionQuickCreateSheet({
               >
                 {worktreePathPreview}
               </p>
-            </div>
+              </div>
+            ) : null}
 
             <WorktreeStartFromControl
               id={`collection-task-base-ref-${resolvedScopeId}`}
               testId={`collection-task-base-ref-${resolvedScopeId}`}
               refs={baseRefs}
+              creationMode={worktreeCreationMode}
               selectedBaseRef={selectedBaseRef}
-              selectedRef={selectedRef}
               isLoading={isLoadingBaseRefs}
               error={baseRefError}
               disabled={submittingMode !== null}
               compact
+              onCreationModeChange={setWorktreeCreationMode}
               onSelectedBaseRefChange={setSelectedBaseRef}
             />
 
@@ -650,6 +737,7 @@ export function CollectionQuickCreateSheet({
                   }
                   onClose();
                 }}
+                {...telemetryClickAttributes('creation.cancel', 'collection_create')}
                 className="rounded-md px-2.5 py-1 text-[12px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)"
               >
                 {canCreateChat ? t('common.cancel') : t('common.close')}
@@ -657,7 +745,8 @@ export function CollectionQuickCreateSheet({
               <button
                 type="button"
                 onClick={() => void handleCreateTask()}
-                disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
+                {...telemetryClickAttributes('creation.submit.task', 'collection_create')}
+                disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported || !worktreeSourceForCreate}
                 className="rounded-md bg-(--accent) px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-(--accent-hover) disabled:cursor-not-allowed disabled:opacity-60"
                 data-testid={`collection-task-submit-${resolvedScopeId}`}
               >

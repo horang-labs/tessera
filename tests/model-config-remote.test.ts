@@ -160,15 +160,49 @@ test('a session-triggered refresh is labeled with the session event', async () =
   assert.ok(headers['X-Tessera-Install-Id'], 'session events still carry the install id');
 });
 
-test('install_id is sent even when telemetry is disabled by env (full count, no gating)', async () => {
+test('a prompt-triggered refresh is content-free and carries closed usage dimensions', async () => {
+  __resetRemoteModelConfigForTests();
+  const { fn, calls } = mockFetch(jsonResponse(validDoc, '"mc-2"'));
+  await refreshRemoteModelConfig(
+    'prompt',
+    { fetchImpl: fn, hostInfo: { ...HOST, platform: 'win32' } },
+    { provider: 'codex', source: 'pty_chat_view', formFactor: 'mobile' },
+  );
+  const headers = calls[0].init.headers as Record<string, string>;
+  assert.equal(headers['X-Tessera-Event'], 'prompt');
+  assert.equal(headers['X-Tessera-Provider'], 'codex');
+  assert.equal(headers['X-Tessera-Source'], 'pty_chat_view');
+  assert.equal(headers['X-Tessera-Form-Factor'], 'mobile');
+  assert.equal(headers['X-Tessera-Platform'], 'win32');
+  assert.ok(headers['X-Tessera-Install-Id'], 'prompt events still carry the install id');
+  assert.equal(calls[0].init.body, undefined, 'prompt content must never reach the Worker');
+});
+
+test('an unrecognized prompt provider is reduced to unknown', async () => {
+  __resetRemoteModelConfigForTests();
+  const { fn, calls } = mockFetch(jsonResponse(validDoc, '"mc-2"'));
+  await refreshRemoteModelConfig(
+    'prompt',
+    { fetchImpl: fn, hostInfo: HOST },
+    {
+      provider: 'user-authored-value' as never,
+      source: 'user-authored-value' as never,
+      formFactor: 'user-authored-value' as never,
+    },
+  );
+  const headers = calls[0].init.headers as Record<string, string>;
+  assert.equal(headers['X-Tessera-Provider'], 'unknown');
+  assert.equal(headers['X-Tessera-Source'], 'unknown');
+  assert.equal(headers['X-Tessera-Form-Factor'], 'unknown');
+});
+
+test('the Worker is never contacted when runtime telemetry is disabled', async () => {
   __resetRemoteModelConfigForTests();
   const { fn, calls } = mockFetch(jsonResponse(validDoc, '"mc-2"'));
   await refreshRemoteModelConfig('launch', { fetchImpl: fn, hostInfo: { ...HOST, telemetryDisabledByEnv: true } });
-  const headers = calls[0].init.headers as Record<string, string>;
-  assert.ok(
-    headers['X-Tessera-Install-Id'],
-    'the config fetch IS the count — install id is sent regardless of the in-app/DNT gate',
-  );
+  await refreshRemoteModelConfig('session', { fetchImpl: fn, hostInfo: { ...HOST, telemetryDisabledByEnv: true } });
+  await refreshRemoteModelConfig('prompt', { fetchImpl: fn, hostInfo: { ...HOST, telemetryDisabledByEnv: true } });
+  assert.equal(calls.length, 0);
 });
 
 test('a 304 keeps the current list and reports not-changed', async () => {

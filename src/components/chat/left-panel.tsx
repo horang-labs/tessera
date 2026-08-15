@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { AppHeader } from '@/components/layout/app-header';
@@ -14,10 +16,12 @@ import { DeleteProjectDialog } from './delete-project-dialog';
 import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useTabStore } from '@/stores/tab-store';
 import { useFolderBrowserStore } from '@/stores/folder-browser-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { usePopoutActive } from '@/hooks/use-popout-active';
+import { useEffectiveViewMode } from '@/hooks/use-effective-view-mode';
 import { ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SessionPeek } from '@/components/board/session-peek';
@@ -44,14 +48,14 @@ export function LeftPanel({
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
   const closeFolderBrowser = useFolderBrowserStore((state) => state.close);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
-  const viewMode = useBoardStore((state) => state.viewMode);
+  const viewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
   const peekFileRef = useBoardStore((state) => state.peekFileRef);
   const closeSessionPeek = useBoardStore((state) => state.closeSessionPeek);
   const kanbanSessionOpenMode = useSettingsStore(
     (state) => state.settings.kanbanSessionOpenMode,
   );
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const { deleteProject } = useSessionCrud();
   const { isActive: isPopoutActive, closePopouts } = usePopoutActive();
 
@@ -93,7 +97,9 @@ export function LeftPanel({
       {!collapsed && <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <AppHeader />
         <div className="min-h-0 flex-1 overflow-hidden relative">
-          {viewMode === 'board' ? <KanbanBoard /> : <Sidebar />}
+          {viewMode === 'board'
+            ? <KanbanBoard />
+            : <Sidebar />}
           {viewMode === 'board' && isPopoutActive && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-(--board-bg)/80 backdrop-blur-sm"
@@ -108,6 +114,7 @@ export function LeftPanel({
                   The board view is currently popped out. Close the pop-out window to use it here.
                 </div>
                 <button
+                  {...telemetryClickAttributes('board.popout.close', 'workspace_board')}
                   type="button"
                   onClick={() => { void closePopouts(); }}
                   className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-(--accent) text-white text-[0.8125rem] font-medium cursor-pointer hover:opacity-90 transition-opacity"

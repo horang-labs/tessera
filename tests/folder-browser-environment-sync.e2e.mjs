@@ -10,11 +10,18 @@ const repoRoot = path.resolve(new URL('..', import.meta.url).pathname);
 const tempRoot = path.join(os.homedir(), 'tmp');
 await fs.mkdir(tempRoot, { recursive: true });
 const dataDir = await fs.mkdtemp(path.join(tempRoot, 'tessera-folder-browser-env-'));
+// The copy stands in for a packaged app root, so it has to carry everything the build
+// needs — including `postcss.config.js`. Leaving it out does not fail: Next serves the
+// page with its CSS entry unprocessed, `@import "tailwindcss"` is never expanded, and not
+// one utility class is generated. Behaviour survives that, which is why it went unnoticed
+// until #245 measured a 554px app shell on a viewport it should have filled. Anything
+// added here must also survive `assertTailwindWasBuilt` below (#252).
 const appRoot = path.join(dataDir, 'app');
 await fs.mkdir(appRoot);
 await Promise.all([
   'next.config.mjs',
   'package.json',
+  'postcss.config.js',
   'public',
   'runtime',
   'server.ts',
@@ -38,7 +45,7 @@ const server = spawn(
       PORT: String(port),
       NODE_ENV: 'development',
       TESSERA_DATA_DIR: dataDir,
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
+      TESSERA_ELECTRON_RUNTIME: '1',
       LOG_LEVEL: 'error',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -53,10 +60,12 @@ server.stderr.on('data', (chunk) => {
 });
 
 let browser;
+let appSecret;
 try {
-  await waitForServer(`${appOrigin}/api/settings`, server);
+  appSecret = await waitForServer(`${appOrigin}/api/settings`, server);
 
   browser = await chromium.launch({ headless: true });
+  await assertTailwindWasBuilt(browser, appOrigin);
   await testWaitsForAuthoritativeNative(browser, appOrigin);
   await testUsesAuthoritativeWsl(browser, appOrigin);
   await testIgnoresBrowseFromPreviousOpen(browser, appOrigin);
@@ -76,6 +85,44 @@ try {
   }
   await waitForExit(server, 5_000);
   await fs.rm(dataDir, { recursive: true, force: true });
+}
+
+/**
+ * The guard for #252: prove the copied root serves a styled page before anything else
+ * measures it.
+ *
+ * The failure this catches is silent and inverted — an unstyled page still answers every
+ * behavioural assertion in this file, so a layout assertion written here would measure a
+ * page no user ever sees and could pass a broken layout or fail a correct one. It reads a
+ * computed style rather than the stylesheet text, because what matters is that the
+ * utility reached the element, and it uses a probe element so it stays true no matter how
+ * the app's own markup changes.
+ */
+async function assertTailwindWasBuilt(browserInstance, origin) {
+  const { context, page } = await createElectronPage(browserInstance, 'native');
+
+  try {
+    await page.goto(`${origin}/chat`, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.getByTestId('chat-layout').waitFor({ timeout: 30_000 });
+
+    const display = await page.evaluate(() => {
+      const element = document.createElement('div');
+      element.className = 'flex';
+      document.body.append(element);
+      const computed = getComputedStyle(element).display;
+      element.remove();
+      return computed;
+    });
+
+    assert.equal(
+      display,
+      'flex',
+      'the copied app root must generate Tailwind utilities — `flex` did not apply, which'
+        + ' means the page is unstyled and no measurement taken here means anything (#252)',
+    );
+  } finally {
+    await context.close();
+  }
 }
 
 async function testWaitsForAuthoritativeNative(browserInstance, origin) {
@@ -278,7 +325,10 @@ async function testReinitializesAfterEnvironmentChange(browserInstance, origin) 
 }
 
 async function createElectronPage(browserInstance, persistedEnvironment) {
-  const context = await browserInstance.newContext({ viewport: { width: 1200, height: 850 } });
+  const context = await browserInstance.newContext({
+    viewport: { width: 1200, height: 850 },
+    extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
+  });
   await context.addInitScript((environment) => {
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
@@ -421,8 +471,11 @@ async function waitForServer(url, child) {
       throw new Error(`isolated Tessera server exited with code ${child.exitCode}`);
     }
     try {
-      const response = await fetch(url);
-      if (response.ok) return;
+      const secret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
+      const response = await fetch(url, {
+        headers: { 'x-tessera-app-secret': secret },
+      });
+      if (response.ok) return secret;
     } catch {
       // The development server is still starting.
     }

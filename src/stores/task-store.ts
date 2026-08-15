@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import type { TaskEntity, WorkflowStatus } from '@/types/task-entity';
 import { useSessionStore } from './session-store';
-import { useTabStore } from './tab-store';
+import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { toast } from './notification-store';
 
 interface LoadTasksOptions {
   setCurrent?: boolean;
@@ -14,8 +16,16 @@ interface QueuedProjectLoad {
 
 interface TaskPrStatusCacheEntry {
   prStatus: TaskEntity['prStatus'];
+  prStatusKnown: boolean;
   prUnsupported: boolean;
   remoteBranchExists: boolean | undefined;
+}
+
+/** A child session lifted out of its task, kept so the removal can be undone. */
+export interface RemovedTaskSession {
+  taskId: string;
+  index: number;
+  session: TaskEntity['sessions'][number];
 }
 
 interface TaskState {
@@ -55,10 +65,11 @@ interface TaskState {
       workflowStatus?: WorkflowStatus;
       worktreeBranch?: string;
       summary?: string;
-    }
+    },
+    projectViewId?: string,
   ) => Promise<boolean>;
-  /** Delete a task (optimistic) */
-  deleteTask: (id: string) => Promise<{ deletedSessionCount: number } | null>;
+  /** Delete a Worktree checkout while retaining its archived canonical records. */
+  deleteWorktree: (taskId: string) => Promise<boolean>;
   /** Archive/restore a task and all child sessions as one unit */
   toggleTaskArchive: (id: string, archived: boolean) => Promise<boolean>;
   /** Reorder tasks (optimistic + server sync) */
@@ -69,11 +80,22 @@ interface TaskState {
   getTaskBySessionId: (sessionId: string) => TaskEntity | undefined;
   /** Get cached tasks for a specific project */
   getTasksForProject: (projectId: string) => TaskEntity[];
+  /** Mirror runtime liveness into linked Sessions projected only through Tasks. */
+  setLinkedSessionRunning: (sessionId: string, running: boolean) => void;
+  /** Mirror canonical unread state into every loaded Worktree Task summary. */
+  setLinkedSessionUnreadCount: (sessionId: string, unreadCount: number) => void;
   /**
    * Update a linked session title in local task cache.
    * Single-session tasks also mirror the parent task title.
    */
   syncLinkedTaskTitle: (sessionId: string, title: string) => void;
+  /**
+   * Drop a child session from its task after that session alone was archived.
+   * Returns what was removed so a failed archive can put it back in place.
+   */
+  removeTaskSession: (sessionId: string) => RemovedTaskSession | null;
+  /** Re-insert a session removed by `removeTaskSession` at its original position. */
+  restoreTaskSession: (removed: RemovedTaskSession) => void;
   /** Replace a collection reference across cached tasks */
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
   /** Clear cached worktree metadata for tasks whose managed worktree was removed */
@@ -86,6 +108,7 @@ interface TaskState {
   applyPrStatusUpdate: (
     taskId: string,
     prStatus: TaskEntity['prStatus'],
+    prStatusKnown: boolean,
     prUnsupported: boolean,
     remoteBranchExists: boolean | undefined,
   ) => void;
@@ -144,6 +167,80 @@ function syncLinkedTaskTitleInList(tasks: TaskEntity[], sessionId: string, title
       ...(shouldSyncTaskTitle && { title }),
       sessions: nextSessions,
     };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function setLinkedSessionRunningInList(
+  tasks: TaskEntity[],
+  sessionId: string,
+  running: boolean,
+): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    const session = task.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || session.isRunning === running) return task;
+
+    changed = true;
+    return {
+      ...task,
+      sessions: task.sessions.map((candidate) =>
+        candidate.id === sessionId ? { ...candidate, isRunning: running } : candidate
+      ),
+    };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function setLinkedSessionUnreadCountInList(
+  tasks: TaskEntity[],
+  sessionId: string,
+  unreadCount: number,
+): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    const session = task.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || session.unreadCount === unreadCount) return task;
+
+    changed = true;
+    return {
+      ...task,
+      sessions: task.sessions.map((candidate) =>
+        candidate.id === sessionId ? { ...candidate, unreadCount } : candidate
+      ),
+    };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function removeTaskSessionInList(tasks: TaskEntity[], sessionId: string): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    if (!task.sessions.some((session) => session.id === sessionId)) {
+      return task;
+    }
+
+    changed = true;
+    return { ...task, sessions: task.sessions.filter((session) => session.id !== sessionId) };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function restoreTaskSessionInList(tasks: TaskEntity[], removed: RemovedTaskSession): TaskEntity[] {
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    if (task.id !== removed.taskId || task.sessions.some((session) => session.id === removed.session.id)) {
+      return task;
+    }
+
+    changed = true;
+    const sessions = [...task.sessions];
+    sessions.splice(Math.min(removed.index, sessions.length), 0, removed.session);
+    return { ...task, sessions };
   });
 
   return changed ? nextTasks : tasks;
@@ -312,13 +409,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const task: TaskEntity = data.task;
 
       set((state) => {
-        const projectTasks = [task, ...(state.tasksByProject[task.projectId] ?? [])];
+        const projectTasks = [task, ...(state.tasksByProject[task.projectViewId] ?? [])];
         return {
           ...updateProjectCache(
             state,
-            task.projectId,
+            task.projectViewId,
             projectTasks,
-            state.currentProjectId === task.projectId
+            state.currentProjectId === task.projectViewId
           ),
         };
       });
@@ -329,53 +426,58 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
-  updateTask: async (id, patch) => {
-    const existingTask = get().getTask(id);
-    const projectId = existingTask?.projectId;
+  updateTask: async (id, patch, explicitProjectViewId) => {
+    const existingTask = explicitProjectViewId
+      ? projectViewWorkspaceState.resolveTask(id, explicitProjectViewId)
+      : get().getTask(id);
+    const projectViewId = explicitProjectViewId
+      ?? get().currentProjectId
+      ?? existingTask?.projectViewId;
+    const affectedProjectIds = Object.entries(get().tasksByProject)
+      .filter(([, tasks]) => tasks.some((task) => task.id === id))
+      .map(([projectId]) => projectId);
     const linkedSessionId = patch.title && existingTask?.sessions.length === 1
       ? existingTask.sessions[0].id
       : null;
-    const primarySessionId = existingTask?.sessions[0]?.id;
-    const previousSessionWorkflowStatus = primarySessionId
-      ? useSessionStore.getState().getSession(primarySessionId)?.workflowStatus ?? existingTask?.workflowStatus ?? 'todo'
-      : existingTask?.workflowStatus;
-    const shouldSyncWorkflowStatus = patch.workflowStatus !== undefined
-      && previousSessionWorkflowStatus !== undefined
-      && previousSessionWorkflowStatus !== patch.workflowStatus;
-    const previousCollectionId = existingTask?.collectionId;
-    const shouldSyncCollectionId = patch.collectionId !== undefined
-      && previousCollectionId !== patch.collectionId;
     const previousLinkedSession = linkedSessionId
-      ? useSessionStore.getState().getSession(linkedSessionId)
+      ? projectViewWorkspaceState.resolveSession(linkedSessionId, projectViewId)
       : undefined;
 
-    if (projectId) {
-      const previousProjectTasks = get().getTasksForProject(projectId);
-      const nextProjectTasks = previousProjectTasks.map((task) =>
-        task.id === id ? applyTaskPatch(task, patch) : task
-      );
-
-      set((state) => ({
-        ...updateProjectCache(
-          state,
-          projectId,
-          nextProjectTasks,
-          state.currentProjectId === projectId
+    const taskOnlyPatch = { ...patch };
+    delete taskOnlyPatch.collectionId;
+    delete taskOnlyPatch.workflowStatus;
+    set((state) => {
+      const patchList = (tasks: TaskEntity[]) =>
+        tasks.map((task) => task.id === id
+          ? applyTaskPatch(task, taskOnlyPatch)
+          : task);
+      return {
+        tasks: patchList(state.tasks),
+        tasksByProject: Object.fromEntries(
+          Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
+            projectId,
+            patchList(tasks),
+          ]),
         ),
-      }));
-    }
+      };
+    });
 
-    if (shouldSyncWorkflowStatus && previousSessionWorkflowStatus) {
-      useSessionStore.getState().syncTaskWorkflowStatus(
-        id,
-        previousSessionWorkflowStatus,
-        patch.workflowStatus!,
-      );
-    }
+    const rollbackTaskDerivedMutation = (
+      patch.workflowStatus !== undefined || patch.collectionId !== undefined
+    )
+      ? projectViewWorkspaceState.applyTaskMutation({
+          taskId: id,
+          projectViewId,
+          ...(patch.workflowStatus !== undefined && { workflowStatus: patch.workflowStatus }),
+          ...(patch.collectionId !== undefined && { collectionId: patch.collectionId }),
+        })
+      : undefined;
 
-    if (shouldSyncCollectionId) {
-      useSessionStore.getState().syncTaskCollectionId(id, patch.collectionId ?? null);
-    }
+    const reloadAffectedProjectViews = async () => {
+      await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+        setCurrent: get().currentProjectId === projectId,
+      })));
+    };
 
     if (linkedSessionId && patch.title) {
       useSessionStore.getState().updateSessionTitle(linkedSessionId, patch.title, true);
@@ -385,7 +487,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const res = await fetchWithClientId(`/api/tasks/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
+        body: JSON.stringify({
+          ...patch,
+          ...(patch.collectionId !== undefined && projectViewId ? { projectViewId } : {}),
+        }),
       });
       if (!res.ok) {
         if (linkedSessionId && previousLinkedSession) {
@@ -395,18 +500,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             previousLinkedSession.hasCustomTitle
           );
         }
-        if (shouldSyncWorkflowStatus && previousSessionWorkflowStatus) {
-          useSessionStore.getState().syncTaskWorkflowStatus(
-            id,
-            patch.workflowStatus!,
-            previousSessionWorkflowStatus,
-          );
-        }
-        if (shouldSyncCollectionId) {
-          useSessionStore.getState().syncTaskCollectionId(id, previousCollectionId ?? null);
-        }
-        if (projectId)
-          await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
+        rollbackTaskDerivedMutation?.();
+        await reloadAffectedProjectViews();
         return false;
       }
       return true;
@@ -418,40 +513,32 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           previousLinkedSession.hasCustomTitle
         );
       }
-      if (shouldSyncWorkflowStatus && previousSessionWorkflowStatus) {
-        useSessionStore.getState().syncTaskWorkflowStatus(
-          id,
-          patch.workflowStatus!,
-          previousSessionWorkflowStatus,
-        );
-      }
-      if (shouldSyncCollectionId) {
-        useSessionStore.getState().syncTaskCollectionId(id, previousCollectionId ?? null);
-      }
-      if (projectId)
-        await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
+      rollbackTaskDerivedMutation?.();
+      await reloadAffectedProjectViews();
       return false;
     }
   },
 
-  deleteTask: async (id) => {
+  deleteWorktree: async (id) => {
     const existingTask = get().getTask(id);
-    const projectId = existingTask?.projectId;
+    if (!existingTask?.worktreeId) {
+      toast.error('This Worktree has no canonical identity and cannot be deleted safely.');
+      return false;
+    }
+    const affectedProjectIds = Object.entries(get().tasksByProject)
+      .filter(([, tasks]) => tasks.some((task) => task.id === id))
+      .map(([projectId]) => projectId);
     const linkedSessionIds = existingTask?.sessions.map((session) => session.id) ?? [];
 
-    if (projectId) {
-      const previousProjectTasks = get().getTasksForProject(projectId);
-      const nextProjectTasks = previousProjectTasks.filter((task) => task.id !== id);
-
-      set((state) => ({
-        ...updateProjectCache(
-          state,
+    set((state) => ({
+      tasks: state.tasks.filter((task) => task.id !== id),
+      tasksByProject: Object.fromEntries(
+        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
           projectId,
-          nextProjectTasks,
-          state.currentProjectId === projectId
-        ),
-      }));
-    }
+          tasks.filter((task) => task.id !== id),
+        ]),
+      ),
+    }));
     if (linkedSessionIds.length > 0) {
       for (const sessionId of linkedSessionIds) {
         useSessionStore.getState().removeSession(sessionId);
@@ -459,20 +546,24 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
 
     try {
-      const res = await fetchWithClientId(`/api/tasks/${id}`, { method: 'DELETE' });
+      const res = await fetchWithClientId(`/api/worktrees/${existingTask.worktreeId}`, { method: 'DELETE' });
       if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        toast.error(body.error ?? 'Failed to delete Worktree');
         await useSessionStore.getState().loadProjects();
-        if (projectId)
-          await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
-        return null;
+        await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+          setCurrent: get().currentProjectId === projectId,
+        })));
+        return false;
       }
-      const data = await res.json();
-      return { deletedSessionCount: data.deletedSessionCount ?? data.unlinkedCount ?? 0 };
-    } catch {
+      return true;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete Worktree');
       await useSessionStore.getState().loadProjects();
-      if (projectId)
-        await get().loadTasks(projectId, { setCurrent: get().currentProjectId === projectId });
-      return null;
+      await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+        setCurrent: get().currentProjectId === projectId,
+      })));
+      return false;
     }
   },
 
@@ -480,34 +571,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const existingTask = get().getTask(id);
     if (!existingTask) return false;
 
-    const projectId = existingTask.projectId;
-    const previousProjectTasks = get().getTasksForProject(projectId);
-    const linkedSessionIds = existingTask.sessions.map((session) => session.id);
-    const archivedAt = archived ? new Date().toISOString() : undefined;
-
-    set((state) => ({
-      ...updateProjectCache(
-        state,
-        projectId,
-        archived
-          ? previousProjectTasks.filter((task) => task.id !== id)
-          : previousProjectTasks.map((task) =>
-              task.id === id ? { ...task, archived, archivedAt } : task
-            ),
-        state.currentProjectId === projectId
-      ),
-    }));
-
-    useSessionStore.setState((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((session) =>
-          linkedSessionIds.includes(session.id)
-            ? { ...session, archived, archivedAt, isReadOnly: archived }
-            : session
-        ),
-      })),
-    }));
+    const affectedProjectIds = Object.entries(get().tasksByProject)
+      .filter(([, tasks]) => tasks.some((task) => task.id === id))
+      .map(([projectId]) => projectId);
+    const linkedSessionIds = Array.from(new Set(
+      [existingTask, ...Object.values(get().tasksByProject)
+        .flat()
+        .filter((task) => task.id === id)]
+        .flatMap((task) => task.sessions.map((session) => session.id)),
+    ));
+    const rollbackArchive = projectViewWorkspaceState.applyTaskMutation({
+      taskId: id,
+      archived,
+    });
 
     try {
       const res = await fetchWithClientId(`/api/archive/tasks/${id}`, {
@@ -518,20 +594,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       if (!res.ok) throw new Error('Failed to update task archive state');
       if (archived) {
         for (const sessionId of linkedSessionIds) {
-          useTabStore.getState().retireSessionSurface(sessionId);
+          retireProjectViewSessionSurfaces(sessionId);
         }
       }
       return true;
     } catch {
-      set((state) => ({
-        ...updateProjectCache(
-          state,
-          projectId,
-          previousProjectTasks,
-          state.currentProjectId === projectId
-        ),
-      }));
+      rollbackArchive?.();
       await useSessionStore.getState().loadProjects();
+      await Promise.all(affectedProjectIds.map((projectId) => get().loadTasks(projectId, {
+        setCurrent: get().currentProjectId === projectId,
+      })));
       return false;
     }
   },
@@ -539,7 +611,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   reorderTasks: (orderedIds, explicitProjectId) => {
     const projectId =
       explicitProjectId ??
-      get().getTask(orderedIds[0])?.projectId ??
+      get().getTask(orderedIds[0])?.projectViewId ??
       get().currentProjectId;
 
     if (!projectId) return;
@@ -597,6 +669,39 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     return [];
   },
 
+  setLinkedSessionRunning: (sessionId, running) =>
+    set((state) => ({
+      tasks: setLinkedSessionRunningInList(state.tasks, sessionId, running),
+      tasksByProject: Object.fromEntries(
+        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
+          projectId,
+          setLinkedSessionRunningInList(tasks, sessionId, running),
+        ])
+      ),
+    })),
+
+  setLinkedSessionUnreadCount: (sessionId, unreadCount) =>
+    set((state) => {
+      const tasks = setLinkedSessionUnreadCountInList(state.tasks, sessionId, unreadCount);
+      let tasksByProject = state.tasksByProject;
+      for (const [projectId, projectTasks] of Object.entries(state.tasksByProject)) {
+        const updatedTasks = setLinkedSessionUnreadCountInList(
+          projectTasks,
+          sessionId,
+          unreadCount,
+        );
+        if (updatedTasks === projectTasks) continue;
+        if (tasksByProject === state.tasksByProject) {
+          tasksByProject = { ...state.tasksByProject };
+        }
+        tasksByProject[projectId] = updatedTasks;
+      }
+
+      return tasks === state.tasks && tasksByProject === state.tasksByProject
+        ? state
+        : { tasks, tasksByProject };
+    }),
+
   syncLinkedTaskTitle: (sessionId, title) =>
     set((state) => ({
       tasks: syncLinkedTaskTitleInList(state.tasks, sessionId, title),
@@ -604,6 +709,45 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
           projectId,
           syncLinkedTaskTitleInList(tasks, sessionId, title),
+        ])
+      ),
+    })),
+
+  removeTaskSession: (sessionId) => {
+    const state = get();
+    const owner = state.tasks.find((task) => task.sessions.some((session) => session.id === sessionId))
+      ?? Object.values(state.tasksByProject)
+        .flat()
+        .find((task) => task.sessions.some((session) => session.id === sessionId));
+    if (!owner) return null;
+
+    const index = owner.sessions.findIndex((session) => session.id === sessionId);
+    const removed: RemovedTaskSession = {
+      taskId: owner.id,
+      index,
+      session: owner.sessions[index],
+    };
+
+    set((current) => ({
+      tasks: removeTaskSessionInList(current.tasks, sessionId),
+      tasksByProject: Object.fromEntries(
+        Object.entries(current.tasksByProject).map(([projectId, tasks]) => [
+          projectId,
+          removeTaskSessionInList(tasks, sessionId),
+        ])
+      ),
+    }));
+
+    return removed;
+  },
+
+  restoreTaskSession: (removed) =>
+    set((state) => ({
+      tasks: restoreTaskSessionInList(state.tasks, removed),
+      tasksByProject: Object.fromEntries(
+        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [
+          projectId,
+          restoreTaskSessionInList(tasks, removed),
         ])
       ),
     })),
@@ -656,40 +800,23 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   applyWorkflowStatusPromotions: (taskIds) => {
-    if (taskIds.length === 0) return;
-    const targets = new Set(taskIds);
-    const patch = (tasks: TaskEntity[]): TaskEntity[] => {
-      let changed = false;
-      const next = tasks.map((task) => {
-        if (!targets.has(task.id) || task.workflowStatus !== 'todo') return task;
-        changed = true;
-        return { ...task, workflowStatus: 'in_progress' as const };
-      });
-      return changed ? next : tasks;
-    };
-
-    set((state) => ({
-      tasks: patch(state.tasks),
-      tasksByProject: Object.fromEntries(
-        Object.entries(state.tasksByProject).map(([projectId, tasks]) => [projectId, patch(tasks)]),
-      ),
-    }));
+    projectViewWorkspaceState.promoteTodoTasks(taskIds);
   },
 
-  applyPrStatusUpdate: (taskId, prStatus, prUnsupported, remoteBranchExists) => {
+  applyPrStatusUpdate: (taskId, prStatus, prStatusKnown, prUnsupported, remoteBranchExists) => {
     const patch = (tasks: TaskEntity[]): TaskEntity[] => {
       let changed = false;
       const next = tasks.map((task) => {
         if (task.id !== taskId) return task;
         changed = true;
-        return { ...task, prStatus, prUnsupported, remoteBranchExists };
+        return { ...task, prStatus, prStatusKnown, prUnsupported, remoteBranchExists };
       });
       return changed ? next : tasks;
     };
     set((state) => ({
       prStatusByTaskId: {
         ...state.prStatusByTaskId,
-        [taskId]: { prStatus, prUnsupported, remoteBranchExists },
+        [taskId]: { prStatus, prStatusKnown, prUnsupported, remoteBranchExists },
       },
       tasks: patch(state.tasks),
       tasksByProject: Object.fromEntries(
@@ -700,13 +827,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   addPendingTask: (task) => {
     set((state) => {
-      const projectTasks = [task, ...(state.tasksByProject[task.projectId] ?? [])];
+      const projectTasks = [task, ...(state.tasksByProject[task.projectViewId] ?? [])];
       return {
         ...updateProjectCache(
           state,
-          task.projectId,
+          task.projectViewId,
           projectTasks,
-          state.currentProjectId === task.projectId
+          state.currentProjectId === task.projectViewId
         ),
       };
     });
@@ -745,9 +872,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         }
       }
       // Insert the real task into its server-reported project bucket.
-      const targetBucket = nextByProject[realTask.projectId] ?? [];
+      const targetBucket = nextByProject[realTask.projectViewId] ?? [];
       const withoutDupe = targetBucket.filter((task) => task.id !== realTask.id);
-      nextByProject[realTask.projectId] = [realTask, ...withoutDupe];
+      nextByProject[realTask.projectViewId] = [realTask, ...withoutDupe];
 
       // Keep `tasks` (exposed to current-project subscribers) in sync.
       const nextTasks =
@@ -762,7 +889,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         tasks: nextTasks,
         loadedProjects: {
           ...state.loadedProjects,
-          [realTask.projectId]: true,
+          [realTask.projectViewId]: true,
         },
       };
     });

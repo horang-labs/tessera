@@ -1,22 +1,25 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { Layers3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { getProjectColor } from '@/lib/constants/project-strip';
 import type { ProjectGroup } from '@/types/chat';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface PortfolioFilterBarProps {
   projects: ProjectGroup[];
   activeProjectId: string | null;
   onProjectFilter: (projectId: string | null) => void;
+  trailingControls?: ReactNode;
 }
 
 export const PortfolioFilterBar = memo(function PortfolioFilterBar({
   projects,
   activeProjectId,
   onProjectFilter,
+  trailingControls,
 }: PortfolioFilterBarProps) {
   const { t } = useI18n();
 
@@ -28,6 +31,7 @@ export const PortfolioFilterBar = memo(function PortfolioFilterBar({
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none">
         <button
           type="button"
+          {...telemetryClickAttributes('board.project_filter.all', 'workspace_board')}
           onClick={() => onProjectFilter(null)}
           aria-pressed={activeProjectId === null}
           className={cn(
@@ -50,6 +54,7 @@ export const PortfolioFilterBar = memo(function PortfolioFilterBar({
             <button
               key={project.encodedDir}
               type="button"
+              {...telemetryClickAttributes('board.project_filter.select', 'workspace_board')}
               onClick={() => onProjectFilter(isActive ? null : project.encodedDir)}
               aria-pressed={isActive}
               className={cn(
@@ -72,6 +77,7 @@ export const PortfolioFilterBar = memo(function PortfolioFilterBar({
           );
         })}
       </div>
+      {trailingControls}
     </div>
   );
 });

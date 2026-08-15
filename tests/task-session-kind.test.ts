@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getCollectionSessionSnapshots } from '@/lib/chat/collection-status-indicator';
 import {
+  buildCollectionGroups,
   countRunningCollectionGroupItems,
   filterCollectionGroupsByRunning,
   getRunningCollectionGroupSessionIds,
@@ -15,6 +16,7 @@ const terminalSession = {
   id: 'terminal-task-session',
   title: 'PTY session',
   projectDir: 'project-a',
+  originProjectId: 'origin-project',
   isRunning: true,
   status: 'running',
   lastModified: '2026-07-14T00:00:00.000Z',
@@ -28,6 +30,7 @@ const terminalSession = {
 const task = {
   id: 'task-a',
   projectId: 'project-a',
+  projectViewId: 'project-a',
   title: 'Task',
   workflowStatus: 'in_progress',
   sortOrder: 0,
@@ -40,6 +43,7 @@ test('task session snapshots preserve the fixed PTY execution kind', () => {
   const [mergedTask] = mergeTasksWithLiveSessions([task], [terminalSession]);
 
   assert.equal(mergedTask.sessions[0]?.kind, 'terminal');
+  assert.equal(mergedTask.sessions[0]?.originProjectId, 'origin-project');
   assert.equal(getCollectionSessionSnapshots([mergedTask], [])[0]?.kind, 'terminal');
   assert.deepEqual(resolveSessionRuntimePresentation(mergedTask.sessions[0]), {
     showRunning: true,
@@ -77,4 +81,41 @@ test('running menus and stop-all targets include live PTY runtimes', () => {
     tasks: [terminalTask],
     chats: [guiSession, terminalChat],
   }]);
+});
+
+test('sidebar trusts the linked Worktree projection regardless of visible child Sessions', () => {
+  const visibleTask = mergeTasksWithLiveSessions([{
+    ...task,
+    id: 'visible-task',
+    sessions: [{
+      id: terminalSession.id,
+      title: terminalSession.title,
+      lastModified: terminalSession.lastModified,
+      isRunning: terminalSession.isRunning,
+      kind: terminalSession.kind,
+    }],
+  }], [{ ...terminalSession, taskId: 'visible-task' }])[0];
+  const hiddenTask = {
+    ...task,
+    id: 'hidden-task',
+    sessions: [{
+      id: 'archived-child',
+      title: 'Archived child',
+      lastModified: terminalSession.lastModified,
+      isRunning: false,
+      kind: 'terminal' as const,
+    }],
+  };
+
+  const groups = buildCollectionGroups(
+    [],
+    [{ ...task, id: 'zero-session-task' }, visibleTask, hiddenTask],
+    [{ ...terminalSession, taskId: 'visible-task' }],
+  );
+
+  assert.deepEqual(groups[0]?.tasks.map((item) => item.id), [
+    'zero-session-task',
+    'visible-task',
+    'hidden-task',
+  ]);
 });

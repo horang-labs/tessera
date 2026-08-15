@@ -3,9 +3,10 @@
 import { useEffect, type MouseEvent } from 'react';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
-import { useTabStore } from '@/stores/tab-store';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { cn } from '@/lib/utils';
+import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
 
@@ -124,7 +125,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
     return electronApi.onTitlebarMenuCommand((command) => {
       switch (command) {
         case 'new-tab':
-          useTabStore.getState().createTab();
+          openSingletonNewTab();
           break;
         case 'open-settings':
           useSettingsStore.getState().open();
@@ -187,6 +188,7 @@ export function ElectronTitlebar({ showMenu = true }: ElectronTitlebarProps) {
         <nav className="flex items-center gap-0.5 min-w-0" aria-label="Application menu">
           {MENU_SECTIONS.map((section) => (
             <button
+              {...telemetryClickAttributes('app_window.menu.open', 'app_window')}
               key={section.key}
               type="button"
               className="electron-no-drag h-7 px-2.5 rounded-md text-[12px] font-medium text-(--electron-titlebar-muted) hover:text-(--electron-titlebar-text) hover:bg-(--electron-titlebar-hover) transition-colors flex items-center gap-1"

@@ -10,6 +10,8 @@ interface WorkspaceMonacoEditorProps {
   content: string;
   language?: string | null;
   mode: "file" | "diff";
+  /** Unique editor instance identity; required when the same path can be open in multiple tabs. */
+  modelKey?: string;
   path: string;
   readOnly?: boolean;
   /**
@@ -114,12 +116,20 @@ function normalizeMonacoLanguage(mode: "file" | "diff", language: string | null 
   return LANGUAGE_BY_EXTENSION[ext] ?? "plaintext";
 }
 
-function buildModelUri(monaco: MonacoApi, mode: "file" | "diff", filePath: string) {
+function buildModelUri(
+  monaco: MonacoApi,
+  mode: "file" | "diff",
+  filePath: string,
+  modelKey?: string,
+) {
+  const encodedModelKey = encodeURIComponent(modelKey ?? `${mode}:${filePath}`);
   const encodedPath = filePath
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
-  return monaco.Uri.parse(`inmemory://workspace/${mode}/${encodedPath || "untitled"}`);
+  return monaco.Uri.parse(
+    `inmemory://workspace/${encodedModelKey}/${mode}/${encodedPath || "untitled"}`,
+  );
 }
 
 function registerMonacoExtensions(monaco: MonacoApi): void {
@@ -200,6 +210,7 @@ export function WorkspaceMonacoEditor({
   content,
   language,
   mode,
+  modelKey,
   path,
   readOnly = true,
   onChange,
@@ -208,7 +219,7 @@ export function WorkspaceMonacoEditor({
   const editorRef = useRef<MonacoEditor | null>(null);
   const modelRef = useRef<MonacoModel | null>(null);
   const monacoRef = useRef<MonacoApi | null>(null);
-  const latestPropsRef = useRef({ content, language, mode, path, readOnly, onChange });
+  const latestPropsRef = useRef({ content, language, mode, modelKey, path, readOnly, onChange });
   const latestThemeRef = useRef("tessera-light");
   // Last value emitted through onChange. The sync effect below runs with a
   // possibly stale `content` prop while the user keeps typing; skipping
@@ -224,8 +235,8 @@ export function WorkspaceMonacoEditor({
   const theme = isDark ? "tessera-dark" : "tessera-light";
 
   useEffect(() => {
-    latestPropsRef.current = { content, language, mode, path, readOnly, onChange };
-  }, [content, language, mode, path, readOnly, onChange]);
+    latestPropsRef.current = { content, language, mode, modelKey, path, readOnly, onChange };
+  }, [content, language, mode, modelKey, path, readOnly, onChange]);
 
   useEffect(() => {
     latestThemeRef.current = theme;
@@ -245,7 +256,7 @@ export function WorkspaceMonacoEditor({
         const model = monaco.editor.createModel(
           latest.content,
           initialLanguage,
-          buildModelUri(monaco, latest.mode, latest.path),
+          buildModelUri(monaco, latest.mode, latest.path, latest.modelKey),
         );
         const editor = monaco.editor.create(containerRef.current, {
           automaticLayout: true,
@@ -305,7 +316,7 @@ export function WorkspaceMonacoEditor({
     const editor = editorRef.current;
     if (!monaco || !editor) return;
 
-    const nextUri = buildModelUri(monaco, mode, path);
+    const nextUri = buildModelUri(monaco, mode, path, modelKey);
     const currentModel = modelRef.current;
     const shouldReplaceModel =
       !currentModel
@@ -324,7 +335,7 @@ export function WorkspaceMonacoEditor({
     if (currentModel.getValue() !== content && content !== lastEmittedValueRef.current) {
       currentModel.setValue(content);
     }
-  }, [content, mode, monacoLanguage, path]);
+  }, [content, mode, modelKey, monacoLanguage, path]);
 
   useEffect(() => {
     monacoRef.current?.editor.setTheme(theme);

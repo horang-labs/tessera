@@ -1,26 +1,28 @@
 import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
+import { userInfo } from 'os';
 import { delimiter } from 'path';
 import { getRuntimePlatform } from '../system/runtime-platform';
 import type { AgentEnvironment } from '../settings/types';
 import type { SpawnCliCache } from './spawn-cli-cache';
+import {
+  buildWslLoginShellCommand,
+  escapeWslShCommandForWindows,
+} from './wsl-login-shell-command';
+import { buildPosixOpenCodeOverlayActivation } from './providers/opencode/config-overlay';
 
 type LoginShellEnvironment = Record<string, string>;
 
-const PATH_MARKER_START = '__TESSERA_PATH_START__';
-const PATH_MARKER_END = '__TESSERA_PATH_END__';
-const WSL_FALLBACK_LOGIN_SHELL = 'bash';
-const WSL_LOGIN_SHELL_PROBE_SCRIPT = [
-  'user="$(id -un 2>/dev/null || printf %s "${USER:-}")"',
-  'shell=""',
-  'if command -v getent >/dev/null 2>&1 && [ -n "$user" ]; then shell="$(getent passwd "$user" 2>/dev/null | cut -d: -f7)"; fi',
-  'if [ -z "$shell" ] && [ -n "$user" ] && [ -r /etc/passwd ]; then shell="$(awk -F: -v user="$user" \'$1 == user { print $7; exit }\' /etc/passwd)"; fi',
-  `case "$shell" in /*) printf "%s" "$shell" ;; *) printf "${WSL_FALLBACK_LOGIN_SHELL}" ;; esac`,
-].join('; ');
+const LOGIN_ENV_MARKER_START = '__TESSERA_ENV_START__';
+const LOGIN_ENV_MARKER_END = '__TESSERA_ENV_END__';
+// rc files that print a banner or set a colored prompt leak ANSI escapes into
+// the captured output. Strip them before parsing KEY=VALUE lines.
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;?]*[A-Za-z]/g;
 // Heavy zsh setups (oh-my-zsh + powerlevel10k + nvm + pyenv + corporate AV
-// scanning the binary on first launch) routinely take 5–8s for a cold
-// `-l -c` invocation. 5s was the previous value and produced empty PATH
-// captures for a non-trivial fraction of macOS users on cold boot.
+// scanning the binary on first launch) routinely take 5–8s for a cold login
+// shell. 5s was the previous value and produced empty PATH captures for a
+// non-trivial fraction of macOS users on cold boot.
 const LOGIN_SHELL_PROBE_TIMEOUT_MS = 10_000;
 
 // Login-shell env keys we trust enough to inherit verbatim into spawned CLIs.
@@ -84,10 +86,6 @@ export function invalidateSpawnCliRuntimeCache(cache: SpawnCliCache): void {
   cache.didResolveLoginShell = false;
   cache.loginShellEnvironment = null;
   cache.didResolveLoginShellEnvironment = false;
-  cache.loginShellPath = null;
-  cache.didResolveLoginShellPath = false;
-  cache.wslLoginShell = null;
-  cache.didResolveWslLoginShell = false;
 }
 
 export function buildSpawnEnvironment(
@@ -106,19 +104,14 @@ export function buildSpawnEnvironment(
 
   const shell = resolveLoginShell(cache, env);
 
-  // Capture login-shell env vars (proxy, CA certs, ANTHROPIC_*, etc.) on both
-  // macOS and Linux. GUI launchers (Finder, Dock, freedesktop .desktop entries)
-  // start the app with a minimal env that does NOT execute the user's
+  // Capture PATH plus login-shell env vars (proxy, CA certs, ANTHROPIC_*, etc.)
+  // on both macOS and Linux. GUI launchers (Finder, Dock, freedesktop .desktop
+  // entries) start the app with a minimal env that does NOT execute the user's
   // .zshrc/.bashrc, so users whose dotfiles set HTTPS_PROXY or
   // NODE_EXTRA_CA_CERTS for corporate CAs would otherwise lose them.
   const loginShellEnv = resolveLoginShellEnvironment(cache, shell, env);
   if (loginShellEnv) {
     mergeWhitelistedLoginEnvironment(env, loginShellEnv);
-  }
-
-  const loginShellPath = resolveLoginShellPath(cache, shell, env);
-  if (loginShellPath) {
-    mergeIntoEnvironmentPath(env, loginShellPath);
   }
 
   if (getRuntimePlatform() === 'darwin') {
@@ -159,6 +152,8 @@ export interface SpawnCliRuntimeOptions {
   // discovery or config (e.g. git). Real agent CLIs (claude, codex) still need
   // the login shell for nvm PATH etc.
   loginShell?: boolean;
+  /** Allowlisted per-launch values reasserted after WSL login rc files run. */
+  guestEnvironment?: Record<string, string | undefined>;
 }
 
 export function spawnCliProcess(
@@ -173,7 +168,7 @@ export function spawnCliProcess(
   const spawnOptions = buildPlatformSpawnOptions(options, env);
 
   if (agentEnv === 'wsl' && getRuntimePlatform() === 'win32') {
-    return spawnWslCli(command, args, spawnOptions, cache, env, runtimeOptions);
+    return spawnWslCli(command, args, spawnOptions, runtimeOptions);
   }
 
   if (agentEnv === 'native' && getRuntimePlatform() === 'win32') {
@@ -219,6 +214,37 @@ function isRunningInWsl(): boolean {
   }
 }
 
+function isUsableShellPath(shell: string): boolean {
+  if (!shell.startsWith('/')) {
+    return false;
+  }
+
+  try {
+    return existsSync(shell);
+  } catch {
+    return false;
+  }
+}
+
+// The shell the OS says this account logs into. Same source of truth the WSL
+// bridge uses (`getent passwd` — see ./wsl-login-shell-command), and for the
+// same reason: $SHELL is whatever the *launching* process happened to export,
+// which on a GUI launch (Finder, Dock, .desktop, systemd) is routinely absent
+// or stale. Guessing bash for a zsh user is not cosmetic — the two build
+// different PATHs, so the same `claude` resolves to a different binary than the
+// one the user's own terminal runs. userInfo() reads the passwd database
+// (getpwuid), which on macOS is the same Directory Service record that
+// `dscl . -read /Users/<u> UserShell` returns, with no process spawn and no
+// probe that can fail.
+function resolvePasswdShell(): string | null {
+  try {
+    const shell = userInfo().shell?.trim();
+    return shell && isUsableShellPath(shell) ? shell : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveLoginShell(cache: SpawnCliCache, env: NodeJS.ProcessEnv): string | null {
   if (cache.didResolveLoginShell) {
     return cache.loginShell;
@@ -227,32 +253,27 @@ function resolveLoginShell(cache: SpawnCliCache, env: NodeJS.ProcessEnv): string
   cache.didResolveLoginShell = true;
 
   const platform = getRuntimePlatform();
-
-  if (platform === 'darwin') {
-    const macUserShell = resolveMacUserShell(env);
-    if (macUserShell) {
-      cache.loginShell = macUserShell;
-      return cache.loginShell;
-    }
+  if (platform === 'win32') {
+    return null;
   }
 
-  const configuredShell = env.SHELL || process.env.SHELL;
-  if (configuredShell) {
+  const passwdShell = resolvePasswdShell();
+  if (passwdShell) {
+    cache.loginShell = passwdShell;
+    return cache.loginShell;
+  }
+
+  const configuredShell = (env.SHELL || process.env.SHELL)?.trim();
+  if (configuredShell && isUsableShellPath(configuredShell)) {
     cache.loginShell = configuredShell;
     return cache.loginShell;
   }
 
-  if (platform === 'darwin') {
-    cache.loginShell = '/bin/zsh';
-    return cache.loginShell;
-  }
-
-  if (platform === 'linux') {
-    cache.loginShell = '/bin/bash';
-    return cache.loginShell;
-  }
-
-  return null;
+  const fallbacks = platform === 'darwin'
+    ? ['/bin/zsh', '/bin/bash', '/bin/sh']
+    : ['/bin/bash', '/bin/zsh', '/bin/sh'];
+  cache.loginShell = fallbacks.find(isUsableShellPath) ?? null;
+  return cache.loginShell;
 }
 
 function mergePathValues(primaryPath: string, secondaryPath?: string): string {
@@ -333,58 +354,45 @@ function resolveWindowsCliPath(env: NodeJS.ProcessEnv): string | null {
     : null;
 }
 
-function parseMarkedPath(stdout: string): string | null {
-  const startIndex = stdout.indexOf(PATH_MARKER_START);
-  const endIndex = stdout.indexOf(PATH_MARKER_END, startIndex + PATH_MARKER_START.length);
-
-  if (startIndex === -1 || endIndex === -1) {
-    return null;
-  }
-
-  const resolvedPath = stdout
-    .slice(startIndex + PATH_MARKER_START.length, endIndex)
-    .trim();
-
-  return resolvedPath || null;
+// One probe where there used to be two. `env` already reports PATH, so the
+// separate `printf "$PATH"` pass only doubled cold-start cost — and it read the
+// wrong thing under fish, whose $PATH is a space-separated list rather than a
+// colon-separated string. Pulling PATH out of `env` output is shell-agnostic.
+function buildLoginEnvProbeScript(): string {
+  return [
+    `printf '%s\\n' '${LOGIN_ENV_MARKER_START}'`,
+    // Absolute path first. The probe runs with whatever PATH the GUI launcher
+    // handed Electron, and a bare `env` is not a builtin — if the rc doesn't
+    // repair PATH (or dies before it gets there), `env` is simply not found and
+    // the probe returns an empty environment without any error to show for it.
+    '/usr/bin/env 2>/dev/null || env',
+    `printf '\\n%s\\n' '${LOGIN_ENV_MARKER_END}'`,
+  ].join('; ');
 }
 
-function resolveLoginShellPath(
-  cache: SpawnCliCache,
-  shell: string | null,
+function runLoginShellProbe(
+  shell: string,
+  shellFlags: string,
   env: NodeJS.ProcessEnv,
-): string | null {
-  if (cache.didResolveLoginShellPath) {
-    return cache.loginShellPath;
-  }
-
-  cache.didResolveLoginShellPath = true;
-
-  if (getRuntimePlatform() === 'win32') {
-    return null;
-  }
-
-  if (!shell) {
-    return null;
-  }
-
+): LoginShellEnvironment | null {
   try {
-    const probe = spawnSync(
-      shell,
-      ['-ilc', `printf '${PATH_MARKER_START}%s${PATH_MARKER_END}' "$PATH"`],
-      {
-        encoding: 'utf8',
-        env,
-        timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
-        windowsHide: true,
-      },
-    );
+    const probe = spawnSync(shell, [shellFlags, buildLoginEnvProbeScript()], {
+      encoding: 'utf8',
+      env,
+      timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
+      // An interactive login shell will read stdin if an rc file prompts, and
+      // dumps startup noise on stderr; give it neither. SIGKILL because a shell
+      // in that state can ignore SIGTERM and outlive the timeout.
+      stdio: ['ignore', 'pipe', 'ignore'],
+      killSignal: 'SIGKILL',
+      windowsHide: true,
+    });
 
-    if (probe.status !== 0 || typeof probe.stdout !== 'string') {
-      return null;
-    }
-
-    cache.loginShellPath = parseMarkedPath(probe.stdout);
-    return cache.loginShellPath;
+    // Deliberately not gating on probe.status. A broken rc line makes bash and
+    // zsh print a complaint and carry on, sometimes with a nonzero exit — but
+    // the env they reported is still the user's real env, and discarding a
+    // usable answer here is what silently strips nvm/homebrew off PATH.
+    return typeof probe.stdout === 'string' ? parseEnvOutput(probe.stdout) : null;
   } catch {
     return null;
   }
@@ -405,55 +413,39 @@ function resolveLoginShellEnvironment(
     return null;
   }
 
-  try {
-    const probe = spawnSync(shell, ['-l', '-c', 'env'], {
-      encoding: 'utf8',
-      env,
-      timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
-      windowsHide: true,
-    });
-
-    if (probe.status !== 0 || typeof probe.stdout !== 'string') {
-      return null;
-    }
-
-    cache.loginShellEnvironment = parseEnvOutput(probe.stdout);
-    return cache.loginShellEnvironment;
-  } catch {
-    return null;
-  }
+  // `-i` earns its place twice: it sources the interactive rc (~/.zshrc,
+  // ~/.bashrc) where nvm/asdf/homebrew install themselves, and it keeps the
+  // shell alive when an rc sources a missing file. `.` is a POSIX special
+  // builtin, so a *non*-interactive sh/dash exits 2 on the spot and reports
+  // nothing at all (measured). `-lc` remains as a retry for any shell that
+  // rejects `-i` outright.
+  cache.loginShellEnvironment = runLoginShellProbe(shell, '-ilc', env)
+    ?? runLoginShellProbe(shell, '-lc', env);
+  return cache.loginShellEnvironment;
 }
 
-function resolveMacUserShell(env: NodeJS.ProcessEnv): string | null {
-  const username = (env.USER || env.LOGNAME || process.env.USER || process.env.LOGNAME)?.trim();
-  if (!username) {
-    return null;
+// Markers fence the env dump off from rc banners and MOTDs. If a shell mangled
+// them, fall back to the whole capture: the KEY=VALUE filter below is strict
+// enough that banner text rarely survives it, and a partial answer beats none.
+function sliceProbeOutput(stdout: string): string {
+  const cleaned = stdout.replace(ANSI_ESCAPE_PATTERN, '');
+  const startIndex = cleaned.indexOf(LOGIN_ENV_MARKER_START);
+  const endIndex = cleaned.indexOf(
+    LOGIN_ENV_MARKER_END,
+    startIndex + LOGIN_ENV_MARKER_START.length,
+  );
+
+  if (startIndex === -1 || endIndex === -1) {
+    return cleaned;
   }
 
-  try {
-    const probe = spawnSync('dscl', ['.', '-read', `/Users/${username}`, 'UserShell'], {
-      encoding: 'utf8',
-      env,
-      timeout: 2000,
-      windowsHide: true,
-    });
-
-    if (probe.status !== 0 || typeof probe.stdout !== 'string') {
-      return null;
-    }
-
-    const match = probe.stdout.match(/(?:^|\n)UserShell:\s*(\S+)/);
-    const shell = match?.[1]?.trim();
-    return shell && shell.startsWith('/') ? shell : null;
-  } catch {
-    return null;
-  }
+  return cleaned.slice(startIndex + LOGIN_ENV_MARKER_START.length, endIndex);
 }
 
 function parseEnvOutput(stdout: string): LoginShellEnvironment | null {
   const parsed: LoginShellEnvironment = {};
 
-  for (const line of stdout.split(/\r?\n/)) {
+  for (const line of sliceProbeOutput(stdout).split(/\r?\n/)) {
     const separatorIndex = line.indexOf('=');
     if (separatorIndex <= 0) {
       continue;
@@ -539,28 +531,38 @@ function spawnWslCli(
   command: string,
   args: string[],
   options: SpawnOptions,
-  cache: SpawnCliCache,
-  env: NodeJS.ProcessEnv,
   runtimeOptions?: SpawnCliRuntimeOptions,
 ): ChildProcess {
   const { cwd, ...spawnOptions } = options;
   const wslCwd = typeof cwd === 'string' && cwd.length > 0
     ? normalizeCwdForCliEnvironment(cwd, 'wsl')
     : null;
-  const script = buildLoginShellExecScript(command, args, wslCwd);
+  const script = buildLoginShellExecScript(
+    command,
+    args,
+    wslCwd,
+    runtimeOptions?.guestEnvironment,
+  );
 
   // Fixed-path binaries (git) don't need the user's login shell; running them in
   // a plain `sh -c` avoids the per-call cost of sourcing the user's rc files
   // (nvm, oh-my-zsh, etc. — routinely hundreds of ms per invocation). sh exists
-  // on every distro including busybox-based ones (the login-shell probe above
-  // relies on the same fact), and WSL's default PATH covers /usr/bin, so git
-  // resolves without any rc. The exec script is POSIX-sh compatible.
+  // on every distro including busybox-based ones, and WSL's default PATH covers
+  // /usr/bin, so git resolves without any rc. The exec script is POSIX-sh
+  // compatible.
   if (runtimeOptions?.loginShell === false) {
-    return spawn('wsl', ['sh', '-c', script], spawnOptions);
+    return spawn('wsl', ['sh', '-c', escapeWslShCommandForWindows(script)], spawnOptions);
   }
 
-  const shell = resolveWslLoginShell(cache, env);
-  return spawn('wsl', [shell, '-i', '-l', '-c', script], spawnOptions);
+  // Agent CLIs (claude, codex) must run under the user's own login shell — that
+  // is what puts nvm/asdf/homebrew on PATH, and therefore what decides *which*
+  // `claude` binary runs. The shell is picked inside WSL: see
+  // ./wsl-login-shell-command for why a Windows-side probe can't be trusted.
+  return spawn(
+    'wsl',
+    ['sh', '-c', escapeWslShCommandForWindows(buildWslLoginShellCommand(script))],
+    spawnOptions,
+  );
 }
 
 function spawnWindowsNativeCli(
@@ -717,22 +719,36 @@ function quoteBashArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildLoginShellExecScript(
+export function buildLoginShellExecScript(
   command: string,
   args: string[],
   cwd: string | null,
+  guestEnvironment?: Record<string, string | undefined>,
 ): string {
+  const environmentCommands = Object.entries(guestEnvironment ?? {}).map(([key, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid guest environment key: ${key}`);
+    }
+    return value === undefined
+      ? `unset ${key}`
+      : `export ${key}=${quoteBashArg(value)}`;
+  });
   const commandExpression = [
     'exec',
     quoteBashArg(command),
     ...args.map(quoteBashArg),
   ].join(' ');
+  const openCodeActivation = guestEnvironment?.TESSERA_OPENCODE_CONFIG_DIR
+    ? buildPosixOpenCodeOverlayActivation(guestEnvironment.TESSERA_OPENCODE_CONFIG_DIR)
+    : '';
+  const launchExpression = openCodeActivation
+    + [...environmentCommands, commandExpression].join('; ');
 
   if (!cwd) {
-    return commandExpression;
+    return launchExpression;
   }
 
-  return `cd -- ${quoteBashArg(cwd)} && ${commandExpression}`;
+  return `cd -- ${quoteBashArg(cwd)} && ${launchExpression}`;
 }
 
 function windowsExecutablePathToWslPath(windowsPath: string): string | null {
@@ -744,39 +760,6 @@ function windowsExecutablePathToWslPath(windowsPath: string): string | null {
   const drive = driveMatch[1].toLowerCase();
   const rest = driveMatch[2].replace(/\\/g, '/');
   return `/mnt/${drive}/${rest}`;
-}
-
-function resolveWslLoginShell(cache: SpawnCliCache, env: NodeJS.ProcessEnv): string {
-  if (cache.didResolveWslLoginShell) {
-    return cache.wslLoginShell ?? WSL_FALLBACK_LOGIN_SHELL;
-  }
-
-  cache.didResolveWslLoginShell = true;
-
-  try {
-    const probe = spawnSync(
-      'wsl',
-      ['sh', '-lc', WSL_LOGIN_SHELL_PROBE_SCRIPT],
-      {
-        encoding: 'utf8',
-        env,
-        timeout: LOGIN_SHELL_PROBE_TIMEOUT_MS,
-        windowsHide: true,
-      },
-    );
-
-    if (probe.status !== 0 || typeof probe.stdout !== 'string') {
-      cache.wslLoginShell = WSL_FALLBACK_LOGIN_SHELL;
-      return cache.wslLoginShell;
-    }
-
-    const shell = probe.stdout.trim();
-    cache.wslLoginShell = shell.startsWith('/') ? shell : WSL_FALLBACK_LOGIN_SHELL;
-    return cache.wslLoginShell;
-  } catch {
-    cache.wslLoginShell = WSL_FALLBACK_LOGIN_SHELL;
-    return cache.wslLoginShell;
-  }
 }
 
 function isExplicitExecutablePath(value: string): boolean {

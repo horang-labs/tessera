@@ -3,6 +3,8 @@ import { useSessionStore } from './session-store';
 import { useTaskStore } from './task-store';
 import { toast } from './notification-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { resolveSessionWorktreeLifecycleTarget } from '@/lib/session/session-worktree-lifecycle';
 
 interface SelectionState {
   /** Set of selected session IDs */
@@ -16,6 +18,8 @@ interface SelectionState {
 
   /** Toggle a single session's selection (Ctrl/Cmd+Click) */
   toggleSelect: (id: string) => void;
+  /** Clear multi-selection and use this normal click as the next Shift range anchor */
+  setRangeAnchor: (id: string) => void;
   /** Range select from lastClickedId to targetId within a given ordered list */
   rangeSelect: (targetId: string, orderedIds: string[]) => void;
   /** Select all given IDs (replace current selection) */
@@ -48,6 +52,9 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
       }
       return { selectedIds: next, lastClickedId: id, barAnchorId: id };
     }),
+
+  setRangeAnchor: (id) =>
+    set({ selectedIds: new Set(), lastClickedId: id, barAnchorId: null }),
 
   rangeSelect: (targetId, orderedIds) =>
     set((state) => {
@@ -86,7 +93,7 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     const sessionStore = useSessionStore.getState();
     const taskAnchors = new Set<string>();
     for (const id of selectedIds) {
-      const session = sessionStore.getSession(id);
+      const session = projectViewWorkspaceState.resolveSession(id);
       if (!session?.taskId) continue;
       if (taskAnchors.has(session.taskId)) continue;
       taskAnchors.add(session.taskId);
@@ -102,23 +109,21 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     const sessionStore = useSessionStore.getState();
     const taskIds = new Set<string>();
-    const chatIds: string[] = [];
+    const sessionIds: string[] = [];
     for (const id of selectedIds) {
-      const session = sessionStore.getSession(id);
-      if (session?.taskId) {
-        taskIds.add(session.taskId);
-      } else {
-        chatIds.push(id);
-      }
+      const task = projectViewWorkspaceState.resolveTaskBySessionId(id);
+      const target = resolveSessionWorktreeLifecycleTarget(id, task);
+      if (target.kind === 'worktree') taskIds.add(target.taskId);
+      else sessionIds.push(target.sessionId);
     }
     for (const taskId of taskIds) {
       void useTaskStore.getState().toggleTaskArchive(taskId, true);
     }
-    for (const id of chatIds) {
+    for (const id of sessionIds) {
       sessionStore.toggleArchive(id, true);
     }
     set({ selectedIds: new Set(), lastClickedId: null, barAnchorId: null });
-    toast.success(`${taskIds.size + chatIds.length}개 항목을 아카이브했습니다`);
+    toast.success(`${taskIds.size + sessionIds.length}개 항목을 아카이브했습니다`);
   },
 
   bulkDelete: async () => {
@@ -130,6 +135,14 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     for (const id of ids) {
       try {
+        const task = projectViewWorkspaceState.resolveTaskBySessionId(id);
+        const target = resolveSessionWorktreeLifecycleTarget(id, task);
+        if (target.kind === 'worktree') {
+          if (!await useTaskStore.getState().deleteWorktree(target.taskId)) {
+            failedIds.push(id);
+          }
+          continue;
+        }
         const res = await fetchWithClientId(`/api/sessions/${encodeURIComponent(id)}`, {
           method: 'DELETE',
         });

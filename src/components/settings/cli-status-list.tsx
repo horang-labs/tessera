@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { wsClient } from '@/lib/ws/client';
 import { useI18n } from '@/lib/i18n';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useSettingsStore } from '@/stores/settings-store';
 import {
   captureTelemetryEvent,
@@ -22,6 +23,13 @@ const STATUS_DOT_CLASS: Record<CliStatusEntry['status'], string> = {
   not_installed: 'bg-gray-400',
 };
 
+interface CliStatusViewState {
+  entries: CliStatusEntry[] | null;
+  checking: boolean;
+  disconnected: boolean;
+  checkFailed: boolean;
+}
+
 export default function CliStatusList() {
   const { t } = useI18n();
   const cliCommandOverridesKey = useSettingsStore((state) => (
@@ -30,30 +38,59 @@ export default function CliStatusList() {
   // 모드에 따라 서버의 감지 경로가 다르므로(pty: which-only / gui: 풀 프로브)
   // 모드 토글 시 상태 리스트도 다시 조회한다.
   const agentExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
-  // null = loading, [] = no providers registered, undefined = disconnected / server error
-  const [entries, setEntries] = useState<CliStatusEntry[] | null | undefined>(null);
+  const [viewState, setViewState] = useState<CliStatusViewState>({
+    entries: null,
+    checking: true,
+    disconnected: false,
+    checkFailed: false,
+  });
+  const requestSerialRef = useRef(0);
   const reportedIssueKeysRef = useRef<Set<string>>(new Set());
 
-  const fetchStatus = useCallback(() => {
-    setEntries(null);
-    wsClient.checkCliStatus((results) => {
-      // Treat disconnect (null from client) and server-error (null after prior fix) the same
-      setEntries(results ?? undefined);
+  const beginStatusCheck = useCallback(() => {
+    const requestSerial = ++requestSerialRef.current;
+    setViewState((current) => ({
+      ...current,
+      checking: true,
+      disconnected: false,
+      checkFailed: false,
+    }));
+    const cancel = wsClient.checkCliStatus((results) => {
+      if (requestSerialRef.current !== requestSerial) return;
+      setViewState((current) => {
+        if (results === null) {
+          return { ...current, checking: false, disconnected: true, checkFailed: false };
+        }
+        if (results === undefined) {
+          return { ...current, checking: false, disconnected: false, checkFailed: true };
+        }
+        return {
+          entries: results,
+          checking: false,
+          disconnected: false,
+          checkFailed: false,
+        };
+      });
     });
+    return () => {
+      cancel?.();
+      if (requestSerialRef.current === requestSerial) requestSerialRef.current += 1;
+    };
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-
-    wsClient.checkCliStatus((results) => {
-      if (!isMounted) return;
-      setEntries(results ?? undefined);
+    let cancelRequest: (() => void) | undefined;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) cancelRequest = beginStatusCheck();
     });
-
     return () => {
-      isMounted = false;
+      cancelled = true;
+      cancelRequest?.();
     };
-  }, [cliCommandOverridesKey, agentExecutionMode]);
+  }, [beginStatusCheck, cliCommandOverridesKey, agentExecutionMode]);
+
+  const { entries, checking, disconnected, checkFailed } = viewState;
 
   const shouldShowEnvTag = useMemo(() => {
     if (!entries || entries.length === 0) return new Set<string>();
@@ -95,7 +132,7 @@ export default function CliStatusList() {
 
   return (
     <div className="space-y-2">
-      {entries === null && (
+      {checking && entries === null && (
         <div
           role="status"
           data-testid="cli-status-loading"
@@ -105,7 +142,7 @@ export default function CliStatusList() {
         </div>
       )}
 
-      {entries === undefined && (
+      {disconnected && (
         <div
           role="status"
           data-testid="cli-status-disconnected"
@@ -115,13 +152,23 @@ export default function CliStatusList() {
         </div>
       )}
 
-      {Array.isArray(entries) && entries.length === 0 && (
+      {checkFailed && (
+        <div
+          role="status"
+          data-testid="cli-status-check-failed"
+          className="text-sm text-(--status-warning-text)"
+        >
+          {t('settings.cliStatus.checkFailed')}
+        </div>
+      )}
+
+      {entries?.length === 0 && !checking && !disconnected && !checkFailed && (
         <div className="text-sm text-(--text-muted)">
           {t('settings.cliStatus.empty')}
         </div>
       )}
 
-      {Array.isArray(entries) && entries.map((e) => {
+      {entries?.map((e) => {
         const displayName = PROVIDER_DISPLAY_NAMES[e.providerId] ?? e.providerId;
         const envSuffix = shouldShowEnvTag.has(e.providerId) ? ` (${ENV_LABELS[e.environment]})` : '';
         return (
@@ -147,10 +194,11 @@ export default function CliStatusList() {
 
       <div className="flex justify-end pt-1">
         <button
+          {...settingsTelemetryClickAttributes('settings.development.cli_status_refresh')}
           type="button"
           data-testid="cli-status-refresh"
-          onClick={fetchStatus}
-          disabled={entries === null}
+          onClick={() => { beginStatusCheck(); }}
+          disabled={checking}
           className="text-xs px-2 py-1 rounded-md border border-(--divider) hover:bg-(--sidebar-hover) text-(--text-primary) disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
         >
           {t('settings.cliStatus.refresh')}

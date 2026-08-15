@@ -3,6 +3,7 @@
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import { captureTelemetryOptOut } from '@/lib/telemetry/client';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export default function TelemetrySettings() {
   const { t } = useI18n();
@@ -38,6 +39,7 @@ export default function TelemetrySettings() {
           {t('settings.telemetry.enabled')}
         </label>
         <input
+          {...settingsTelemetryClickAttributes('settings.telemetry.enabled')}
           type="checkbox"
           id="telemetry-enabled"
           checked={telemetry.enabled && !telemetryDisabledByEnv}

@@ -3,6 +3,7 @@ import type {
   TerminalInterruptInputPolicy,
   TerminalResizeScrollbackPolicy,
 } from '@/lib/cli/providers/types';
+import type { AgentEnvironment } from '@/lib/settings/types';
 
 export type TerminalShellKind = 'default' | 'cmd' | 'powershell' | 'wsl';
 
@@ -31,6 +32,8 @@ export interface TerminalLaunchSpec {
   prefillInput?: string;
   /** Session whose app-server ownership was handed to this terminal. */
   handoffSessionId?: string;
+  /** The provider command resumes an existing conversation and may be ready before its first hook. */
+  restoresProviderSession?: boolean;
 }
 
 export interface TerminalCreateOptions {
@@ -43,9 +46,22 @@ export interface TerminalCreateOptions {
   cwd?: string | null;
   sessionId?: string | null;
   shellKind?: TerminalShellKind;
+  /** Already resolved by a server-owned launch module; avoids re-reading user settings. */
+  agentEnvironment?: AgentEnvironment;
   cols?: number;
   rows?: number;
   launchSpec?: TerminalLaunchSpec;
+  /**
+   * Finalizes launch-owned resources or argv inside TerminalManager's protected
+   * opening window, before the provider command is shell-quoted.
+   */
+  prepareLaunch?: () => Promise<void>;
+  /**
+   * Fully resolved argv that skips cwd validation and shell wrapping. Only the
+   * server may supply it, for work it started itself against a directory it
+   * just created; a browser transport must go through launchSpec instead.
+   */
+  resolvedShell?: TerminalResolvedShell;
   /** Provider hook side-channel token minted by server-message-routing. */
   paneToken?: string;
   /** Native agent provider launched inside this PTY. */
@@ -72,8 +88,18 @@ export interface TerminalCreateOptions {
   appearance?: TerminalAppearance;
   /** Disposes provider resources created before PTY spawn. */
   launchObserverDisposer?: () => void;
+  /**
+   * Called once the runtime's process ends, with the output still held for
+   * replay. Only the server may supply it: it exists so work the server started
+   * with no surface attached can record how it went, and a runtime that ends
+   * with nobody watching would otherwise report to nobody.
+   */
+  onRuntimeExit?: (
+    event: { exitCode: number; signal?: number },
+    output: string,
+  ) => void;
   /** Server-owned environment overrides for the provider process. */
-  launchEnv?: Record<string, string>;
+  launchEnv?: Record<string, string | undefined>;
   /**
    * Async variant of launchEnv, resolved inside the opening window right before
    * PTY spawn. Slow preparation (e.g. the WSL guest Codex overlay, up to tens of
@@ -81,7 +107,7 @@ export interface TerminalCreateOptions {
    * outside the opening window a concurrent close_session cannot cancel it and
    * a duplicate terminal_create cannot deduplicate against it.
    */
-  launchEnvFactory?: () => Promise<Record<string, string> | undefined>;
+  launchEnvFactory?: () => Promise<Record<string, string | undefined> | undefined>;
 }
 
 export interface TerminalResolvedShell {

@@ -1,12 +1,13 @@
 import { getCliStatusSnapshot } from '@/lib/cli/connection-checker';
+import { isHiddenSlashCommandInput } from '@/lib/chat/hidden-slash-commands';
 import { cliProviderRegistry } from '../cli/providers/registry';
 import { getAgentEnvironment } from '../cli/spawn-cli';
 import { processManager } from '../cli/process-manager';
 import * as dbSessions from '../db/sessions';
-import { sessionHistory } from '../session-history';
 import logger from '../logger';
 import { refreshSessionDiffStateSoon } from '../git/session-diff-refresh';
 import { bindTerminalSender } from '../terminal/shared-terminal-manager';
+import { isPreparationTerminalId } from '../projects/preparation-terminal-id';
 import {
   resolveTerminalLaunchIntent,
   TerminalLaunchIntentError,
@@ -17,24 +18,21 @@ import {
   releaseTerminalHandoffByTerminal,
 } from '../terminal/terminal-handoff-lock';
 import { mintPaneToken } from '../terminal/pane-token-registry';
-import { buildProviderTerminalLaunch } from '../terminal/provider-launch';
-import { resolveTerminalProviderSessionReference } from '../terminal/provider-session-identity';
 import { detectTerminalProviders } from '../terminal/provider-detection';
 import { SettingsManager } from '../settings/manager';
-import { createCodexOverlay } from '../terminal/codex-overlay';
-import { createCodexOverlayInWsl } from '../terminal/codex-overlay-wsl';
-import { buildClaudeHookSettingsJson } from '../terminal/claude-hook-settings';
-import type { HookCommandStyle } from '../terminal/hook-command';
-import { getRuntimePlatform } from '../system/runtime-platform';
-import { createOpenCodeOverlay } from '../terminal/opencode-overlay';
-import { createOpenCodeOverlayInWsl } from '../terminal/opencode-overlay-wsl';
 import { createTerminalProviderSessionObserver } from '../terminal/provider-session-observer';
 import { getTerminalProviderSessionForTesseraSession } from '../db/terminal-provider-sessions';
 import { observeTerminalProviderSession } from '../terminal/provider-session-observation';
 import type { TerminalCreateOptions, TerminalLaunchSpec } from '../terminal/types';
+import {
+  TerminalSessionInputError,
+  TerminalSessionRuntimeNotRunningError,
+} from '../terminal/terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { CliProvider, ProviderMeta } from '../cli/providers/types';
+import { resolveSessionWorkspaceRoot } from '../session/session-workspace-root';
+import { providerLaunchModule } from '../terminal/shared-provider-launch-module';
 import {
   clearUnreadFromWebSocket,
   closeSessionFromWebSocket,
@@ -66,7 +64,7 @@ function isSafeTerminalIdentity(value: unknown): value is string {
   return typeof value === 'string' && SAFE_TERMINAL_ID.test(value);
 }
 
-function terminalInputText(content: Extract<ClientMessage, { type: 'send_message' }>['content']): string {
+function sendMessageInputText(content: Extract<ClientMessage, { type: 'send_message' }>['content']): string {
   if (typeof content === 'string') return content.trim();
   return content
     .filter((block) => block.type === 'text')
@@ -90,10 +88,25 @@ export function logReceivedClientTransportMessage(
   }, 'WebSocket message received');
 }
 
+// Messages whose sessionId is only a workspace-root lookup key, not a handle on
+// a live session. The workspace file feature already treats an unknown session
+// as an empty workspace — both the REST route and the watch manager resolve the
+// root through resolveSessionWorkspaceFilesystemRoot and answer with an empty
+// list / a `missing_work_dir` fallback. Rejecting them here turned a background
+// subscription into a user-facing error toast whenever a panel followed the
+// optimistic `temp-` session that exists while creation is in flight. Ownership
+// is still enforced; only the existence check is skipped.
+// Unrelated to the terminal-handoff exemptions in routeClientTransportMessage.
+const EXISTENCE_OPTIONAL_MESSAGE_TYPES: ReadonlySet<ClientMessage['type']> = new Set([
+  'subscribe_workspace_files',
+  'unsubscribe_workspace_files',
+]);
+
 export function verifyClientSessionAccess(
   userId: string,
   message: ClientMessage,
   sendToUser: WsSendToUser,
+  options: { allowMissingSession?: boolean } = {},
 ): boolean {
   if (!('sessionId' in message) || !message.sessionId) {
     return true;
@@ -109,6 +122,7 @@ export function verifyClientSessionAccess(
       }, 'Session ownership violation');
       sendToUser(userId, {
         type: 'error',
+        requestId: message.requestId,
         sessionId: message.sessionId,
         code: 'unauthorized',
         message: 'You do not own this session',
@@ -123,12 +137,16 @@ export function verifyClientSessionAccess(
   // ownership, so for unspawned sessions we trust the authenticated user.
   const session = dbSessions.getSession(message.sessionId);
   if (!session) {
+    if (options.allowMissingSession || EXISTENCE_OPTIONAL_MESSAGE_TYPES.has(message.type)) {
+      return true;
+    }
     logger.warn('Session not found', {
       sessionId: message.sessionId,
       messageType: message.type,
     });
     sendToUser(userId, {
       type: 'error',
+      requestId: message.requestId,
       sessionId: message.sessionId,
       code: 'session_not_found',
       message: 'Session does not exist',
@@ -147,6 +165,7 @@ export async function routeClientTransportMessage({
   userId,
 }: RouteClientTransportMessageOptions): Promise<void> {
   const unguardedSessionMessage = message.type === 'terminal_create'
+    || message.type === 'terminal_prompt'
     || message.type === 'subscribe_workspace_files'
     || message.type === 'unsubscribe_workspace_files'
     || message.type === 'mark_as_read'
@@ -162,6 +181,7 @@ export async function routeClientTransportMessage({
   if (guardedSessionId && !beginTesseraSessionOperation(guardedSessionId)) {
     sendToUser(userId, {
       type: 'error',
+      requestId: message.requestId,
       sessionId: guardedSessionId,
       code: 'session_handed_off_to_terminal',
       message: 'Close the Codex terminal before using this session in Tessera.',
@@ -184,6 +204,17 @@ export async function routeClientTransportMessage({
       });
       return;
     }
+  }
+
+  if (message.type === 'terminal_prompt' && !isSafeTerminalIdentity(message.submissionId)) {
+    sendToConnection(connectionId, {
+      type: 'error',
+      requestId: message.requestId,
+      sessionId: message.sessionId,
+      code: 'invalid_terminal_prompt',
+      message: 'Invalid terminal prompt identity.',
+    });
+    return;
   }
 
   try {
@@ -228,7 +259,7 @@ export async function routeClientTransportMessage({
           dbSessions.getSession(message.sessionId)?.provider_state ?? null,
         ) === 'terminal'
       ) {
-        const text = terminalInputText(message.content);
+        const text = sendMessageInputText(message.content);
         const submitted = text.length > 0
           && bindTerminalSender(sendToConnection).submitSessionInput(message.sessionId, userId, text);
         if (!submitted) {
@@ -242,6 +273,26 @@ export async function routeClientTransportMessage({
               : 'Terminal sessions only accept text input.',
           });
         }
+        return;
+      }
+      // 헤드리스 세션에서 의미가 깨지는 슬래시 명령(claude-code `/clear`)은 CLI에 닿기 전에
+      // 막는다. 위 터미널 분기 뒤에 두는 것이 중요하다 — PTY 세션은 진짜 TUI라 `/clear`가
+      // 정상 동작하므로 막으면 안 된다. 여기서 통과시키면 화면의 대화는 그대로인 채
+      // 컨텍스트만 비워지고, CLI가 새 세션 ID로 갈아타 이후 재개가 어긋난다.
+      if (
+        !message.skillName
+        && isHiddenSlashCommandInput(
+          sendMessageInputText(message.content),
+          dbSessions.getSession(message.sessionId)?.provider?.trim() ?? null,
+        )
+      ) {
+        sendToUser(userId, {
+          type: 'error',
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+          code: 'slash_command_unsupported',
+          message: 'This command is not available in a Tessera chat session. Create a new session instead.',
+        });
         return;
       }
       await sendSessionMessageFromWebSocket({
@@ -478,49 +529,69 @@ export async function routeClientTransportMessage({
 
     case 'terminal_create': {
       const structured = message.launch;
-      const isStructuredClaude = structured?.providerId === 'claude-code';
-      const isStructuredCodex = structured?.providerId === 'codex';
-      const isStructuredOpenCode = structured?.providerId === 'opencode';
-
       if (structured) {
-        const session = dbSessions.getSession(structured.sessionId);
-        const supportedProvider = isStructuredClaude || isStructuredCodex || isStructuredOpenCode;
-        const matchesPersistedSession = session
-          && session.provider === structured.providerId
-          && dbSessions.extractSessionKind(session.provider_state) === 'terminal';
-        if (!supportedProvider || !matchesPersistedSession) {
+        if (!verifyClientSessionAccess(
+          userId,
+          { ...message, sessionId: structured.sessionId },
+          sendToUser,
+          { allowMissingSession: true },
+        )) {
+          return;
+        }
+
+        bindTerminalSender(sendToConnection);
+        try {
+          await providerLaunchModule.launch({
+            sessionId: structured.sessionId,
+            userId,
+            mode: 'surface',
+            surface: {
+              connectionId,
+              surfaceId: message.surfaceId,
+              terminalId: message.terminalId,
+              previewOwnerToken: message.previewOwnerToken,
+              cols: message.cols,
+              rows: message.rows,
+              appearance: message.appearance,
+              prefillInput: message.prefillInput,
+              expectedProviderId: structured.providerId,
+              onAwaitingPreparation: (terminalId) => {
+                sendToConnection(connectionId, {
+                  type: 'terminal_awaiting_preparation',
+                  terminalId,
+                  surfaceId: message.surfaceId,
+                });
+              },
+            },
+          });
+        } catch (error) {
           sendToConnection(connectionId, {
             type: 'terminal_error',
             terminalId: message.terminalId,
             surfaceId: message.surfaceId,
-            message: 'Terminal launch does not match the persisted session provider.',
+            message: error instanceof Error ? error.message : 'Failed to create terminal',
           });
-          return;
         }
-      }
-
-      // 보안: 구조화 launch의 sessionId(클라 입력)를 소유 검증 — 남의 세션 resume 차단(codex 동일).
-      if (
-        (isStructuredClaude || isStructuredCodex || isStructuredOpenCode) && structured
-        && !verifyClientSessionAccess(userId, { ...message, sessionId: structured.sessionId }, sendToUser)
-      ) {
         return;
       }
 
       // create/cwd allowlist용 sessionId(기존 동작 유지).
-      const sessionId = structured?.sessionId ?? message.sessionId ?? null;
-      // 훅 스타일·codex 오버레이 위치는 "CLI가 실제로 도는 런타임"을 따른다 —
-      // resolveShellKind와 같은 소스(getAgentEnvironment)라 스폰과 항상 일치한다.
-      const agentEnvironment = structured ? await getAgentEnvironment(userId) : 'native';
-      const wslTerminalRuntime = getRuntimePlatform() === 'win32' && agentEnvironment === 'wsl';
-      const hookCommandStyle: HookCommandStyle =
-        getRuntimePlatform() === 'win32' && !wslTerminalRuntime ? 'windows-cmd' : 'posix';
+      const sessionId = message.sessionId ?? null;
       const manager = bindTerminalSender(sendToConnection);
       const terminalId = sessionId
         ? manager.reserveTerminalId(userId, message.terminalId, sessionId)
         : message.terminalId;
       if (sessionId) pendingTerminalReservation = { manager, sessionId, terminalId };
       const terminalExists = manager.hasOrIsOpening(terminalId, userId, sessionId);
+      if (isPreparationTerminalId(terminalId) && !terminalExists) {
+        sendToConnection(connectionId, {
+          type: 'terminal_error',
+          terminalId: message.terminalId,
+          surfaceId: message.surfaceId,
+          message: 'Worktree preparation is no longer running.',
+        });
+        return;
+      }
       let launchSpec: TerminalLaunchSpec | undefined;
       let providerId: string | undefined;
       let launchEnv: Record<string, string> | undefined;
@@ -533,127 +604,7 @@ export async function routeClientTransportMessage({
       let terminalProvider: CliProvider | undefined;
       let acquiredHandoff = false;
 
-      if (!terminalExists && isStructuredClaude && structured) {
-        providerId = 'claude-code';
-        const settingsJson = buildClaudeHookSettingsJson(hookCommandStyle);
-        // Claude emits SessionStart as soon as its empty TUI opens, but does not
-        // persist a resumable conversation until the first prompt is submitted.
-        // Tessera records that prompt synchronously, so canonical history is the
-        // resume boundary; a mere prior PTY launch is not.
-        const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
-        const providerSession = resolveTerminalProviderSessionReference(
-          structured.sessionId,
-          state,
-        );
-        const resume = providerSession.nativeFork
-          || await sessionHistory.historyExists(structured.sessionId);
-        const built = buildProviderTerminalLaunch({
-          providerId: 'claude-code',
-          sessionId: providerSession.providerSessionId,
-          resume,
-          // Older persisted native forks predate activation metadata. Claude's
-          // native `/fork` artifact is a background daemon and must be attached.
-          providerSessionActivation: providerSession.activation
-            ?? (providerSession.nativeFork ? 'background' : undefined),
-          settingsJson,
-        });
-        launchSpec = {
-          program: built.command,
-          args: built.args,
-          prefillInput: message.prefillInput,
-        };
-      } else if (!terminalExists && isStructuredCodex && structured) {
-        providerId = 'codex';
-        // resume 판정: 이전 SessionStart 훅에서 캡처한 codexSessionId(rollout id)가 있으면 resume.
-        const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
-        const codexResumeId = dbSessions.extractCodexTerminalSessionId(state);
-        const built = buildProviderTerminalLaunch({
-          providerId: 'codex',
-          sessionId: structured.sessionId,
-          resume: !!codexResumeId,
-          codexResumeId,
-        });
-        launchSpec = {
-          program: built.command,
-          args: built.args,
-          prefillInput: message.prefillInput,
-        };
-        // CODEX_HOME 오버레이 생성(hooks.json 주입) — env로만 자식에 전달.
-        // win32+wsl은 게스트 파일시스템 안에 만든다(호스트 오버레이는 게스트 codex가
-        // 못 쓴다: 계정 홈 불일치 + Windows 심링크 EPERM). factory로 넘겨 opening
-        // 윈도우 안에서 실행한다 — WSL VM 콜드 부팅으로 수십 초 걸릴 수 있어서,
-        // 여기서 await하면 close_session 취소도 중복 create 방지도 그 구간을 못
-        // 지킨다. 실패는 create()가 terminal_error로 표면화한다 — 조용히 빈
-        // CODEX_HOME을 주면 codex가 로그인 화면부터 띄운다.
-        launchEnvFactory = async () => {
-          try {
-            const overlayHome = wslTerminalRuntime
-              ? await createCodexOverlayInWsl(terminalId, hookCommandStyle)
-              : createCodexOverlay(terminalId, hookCommandStyle);
-            // TESSERA_CODEX_HOME: login 셸 profile이 CODEX_HOME을 덮어도 -c 본문의
-            // 재단언(terminal-resolver)이 오버레이로 되돌릴 수 있게 원본을 함께 전달.
-            return { CODEX_HOME: overlayHome, TESSERA_CODEX_HOME: overlayHome };
-          } catch (error) {
-            logger.error({ error, terminalId }, 'Failed to prepare the Codex overlay');
-            throw new Error(
-              `Failed to prepare the Codex overlay: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        };
-      } else if (!terminalExists && isStructuredOpenCode && structured) {
-        providerId = 'opencode';
-        const state = dbSessions.getSession(structured.sessionId)?.provider_state ?? null;
-        const opencodeResumeId = dbSessions.extractOpenCodeTerminalSessionId(state);
-        const built = buildProviderTerminalLaunch({
-          providerId: 'opencode',
-          sessionId: structured.sessionId,
-          resume: !!opencodeResumeId,
-          opencodeResumeId,
-        });
-        launchSpec = {
-          program: built.command,
-          args: built.args,
-          prefillInput: message.prefillInput,
-        };
-
-        if (wslTerminalRuntime) {
-          // Windows의 세션별 설정 폴더를 /mnt/c로 넘기면 OpenCode가 수천 개의
-          // 플러그인 의존성 파일을 매번 DrvFS에 설치한다. WSL 안의 공용 폴더를
-          // 준비해 설치 결과를 재사용하고, 반환된 POSIX 경로는 /p 변환 없이 넘긴다.
-          launchEnvFactory = async () => {
-            try {
-              const overlayDir = await createOpenCodeOverlayInWsl();
-              return {
-                OPENCODE_CONFIG_DIR: overlayDir,
-                ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
-              };
-            } catch (error) {
-              logger.error({ error, terminalId }, 'Failed to prepare the OpenCode WSL overlay');
-              throw new Error(
-                `Failed to prepare the OpenCode WSL overlay: ${error instanceof Error ? error.message : String(error)}`,
-              );
-            }
-          };
-        } else {
-          try {
-            const overlay = createOpenCodeOverlay(terminalId);
-            launchObserverDisposer = overlay.dispose;
-            launchEnv = {
-              OPENCODE_CONFIG_DIR: overlay.configDir,
-              ...(opencodeResumeId ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId } : {}),
-            };
-          } catch (error) {
-            launchObserverDisposer?.();
-            sendToConnection(connectionId, {
-              type: 'terminal_error',
-              terminalId: message.terminalId,
-              surfaceId: message.surfaceId,
-              message: error instanceof Error ? error.message : 'Unable to prepare the OpenCode invocation.',
-            });
-            return;
-          }
-        }
-      } else if (!terminalExists && message.launchIntent) {
+      if (!terminalExists && message.launchIntent) {
         try {
           providerId = message.launchIntent.kind === 'codex-slash' ? 'codex' : 'claude-code';
           launchSpec = await resolveTerminalLaunchIntent({
@@ -687,17 +638,27 @@ export async function routeClientTransportMessage({
         }
       }
 
+      const persistedSessionCwd = !terminalExists && sessionId
+        ? resolveSessionWorkspaceRoot(sessionId)
+        : null;
+      if (!terminalExists && sessionId && !persistedSessionCwd) {
+        if (acquiredHandoff) releaseTerminalHandoffByTerminal(userId, terminalId);
+        sendToConnection(connectionId, {
+          type: 'terminal_error',
+          terminalId,
+          surfaceId: message.surfaceId,
+          message: 'The session workspace is unavailable.',
+        });
+        return;
+      }
+
       if (!terminalExists && providerId) {
         const provider = cliProviderRegistry.getProvider(providerId);
         terminalProvider = provider;
         appearanceChangePolicy = provider.getTerminalAppearanceChangePolicy();
         resizeScrollbackPolicy = provider.getTerminalResizeScrollbackPolicy();
         interruptInputPolicy = provider.getTerminalInterruptInputPolicy();
-        if (appearanceChangePolicy === 'restart' && structured) {
-          canRestartForAppearance = () => provider.canResumeTerminalAfterRestart?.(
-            dbSessions.getSession(structured.sessionId)?.provider_state ?? null,
-          ) ?? false;
-        } else if (appearanceChangePolicy === 'restart' && launchSpec?.handoffSessionId) {
+        if (appearanceChangePolicy === 'restart' && launchSpec?.handoffSessionId) {
           // A handoff intent already validated a stable provider thread id and
           // can safely resolve the same resume recipe again after PTY exit.
           canRestartForAppearance = () => true;
@@ -705,28 +666,27 @@ export async function routeClientTransportMessage({
       }
 
       // paneToken sessionId: slash-fallback은 ambient(chat) id라 상태 오귀속 방지 위해 null.
-      const tokenSessionId = (
-        isStructuredClaude || isStructuredCodex || isStructuredOpenCode
-      ) && structured ? structured.sessionId : null;
       const paneToken = !terminalExists && providerId
-        ? mintPaneToken({ terminalId, userId, sessionId: tokenSessionId, providerId })
+        ? mintPaneToken({ terminalId, userId, sessionId: null, providerId })
         : undefined;
       if (!terminalExists && providerId && terminalProvider && paneToken && sessionId) {
         const existingDisposer = launchObserverDisposer;
         const providerSessionObserver = createTerminalProviderSessionObserver({
           provider: terminalProvider,
+          userId,
           currentProviderSessionId: () => {
             const activeSessionId = manager.getSessionIdForTerminal(terminalId, userId)
               ?? sessionId;
             return getTerminalProviderSessionForTesseraSession(activeSessionId)
               ?.provider_session_id;
           },
-          onObservation: ({ activation, identity }) => {
+          onObservation: ({ activation, identity, workDir }) => {
             try {
               observeTerminalProviderSession({
                 pane: { terminalId, userId, sessionId, providerId },
                 identity,
                 activation,
+                ...(workDir ? { workDir } : {}),
               });
             } catch (error) {
               logger.warn({ error, providerId, terminalId },
@@ -749,7 +709,7 @@ export async function routeClientTransportMessage({
           surfaceId: message.surfaceId,
           previewOwnerToken: message.previewOwnerToken,
           terminalId,
-          cwd: message.cwd,
+          cwd: persistedSessionCwd ?? message.cwd,
           sessionId,
           shellKind: launchSpec ? undefined : message.shellKind,
           cols: message.cols,
@@ -808,6 +768,39 @@ export async function routeClientTransportMessage({
       );
       return;
 
+    case 'terminal_prompt':
+      try {
+        await bindTerminalSender(sendToConnection).submitSessionChatPrompt(
+          message.sessionId,
+          userId,
+          message.text,
+          message.submissionId,
+        );
+        sendToConnection(connectionId, {
+          type: 'terminal_prompt_accepted',
+          requestId: message.requestId,
+          sessionId: message.sessionId,
+        });
+      } catch (error) {
+        if (
+          error instanceof TerminalSessionInputError
+          || error instanceof TerminalSessionRuntimeNotRunningError
+        ) {
+          sendToConnection(connectionId, {
+            type: 'error',
+            requestId: message.requestId,
+            sessionId: message.sessionId,
+            code: error instanceof TerminalSessionRuntimeNotRunningError
+              ? 'terminal_runtime_not_running'
+              : 'terminal_input_not_accepted',
+            message: error.message,
+          });
+          return;
+        }
+        throw error;
+      }
+      return;
+
     case 'terminal_set_appearance':
       bindTerminalSender(sendToConnection).setAppearance(
         message.terminalId,
@@ -837,6 +830,7 @@ export async function routeClientTransportMessage({
 
     case 'subscribe_workspace_files':
       await workspaceFileWatchManager.subscribe({
+        agentEnvironment: await getAgentEnvironment(userId),
         connectionId,
         sendToUser,
         sessionId: message.sessionId,

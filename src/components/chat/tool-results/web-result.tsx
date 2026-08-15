@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, memo } from 'react';
 import { ExternalLink, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -44,6 +46,7 @@ export const WebResult = memo(function WebResult({ result, toolName }: WebResult
                 <div className="min-w-0">
                   <div className="text-(--text-secondary) truncate">{item.title}</div>
                   <a
+                    {...telemetryClickAttributes('message.link.open', 'message')}
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -75,6 +78,7 @@ export const WebResult = memo(function WebResult({ result, toolName }: WebResult
       {/* URL + status */}
       <div className="flex items-center gap-2 flex-wrap">
         <a
+          {...telemetryClickAttributes('message.link.open', 'message')}
           href={url}
           target="_blank"
           rel="noopener noreferrer"
@@ -102,6 +106,7 @@ export const WebResult = memo(function WebResult({ result, toolName }: WebResult
           </pre>
           {content && content.split('\n').length > 5 && (
             <button
+              {...telemetryClickAttributes('message.result.open', 'message')}
               onClick={(e) => { e.stopPropagation(); setIsExpanded(v => !v); }}
               className="mt-1 text-[11px] text-(--accent) hover:text-(--accent-light) transition-colors"
             >

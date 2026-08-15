@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { WindowsCloseBehavior } from '@/lib/settings/types';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
 
 type WindowCloseAction = 'quit' | 'tray' | 'cancel';
 
@@ -129,13 +131,18 @@ export function ElectronCloseDialog() {
 
   return (
     <div
+      {...telemetryIgnoreAttributes('manual_capture')}
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
       data-testid="electron-close-dialog-overlay"
       onClick={() => {
-        if (!isBusy) void respond('cancel');
+        if (!isBusy) {
+          void captureTelemetryUiControl('app_window.close_dialog.cancel', 'app_window');
+          void respond('cancel');
+        }
       }}
     >
       <div
+        {...telemetryIgnoreAttributes('event_boundary')}
         role="dialog"
         aria-modal="true"
         aria-labelledby="electron-close-title"
@@ -150,6 +157,7 @@ export function ElectronCloseDialog() {
               {t('electronClose.title')}
             </h2>
             <button
+              {...telemetryClickAttributes('app_window.close_dialog.cancel', 'app_window')}
               type="button"
               aria-label={t('common.cancel')}
               className="rounded-md p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-50"
@@ -168,6 +176,7 @@ export function ElectronCloseDialog() {
 
           <label className="mt-5 flex items-center gap-2 text-sm text-(--text-secondary)">
             <input
+              {...telemetryClickAttributes('app_window.close_dialog.remember', 'app_window')}
               type="checkbox"
               className="h-4 w-4 rounded border-(--input-border) accent-(--accent)"
               checked={rememberChoice}
@@ -180,6 +189,7 @@ export function ElectronCloseDialog() {
 
         <div className="flex flex-col-reverse gap-2 border-t border-(--divider) bg-(--input-bg)/45 px-5 py-4 sm:flex-row sm:justify-end">
           <Button
+            {...telemetryClickAttributes('app_window.close_dialog.cancel', 'app_window')}
             type="button"
             variant="outline"
             disabled={isBusy}
@@ -188,6 +198,7 @@ export function ElectronCloseDialog() {
             {t('common.cancel')}
           </Button>
           <Button
+            {...telemetryClickAttributes('app_window.close_dialog.quit', 'app_window')}
             type="button"
             variant="outline"
             className="border-(--input-border) text-(--error) hover:bg-(--error)/10 hover:text-(--error)"
@@ -198,6 +209,7 @@ export function ElectronCloseDialog() {
             {t('electronClose.quit')}
           </Button>
           <Button
+            {...telemetryClickAttributes('app_window.close_dialog.tray', 'app_window')}
             type="button"
             disabled={isBusy}
             onClick={() => void respond('tray')}

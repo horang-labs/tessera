@@ -1,10 +1,11 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import ThemeInitializer from '@/components/theme-initializer';
 import '@xterm/xterm/css/xterm.css';
 import 'monaco-editor/min/vs/editor/editor.main.css';
 import './globals.css';
 import './terminal.css';
 import { I18nHtmlLang } from '@/components/i18n-html-lang';
+import { RendererConsoleBridge } from '@/components/renderer-console-bridge';
 import { Agentation } from 'agentation';
 import { ElectronCloseDialog } from '@/components/layout/electron-close-dialog';
 import { TelemetryProvider } from '@/components/telemetry/telemetry-provider';
@@ -19,12 +20,26 @@ export const metadata: Metadata = {
   description: 'Multi-provider chat development tool',
 };
 
+// `width` and `initialScale` restate Next's default; declaring `viewport` replaces it.
+// `interactiveWidget` is the part that matters: the browser default, `resizes-visual`,
+// lets the soft keyboard shrink only the visual viewport, so `dvh` never changes, the
+// terminal's ResizeObserver stays silent, and the input area ends up behind the keyboard.
+// `resizes-content` shrinks the layout viewport instead, at the cost of one PTY resize
+// per keyboard open.
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  interactiveWidget: 'resizes-content',
+};
+
 // Inline script to prevent FOUC (Flash of Unstyled Content)
 // Runs before React hydration to apply the correct theme class and font scale
 const themeScript = `
 (function() {
   try {
-    var stored = localStorage.getItem('tessera:settings');
+    var stored = window.electronAPI && window.electronAPI.isElectron && window.electronAPI.uiStorageGetItem
+      ? window.electronAPI.uiStorageGetItem('tessera:settings')
+      : localStorage.getItem('tessera:settings');
     var settings = stored ? JSON.parse(stored).state.settings : {};
     var theme = settings.theme || 'auto';
     var isDark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -59,6 +74,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
+        <RendererConsoleBridge />
         <I18nHtmlLang />
         <ThemeInitializer />
         <TelemetryProvider />

@@ -13,6 +13,7 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useTaskStore } from '@/stores/task-store';
 import { generateSessionTitle } from '@/lib/session/title-generator';
+import { requestSessionRename } from '@/lib/session/rename-session-request';
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
@@ -21,6 +22,8 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { resolveSessionWorktreeLifecycleTarget } from '@/lib/session/session-worktree-lifecycle';
 
 interface SessionCreateOptions {
   workDir?: string;
@@ -72,8 +75,8 @@ export function useSessionCrud() {
         const taskStore = useTaskStore.getState();
         const task = taskStore.getTaskBySessionId(sessionId);
         if (task) {
-          taskStore.loadTasks(task.projectId, {
-            setCurrent: taskStore.currentProjectId === task.projectId,
+          taskStore.loadTasks(task.projectViewId, {
+            setCurrent: taskStore.currentProjectId === task.projectViewId,
           });
         }
       });
@@ -111,10 +114,12 @@ export function useSessionCrud() {
       // 미지정이면 글로벌 기본.
       const effectiveExecutionMode = options.executionMode
         ?? useSettingsStore.getState().settings.agentExecutionMode;
+      const originProjectId = options.parentProjectId || options.workDir || process.cwd();
       const optimisticSession: UnifiedSession = {
         id: tempSessionId,
         title: t('panel.creating'),
-        projectDir: options.parentProjectId || options.workDir || process.cwd(),
+        projectDir: originProjectId,
+        originProjectId,
         workDir: options.workDir,
         isRunning: false,
         hasStarted: false,
@@ -190,17 +195,16 @@ export function useSessionCrud() {
         const result = await response.json();
 
         const projectDir = options.parentProjectId || result.projectDir || '';
-        const projectExisted = sessionStore.projects.some(
+        const projectExisted = projectViewWorkspaceState.getLoadedProjectViews().some(
           (p) => p.encodedDir === projectDir || p.decodedPath === projectDir
         );
-
-        sessionStore.removeSession(tempSessionId);
 
         // No runtime exists yet. GUI starts on first input; PTY starts on first open.
         const newSession: UnifiedSession = {
           id: result.sessionId,
           title: result.title,
           projectDir: projectDir,
+          originProjectId: projectDir,
           workDir: options.workDir || result.projectDir,
           isRunning: false,
           hasStarted: false,
@@ -211,6 +215,8 @@ export function useSessionCrud() {
           archived: false,
           sortOrder: 0,
           worktreeBranch,
+          worktreeId: result.worktreeId,
+          scopeBranch: result.scopeBranch,
           kind: result.kind,
           provider: result.provider,
           model: result.model,
@@ -224,7 +230,16 @@ export function useSessionCrud() {
           hasCustomTitle: options.hasCustomTitle ?? false,
         };
 
-        sessionStore.addSession(newSession);
+        // The user may have moved to another tab while the request was in flight.
+        // Keep that newer choice active and replace only the optimistic surface
+        // that initiated this creation.
+        sessionStore.addSession(newSession, { activate: false });
+        useTabStore.getState().rebindSessionSurface(
+          [tempSessionId],
+          result.sessionId,
+          { worktreeId: result.worktreeId ?? null },
+        );
+        sessionStore.removeSession(tempSessionId);
         sessionStore.setCreatingSession(null);
 
         // Migrate draft input from temp session to real session
@@ -232,16 +247,6 @@ export function useSessionCrud() {
         const tempDraft = chatStore.getDraftInput(tempSessionId);
         if (tempDraft) {
           chatStore.setDraftInput(result.sessionId, tempDraft);
-        }
-
-        // Update panel from temp to real session
-        {
-          const ps = usePanelStore.getState();
-          ps.assignSession(
-            selectActiveTab(ps)?.activePanelId ?? '',
-            result.sessionId,
-          );
-          useTabStore.getState().syncTabProjectFromSession(ps.activeTabId, result.sessionId);
         }
 
         chatStore.loadHistory(result.sessionId, []);
@@ -257,6 +262,7 @@ export function useSessionCrud() {
           has_task: Boolean(options.taskId),
           has_worktree: Boolean(worktreeBranch),
           has_collection: Boolean(options.collectionId),
+          session_kind: result.kind,
         });
 
         return result.sessionId;
@@ -305,6 +311,16 @@ export function useSessionCrud() {
   const deleteSession = useCallback(
     async (sessionId: string): Promise<boolean> => {
       try {
+        const task = projectViewWorkspaceState.resolveTaskBySessionId(sessionId);
+        const target = resolveSessionWorktreeLifecycleTarget(sessionId, task);
+        if (target.kind === 'worktree') {
+          const deleted = await useTaskStore.getState().deleteWorktree(target.taskId);
+          if (!deleted) return false;
+          removeSessionFromStores(sessionId);
+          toast.success(t('notifications.sessionDeleted'));
+          return true;
+        }
+
         const response = await requestSessionDelete(sessionId);
 
         if (!response.ok) {
@@ -352,6 +368,7 @@ export function useSessionCrud() {
           id: result.sessionId,
           title: result.title,
           projectDir: result.projectDir,
+          originProjectId: result.projectDir,
           workDir: result.workDir,
           isRunning: false,
           hasStarted: true,
@@ -445,44 +462,14 @@ export function useSessionCrud() {
    */
   const renameSession = useCallback(
     async (sessionId: string, newTitle: string) => {
-      const session = sessionStore.getSession(sessionId);
-      const oldTitle = session?.title;
-      const oldHasCustomTitle = session?.hasCustomTitle;
-      const linkedTask = useTaskStore.getState().getTaskBySessionId(sessionId);
-      const oldTaskTitle = linkedTask?.title;
-      sessionStore.updateSessionTitle(sessionId, newTitle, true);
-      useTaskStore.getState().syncLinkedTaskTitle(sessionId, newTitle);
-
       setIsRenaming(true);
-
       try {
-        const response = await fetchWithClientId(`/api/sessions/${sessionId}/rename`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: newTitle }),
-        });
-
-        if (!response.ok) {
-          throw new Error(t('errors.renameSessionFailed'));
-        }
-
-        toast.success(t('notifications.sessionRenamed'));
-      } catch (err) {
-        if (oldTitle) {
-          sessionStore.updateSessionTitle(sessionId, oldTitle, oldHasCustomTitle);
-        }
-        if (linkedTask?.sessions.length === 1 && oldTaskTitle) {
-          useTaskStore.getState().syncLinkedTaskTitle(sessionId, oldTaskTitle);
-        } else if (oldTitle) {
-          useTaskStore.getState().syncLinkedTaskTitle(sessionId, oldTitle);
-        }
-        toast.error(t('errors.renameSessionFailed'));
-        console.error('Rename session error:', err);
+        await requestSessionRename(sessionId, newTitle, t);
       } finally {
         setIsRenaming(false);
       }
     },
-    [sessionStore, t]
+    [t]
   );
 
   /**
@@ -521,6 +508,10 @@ export function useSessionCrud() {
         if (!response.ok) {
           const body = await response.json();
           if (body.code === 'no_conversation') {
+            void captureTelemetryEvent('ai_title_generation_result', {
+              source: 'manual',
+              result: 'no_conversation',
+            });
             toast.warning(t('notifications.noConversationYet'));
             return;
           }
@@ -532,8 +523,17 @@ export function useSessionCrud() {
         sessionStore.updateSessionTitle(sessionId, result.title, true);
         useTaskStore.getState().syncLinkedTaskTitle(sessionId, result.title);
 
+        void captureTelemetryEvent('ai_title_generation_result', {
+          source: 'manual',
+          result: 'success',
+        });
+
         toast.success(t('notifications.titleGenerated'));
       } catch (err) {
+        void captureTelemetryEvent('ai_title_generation_result', {
+          source: 'manual',
+          result: 'failed',
+        });
         toast.error(t('errors.generateTitleFailed'));
         console.error('Generate title error:', err);
       } finally {

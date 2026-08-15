@@ -52,9 +52,12 @@ export async function POST(
 
     logger.info({ userId, sessionId, title: result.title }, 'AI title saved to DB');
 
+    const session = dbSessions.getSession(sessionId);
     broadcastSessionMutation(userId, {
       kind: 'updated',
-      projectId: dbSessions.getSession(sessionId)?.project_id,
+      projectId: session?.project_id,
+      sessionId,
+      taskId: session?.task_id ?? undefined,
       originClientId: getOriginClientIdFromRequest(req),
     });
 

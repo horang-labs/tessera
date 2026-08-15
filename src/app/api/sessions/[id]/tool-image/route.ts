@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs/promises';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
+import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
 import { jsonError } from '@/lib/http/json-error';
 import logger from '@/lib/logger';
 import * as dbSessions from '@/lib/db/sessions';
 import { sessionHistory } from '@/lib/session-history';
+import {
+  readTerminalToolCallParams,
+  supportsTerminalTranscriptHistory,
+} from '@/lib/session/terminal-session-history';
 import { inferImageMime, isImagePath } from '@/lib/tool-results/tool-image';
 
 // Codex screenshots / large reads can be a few MB; cap to avoid serving huge files.
@@ -33,11 +38,16 @@ export async function GET(
       return jsonError('invalid_params', 'toolUseId is required', 400);
     }
 
-    if (!dbSessions.getSession(id)) {
+    const session = dbSessions.getSession(id);
+    if (!session) {
       return jsonError('not_found', 'Session not found', 404);
     }
 
-    const toolParams = await sessionHistory.readToolCallParams(id, toolUseId);
+    // A PTY session's conversation never reaches Tessera's own history, so its
+    // tool calls only exist in the provider transcript the chat view decodes.
+    const toolParams = supportsTerminalTranscriptHistory(session)
+      ? await readTerminalToolCallParams(session, toolUseId, auth.userId)
+      : await sessionHistory.readToolCallParams(id, toolUseId);
     if (!toolParams) {
       return jsonError('not_found', 'Tool call not found', 404);
     }
@@ -56,9 +66,16 @@ export async function GET(
       return jsonError('unsupported_media', 'Tool call path is not an image', 415);
     }
 
+    // The recorded path is the one the CLI saw, which is not always readable by
+    // this process: a Windows-hosted server driving a WSL agent records
+    // `/home/...` and `/mnt/c/...`, neither of which `fs` can open. Re-resolve
+    // against the host filesystem (`\\wsl.localhost\<distro>\...`, `C:\...`)
+    // before touching disk.
+    const hostPath = await resolvePathForHostFilesystem(rawPath);
+
     let stat;
     try {
-      stat = await fs.stat(rawPath);
+      stat = await fs.stat(hostPath);
     } catch {
       return jsonError('file_not_found', 'Image file not found', 404);
     }
@@ -69,7 +86,7 @@ export async function GET(
       return jsonError('file_too_large', 'Image is too large to preview', 413);
     }
 
-    const buffer = await fs.readFile(rawPath);
+    const buffer = await fs.readFile(hostPath);
     return new NextResponse(buffer, {
       headers: {
         'Content-Type': inferImageMime(rawPath) ?? 'application/octet-stream',

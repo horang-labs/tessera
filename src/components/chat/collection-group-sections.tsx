@@ -9,17 +9,27 @@ import {
   CircleStop,
   ExternalLink,
   FolderGit2,
-  FolderInput,
-  GitBranch,
   MessageSquare,
   Pencil,
   Plus,
+  RefreshCw,
   Sparkles,
   Trash2,
   type LucideIcon,
 } from 'lucide-react';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useInlineRename } from '@/hooks/use-inline-rename';
+import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
+import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import {
+  useAnyProjectViewSessionUnread,
+  useProjectViewSessionUnread,
+} from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { cn } from '@/lib/utils';
@@ -30,11 +40,12 @@ import {
   useIsSessionAwaitingUser,
 } from '@/hooks/use-session-awaiting-user';
 import { useCollectionStore } from '@/stores/collection-store';
-import { useProvidersStore } from '@/stores/providers-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
+import { usePanelStore } from '@/stores/panel-store';
+import { useTabStore } from '@/stores/tab-store';
 import { COLLECTION_ITEM_DND_MIME, SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
 import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-entity';
 import type { TaskEntity, TaskSession } from '@/types/task-entity';
@@ -51,6 +62,7 @@ import {
 } from './work-item-primitives';
 import { CollectionMoveSubmenu } from './collection-move-submenu';
 import { DiffStatsBadge } from './diff-stats-badge';
+import { TaskPreparationBadge } from '@/components/task/task-preparation-view';
 import { ProviderLogoMark } from './provider-brand';
 import { ProviderQuickMenu } from './provider-quick-menu';
 import { detectPrMismatch, prMismatchTooltip } from './task-pr-badge';
@@ -60,6 +72,22 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  SIDEBAR_TREE_LEADING_SLOT,
+  SIDEBAR_TREE_ROW_GUTTER,
+} from './sidebar-tree-layout';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import {
+  getLinkedWorktreeDensity,
+  isLinkedWorktreeParentActive,
+  toLinkedWorktreeSession,
+} from '@/lib/worktrees/linked-worktree-presentation';
+import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { resolvePreparationBadge } from '@/lib/projects/preparation-status-policy';
+import { isSpecialSession } from '@/lib/constants/special-sessions';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
 
 type CollectionItemType = 'chat' | 'task';
 type ItemContextMenuHandler = (
@@ -137,8 +165,18 @@ export function CollectionHeaderMenu({
       }
     }
 
-    document.addEventListener('mousedown', handleMouseDown, true);
-    return () => document.removeEventListener('mousedown', handleMouseDown, true);
+    // A phone tap synthesises pointerdown → mousedown → mouseup → click all in
+    // one tick. If we register on the leading edge of that sequence, the very
+    // click that just opened the menu is also seen as an outside mousedown and
+    // the menu snaps shut before the user ever sees it. Deferring by a frame
+    // lets the opening cycle drain first.
+    const raf = window.requestAnimationFrame(() => {
+      document.addEventListener('mousedown', handleMouseDown, true);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      document.removeEventListener('mousedown', handleMouseDown, true);
+    };
   }, [open]);
 
   const handleToggle = useCallback(
@@ -188,6 +226,8 @@ export function CollectionHeaderMenu({
   return (
     <div className="shrink-0 leading-none">
       <OverflowMenuButton
+        telemetryControl="collection.menu.open"
+        telemetrySurface="workspace_list"
         buttonRef={btnRef}
         onClick={handleToggle}
         size="compact"
@@ -204,6 +244,7 @@ export function CollectionHeaderMenu({
           style={{ top: menuPos.top, left: menuPos.left }}
         >
           <button
+            {...telemetryClickAttributes('collection.edit', 'workspace_list')}
             onClick={handleEdit}
             className="flex w-full items-center gap-2 px-3 h-8 text-[0.75rem] text-left rounded-md text-(--sidebar-text-active) transition-colors hover:bg-(--sidebar-hover) cursor-default"
           >
@@ -211,6 +252,7 @@ export function CollectionHeaderMenu({
             <span>Edit</span>
           </button>
           <button
+            {...telemetryClickAttributes('collection.delete', 'workspace_list')}
             onClick={handleDelete}
             className="flex w-full items-center gap-2 px-3 h-8 text-[0.75rem] text-left rounded-md text-(--error) transition-colors hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] cursor-default"
           >
@@ -226,6 +268,7 @@ export function CollectionHeaderMenu({
 
 export function CollectionContextMenu({
   menu,
+  projectViewId,
   collections,
   onClose,
   onRename,
@@ -233,11 +276,12 @@ export function CollectionContextMenu({
   onArchive,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onStopProcess,
   onStatusChange,
+  onRunPreparation,
 }: {
   menu: ContextMenuState;
+  projectViewId: string;
   collections?: Collection[];
   onClose: () => void;
   onRename?: () => void;
@@ -245,9 +289,10 @@ export function CollectionContextMenu({
   onArchive?: () => void;
   onOpenInNewTab?: () => void;
   onGenerateTitle?: () => void;
-  onMoveToProject?: () => void;
   onStopProcess?: () => void;
   onStatusChange?: (status: string) => void;
+  /** Runs the project's preparation script again on this task's worktree. */
+  onRunPreparation?: () => void;
 }) {
   const { t } = useI18n();
   const fallbackCollections = useCollectionStore((state) => state.collections);
@@ -317,9 +362,9 @@ export function CollectionContextMenu({
         return;
       }
 
-      await useTaskStore.getState().updateTask(menu.targetId, { collectionId });
+      await useTaskStore.getState().updateTask(menu.targetId, { collectionId }, projectViewId);
     },
-    [menu, onClose],
+    [menu, onClose, projectViewId],
   );
 
   const menuItemClass = cn(
@@ -338,6 +383,7 @@ export function CollectionContextMenu({
         {menu.isRunning && onStopProcess && (
           <>
             <button
+              {...telemetryClickAttributes('task.stop', 'workspace_list')}
               className={cn(menuItemClass, 'text-(--error)')}
               onClick={() => { onStopProcess(); onClose(); }}
               data-testid="ctx-stop-process"
@@ -377,6 +423,7 @@ export function CollectionContextMenu({
               return (
                 <button
                   key={status}
+                  {...telemetryClickAttributes('task.status.change', 'workspace_list')}
                   className={cn(menuItemClass, isCurrent && 'opacity-50 cursor-default')}
                   onClick={isCurrent ? undefined : () => { onStatusChange(status); onClose(); }}
                   disabled={isCurrent}
@@ -393,45 +440,63 @@ export function CollectionContextMenu({
         )}
 
         {onGenerateTitle && (
-          <button className={menuItemClass} onClick={() => { onGenerateTitle(); onClose(); }}>
+          <button
+            {...telemetryClickAttributes('task.generate_title', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onGenerateTitle(); onClose(); }}
+          >
             <Sparkles className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>{t('task.contextMenu.generateTitle' as Parameters<typeof t>[0])}</span>
           </button>
         )}
 
+        {onRunPreparation && (
+          <button
+            {...telemetryClickAttributes('task.run_preparation', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onRunPreparation(); onClose(); }}
+            data-testid="ctx-run-preparation"
+          >
+            <RefreshCw className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+            <span>{t('task.preparation.runNow')}</span>
+          </button>
+        )}
+
         {onRename && (
-          <button className={menuItemClass} onClick={() => { onRename(); onClose(); }}>
+          <button
+            {...telemetryClickAttributes('task.rename', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onRename(); onClose(); }}
+          >
             <Pencil className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>Rename</span>
           </button>
         )}
 
         {onArchive && (
-          <button className={menuItemClass} onClick={() => { onArchive(); onClose(); }}>
+          <button
+            {...telemetryClickAttributes('task.archive_toggle', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onArchive(); onClose(); }}
+            data-testid={menu.type === 'task' && !menu.isSubSession
+              ? 'ctx-archive-worktree-task'
+              : 'ctx-archive-session'}
+          >
             <Archive className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-            <span>Archive</span>
+            <span>{menu.type === 'task' && !menu.isSubSession
+              ? 'Archive worktree task'
+              : 'Archive session'}</span>
           </button>
         )}
 
         {onOpenInNewTab && (
-          <button className={menuItemClass} onClick={() => { onOpenInNewTab(); onClose(); }}>
+          <button
+            {...telemetryClickAttributes('task.open_new_tab', 'workspace_list')}
+            className={menuItemClass}
+            onClick={() => { onOpenInNewTab(); onClose(); }}
+          >
             <ExternalLink className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>Open in New Tab</span>
-          </button>
-        )}
-
-        {onMoveToProject && (
-          <button
-            className={cn(menuItemClass, menu.isRunning && 'pointer-events-none opacity-40')}
-            onClick={() => {
-              if (!menu.isRunning) {
-                onMoveToProject();
-                onClose();
-              }
-            }}
-          >
-            <FolderInput className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
-            <span>Move to Project</span>
           </button>
         )}
 
@@ -439,6 +504,7 @@ export function CollectionContextMenu({
           <>
             <div className="mx-2 my-1 h-px bg-(--divider) opacity-40" />
             <button
+              {...telemetryClickAttributes('task.delete', 'workspace_list')}
               className={cn(
                 'flex h-8 w-full cursor-default items-center gap-2 rounded-md px-3 text-left text-[0.75rem]',
                 'text-(--error) transition-colors hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)]',
@@ -458,23 +524,29 @@ export function CollectionContextMenu({
 
 function SubSessionRow({
   sess,
+  task,
   activeSessionId,
   collectionId,
   onSessionClick,
   onSessionDoubleClick,
   onContextMenu,
   onStopProcess,
+  onArchive,
   onRename,
   isRenameRequested,
   onRenameComplete,
+  reorder,
 }: {
   sess: TaskSession;
+  task: TaskEntity;
   activeSessionId: string | null;
   collectionId: string | null;
+  reorder?: ReturnType<typeof useSubSessionReorder>;
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
   onSessionDoubleClick?: (session: UnifiedSession) => void;
   onContextMenu?: ItemContextMenuHandler;
   onStopProcess?: (sessionId: string) => void;
+  onArchive?: (sessionId: string) => void;
   onRename?: (sessionId: string, newTitle: string) => void;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
@@ -486,41 +558,30 @@ function SubSessionRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
-  const liveSession = useSessionStore((state) => {
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return session;
-    }
-    return undefined;
-  });
+  const liveSession = useProjectViewSession(sess.id, task.projectViewId);
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? sess.kind,
     isRunning: liveSession?.isRunning ?? sess.isRunning,
   });
-  const hasUnread = useSessionStore((state) => {
-    if (isActive) return false;
-    for (const project of state.projects) {
-      const session = project.sessions.find((item) => item.id === sess.id);
-      if (session) return (session.unreadCount ?? 0) > 0;
-    }
-    return false;
-  });
+  const hasCanonicalUnread = useProjectViewSessionUnread(sess.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const asUnifiedSession = useCallback(
-    () =>
-      ({
-        id: sess.id,
-        title: sess.title,
-        lastModified: sess.lastModified,
-        isRunning: liveSession?.isRunning ?? sess.isRunning,
-        kind: liveSession?.kind ?? sess.kind,
-      }) as UnifiedSession,
-    [liveSession, sess],
+    () => toLinkedWorktreeSession(task, sess, liveSession),
+    [liveSession, sess, task],
   );
+  const openSession = useCallback(() => {
+    return asUnifiedSession();
+  }, [asUnifiedSession]);
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     event.preventDefault();
     onStopProcess?.(sess.id);
   }, [onStopProcess, sess.id]);
+  const {
+    isConfirmingArchive,
+    handleArchiveClick,
+    resetArchiveConfirm,
+  } = useArchiveConfirm(() => onArchive?.(sess.id));
   const {
     inputRef: renameInputRef,
     isRenaming,
@@ -542,13 +603,17 @@ function SubSessionRow({
     event.stopPropagation();
     setPanelSessionDragData(event.dataTransfer, sess.id);
     event.dataTransfer.effectAllowed = 'move';
-  }, [isRenaming, sess.id]);
+    reorder?.handleDragStart(sess.id);
+  }, [isRenaming, sess.id, reorder]);
+
+  const dropPosition = reorder?.indicatorFor(sess.id) ?? null;
 
   return (
     <div
       className={cn(
         'group/sub relative my-px flex items-center gap-1.5 rounded px-2 py-1 text-[0.75rem] transition-colors duration-150',
         isRenaming ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+        reorder?.draggingSessionId === sess.id && 'opacity-40',
         isSelected
           ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
           : isActive
@@ -557,18 +622,28 @@ function SubSessionRow({
       )}
       draggable={!isRenaming}
       onDragStart={handleDragStart}
-      onDragEnd={(event) => event.stopPropagation()}
+      onDragEnd={(event) => {
+        event.stopPropagation();
+        reorder?.handleDragEnd();
+      }}
+      onDragOver={(event) => reorder?.handleDragOver(event, sess.id)}
+      onDrop={(event) => reorder?.handleDrop(event, sess.id)}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      data-telemetry-ignore="manual_capture"
+      onMouseLeave={() => {
+        setIsHovered(false);
+        resetArchiveConfirm();
+      }}
       onClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
-        onSessionClick(asUnifiedSession(), event);
+        void captureTelemetryUiControl('list.subsession.open', 'workspace_list');
+        onSessionClick(openSession(), event);
       }}
       onDoubleClick={(event) => {
         if (isRenaming) return;
         event.stopPropagation();
-        onSessionDoubleClick?.(asUnifiedSession());
+        onSessionDoubleClick?.(openSession());
       }}
       onContextMenu={(event) => {
         if (isRenaming) return;
@@ -578,7 +653,16 @@ function SubSessionRow({
       }}
       data-session-id={sess.id}
       data-testid={`collection-subsession-${sess.id}`}
+      data-drop-position={dropPosition ?? undefined}
     >
+      {dropPosition && (
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-x-0 h-0.5 rounded-full bg-(--accent)',
+            dropPosition === 'before' ? '-top-px' : '-bottom-px',
+          )}
+        />
+      )}
       <div className="absolute -left-3 top-1/2 h-px w-[10px] bg-(--divider)" />
       {isActive && (
         <div className="absolute -left-3 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)" />
@@ -617,6 +701,7 @@ function SubSessionRow({
 
       {isRenaming ? (
         <InlineRenameInput
+          telemetrySurface="workspace_list"
           inputRef={renameInputRef}
           value={renameValue}
           onValueChange={setRenameValue}
@@ -628,23 +713,63 @@ function SubSessionRow({
         <span className="min-w-0 flex-1 truncate pr-8">{sess.title}</span>
       )}
 
-      {isHovered && !isRenaming && (
+      {!isRenaming && (
+        // Row actions.
+        // Desktop: hover-reveal — stop / archive / kebab appear together.
+        // Phone: stop and archive collapse into the kebab menu (which already
+        // carries them via onContextMenu), and the kebab itself is always
+        // visible. Hover on touch is unreliable and, when it does fire on tap,
+        // races the row's own onClick that opens the session.
         <div className="flex shrink-0 items-center gap-0.5">
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
+              telemetryControl="task.stop"
+              telemetrySurface="workspace_list"
               onClick={handleStopProcess}
-              className="rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+              className={cn(
+                'max-sm:hidden rounded p-0.5 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90',
+                isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none',
+              )}
               testId={`collection-subsession-quick-stop-${sess.id}`}
             />
           )}
+          {onArchive && (
+            <ArchiveConfirmButton
+              telemetryControl="task.archive_toggle"
+              telemetrySurface="workspace_list"
+              isConfirming={isConfirmingArchive}
+              onClick={(event) => {
+                event.stopPropagation();
+                event.preventDefault();
+                handleArchiveClick();
+              }}
+              className={cn(
+                'max-sm:hidden rounded p-0.5 transition-all duration-150',
+                isConfirmingArchive
+                  ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
+                  : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
+                isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none',
+              )}
+              testId={`collection-subsession-quick-archive-${sess.id}`}
+              confirmTitle="Click again to archive"
+              idleTitle="Archive"
+            />
+          )}
           <OverflowMenuButton
+            telemetryControl="task.menu.open"
+            telemetrySurface="workspace_list"
             buttonRef={moreRef}
             onClick={(event) => {
               event.stopPropagation();
               onContextMenu?.(event, 'chat', sess.id, collectionId, true);
             }}
             size="compact"
-            className="shrink-0 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)"
+            className={cn(
+              'shrink-0 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
+              // Always available on phone; desktop keeps the hover-reveal.
+              'max-sm:opacity-100',
+              isHovered ? 'sm:opacity-100' : 'sm:opacity-0 sm:pointer-events-none',
+            )}
           />
         </div>
       )}
@@ -667,6 +792,7 @@ export function TaskItemRow({
   onDragOverItem,
   onRename,
   onSessionRename,
+  onSessionArchive,
   renamingSessionId,
   isRenameRequested,
   onRenameComplete,
@@ -689,10 +815,12 @@ export function TaskItemRow({
   onDragOverItem: (e: React.DragEvent) => void;
   onRename?: (taskId: string, newTitle: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
+  /** Archives a single child session, leaving the task and its worktree alone. */
+  onSessionArchive?: (sessionId: string, task?: TaskEntity) => void;
   renamingSessionId?: string | null;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
-  onAddSession: (providerId?: string) => void;
+  onAddSession: (providerId?: string, executionMode?: AgentExecutionMode) => void;
   onStopProcess?: (sessionId: string) => void;
   disableDnd?: boolean;
   allowPanelSessionDnd?: boolean;
@@ -703,48 +831,68 @@ export function TaskItemRow({
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
-  const isMultiSession = task.sessions.length > 1;
-  const isTaskActive = !isMultiSession && task.sessions.length === 1 && task.sessions[0].id === activeSessionId;
+  const density = getLinkedWorktreeDensity(task.sessions);
+  const isExpanded = density === 'expanded';
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
+  const activeTabId = useTabStore((state) => state.activeTabId);
+  const activePanelSessionId = usePanelStore((state) => {
+    const tab = state.tabPanels[activeTabId];
+    const sessionId = tab?.panels[tab.activePanelId]?.sessionId ?? null;
+    return isSpecialSession(sessionId) ? null : sessionId;
+  });
+  const activePanelWorktreeId = usePanelStore((state) => {
+    const tab = state.tabPanels[activeTabId];
+    return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
+  });
+  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
+  const isTaskActive = isLinkedWorktreeParentActive({
+    density,
+    primarySessionId: task.sessions[0]?.id ?? null,
+    activeSessionId,
+    taskWorktreeId: task.worktreeId ?? null,
+    activePanelSessionId,
+    activePanelWorktreeId,
+    peekWorktreeId,
+  });
   const isPending = task.isPending === true;
+  const hasPreparationBadge = resolvePreparationBadge(
+    task.preparationStatus ?? 'never_run',
+  ) !== null;
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
     primarySessionId ? state.generatingTitleIds.has(primarySessionId) : false,
   );
   const isSelected = useSelectionStore((state) =>
-    primarySessionId ? state.selectedIds.has(primarySessionId) : false,
+    density === 'composite' && primarySessionId
+      ? state.selectedIds.has(primarySessionId)
+      : false,
   );
   const hoverActionFadeStyle = getSidebarHoverActionFadeStyle(
     getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
   );
   const taskSessionIds = task.sessions.map((session) => session.id);
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return resolveSessionRuntimePresentation(session).showRunning;
-      }
-      const snapshot = task.sessions.find((session) => session.id === id);
-      return snapshot
-        ? resolveSessionRuntimePresentation(snapshot).showRunning
-        : false;
-    }),
+  const resolvedTaskSessions = useProjectViewSessions(taskSessionIds, task.projectViewId);
+  const resolvedTaskSessionsById = new Map(
+    resolvedTaskSessions.map((session) => [session.id, session]),
   );
+  const hasVisibleRuntimeSession = taskSessionIds.some((id) => {
+    const snapshot = task.sessions.find((session) => session.id === id);
+    const session = resolvedTaskSessionsById.get(id) ?? snapshot;
+    return session
+      ? resolveSessionRuntimePresentation(session).showRunning
+      : false;
+  });
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
-  const hasUnreadSession = useSessionStore((state) =>
-    !isTaskActive &&
-    taskSessionIds.some((id) => {
-      if (id === activeSessionId) return false;
-      for (const project of state.projects) {
-        const session = project.sessions.find((item) => item.id === id);
-        if (session) return (session.unreadCount ?? 0) > 0;
-      }
-      return false;
-    }),
+  const hasCanonicalUnreadSession = useAnyProjectViewSessionUnread(
+    taskSessionIds,
+    activeSessionId,
   );
+  const hasUnreadSession = !isTaskActive && hasCanonicalUnreadSession;
   const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasUnreadSession || hasVisibleRuntimeSession;
   const {
     inputRef: renameInputRef,
@@ -760,7 +908,9 @@ export function TaskItemRow({
     onRenameComplete,
   });
   const canCollectionDnd = !disableDnd && !isRenaming && !isPending;
-  const canPanelSessionDnd = Boolean(allowPanelSessionDnd && primarySessionId && !isRenaming && !isPending);
+  const canPanelSessionDnd = Boolean(
+    density === 'composite' && allowPanelSessionDnd && primarySessionId && !isRenaming && !isPending,
+  );
   const canDrag = canCollectionDnd || canPanelSessionDnd;
   const titleFadeStyle: React.CSSProperties | undefined = isHovered && !isRenaming
     ? {
@@ -769,7 +919,7 @@ export function TaskItemRow({
       }
     : undefined;
 
-  const handleArchiveTask = useCallback(() => {
+  const handleArchive = useCallback(() => {
     void useTaskStore.getState().toggleTaskArchive(task.id, true);
   }, [task.id]);
 
@@ -777,19 +927,22 @@ export function TaskItemRow({
     isConfirmingArchive,
     handleArchiveClick,
     resetArchiveConfirm,
-  } = useArchiveConfirm(handleArchiveTask);
+  } = useArchiveConfirm(handleArchive);
 
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     event.preventDefault();
 
     for (const session of task.sessions) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onStopProcess?.(session.id);
       }
     }
-  }, [onStopProcess, task.sessions]);
+  }, [onStopProcess, task.projectViewId, task.sessions]);
 
   const handleDragStart = useCallback((event: React.DragEvent) => {
     if (disableDnd) {
@@ -802,39 +955,41 @@ export function TaskItemRow({
     onDragStart(event);
   }, [disableDnd, onDragStart, primarySessionId]);
 
-  const handleClick = useCallback(
-    (event: React.MouseEvent) => {
-      if (isRenaming) return;
-      const session = task.sessions[0];
-      if (!session) return;
-      onSessionClick(
-        {
-          id: session.id,
-          title: session.title,
-          lastModified: session.lastModified,
-          isRunning: session.isRunning,
-          kind: session.kind,
-        } as UnifiedSession,
-        event,
-      );
-    },
-    [isRenaming, onSessionClick, task.sessions],
-  );
+  const selectWorktree = useCallback(() => {
+    if (!task.worktreeId) return;
+    stepAsidePhoneSidebar();
+    useWorkspacePeekStore.getState().openWorktree(task.worktreeId, task.projectViewId);
+  }, [task.projectViewId, task.worktreeId]);
 
-  const handleDoubleClick = useCallback(() => {
-    if (isRenaming) return;
+  const openPrimarySession = useCallback(async (
+    open: (session: UnifiedSession) => void | Promise<void>,
+  ) => {
     const session = task.sessions[0];
     if (!session) return;
-    onSessionDoubleClick?.(
-      {
-        id: session.id,
-        title: session.title,
-        lastModified: session.lastModified,
-        isRunning: session.isRunning,
-        kind: session.kind,
-      } as UnifiedSession,
-    );
-  }, [isRenaming, onSessionDoubleClick, task.sessions]);
+    const unifiedSession = toLinkedWorktreeSession(task, session);
+    await open(unifiedSession);
+  }, [task]);
+
+  const handleClick = useCallback(
+    async (event: React.MouseEvent) => {
+      if (isRenaming) return;
+      if (density !== 'composite') {
+        selectWorktree();
+        return;
+      }
+      await openPrimarySession((session) => onSessionClick(session, event));
+    },
+    [density, isRenaming, onSessionClick, openPrimarySession, selectWorktree],
+  );
+
+  const handleDoubleClick = useCallback(async () => {
+    if (isRenaming) return;
+    if (density !== 'composite') {
+      selectWorktree();
+      return;
+    }
+    await openPrimarySession((session) => onSessionDoubleClick?.(session));
+  }, [density, isRenaming, onSessionDoubleClick, openPrimarySession, selectWorktree]);
 
   // Worktree mark (git branch icon + PR-mismatch / missing badges). Rendered on
   // the leading side when provider icons are off (it's the task's primary mark),
@@ -843,11 +998,13 @@ export function TaskItemRow({
   // status dot; only the leading placement carries it (trailing gets it on the
   // provider mark instead).
   const renderWorktreeMark = (showStatus: boolean, className?: string, Icon: LucideIcon = FolderGit2) => {
-    if (!task.worktreeBranch) return null;
+    if (!task.worktreeId && !task.worktreeBranch) return null;
+    const branchLabel = task.worktreeBranch ?? 'unknown';
     return (
       <span
-        title={task.worktreeMissing ? t('task.worktree.missing', { branch: task.worktreeBranch }) : task.worktreeBranch}
+        title={task.worktreeMissing ? t('task.worktree.missing', { branch: branchLabel }) : branchLabel}
         className={cn('relative flex shrink-0 items-center', className)}
+        data-testid={`collection-task-worktree-icon-${task.id}`}
       >
         <Icon
           className={cn(
@@ -860,7 +1017,7 @@ export function TaskItemRow({
         {(() => {
           // Skip mismatch badge when PR sync is unsupported — we have no
           // reliable prStatus to compare against the column.
-          const mismatch = task.prUnsupported
+          const mismatch = task.prUnsupported || task.prStatusKnown === false
             ? null
             : detectPrMismatch(task.workflowStatus, task.prStatus);
           if (!mismatch) return null;
@@ -913,7 +1070,8 @@ export function TaskItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/task relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-all duration-150',
+          'group/task relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150 max-sm:pr-14',
+          SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -925,7 +1083,11 @@ export function TaskItemRow({
           isRenaming && 'cursor-default',
           isPending && 'pointer-events-none opacity-60',
         )}
-        onClick={isPending ? undefined : handleClick}
+        data-telemetry-ignore="manual_capture"
+        onClick={isPending ? undefined : (event) => {
+          void captureTelemetryUiControl('list.task.open', 'workspace_list');
+          handleClick(event);
+        }}
         onDoubleClick={isPending ? undefined : handleDoubleClick}
         onContextMenu={(event) => {
           if (isPending || isRenaming || !onContextMenu) return;
@@ -933,10 +1095,19 @@ export function TaskItemRow({
           onContextMenu(event, 'task', task.id, task.collectionId ?? null);
         }}
         data-session-id={task.sessions[0]?.id}
+        data-worktree-id={task.worktreeId}
+        data-linked-worktree-density={density}
+        aria-current={isTaskActive ? 'true' : undefined}
         data-testid={`collection-task-${task.id}`}
       >
-        <span className="flex shrink-0 items-center">
-          {showProviderIcons ? (
+        {/* Pending, preparation, and ready states share one slot so the title stays put. */}
+        <span className={SIDEBAR_TREE_LEADING_SLOT}>
+          {hasPreparationBadge ? (
+            <TaskPreparationBadge
+              status={task.preparationStatus}
+              presentation="icon"
+            />
+          ) : showProviderIcons && primarySessionId ? (
             <span className="relative flex shrink-0 items-center">
               <ProviderLogoMark
                 providerId={task.sessions[0]?.provider}
@@ -954,7 +1125,7 @@ export function TaskItemRow({
                 surface="sidebar"
               />
             </span>
-          ) : task.worktreeBranch ? (
+          ) : task.worktreeId || task.worktreeBranch ? (
             renderWorktreeMark(true)
           ) : hasTaskStatus ? (
             <span className="relative flex w-3.5 shrink-0 items-center justify-center">
@@ -974,6 +1145,7 @@ export function TaskItemRow({
         <div className="min-w-0 flex-1">
           {isRenaming ? (
             <InlineRenameInput
+              telemetrySurface="workspace_list"
               inputRef={renameInputRef}
               value={renameValue}
               onValueChange={setRenameValue}
@@ -1009,32 +1181,44 @@ export function TaskItemRow({
               isHovered ? 'opacity-0' : 'opacity-100',
             )}
           >
-            <DiffStatsBadge stats={task.diffStats} />
-            {showProviderIcons && renderWorktreeMark(false, undefined, GitBranch)}
+            <DiffStatsBadge stats={task.diffStats} className="max-sm:hidden" />
+            {showProviderIcons && renderWorktreeMark(false)}
           </span>
         )}
 
         <div
           className={cn(
-            'pointer-events-none absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
+            // Desktop keeps hover-reveal. Phone forces the action rail visible
+            // and pointer-active so the + and kebab are always reachable — hover
+            // on touch is unreliable and, when it fires from a tap, races the
+            // row's own onClick that opens the session. Stop/archive drop into
+            // the kebab menu on phone (see max-sm:hidden below).
+            'absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
             hasVisibleRuntimeSession ? 'w-28' : 'w-24',
-            isHovered && !isRenaming ? 'opacity-100' : 'pointer-events-none opacity-0',
+            'max-sm:opacity-100 max-sm:pointer-events-auto',
+            isHovered && !isRenaming
+              ? 'sm:opacity-100 sm:pointer-events-auto'
+              : 'sm:opacity-0 sm:pointer-events-none',
           )}
         >
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 w-full rounded-r-lg"
+            className="absolute inset-y-0 right-0 w-full rounded-r-lg max-sm:hidden"
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
             {hasVisibleRuntimeSession && onStopProcess && (
               <StopProcessButton
+                telemetryControl="task.stop"
+                telemetrySurface="workspace_list"
                 onClick={handleStopProcess}
-                className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+                className="max-sm:hidden rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
                 testId={`collection-task-quick-stop-${task.id}`}
               />
             )}
             <ArchiveConfirmButton
+              telemetryControl="task.archive_toggle"
+              telemetrySurface="workspace_list"
               isConfirming={isConfirmingArchive}
               onClick={(event) => {
                 event.stopPropagation();
@@ -1042,26 +1226,23 @@ export function TaskItemRow({
                 handleArchiveClick();
               }}
               className={cn(
-                'rounded p-1 transition-all duration-150',
+                'max-sm:hidden rounded p-1 transition-all duration-150',
                 isConfirmingArchive
                   ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                   : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
               )}
               testId={`collection-task-quick-archive-${task.id}`}
-              confirmTitle="Click again to archive task"
-              idleTitle="Archive task"
+              confirmTitle="Click again to archive worktree task"
+              idleTitle="Archive worktree task"
             />
             <button
               ref={addButtonRef}
+              {...telemetryClickAttributes('list.task.add_session', 'workspace_list')}
               onClick={(event) => {
                 event.stopPropagation();
                 event.preventDefault();
-                const providers = useProvidersStore.getState().providers;
-                const selectable = (providers ?? []).filter((p) => p.status === 'connected');
-                if (selectable.length === 1) {
-                  onAddSession(selectable[0].id);
-                  return;
-                }
+                // Always open the menu — even with a single provider the session
+                // still needs its PTY/GUI choice.
                 const rect = addButtonRef.current?.getBoundingClientRect();
                 if (rect) setProviderMenuAnchor(rect);
               }}
@@ -1074,6 +1255,8 @@ export function TaskItemRow({
               <Plus className="h-3.5 w-3.5" />
             </button>
             <OverflowMenuButton
+              telemetryControl="task.menu.open"
+              telemetrySurface="workspace_list"
               buttonRef={moreButtonRef}
               onClick={(event) => {
                 event.stopPropagation();
@@ -1087,7 +1270,7 @@ export function TaskItemRow({
         </div>
       </div>
 
-      {isMultiSession && (
+      {isExpanded && (
         <div
           className="relative ml-[30px] pl-3"
           onDragOver={(event) => {
@@ -1105,21 +1288,38 @@ export function TaskItemRow({
           }}
         >
           <div className="absolute bottom-2 left-0 top-0 w-px bg-(--divider)" />
-          {task.sessions.map((session) => (
+          {visibleSessions.map((session) => (
             <SubSessionRow
               key={session.id}
               sess={session}
+              task={task}
               activeSessionId={activeSessionId}
               collectionId={task.collectionId ?? null}
               onSessionClick={onSessionClick}
               onSessionDoubleClick={onSessionDoubleClick}
               onContextMenu={onContextMenu}
               onStopProcess={onStopProcess}
+              onArchive={(sessionId) => onSessionArchive?.(sessionId, task)}
               onRename={onSessionRename}
               isRenameRequested={renamingSessionId === session.id}
               onRenameComplete={onRenameComplete}
+              reorder={subSessionReorder}
             />
           ))}
+          {showToggle && (
+            <button
+              {...telemetryClickAttributes('collection.subsessions.toggle', 'workspace_list')}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggle();
+              }}
+              className="w-full px-2 py-1 text-left text-[0.6875rem] text-(--text-muted) hover:text-(--sidebar-text-active)"
+              data-testid={`collection-task-show-more-${task.id}`}
+            >
+              {revealed ? t('task.showLess') : t('task.showMore', { count: hiddenCount })}
+            </button>
+          )}
         </div>
       )}
 
@@ -1130,7 +1330,7 @@ export function TaskItemRow({
         <ProviderQuickMenu
           anchorRect={providerMenuAnchor}
           currentProviderId={task.sessions[0]?.provider}
-          onSelect={(providerId) => onAddSession(providerId)}
+          onSelect={(providerId, executionMode) => onAddSession(providerId, executionMode)}
           onClose={() => setProviderMenuAnchor(null)}
         />
       )}
@@ -1185,7 +1385,7 @@ export function ChatItemRow({
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
-  const liveSession = useSessionStore((state) => state.getSession(session.id));
+  const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? session.kind,
@@ -1199,15 +1399,12 @@ export function ChatItemRow({
   const workflowIconFill = workflowStatus
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
-  // Trailing badges mirror the worktree row's trailing group. The diff badge
-  // shows whenever the chat has worktree diff stats — provider icons on or off.
-  // With provider icons on, the leading slot holds the provider logo, so the
-  // chat bubble rides the trailing edge — ALWAYS shown for chats (colored by
-  // status when set, neutral gray when the chat has no status). Provider-off
-  // rows already carry the bubble in the leading slot instead.
+  // Desktop shows Git stats for chats backed by a changed worktree. Phone keeps
+  // that badge hidden so the always-visible overflow action has enough room.
   const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
   const showTrailingBubble = showProviderIcons;
-  const hasUnread = !isActive && (session.unreadCount ?? 0) > 0;
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const {
     isConfirmingArchive,
@@ -1269,7 +1466,8 @@ export function ChatItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/chat relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-all duration-150',
+          'group/chat relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150 max-sm:pr-10',
+          SIDEBAR_TREE_ROW_GUTTER,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1279,8 +1477,10 @@ export function ChatItemRow({
           isDragging && 'cursor-grabbing opacity-35 scale-[0.97]',
           isJustDropped && 'drop-flash',
         )}
+        data-telemetry-ignore="manual_capture"
         onClick={(event) => {
           if (!isRenaming) {
+            void captureTelemetryUiControl('list.chat.open', 'workspace_list');
             onSessionClick(session, event);
           }
         }}
@@ -1298,7 +1498,7 @@ export function ChatItemRow({
         data-item-id={session.id}
         data-testid={`collection-chat-${session.id}`}
       >
-        <span className="relative flex shrink-0 items-center">
+        <span className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
           {showProviderIcons ? (
             <ProviderLogoMark
               providerId={session.provider}
@@ -1335,6 +1535,7 @@ export function ChatItemRow({
         <div className="min-w-0 flex-1">
           {isRenaming ? (
             <InlineRenameInput
+              telemetrySurface="workspace_list"
               inputRef={renameInputRef}
               value={renameValue}
               onValueChange={setRenameValue}
@@ -1359,18 +1560,17 @@ export function ChatItemRow({
           )}
         </div>
 
-        {/* Trailing group mirrors the worktree row: diff first, then a status-
-            colored chat bubble. Diff shows regardless of provider icons; the
-            bubble only when the provider logo holds the leading slot. Hidden on
-            hover so the quick-action buttons show. */}
+        {/* Desktop retains the worktree diff. When a provider logo occupies the
+            leading slot, keep chat identity on the trailing edge as well. */}
         {!isRenaming && (showTrailingDiff || showTrailingBubble) && (
           <span
             className={cn(
               'flex shrink-0 items-center gap-1.5 transition-opacity duration-150',
-              isHovered ? 'opacity-0' : 'opacity-100',
+              'max-sm:opacity-100',
+              isHovered ? 'sm:opacity-0' : 'sm:opacity-100',
             )}
           >
-            <DiffStatsBadge stats={session.diffStats} />
+            <DiffStatsBadge stats={session.diffStats} className="max-sm:hidden" />
             {showTrailingBubble && (
               workflowColor && workflowIconFill ? (
                 <WorkflowMessageSquareIcon
@@ -1391,26 +1591,33 @@ export function ChatItemRow({
 
         <div
           className={cn(
-            'pointer-events-none absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
-            runtimePresentation.canStop ? 'w-28' : 'w-24',
-            isHovered && !isRenaming ? 'opacity-100' : 'pointer-events-none opacity-0',
+            'absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
+            runtimePresentation.canStop ? 'sm:w-28' : 'sm:w-24',
+            'max-sm:w-10 max-sm:opacity-100 max-sm:pointer-events-auto',
+            isHovered && !isRenaming
+              ? 'sm:opacity-100 sm:pointer-events-auto'
+              : 'sm:opacity-0 sm:pointer-events-none',
           )}
         >
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 w-full rounded-r-lg"
+            className="absolute inset-y-0 right-0 w-full rounded-r-lg max-sm:hidden"
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
             {runtimePresentation.canStop && onStopProcess && (
               <StopProcessButton
+                telemetryControl="task.stop"
+                telemetrySurface="workspace_list"
                 onClick={handleStopProcess}
-                className="rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
+                className="max-sm:hidden rounded p-1 text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
                 testId={`collection-chat-quick-stop-${session.id}`}
               />
             )}
             {onArchive && (
               <ArchiveConfirmButton
+                telemetryControl="task.archive_toggle"
+                telemetrySurface="workspace_list"
                 isConfirming={isConfirmingArchive}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -1418,7 +1625,7 @@ export function ChatItemRow({
                   handleArchiveClick();
                 }}
                 className={cn(
-                  'rounded p-1 transition-all duration-150',
+                  'max-sm:hidden rounded p-1 transition-all duration-150',
                   isConfirmingArchive
                     ? 'bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)'
                     : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] hover:text-(--accent)',
@@ -1429,6 +1636,8 @@ export function ChatItemRow({
               />
             )}
             <OverflowMenuButton
+              telemetryControl="task.menu.open"
+              telemetrySurface="workspace_list"
               buttonRef={moreButtonRef}
               onClick={(event) => {
                 event.stopPropagation();

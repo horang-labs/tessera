@@ -353,7 +353,7 @@ export function normalizeToolResult(
       if ('retrieval_status' in result || 'task_id' in result) {
         return normalizeBackgroundTaskResult(result as TaskOutputToolResult | TaskStopToolResult);
       }
-      if ('query' in result || 'url' in result) {
+      if (('query' in result && Array.isArray(result.results)) || 'url' in result) {
         return normalizeWebResult(result as WebSearchToolResult | WebFetchToolResult);
       }
       if ('plan' in result || 'message' in result) {

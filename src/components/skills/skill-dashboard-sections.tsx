@@ -12,6 +12,7 @@ import type {
   SkillDetail,
 } from '@/lib/skill/skill-analysis-types';
 import { SkillCard } from './skill-card';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 type TranslateFn = (key: string, options?: Record<string, unknown>) => string;
 
@@ -282,6 +283,7 @@ export function CategoryAccordion({
       'bg-(--bg-secondary) border-(--divider)',
     )}>
       <button
+        {...telemetryClickAttributes('skills.item.toggle', 'skills')}
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2.5 w-full px-4 py-3 text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
       >

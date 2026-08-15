@@ -7,17 +7,53 @@ import {
   dialog,
   Menu,
   nativeTheme,
+  screen,
   type ContextMenuParams,
   type MenuItemConstructorOptions,
 } from 'electron';
 import { fork, ChildProcess, spawnSync } from 'child_process';
-import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs';
-import { createTray, destroyTray, updateTrayCloseBehavior } from './tray';
+import { networkInterfaces } from 'node:os';
+import QRCode from 'qrcode';
+import {
+  createTray,
+  destroyTray,
+  updateTrayCloseBehavior,
+  updateTrayRemoteAccessStatus,
+} from './tray';
+import {
+  buildQuitConfirmation,
+  parseRemoteAccessStatus,
+  retainLastRemoteAccessStatus,
+  resolveElectronLanguage,
+  type RemoteAccessStatus,
+} from './remote-access-status';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
+import {
+  acquireElectronInstanceLock,
+  configureElectronTestInstance,
+  resolveElectronServerPort,
+  resolveElectronWindowTitle,
+} from '../src/lib/electron-test-instance';
 import { normalizeExternalHttpUrl } from '../src/lib/external-http-url';
+import { isPairingDecision } from '../src/lib/auth/pairing-contract';
 import { readTerminalClipboard, writeTerminalClipboardText } from './terminal-clipboard';
+import { registerAppSecretHeader } from './app-secret-header';
+import { configureTailscaleFirewall } from './windows-firewall';
+import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
+import { buildRemoteAccessAddressCandidates } from './network-addresses';
+import {
+  parseElectronWindowLayoutState,
+  resolveVisibleWindowBounds,
+  type RestorablePopoutWindowState,
+  type RestorableWindowState,
+  type WindowBounds,
+} from './window-layout-state';
+
+// Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
+// Normal builds do not set the test instance env and keep the production path.
+const electronTestInstance = configureElectronTestInstance(app);
 
 type TitlebarMenuSection = 'file' | 'edit' | 'view' | 'window' | 'help';
 type TitlebarTheme = 'light' | 'dark';
@@ -48,8 +84,9 @@ const WINDOWS_TITLEBAR_DIMMED_THEME = {
 const TESSERA_HOMEPAGE = 'https://github.com/horang-labs/tessera';
 const MAX_SHELL_PATH_LENGTH = 32768;
 const ELECTRON_DEFAULT_PORT = 32123;
-const ELECTRON_PORT_SCAN_LIMIT = 100;
 const UI_STORAGE_PATH = getTesseraDataPath('ui-state.json');
+const WINDOW_LAYOUT_STORAGE_KEY = 'tessera:electron-window-layout';
+const WINDOW_LAYOUT_WRITE_DELAY_MS = 200;
 
 function readUiStorage(): Record<string, string> {
   try {
@@ -330,18 +367,161 @@ function normalizeElectronLogLevel(value: string | undefined): ElectronLogLevel 
   return null;
 }
 
-const ELECTRON_LOG_LEVEL =
-  normalizeElectronLogLevel(process.env.TESSERA_ELECTRON_LOG_LEVEL) ??
-  normalizeElectronLogLevel(process.env.LOG_LEVEL) ??
-  (app.isPackaged ? 'error' : 'debug');
+/**
+ * Level baked into the build itself. `electron-builder` writes it with
+ * `-c.extraMetadata.tesseraLogLevel=debug` (see the `electron:build:*:debug` scripts), so a
+ * debug build logs everything on a plain double-click — no environment variable to set,
+ * which a user launching the portable exe from Explorer has no way to do.
+ */
+interface TesseraBuildMetadata {
+  tesseraLogLevel?: unknown;
+  tesseraTelemetryDisabled?: unknown;
+}
+
+function readBuildMetadata(): TesseraBuildMetadata {
+  try {
+    const manifest = fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8');
+    return JSON.parse(manifest) as TesseraBuildMetadata;
+  } catch {
+    return {};
+  }
+}
+
+const BUILD_METADATA = readBuildMetadata();
+
+function readBuildStampedLogLevel(): string | undefined {
+  return typeof BUILD_METADATA.tesseraLogLevel === 'string'
+    ? BUILD_METADATA.tesseraLogLevel
+    : undefined;
+}
+
+const BUILD_STAMPED_TELEMETRY_DISABLED = BUILD_METADATA.tesseraTelemetryDisabled === true;
+
+type LogLevelSource = 'TESSERA_ELECTRON_LOG_LEVEL' | 'LOG_LEVEL' | 'build' | 'default';
+
+function resolveLogLevel(): { level: ElectronLogLevel; source: LogLevelSource } {
+  const fromElectronEnv = normalizeElectronLogLevel(process.env.TESSERA_ELECTRON_LOG_LEVEL);
+  if (fromElectronEnv) return { level: fromElectronEnv, source: 'TESSERA_ELECTRON_LOG_LEVEL' };
+
+  const fromEnv = normalizeElectronLogLevel(process.env.LOG_LEVEL);
+  if (fromEnv) return { level: fromEnv, source: 'LOG_LEVEL' };
+
+  const fromBuild = normalizeElectronLogLevel(readBuildStampedLogLevel());
+  if (fromBuild) return { level: fromBuild, source: 'build' };
+
+  return { level: app.isPackaged ? 'error' : 'debug', source: 'default' };
+}
+
+const RESOLVED_LOG_LEVEL = resolveLogLevel();
+const ELECTRON_LOG_LEVEL = RESOLVED_LOG_LEVEL.level;
+
+/**
+ * The level someone actually asked for, as opposed to the built-in default. Only this is
+ * handed down to the server child: passing the default too would silently raise an unpackaged
+ * run's server logging from pino's `info` to `debug`.
+ */
+const EXPLICIT_LOG_LEVEL =
+  RESOLVED_LOG_LEVEL.source === 'default' ? null : RESOLVED_LOG_LEVEL.level;
+
+// A debug build writes orders of magnitude more than an error-level one, and the log is
+// append-only, so cap it and keep a single previous generation. Sized for a debug session:
+// truncating the run that reproduced the bug defeats the point.
+const LOG_MAX_BYTES = 500 * 1024 * 1024;
+let logBytesWritten: number | null = null;
+let logFd: number | null = null;
+
+function closeLogFd() {
+  if (logFd === null) return;
+  try {
+    fs.closeSync(logFd);
+  } catch {
+    // Already gone; nothing to release.
+  }
+  logFd = null;
+}
+
+/**
+ * Keep the log open across writes. `appendFileSync` reopens and closes the file on every
+ * line, which is fine at error level but turns into the dominant cost once a debug build
+ * starts funnelling pino output and the renderer console through here. Writes stay
+ * synchronous on purpose — a crash has to leave its last lines on disk.
+ */
+function ensureLogFd(): number | null {
+  if (logFd !== null) return logFd;
+  try {
+    fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
+    logFd = fs.openSync(LOG_PATH, 'a');
+  } catch {
+    logFd = null;
+  }
+  return logFd;
+}
+
+function rotateLogIfNeeded(incomingBytes: number) {
+  if (logBytesWritten === null) {
+    try {
+      logBytesWritten = fs.statSync(LOG_PATH).size;
+    } catch {
+      logBytesWritten = 0;
+    }
+  }
+  if (logBytesWritten + incomingBytes <= LOG_MAX_BYTES) return;
+  try {
+    // Windows refuses to rename a file that is still open, so release the handle first.
+    closeLogFd();
+    fs.rmSync(`${LOG_PATH}.1`, { force: true });
+    fs.renameSync(LOG_PATH, `${LOG_PATH}.1`);
+    logBytesWritten = 0;
+  } catch {
+    // Rotation is best effort — keep appending rather than dropping the line. Drop the
+    // byte counter so the next write re-reads the real size instead of retrying forever.
+    logBytesWritten = null;
+  }
+}
+
+function writeLogLine(level: ElectronLogLevel, msg: string) {
+  // A serialized stack spans several lines. Indent the continuation so one entry still reads
+  // as one entry in a file where every other line opens with a timestamp.
+  const body = msg.includes('\n') ? msg.replace(/\n/g, '\n    ') : msg;
+  const line = `[${new Date().toISOString()}] [${level.toUpperCase()}] ${body}\n`;
+  const bytes = Buffer.byteLength(line);
+  rotateLogIfNeeded(bytes);
+  const fd = ensureLogFd();
+  if (fd === null) return;
+  try {
+    fs.writeSync(fd, line);
+    logBytesWritten = (logBytesWritten ?? 0) + bytes;
+  } catch {
+    // The handle went stale (log deleted or rotated underneath us). Reopen next time.
+    closeLogFd();
+    logBytesWritten = null;
+  }
+}
 
 function log(level: ElectronLogLevel, msg: string) {
   if (LOG_LEVEL_WEIGHT[level] < LOG_LEVEL_WEIGHT[ELECTRON_LOG_LEVEL]) {
     return;
   }
-  fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
-  fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] [${level.toUpperCase()}] ${msg}\n`);
+  writeLogLine(level, msg);
 }
+
+/**
+ * A run marker, written whatever the level is. The log is append-only across launches, so
+ * without it the first question asked of any bug report — which of these lines belong to the
+ * run I care about — has no answer. Recording where the level came from also answers the
+ * follow-up: why this build is (or is not) logging what was expected.
+ */
+function logSessionBanner() {
+  const rule = '='.repeat(16);
+  writeLogLine(
+    'info',
+    `${rule} Tessera ${app.getVersion()} started ` +
+      `[level=${ELECTRON_LOG_LEVEL} via ${RESOLVED_LOG_LEVEL.source}] ` +
+      `[${process.platform}-${process.arch} packaged=${app.isPackaged} pid=${process.pid}] ${rule}`,
+  );
+}
+
+logSessionBanner();
 
 function classifyServerStdout(line: string): ElectronLogLevel {
   try {
@@ -393,8 +573,108 @@ function attachServerProcessLogging(child: ChildProcess) {
   });
 }
 
+// Chromium's console severities, in the order `console-message` reports them.
+const RENDERER_CONSOLE_LEVELS: ElectronLogLevel[] = ['debug', 'info', 'warn', 'error'];
+
+type RendererConsoleDetails = {
+  level?: number | string;
+  message?: string;
+  lineNumber?: number;
+  sourceId?: string;
+};
+
+function rendererConsoleLevel(level: number | string | undefined): ElectronLogLevel {
+  if (typeof level === 'number') {
+    return RENDERER_CONSOLE_LEVELS[level] ?? 'debug';
+  }
+  return normalizeElectronLogLevel(level) ?? 'debug';
+}
+
+/**
+ * Mirror the renderer's console into the same file as the main and server logs. Without this
+ * the UI side is only visible through DevTools, so a bug report from a packaged build arrives
+ * with the server half of the story and nothing from the window.
+ *
+ * Always attached, at every level: each message is mapped to its Chromium severity and then
+ * filtered by `log()` like any other line. An error-level build therefore still records a
+ * renderer `console.error` — which is exactly the line worth having — while dropping its
+ * `console.debug` chatter.
+ */
+const DEBUG_LOGGING_ENABLED = ELECTRON_LOG_LEVEL === 'debug';
+
+// Per-webContents state for the two renderer paths, so the IPC bridge can retire the
+// `console-message` mirror for its own window once it takes over.
+type RendererConsoleMirror = {
+  label: string;
+  listener: (...payload: unknown[]) => void;
+};
+const rendererConsoleMirrors = new Map<number, RendererConsoleMirror>();
+
+function attachRendererConsoleLogging(win: BrowserWindow, label: string) {
+  // Electron 33 emits the positional form `(event, level, message, line, sourceId)`; 35+
+  // replaced it with `(event, details)`. Accept both so an upgrade doesn't silently stop this.
+  const listener = (...payload: unknown[]) => {
+    const [, second, third, fourth, fifth] = payload;
+    const details =
+      second && typeof second === 'object' ? (second as RendererConsoleDetails) : null;
+
+    const level = rendererConsoleLevel(
+      details ? details.level : (second as number | string | undefined),
+    );
+    const message = details ? (details.message ?? '') : String(third ?? '');
+    const sourceId = details ? details.sourceId : (fifth as string | undefined);
+    const lineNumber = details ? details.lineNumber : (fourth as number | undefined);
+    const origin = sourceId ? ` (${sourceId}:${lineNumber ?? 0})` : '';
+
+    log(level, `[renderer:${label}] ${message}${origin}`);
+  };
+
+  const contentsId = win.webContents.id;
+  rendererConsoleMirrors.set(contentsId, { label, listener });
+  win.webContents.on('console-message', listener);
+  win.webContents.once('destroyed', () => {
+    rendererConsoleMirrors.delete(contentsId);
+  });
+}
+
+/**
+ * Receive the renderer's console through IPC, where the arguments are still structured.
+ *
+ * `console-message` hands over whatever Chromium flattened to a string, so an object argument
+ * arrives as `[object Object]` and an Error loses its stack. The renderer-side bridge
+ * (src/lib/renderer-console-bridge.ts) serializes before sending, which is why this exists
+ * alongside the mirror rather than instead of it.
+ *
+ * Registered only in a debug build. On a release the channels have no listener, so the
+ * preload's `send()` is a no-op even if something calls it.
+ */
+function registerRendererConsoleBridge() {
+  if (!DEBUG_LOGGING_ENABLED) return;
+
+  ipcMain.on('renderer-console-log', (event, payload: { level?: unknown; text?: unknown }) => {
+    if (typeof payload?.text !== 'string') return;
+    const level = normalizeElectronLogLevel(
+      typeof payload.level === 'string' ? payload.level : undefined,
+    ) ?? 'debug';
+    const label = rendererConsoleMirrors.get(event.sender.id)?.label ?? 'window';
+    log(level, `[renderer:${label}] ${payload.text}`);
+  });
+
+  ipcMain.on('renderer-console-bridge-ready', event => {
+    // The bridge now reports the same calls with their arguments intact; keeping the mirror
+    // would log every line twice, once in its flattened form.
+    const mirror = rendererConsoleMirrors.get(event.sender.id);
+    if (!mirror) return;
+    event.sender.removeListener('console-message', mirror.listener);
+    log('debug', `[renderer:${mirror.label}] console bridge attached; mirror detached`);
+  });
+}
+
 // ── Single instance lock ───────────────────────────────────────────────────
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = acquireElectronInstanceLock(
+  () => app.requestSingleInstanceLock(),
+  electronTestInstance,
+);
 if (!gotLock) {
   app.quit();
   process.exit(0);
@@ -418,7 +698,8 @@ if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.commandLine.appendSwitch('max-active-webgl-contexts', '128');
 }
 
-// The embedded server listens on 127.0.0.1 only, but windows load http://localhost.
+// App windows keep a stable localhost origin even though the packaged Windows
+// server also listens on external IPv4 interfaces for direct Tailscale access.
 // On hosts where connecting to ::1 stalls (observed ~210ms per connect with WSL /
 // VPN network stacks), every fresh renderer connection pays that penalty. Pin
 // localhost to IPv4 in Chromium's resolver; keeping the literal "localhost" URL
@@ -427,6 +708,8 @@ app.commandLine.appendSwitch('host-resolver-rules', 'MAP localhost 127.0.0.1');
 
 let mainWindow: BrowserWindow | null = null;
 const popoutWindows = new Set<BrowserWindow>();
+const popoutRoutes = new Map<BrowserWindow, string>();
+let windowLayoutWriteTimer: NodeJS.Timeout | null = null;
 let serverProcess: ChildProcess | null = null;
 let serverPort = 0;
 let isQuitting = false;
@@ -436,6 +719,94 @@ let closeRequestSequence = 0;
 let activeCloseRequest: Promise<void> | null = null;
 let activeQuitConfirmation: Promise<void> | null = null;
 let terminalSummarySequence = 0;
+let pairingPresentationSequence = 0;
+let electronAppSecret = '';
+let remoteAccessStatus: RemoteAccessStatus | null = null;
+let remoteAccessStatusTimer: NodeJS.Timeout | null = null;
+
+function currentDisplayWorkAreas(): WindowBounds[] {
+  return screen.getAllDisplays().map((display) => ({
+    x: display.workArea.x,
+    y: display.workArea.y,
+    width: display.workArea.width,
+    height: display.workArea.height,
+  }));
+}
+
+function restoredBounds(state?: RestorableWindowState): WindowBounds | undefined {
+  return resolveVisibleWindowBounds(state?.bounds, currentDisplayWorkAreas());
+}
+
+function captureWindowState(win: BrowserWindow): RestorableWindowState {
+  const bounds = win.getNormalBounds();
+  return {
+    bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+    isMaximized: win.isMaximized(),
+    isFullScreen: win.isFullScreen(),
+  };
+}
+
+function persistWindowLayoutNow(): void {
+  if (windowLayoutWriteTimer) {
+    clearTimeout(windowLayoutWriteTimer);
+    windowLayoutWriteTimer = null;
+  }
+
+  const main = mainWindow && !mainWindow.isDestroyed()
+    ? captureWindowState(mainWindow)
+    : null;
+  const popouts: RestorablePopoutWindowState[] = [];
+  for (const win of popoutWindows) {
+    const route = popoutRoutes.get(win);
+    if (win.isDestroyed() || !route) continue;
+    popouts.push({ ...captureWindowState(win), route });
+  }
+  setUiStorageItem({
+    key: WINDOW_LAYOUT_STORAGE_KEY,
+    value: JSON.stringify({ version: 1, main, popouts }),
+  });
+}
+
+function scheduleWindowLayoutPersist(): void {
+  if (windowLayoutWriteTimer) clearTimeout(windowLayoutWriteTimer);
+  windowLayoutWriteTimer = setTimeout(persistWindowLayoutNow, WINDOW_LAYOUT_WRITE_DELAY_MS);
+  windowLayoutWriteTimer.unref?.();
+}
+
+function bindWindowLayoutPersistence(win: BrowserWindow): void {
+  win.on('move', scheduleWindowLayoutPersist);
+  win.on('resize', scheduleWindowLayoutPersist);
+  win.on('maximize', scheduleWindowLayoutPersist);
+  win.on('unmaximize', scheduleWindowLayoutPersist);
+  win.on('enter-full-screen', scheduleWindowLayoutPersist);
+  win.on('leave-full-screen', scheduleWindowLayoutPersist);
+}
+
+function applyRestoredWindowMode(win: BrowserWindow, state?: RestorableWindowState): void {
+  if (!state) return;
+  if (state.isFullScreen) {
+    win.setFullScreen(true);
+  } else if (state.isMaximized) {
+    win.maximize();
+  }
+}
+
+function updatePopoutRouteParam(
+  key: 'projectDir' | 'collectionFilter' | 'runningFilter',
+  value: string | boolean | null,
+): void {
+  for (const [win, route] of popoutRoutes) {
+    if (win.isDestroyed()) continue;
+    const url = new URL(route, 'http://localhost');
+    if (value === null || value === '') {
+      url.searchParams.delete(key);
+    } else {
+      url.searchParams.set(key, String(value));
+    }
+    popoutRoutes.set(win, `${url.pathname}${url.search}`);
+  }
+  scheduleWindowLayoutPersist();
+}
 
 type WindowCloseAction = 'quit' | 'tray' | 'cancel';
 type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
@@ -447,6 +818,9 @@ type PendingCloseRequest = {
 const WINDOW_CLOSE_RESPONSE_TIMEOUT_MS = 15_000;
 const SERVER_SHUTDOWN_TIMEOUT_MS = 8_000;
 const TERMINAL_SUMMARY_TIMEOUT_MS = 1_500;
+const PAIRING_PRESENTATION_TIMEOUT_MS = 5_000;
+const REMOTE_ACCESS_STATUS_TIMEOUT_MS = 1_500;
+const REMOTE_ACCESS_STATUS_POLL_INTERVAL_MS = 2_000;
 const pendingCloseRequests = new Map<string, PendingCloseRequest>();
 type TerminalRuntimeSummary = { activeCount: number; sessionCount: number };
 type PendingTerminalSummary = {
@@ -454,6 +828,19 @@ type PendingTerminalSummary = {
   timeout: NodeJS.Timeout;
 };
 const pendingTerminalSummaries = new Map<string, PendingTerminalSummary>();
+type PairingPresentation = {
+  pairingLink: string;
+  createdAt: string;
+  expiresAt: string;
+};
+type PairingPresentationResult =
+  | ({ ok: true } & PairingPresentation)
+  | { ok: false; code: string; error: string };
+type PendingPairingPresentation = {
+  resolve: (result: PairingPresentationResult) => void;
+  timeout: NodeJS.Timeout;
+};
+const pendingPairingPresentations = new Map<string, PendingPairingPresentation>();
 let windowsCloseBehavior: WindowsCloseBehavior = 'ask';
 
 function resolveTerminalSummary(
@@ -471,6 +858,233 @@ function resolveAllTerminalSummaries(): void {
   for (const requestId of [...pendingTerminalSummaries.keys()]) {
     resolveTerminalSummary(requestId, { activeCount: -1, sessionCount: -1 });
   }
+}
+
+function resolvePairingPresentation(
+  requestId: string,
+  result: PairingPresentationResult,
+): void {
+  const pending = pendingPairingPresentations.get(requestId);
+  if (!pending) return;
+  clearTimeout(pending.timeout);
+  pendingPairingPresentations.delete(requestId);
+  pending.resolve(result);
+}
+
+function resolveAllPairingPresentations(): void {
+  for (const requestId of [...pendingPairingPresentations.keys()]) {
+    resolvePairingPresentation(requestId, {
+      ok: false,
+      code: 'server-unavailable',
+      error: 'The Tessera server is unavailable',
+    });
+  }
+}
+
+async function requestPairingPresentationOverHttp(
+  action: 'issue' | 'rotate',
+): Promise<PairingPresentationResult> {
+  try {
+    const { APP_SECRET_HEADER, APP_SECRET_PATH } = await import('../src/lib/auth/app-secret');
+    const secret = (await fs.promises.readFile(APP_SECRET_PATH, 'utf8')).trim();
+    const response = await fetch(`http://127.0.0.1:${serverPort}/api/pairing`, {
+      method: action === 'rotate' ? 'PUT' : 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        origin: `http://127.0.0.1:${serverPort}`,
+      },
+    });
+    const body = await response.json().catch(() => null) as {
+      pairingLink?: unknown;
+      createdAt?: unknown;
+      expiresAt?: unknown;
+      code?: unknown;
+      error?: unknown;
+    } | null;
+    if (
+      response.ok
+      && typeof body?.pairingLink === 'string'
+      && typeof body.createdAt === 'string'
+      && typeof body.expiresAt === 'string'
+    ) {
+      return {
+        ok: true,
+        pairingLink: body.pairingLink,
+        createdAt: body.createdAt,
+        expiresAt: body.expiresAt,
+      };
+    }
+    return {
+      ok: false,
+      code: typeof body?.code === 'string' ? body.code : 'pairing-failed',
+      error: typeof body?.error === 'string' ? body.error : 'Pairing failed',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'server-unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function requestPairingPresentation(
+  action: 'issue' | 'rotate',
+): Promise<PairingPresentationResult> {
+  const child = serverProcess;
+  if (!child?.connected) {
+    if (app.isPackaged) {
+      return Promise.resolve({
+        ok: false,
+        code: 'server-unavailable',
+        error: 'The Tessera server is not connected',
+      });
+    }
+    // electron:dev owns the server in the npm process, so child IPC is not
+    // available there. Keep QR generation in main while using its loopback API.
+    return requestPairingPresentationOverHttp(action);
+  }
+
+  const requestId = `pairing-presentation-${Date.now()}-${++pairingPresentationSequence}`;
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingPairingPresentations.delete(requestId);
+      resolve({
+        ok: false,
+        code: 'server-timeout',
+        error: 'Timed out while creating the pairing link',
+      });
+    }, PAIRING_PRESENTATION_TIMEOUT_MS);
+    timeout.unref?.();
+    pendingPairingPresentations.set(requestId, { resolve, timeout });
+
+    try {
+      child.send({ type: 'pairing_presentation_request', requestId, action }, (error) => {
+        if (!error) return;
+        resolvePairingPresentation(requestId, {
+          ok: false,
+          code: 'server-unavailable',
+          error: error.message,
+        });
+      });
+    } catch (error) {
+      resolvePairingPresentation(requestId, {
+        ok: false,
+        code: 'server-unavailable',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
+
+async function createPairingCode(action: 'issue' | 'rotate'): Promise<
+  | (PairingPresentation & { ok: true; qrDataUrl: string })
+  | { ok: false; code: string; error: string }
+> {
+  const presentation = await requestPairingPresentation(action);
+  if (!presentation.ok) return presentation;
+
+  const qrDataUrl = await QRCode.toDataURL(presentation.pairingLink, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 256,
+    color: { dark: '#17191cff', light: '#ffffffff' },
+  });
+  return { ...presentation, qrDataUrl };
+}
+
+type PairingApprovalApiResult =
+  | { ok: true; requests?: unknown; request?: unknown }
+  | { ok: false; code: string; error: string };
+
+async function requestPairingApprovalApi(
+  pathname: string,
+  init?: { method: 'PATCH'; body: string },
+): Promise<PairingApprovalApiResult> {
+  if (!serverPort || !electronAppSecret) {
+    return { ok: false, code: 'server-unavailable', error: 'The Tessera server is unavailable' };
+  }
+
+  try {
+    const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+    const response = await fetch(`http://127.0.0.1:${serverPort}${pathname}`, {
+      ...init,
+      headers: {
+        [APP_SECRET_HEADER]: electronAppSecret,
+        origin: `http://127.0.0.1:${serverPort}`,
+        ...(init ? { 'content-type': 'application/json' } : {}),
+      },
+      signal: AbortSignal.timeout(PAIRING_PRESENTATION_TIMEOUT_MS),
+    });
+    const body = await response.json().catch(() => null) as {
+      requests?: unknown;
+      request?: unknown;
+      code?: unknown;
+      error?: unknown;
+    } | null;
+    if (response.ok) {
+      return {
+        ok: true,
+        ...(body && 'requests' in body ? { requests: body.requests } : {}),
+        ...(body && 'request' in body ? { request: body.request } : {}),
+      };
+    }
+    return {
+      ok: false,
+      code: typeof body?.code === 'string' ? body.code : 'pairing-request-failed',
+      error: typeof body?.error === 'string' ? body.error : 'Pairing request failed',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'server-unavailable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function requestRemoteAccessStatus(): Promise<RemoteAccessStatus | null> {
+  if (!serverPort || !electronAppSecret) return null;
+
+  try {
+    const { APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
+    const response = await fetch(`http://127.0.0.1:${serverPort}/api/devices`, {
+      headers: {
+        [APP_SECRET_HEADER]: electronAppSecret,
+        origin: `http://127.0.0.1:${serverPort}`,
+      },
+      signal: AbortSignal.timeout(REMOTE_ACCESS_STATUS_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    return parseRemoteAccessStatus(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+async function refreshRemoteAccessStatus(): Promise<void> {
+  const status = await requestRemoteAccessStatus();
+  // Keep the last verified snapshot through transient polling failures. This
+  // avoids both tray flicker and an unnecessary quit warning after we already
+  // established that no remote device is connected.
+  remoteAccessStatus = retainLastRemoteAccessStatus(remoteAccessStatus, status);
+  if (!status) return;
+  updateTrayRemoteAccessStatus(remoteAccessStatus);
+}
+
+function startRemoteAccessStatusMonitor(): void {
+  stopRemoteAccessStatusMonitor();
+  void refreshRemoteAccessStatus();
+  remoteAccessStatusTimer = setInterval(() => {
+    void refreshRemoteAccessStatus();
+  }, REMOTE_ACCESS_STATUS_POLL_INTERVAL_MS);
+  remoteAccessStatusTimer.unref?.();
+}
+
+function stopRemoteAccessStatusMonitor(): void {
+  if (!remoteAccessStatusTimer) return;
+  clearInterval(remoteAccessStatusTimer);
+  remoteAccessStatusTimer = null;
 }
 
 function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
@@ -502,29 +1116,20 @@ function requestTerminalSummary(): Promise<TerminalRuntimeSummary> {
   });
 }
 
-async function confirmTerminalQuit(activeCount: number): Promise<boolean> {
-  if (activeCount === 0) return true;
+async function confirmAppQuit(activeCount: number): Promise<boolean> {
+  const copy = buildQuitConfirmation(
+    resolveElectronLanguage(app.getLocale()),
+    activeCount,
+    remoteAccessStatus,
+  );
+  if (!copy) return true;
 
-  const isKorean = app.getLocale().toLowerCase().startsWith('ko');
-  const summaryUnavailable = activeCount < 0;
   const options = {
     type: 'warning' as const,
     title: 'Tessera',
-    message: isKorean
-      ? (summaryUnavailable
-          ? '터미널 상태를 확인하지 못했습니다. Tessera를 종료할까요?'
-          : `실행 중인 터미널 ${activeCount}개를 종료할까요?`)
-      : (summaryUnavailable
-          ? 'Terminal status is unavailable. Quit Tessera?'
-          : `Quit ${activeCount} active terminal${activeCount === 1 ? '' : 's'}?`),
-    detail: isKorean
-      ? (summaryUnavailable
-          ? '종료하면 실행 중인 터미널 작업이 함께 중단될 수 있습니다.'
-          : 'Tessera를 종료하면 터미널에서 실행 중인 Claude Code/Codex 작업도 함께 종료됩니다.')
-      : (summaryUnavailable
-          ? 'Quitting may stop active terminal work.'
-          : 'Quitting Tessera will also stop the Claude Code/Codex work running in these terminals.'),
-    buttons: isKorean ? ['취소', 'Tessera 종료'] : ['Cancel', 'Quit Tessera'],
+    message: copy.message,
+    detail: copy.detail,
+    buttons: copy.buttons,
     defaultId: 0,
     cancelId: 0,
     noLink: true,
@@ -538,9 +1143,15 @@ async function confirmTerminalQuit(activeCount: number): Promise<boolean> {
 async function beginAppQuit(): Promise<void> {
   if (isQuitRequested) return;
 
-  const summary = await requestTerminalSummary();
-  if (!(await confirmTerminalQuit(summary.activeCount))) return;
+  const [summary] = await Promise.all([
+    requestTerminalSummary(),
+    refreshRemoteAccessStatus(),
+  ]);
+  if (!(await confirmAppQuit(summary.activeCount))) return;
 
+  // Capture normal bounds and the still-open popout set before app.quit()
+  // starts destroying BrowserWindows.
+  persistWindowLayoutNow();
   isQuitRequested = true;
   isQuitting = true;
   activeCloseRequest = null;
@@ -548,6 +1159,7 @@ async function beginAppQuit(): Promise<void> {
     pending.resolve('cancel');
     pendingCloseRequests.delete(requestId);
   }
+  stopRemoteAccessStatusMonitor();
   destroyTray();
   app.quit();
 }
@@ -665,33 +1277,6 @@ function forceKillProcessTree(proc: ChildProcess): void {
   }
 }
 
-// ── Port allocation ────────────────────────────────────────────────────────
-async function isPortAvailable(port: number): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.once('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
-        resolve(false);
-        return;
-      }
-      reject(error);
-    });
-    srv.listen(port, '127.0.0.1', () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
-async function findStablePort(): Promise<number> {
-  for (let offset = 0; offset < ELECTRON_PORT_SCAN_LIMIT; offset += 1) {
-    const candidate = ELECTRON_DEFAULT_PORT + offset;
-    if (await isPortAvailable(candidate)) return candidate;
-  }
-  throw new Error(
-    `No available port found from ${ELECTRON_DEFAULT_PORT} to ${ELECTRON_DEFAULT_PORT + ELECTRON_PORT_SCAN_LIMIT - 1}`
-  );
-}
-
 // ── Server lifecycle ───────────────────────────────────────────────────────
 async function startServer(): Promise<number> {
   const devPort = process.env.TESSERA_DEV_PORT;
@@ -700,8 +1285,8 @@ async function startServer(): Promise<number> {
     return serverPort;
   }
 
-  const port = await findStablePort();
-  log('debug', `Electron server port selected: ${port}`);
+  const port = resolveElectronServerPort(ELECTRON_DEFAULT_PORT, electronTestInstance);
+  log('debug', `Electron server port: ${port}`);
 
   return new Promise((resolve, reject) => {
     const isPackaged = app.isPackaged;
@@ -718,10 +1303,15 @@ async function startServer(): Promise<number> {
       NODE_ENV: isPackaged ? 'production' : 'development',
       ELECTRON_CHILD: '1',
       TESSERA_ELECTRON_SERVER: '1',
+      TESSERA_ELECTRON_PACKAGED: isPackaged ? '1' : '0',
       TESSERA_PRODUCTION_DB: '1',
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
+      ...(BUILD_STAMPED_TELEMETRY_DISABLED ? { TESSERA_TELEMETRY_DISABLED: '1' } : {}),
+      // Carry a requested level down so the child's own startup log and pino agree with the
+      // main process. Without this a build-stamped debug level would stop at this boundary,
+      // since the child only ever reads the environment.
+      ...(EXPLICIT_LOG_LEVEL ? { LOG_LEVEL: EXPLICIT_LOG_LEVEL } : {}),
       // Makes the Electron exe behave as plain Node.js for fork()
       ELECTRON_RUN_AS_NODE: '1',
     };
@@ -750,8 +1340,17 @@ async function startServer(): Promise<number> {
       requestId?: string;
       activeCount?: number;
       sessionCount?: number;
+      pairingLink?: string;
+      createdAt?: string;
+      expiresAt?: string;
+      code?: string;
     }) => {
-      log('debug', `Server message: ${JSON.stringify(msg)}`);
+      log(
+        'debug',
+        msg?.type?.startsWith('pairing_presentation')
+          ? `Server message: ${msg.type}`
+          : `Server message: ${JSON.stringify(msg)}`,
+      );
       if (
         msg?.type === 'terminal_summary'
         && typeof msg.requestId === 'string'
@@ -761,6 +1360,28 @@ async function startServer(): Promise<number> {
         resolveTerminalSummary(msg.requestId, {
           activeCount: msg.activeCount,
           sessionCount: msg.sessionCount,
+        });
+      } else if (
+        msg?.type === 'pairing_presentation'
+        && typeof msg.requestId === 'string'
+        && typeof msg.pairingLink === 'string'
+        && typeof msg.createdAt === 'string'
+        && typeof msg.expiresAt === 'string'
+      ) {
+        resolvePairingPresentation(msg.requestId, {
+          ok: true,
+          pairingLink: msg.pairingLink,
+          createdAt: msg.createdAt,
+          expiresAt: msg.expiresAt,
+        });
+      } else if (
+        msg?.type === 'pairing_presentation_error'
+        && typeof msg.requestId === 'string'
+      ) {
+        resolvePairingPresentation(msg.requestId, {
+          ok: false,
+          code: typeof msg.code === 'string' ? msg.code : 'pairing-failed',
+          error: typeof msg.message === 'string' ? msg.message : 'Pairing failed',
         });
       } else if (msg?.type === 'ready') {
         clearTimeout(timeout);
@@ -775,6 +1396,7 @@ async function startServer(): Promise<number> {
 
     serverProcess.on('exit', (code) => {
       resolveAllTerminalSummaries();
+      resolveAllPairingPresentations();
       log(isQuitting ? 'debug' : 'error', `Server child exited with code ${code}`);
       serverProcess = null;
       if (!isQuitting) {
@@ -837,18 +1459,33 @@ async function stopServer(): Promise<void> {
 }
 
 // ── Window ─────────────────────────────────────────────────────────────────
-function createWindow(port: number): BrowserWindow {
+function bindStableTestWindowTitle(win: BrowserWindow, title: string): void {
+  if (!electronTestInstance) return;
+
+  // Next metadata keeps the renderer document title as "Tessera". Test
+  // windows need their isolated instance id in Alt-Tab and the taskbar even
+  // after navigation changes the page title.
+  win.webContents.on('page-title-updated', (event) => {
+    event.preventDefault();
+    win.setTitle(title);
+  });
+}
+
+function createWindow(port: number, restoredState?: RestorableWindowState): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  const windowTitle = resolveElectronWindowTitle('Tessera', electronTestInstance);
 
+  const bounds = restoredBounds(restoredState);
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    ...(bounds ?? {}),
     minWidth: 800,
     minHeight: 600,
-    title: 'Tessera',
+    title: windowTitle,
     show: false,
     frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
@@ -864,16 +1501,22 @@ function createWindow(port: number): BrowserWindow {
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
 
+  bindStableTestWindowTitle(win, windowTitle);
+
   bindWindowStateEvents(win);
+  bindWindowLayoutPersistence(win);
 
   if (!isMac) {
     win.removeMenu();
   }
 
+  attachRendererConsoleLogging(win, 'main');
+
   const url = `http://localhost:${port}`;
   win.loadURL(url);
 
   win.once('ready-to-show', () => {
+    applyRestoredWindowMode(win, restoredState);
     win.show();
   });
 
@@ -954,18 +1597,25 @@ function createWindow(port: number): BrowserWindow {
 }
 
 // ── Popout window ──────────────────────────────────────────────────────────
-function createPopoutWindow(port: number, route: string): BrowserWindow {
+function createPopoutWindow(
+  port: number,
+  route: string,
+  restoredState?: RestorablePopoutWindowState,
+): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  const windowTitle = resolveElectronWindowTitle('Tessera Board', electronTestInstance);
 
+  const bounds = restoredBounds(restoredState);
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    ...(bounds ?? {}),
     minWidth: 600,
     minHeight: 400,
-    title: 'Tessera Board',
+    title: windowTitle,
     show: false,
     frame: !isLinux,
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
@@ -981,16 +1631,24 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
     titleBarOverlay: isWindows ? getTitlebarOverlayOptions(initialTitlebarTheme) : false,
   });
 
+  bindStableTestWindowTitle(win, windowTitle);
+
   bindWindowStateEvents(win);
+  bindWindowLayoutPersistence(win);
 
   if (!isMac) {
     win.removeMenu();
   }
 
+  attachRendererConsoleLogging(win, 'popout');
+
   const url = `http://localhost:${port}${route}`;
   win.loadURL(url);
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    applyRestoredWindowMode(win, restoredState);
+    win.show();
+  });
 
   win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
     if (openUrl.startsWith('https://') || openUrl.startsWith('http://')) {
@@ -1007,10 +1665,14 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
   });
 
   popoutWindows.add(win);
+  popoutRoutes.set(win, route);
   broadcastPopoutState();
+  scheduleWindowLayoutPersist();
   win.on('closed', () => {
     popoutWindows.delete(win);
+    popoutRoutes.delete(win);
     broadcastPopoutState();
+    if (!isQuitting) scheduleWindowLayoutPersist();
   });
 
   return win;
@@ -1022,7 +1684,52 @@ function broadcastPopoutState(): void {
 }
 
 // ── IPC ────────────────────────────────────────────────────────────────────
+registerRendererConsoleBridge();
+
 ipcMain.handle('get-server-port', () => serverPort);
+ipcMain.handle('get-remote-access-address-candidates', () => (
+  buildRemoteAccessAddressCandidates(networkInterfaces(), serverPort)
+));
+ipcMain.on('supports-tailscale-firewall-configuration', (event) => {
+  event.returnValue = supportsTailscaleFirewallConfiguration();
+});
+ipcMain.handle('configure-tailscale-firewall', () => {
+  if (!supportsTailscaleFirewallConfiguration()) {
+    return {
+      ok: false,
+      code: 'unsupported',
+      error: 'Firewall configuration is disabled outside the packaged product server',
+    };
+  }
+  return configureTailscaleFirewall({ port: serverPort });
+});
+ipcMain.handle('create-pairing-code', (_event, action: unknown) => {
+  if (action !== 'issue' && action !== 'rotate') {
+    return { ok: false, code: 'invalid-action', error: 'Invalid pairing action' };
+  }
+  return createPairingCode(action);
+});
+ipcMain.handle('list-pairing-requests', () => (
+  requestPairingApprovalApi('/api/pairing/requests')
+));
+ipcMain.handle('decide-pairing-request', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') {
+    return { ok: false, code: 'invalid-request', error: 'Invalid pairing decision' };
+  }
+  const { requestId, decision } = payload as { requestId?: unknown; decision?: unknown };
+  if (
+    typeof requestId !== 'string'
+    || requestId.length === 0
+    || requestId.length > 128
+    || !isPairingDecision(decision)
+  ) {
+    return { ok: false, code: 'invalid-request', error: 'Invalid pairing decision' };
+  }
+  return requestPairingApprovalApi(
+    `/api/pairing/requests/${encodeURIComponent(requestId)}`,
+    { method: 'PATCH', body: JSON.stringify({ decision }) },
+  );
+});
 ipcMain.handle('read-terminal-clipboard', () => readTerminalClipboard(clipboard));
 ipcMain.handle('write-terminal-clipboard-text', (_event, text: unknown) => (
   writeTerminalClipboardText(clipboard, text)
@@ -1081,15 +1788,19 @@ ipcMain.handle('open-board-window', (_event, payload?: unknown) => {
   if (!serverPort) return { ok: false };
   const params = new URLSearchParams();
   if (payload && typeof payload === 'object') {
-    const { projectDir, collectionFilter } = payload as {
+    const { projectDir, collectionFilter, runningFilter } = payload as {
       projectDir?: unknown;
       collectionFilter?: unknown;
+      runningFilter?: unknown;
     };
     if (typeof projectDir === 'string' && projectDir.length > 0) {
       params.set('projectDir', projectDir);
     }
     if (typeof collectionFilter === 'string' && collectionFilter.length > 0) {
       params.set('collectionFilter', collectionFilter);
+    }
+    if (typeof runningFilter === 'boolean') {
+      params.set('runningFilter', String(runningFilter));
     }
   }
   const query = params.toString();
@@ -1141,6 +1852,7 @@ ipcMain.on('ui-selected-project-changed', (event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return;
   const { projectDir } = payload as { projectDir?: unknown };
   if (projectDir !== null && typeof projectDir !== 'string') return;
+  updatePopoutRouteParam('projectDir', projectDir);
   const senderId = event.sender.id;
   const targets: BrowserWindow[] = [];
   if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
@@ -1155,6 +1867,7 @@ ipcMain.on('ui-collection-filter-changed', (event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return;
   const { collectionId } = payload as { collectionId?: unknown };
   if (collectionId !== null && typeof collectionId !== 'string') return;
+  updatePopoutRouteParam('collectionFilter', collectionId);
   const senderId = event.sender.id;
   const targets: BrowserWindow[] = [];
   if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
@@ -1163,6 +1876,21 @@ ipcMain.on('ui-collection-filter-changed', (event, payload: unknown) => {
     if (win.isDestroyed()) continue;
     if (win.webContents.id === senderId) continue;
     win.webContents.send('ui-collection-filter-changed', { collectionId });
+  }
+});
+ipcMain.on('ui-kanban-running-filter-changed', (event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return;
+  const { active } = payload as { active?: unknown };
+  if (typeof active !== 'boolean') return;
+  updatePopoutRouteParam('runningFilter', active);
+  const senderId = event.sender.id;
+  const targets: BrowserWindow[] = [];
+  if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
+  for (const win of popoutWindows) targets.push(win);
+  for (const win of targets) {
+    if (win.isDestroyed()) continue;
+    if (win.webContents.id === senderId) continue;
+    win.webContents.send('ui-kanban-running-filter-changed', { active });
   }
 });
 ipcMain.on(
@@ -1236,13 +1964,24 @@ ipcMain.on('set-titlebar-theme', (event, theme: TitlebarTheme, options?: Titleba
 app.whenReady().then(async () => {
   try {
     const port = await startServer();
-    mainWindow = createWindow(port);
+    electronAppSecret = await registerAppSecretHeader(port);
+    const restoredLayout = parseElectronWindowLayoutState(
+      getUiStorageItem(WINDOW_LAYOUT_STORAGE_KEY),
+    );
+    mainWindow = createWindow(port, restoredLayout.main ?? undefined);
+    for (const popout of restoredLayout.popouts) {
+      createPopoutWindow(port, popout.route, popout);
+    }
     createTray(mainWindow, requestAppQuit, {
       closeBehavior: windowsCloseBehavior,
       onCloseBehaviorChange: handleTrayCloseBehaviorChange,
+      language: resolveElectronLanguage(app.getLocale()),
+      remoteAccessStatus,
     });
+    startRemoteAccessStatusMonitor();
   } catch (err) {
     dialog.showErrorBox('Tessera', `Failed to start server: ${err}`);
+    remoteAccessStatus = { registeredDeviceCount: 0, connectedDeviceCount: 0 };
     requestAppQuit();
   }
 });

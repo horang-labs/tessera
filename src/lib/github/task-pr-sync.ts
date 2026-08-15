@@ -11,6 +11,7 @@
  */
 
 import * as dbTasks from '@/lib/db/tasks';
+import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import logger from '@/lib/logger';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type { TaskPrStatus } from '@/types/task-pr-status';
@@ -19,6 +20,7 @@ import { probeTaskPrStatus } from './pr-status-provider';
 export interface TaskPrUpdate {
   taskId: string;
   prStatus?: TaskPrStatus;
+  prStatusKnown: boolean;
   prUnsupported: boolean;
   remoteBranchExists?: boolean;
 }
@@ -67,8 +69,10 @@ function prStatusesEqual(a: TaskPrStatus | undefined, b: TaskPrStatus | undefine
   return (
     a.number === b.number &&
     a.state === b.state &&
+    a.relation === b.relation &&
     a.url === b.url &&
-    (a.mergedAt ?? null) === (b.mergedAt ?? null)
+    (a.mergedAt ?? null) === (b.mergedAt ?? null) &&
+    (a.headRefOid ?? null) === (b.headRefOid ?? null)
   );
 }
 
@@ -91,9 +95,9 @@ export function syncTaskPr(
       if (!row) return;
       if (!row.workDir || !row.branch) {
         // Tasks with no branch/workDir are permanently unsupported.
-        if (!row.wasUnsupported) {
+        if (!row.wasUnsupported || row.prStatusKnown || row.prStatus) {
           dbTasks.setTaskPrStatus(taskId, { unsupported: true });
-          notify({ taskId, prUnsupported: true });
+          notify({ taskId, prStatusKnown: false, prUnsupported: true });
         }
         return;
       }
@@ -101,13 +105,16 @@ export function syncTaskPr(
       const probe = await probeTaskPrStatus({
         workDir: row.workDir,
         branch: row.branch,
-        agentEnvironment: options.agentEnvironment,
+        // Same rule as session sync: no configured environment means falling
+        // back to the worktree path, said here rather than defaulted below.
+        agentEnvironment: options.agentEnvironment
+          ?? await resolveGitEnvironment({ inferFromPaths: [row.workDir] }),
       });
 
       if (probe.kind === 'unsupported') {
-        if (!row.wasUnsupported) {
+        if (!row.wasUnsupported || row.prStatusKnown || row.prStatus) {
           dbTasks.setTaskPrStatus(taskId, { unsupported: true });
-          notify({ taskId, prUnsupported: true });
+          notify({ taskId, prStatusKnown: false, prUnsupported: true });
           logger.info({ taskId, reason: probe.reason }, 'Task marked PR-unsupported');
         }
         return;
@@ -124,13 +131,25 @@ export function syncTaskPr(
         // Leave the previously-known PR state alone — the next probe will
         // settle it. Overwriting with null here is what made PR detection
         // appear to lose tracked PRs intermittently.
+        if (row.prStatusKnown || row.wasUnsupported) {
+          dbTasks.markTaskPrStatusUnknown(taskId);
+          notify({
+            taskId,
+            prStatus: row.prStatus,
+            prStatusKnown: false,
+            prUnsupported: false,
+            remoteBranchExists: row.remoteBranchExists,
+          });
+        }
         return;
       }
 
       const nextStatus = probe.prStatus ?? null;
       const nextRemoteExists = probe.remoteBranchExists;
       const prUnchanged =
-        !row.wasUnsupported && prStatusesEqual(row.prStatus, nextStatus ?? undefined);
+        !row.wasUnsupported
+        && row.prStatusKnown
+        && prStatusesEqual(row.prStatus, nextStatus ?? undefined);
       const remoteUnchanged = row.remoteBranchExists === nextRemoteExists;
       if (prUnchanged && remoteUnchanged) return;
 
@@ -142,6 +161,7 @@ export function syncTaskPr(
       notify({
         taskId,
         prStatus: nextStatus ?? undefined,
+        prStatusKnown: true,
         prUnsupported: false,
         remoteBranchExists: nextRemoteExists,
       });

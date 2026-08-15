@@ -2,18 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   collectKanbanScopeData,
+  filterKanbanTasksByCollection,
   resolveKanbanScope,
+  selectKanbanProjectionItems,
 } from '@/lib/kanban/board-scope';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import type { TaskEntity } from '@/types/task-entity';
+import { buildProjectCollectionGroups } from '@/lib/chat/build-collection-groups';
 
 function session(id: string, projectDir: string): UnifiedSession {
   return {
     id,
     title: id,
     projectDir,
+    originProjectId: projectDir,
     isRunning: false,
     status: 'completed',
     lastModified: '2026-07-14T00:00:00.000Z',
@@ -42,6 +46,7 @@ function task(id: string, projectId: string): TaskEntity {
   return {
     id,
     projectId,
+    projectViewId: projectId,
     title: id,
     workflowStatus: 'todo',
     sortOrder: 0,
@@ -88,4 +93,116 @@ test('single-project scope keeps sessions, tasks, and collections project-local'
   assert.deepEqual(data.sessions.map((item) => item.id), ['chat-beta']);
   assert.deepEqual(data.tasks.map((item) => item.id), ['task-beta']);
   assert.deepEqual(Object.keys(data.collectionsByProject), ['beta']);
+});
+
+test('selected Project treats projected direct Sessions as Chats and linked Worktrees as Tasks', () => {
+  const canonicalLinkedSession = session('session-c', 'project-c');
+  canonicalLinkedSession.taskId = 'linked-c';
+  canonicalLinkedSession.originProjectId = 'project-a';
+  const directSession = session('direct-c', 'project-c');
+  directSession.originProjectId = 'project-c';
+  const descendant = task('descendant-d', 'project-c');
+  descendant.sessions = [{
+    id: 'descendant-session',
+    originProjectId: 'project-c',
+    title: 'descendant-session',
+    lastModified: '2026-07-14T00:00:00.000Z',
+    isRunning: false,
+    sortOrder: 0,
+  }];
+
+  const scope = resolveKanbanScope('project-c', [
+    project('project-c', [canonicalLinkedSession, directSession]),
+  ]);
+  const data = collectKanbanScopeData(
+    scope,
+    [project('project-c', [canonicalLinkedSession, directSession])],
+    { 'project-c': [descendant] },
+    { 'project-c': [] },
+  );
+  const items = selectKanbanProjectionItems(data, null);
+  const sidebarGroups = buildProjectCollectionGroups(
+    project('project-c', [canonicalLinkedSession, directSession]),
+    [],
+    [descendant],
+  );
+
+  assert.deepEqual(items.chats.map((item) => item.id), ['session-c', 'direct-c']);
+  assert.deepEqual(items.tasks.map((item) => item.id), ['descendant-d']);
+  assert.deepEqual(
+    sidebarGroups.flatMap((group) => group.chats.map((item) => item.id)),
+    items.chats.map((item) => item.id),
+  );
+  assert.deepEqual(
+    sidebarGroups.flatMap((group) => group.tasks.map((item) => item.id)),
+    items.tasks.map((item) => item.id),
+  );
+});
+
+test('All Projects emits only origin Project representatives for canonical items', () => {
+  const directA = session('direct-a', 'project-a');
+  directA.originProjectId = 'project-a';
+  const projectedC = session('session-c', 'project-c');
+  projectedC.taskId = 'linked-c';
+  projectedC.originProjectId = 'project-a';
+  const directC = session('direct-c', 'project-c');
+  directC.originProjectId = 'project-c';
+  const linkedC = task('linked-c', 'project-a');
+  linkedC.sessions = [{
+    id: 'session-c',
+    originProjectId: 'project-a',
+    title: 'session-c',
+    lastModified: '2026-07-14T00:00:00.000Z',
+    isRunning: false,
+    sortOrder: 0,
+  }];
+
+  const allProjects = [
+    project('project-a', [directA]),
+    project('project-c', [projectedC, directC]),
+  ];
+  const data = collectKanbanScopeData(
+    resolveKanbanScope(ALL_PROJECTS_SENTINEL, allProjects),
+    allProjects,
+    { 'project-a': [linkedC], 'project-c': [] },
+    { 'project-a': [], 'project-c': [] },
+  );
+
+  assert.deepEqual(data.sessions.map((item) => [item.id, item.projectDir]), [
+    ['direct-a', 'project-a'],
+    ['direct-c', 'project-c'],
+  ]);
+  assert.deepEqual(data.tasks.map((item) => [item.id, item.projectId]), [
+    ['linked-c', 'project-a'],
+  ]);
+});
+
+test('kanban trusts branch-scoped linked Worktree children and keeps zero-session Worktrees', () => {
+  const visibleChild = session('visible-child', 'alpha');
+  visibleChild.taskId = 'visible-task';
+
+  const visibleTask = task('visible-task', 'alpha');
+  visibleTask.sessions = [{
+    id: visibleChild.id,
+    title: visibleChild.title,
+    lastModified: visibleChild.lastModified,
+    isRunning: false,
+  }];
+
+  const hiddenTask = task('hidden-task', 'alpha');
+  hiddenTask.sessions = [{
+    id: 'archived-child',
+    title: 'archived-child',
+    lastModified: '2026-07-14T00:00:00.000Z',
+    isRunning: false,
+  }];
+
+  assert.deepEqual(filterKanbanTasksByCollection(
+    [task('zero-session-task', 'alpha'), visibleTask, hiddenTask],
+    null,
+  ).map((item) => item.id), [
+    'zero-session-task',
+    'visible-task',
+    'hidden-task',
+  ]);
 });

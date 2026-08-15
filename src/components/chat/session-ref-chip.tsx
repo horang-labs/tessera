@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { FolderGit2, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SessionRefItem } from '@/types/session-ref';
@@ -46,6 +48,7 @@ export function SessionRefChip({ item, onRemove, onRetry }: SessionRefChipProps)
       )}
       {isError && (
         <button
+          {...telemetryClickAttributes('composer.reference.retry', 'composer')}
           type="button"
           onClick={(e) => {
             e.stopPropagation();
@@ -61,6 +64,7 @@ export function SessionRefChip({ item, onRemove, onRetry }: SessionRefChipProps)
         </button>
       )}
       <button
+        {...telemetryClickAttributes('composer.reference.remove', 'composer')}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
@@ -69,7 +73,9 @@ export function SessionRefChip({ item, onRemove, onRetry }: SessionRefChipProps)
         className={cn(
           'w-4 h-4 flex items-center justify-center rounded-full',
           'text-(--text-muted) text-[10px] leading-none',
-          'opacity-0 group-hover:opacity-100 transition-opacity',
+          // Visible below the Phone viewport step, hover-revealed from `sm` up: a phone
+          // has no hover for the reveal to run on (#250).
+          'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity',
           'hover:bg-(--error)/20 hover:text-(--error)',
         )}
         aria-label={`Remove session reference: ${item.title}`}

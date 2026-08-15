@@ -4,10 +4,12 @@ import { randomUUID } from 'crypto';
 import { ServerTransportMessage } from './message-types';
 import { processManager } from '../cli/process-manager';
 import { protocolAdapter } from '../cli/protocol-adapter';
-import { verifyToken } from '../auth/jwt';
-import { isElectronAuthBypassEnabled } from '../auth/electron-mode';
-import { getElectronAuthUserId } from '../auth/electron-user';
-import { findUserById } from '../users';
+import {
+  evaluateRequestAndLog,
+  parseRequestUrl,
+  type CredentialKind,
+  type RequestGateInput,
+} from '../auth/request-gate';
 import { getCachedRateLimitData } from '../rate-limit/fetcher';
 import { skillAnalysisService } from '../skill/skill-analysis-service';
 import { buildClaudeRateLimitSnapshot } from '../status-display/rate-limit-snapshots';
@@ -15,6 +17,10 @@ import { rateLimitPoller } from '../rate-limit/poller';
 import logger from '../logger';
 import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
+import {
+  installDiffStatsSafetySweep,
+  uninstallDiffStatsSafetySweep,
+} from '../git/diff-stats-safety-sweep-runner';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
 import { bindTerminalRuntimeSender, terminalManager } from '../terminal/shared-terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
@@ -25,27 +31,98 @@ import {
   routeClientTransportMessage,
   verifyClientSessionAccess,
 } from './server-message-routing';
+import { WebSocketServerHeartbeat, WS_HEARTBEAT_INTERVAL_MS } from './server-heartbeat';
+import { isDeviceRegistered } from '../auth/device-registry';
+
+// Supports five 5MiB image attachments after base64 expansion; lowering this
+// to a generic RPC-sized cap would break the existing composer contract.
+export const WS_MAX_PAYLOAD_BYTES = 50 * 1024 * 1024;
+export const MAX_WS_CONNECTIONS = 128;
+export const MAX_TCP_CONNECTIONS = MAX_WS_CONNECTIONS * 2;
+const WS_REJECTION_GRACE_MS = 1_000;
+
+interface WebSocketServerOptions {
+  maxConnections?: number;
+  heartbeatIntervalMs?: number;
+  rejectionGraceMs?: number;
+}
+
+export interface WebSocketIdentity {
+  userId: string;
+  kind: CredentialKind;
+  deviceId?: string;
+}
+
+export interface WebSocketConnectionInfo extends WebSocketIdentity {
+  connectionId: string;
+}
 
 interface AuthenticatedWebSocket extends WebSocket {
   connectionId?: string;
-  userId?: string;
-  username?: string;
-  isAlive?: boolean; // For ping/pong tracking
+  identity?: WebSocketIdentity;
+}
+
+function parseCookieHeader(header: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  for (const segment of header.split(';')) {
+    const separator = segment.indexOf('=');
+    if (separator <= 0) continue;
+    const name = segment.slice(0, separator).trim();
+    if (!name) continue;
+    cookies[name] = segment.slice(separator + 1).trim();
+  }
+  return cookies;
+}
+
+function requestGateInputFromUpgrade(req: IncomingMessage): RequestGateInput {
+  const headers = Object.fromEntries(
+    Object.entries(req.headers).flatMap(([name, value]) => {
+      if (value === undefined) return [];
+      return [[name.toLowerCase(), Array.isArray(value) ? value.join(', ') : value]];
+    }),
+  );
+
+  return {
+    purpose: 'ws-upgrade',
+    method: req.method ?? 'GET',
+    rawUrl: req.url ?? '',
+    host: headers.host ?? '',
+    origin: headers.origin ?? '',
+    cookies: parseCookieHeader(headers.cookie ?? ''),
+    headers,
+  };
+}
+
+function parseUpgradePath(rawUrl: string | undefined): string | null {
+  if (!rawUrl) return null;
+  try {
+    return new URL(rawUrl, 'http://localhost').pathname;
+  } catch {
+    return null;
+  }
 }
 
 export class WebSocketServer {
   private wss: WSServer | null = null;
   private connections = new Map<string, Set<AuthenticatedWebSocket>>();
   private rateLimitCache = new Map<string, Map<string, Extract<ServerTransportMessage, { type: 'rate_limit_update' }>>>();
-  private pingInterval: NodeJS.Timeout | null = null;
   private analysisUnsubscribe: (() => void) | null = null;
-  private readonly PING_INTERVAL = 30000; // 30 seconds
+  private readonly maxConnections: number;
+  private readonly rejectionGraceMs: number;
+  private readonly heartbeatIntervalMs: number;
+  private readonly heartbeat: WebSocketServerHeartbeat;
+
+  constructor(options: WebSocketServerOptions = {}) {
+    this.maxConnections = options.maxConnections ?? MAX_WS_CONNECTIONS;
+    this.rejectionGraceMs = options.rejectionGraceMs ?? WS_REJECTION_GRACE_MS;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? WS_HEARTBEAT_INTERVAL_MS;
+    this.heartbeat = new WebSocketServerHeartbeat(this.heartbeatIntervalMs);
+  }
 
   /**
    * Start WebSocket server
    */
   start(httpServer: import('http').Server): void {
-    const WS_MAX_PAYLOAD_BYTES = 50 * 1024 * 1024; // 50MB: supports 5 images × 5MB × base64 1.33x
     // Use noServer mode so ws doesn't intercept ALL upgrade requests on the
     // HTTP server.  Next.js 16 auto-attaches its own upgrade listener for HMR
     // (_next/webpack-hmr); if ws grabs every upgrade first, HMR gets a 400.
@@ -55,16 +132,7 @@ export class WebSocketServer {
       this.handleConnection(ws, req);
     });
 
-    // Only handle upgrade requests destined for /ws
-    httpServer.on('upgrade', (req, socket, head) => {
-      const { pathname } = new URL(req.url || '', `http://${req.headers.host}`);
-      if (pathname === '/ws') {
-        this.wss!.handleUpgrade(req, socket, head, (ws) => {
-          this.wss!.emit('connection', ws, req);
-        });
-      }
-      // Non-/ws upgrades fall through to Next.js's auto-registered handler
-    });
+    this.attach(httpServer);
 
     // Setup protocol adapter callback
     protocolAdapter.setSendToUser((userId, message) => {
@@ -76,6 +144,8 @@ export class WebSocketServer {
 
     // Relay worktree diff-stats updates to connected users
     installDiffStatsBroadcast();
+    // Backstop for when every push trigger goes quiet at once (see the sweep module)
+    installDiffStatsSafetySweep(() => this.connections.keys());
     // Relay git panel state updates (commits, branch, changedFiles, prStatus)
     installGitPanelBroadcast();
 
@@ -98,10 +168,81 @@ export class WebSocketServer {
       }
     });
 
-    // Start ping/pong heartbeat
-    this.startPingPong();
+    this.heartbeat.start(() => this.wss?.clients ?? []);
 
-    logger.info({ path: '/ws', pingInterval: this.PING_INTERVAL }, 'WebSocket server started');
+    logger.info({
+      path: '/ws',
+      pingInterval: this.heartbeatIntervalMs,
+      maxConnections: this.maxConnections,
+      maxPayload: WS_MAX_PAYLOAD_BYTES,
+    }, 'WebSocket server started');
+  }
+
+  /**
+   * Serve /ws on one more HTTP listener. The packaged Electron server binds
+   * loopback and, when remote access is on, a direct address; both listeners
+   * share this one WebSocket server and its connection registry.
+   */
+  attach(httpServer: import('http').Server): void {
+    if (!this.wss) {
+      logger.warn('WebSocket upgrade handler requested before the server started');
+      return;
+    }
+
+    // The TCP cap also covers clients that never complete an HTTP or WebSocket
+    // handshake, while the lower WebSocket cap bounds upgraded connections.
+    httpServer.maxConnections = MAX_TCP_CONNECTIONS;
+
+    // Only handle upgrade requests destined for /ws
+    httpServer.on('upgrade', (req, socket, head) => {
+      // Tessera must not validate or consume unrelated upgrades. In
+      // development, Next.js owns its HMR WebSocket on this same server.
+      if (parseUpgradePath(req.url) !== '/ws') return;
+
+      const input = requestGateInputFromUpgrade(req);
+      const parsedUrl = parseRequestUrl(input);
+      if (!parsedUrl) {
+        void evaluateRequestAndLog(input)
+          .catch((error) => logger.error({ error }, 'Malformed WebSocket upgrade gate failed'))
+          .finally(() => socket.destroy());
+        return;
+      }
+
+      this.wss!.handleUpgrade(req, socket, head, (ws) => {
+        if (this.wss!.clients.size > this.maxConnections) {
+          logger.warn({ maxConnections: this.maxConnections }, 'WebSocket connection rejected: capacity reached');
+          this.rejectConnection(ws, 1013, 'Maximum connections reached');
+          return;
+        }
+        this.wss!.emit('connection', ws, req);
+      });
+    });
+  }
+
+  listConnections(): WebSocketConnectionInfo[] {
+    const result: WebSocketConnectionInfo[] = [];
+    for (const sockets of this.connections.values()) {
+      for (const socket of sockets) {
+        if (!socket.connectionId || !socket.identity) continue;
+        result.push({
+          connectionId: socket.connectionId,
+          ...socket.identity,
+        });
+      }
+    }
+    return result;
+  }
+
+  disconnectDevice(deviceId: string): number {
+    let disconnected = 0;
+    for (const sockets of this.connections.values()) {
+      for (const socket of sockets) {
+        if (socket.identity?.deviceId !== deviceId) continue;
+        socket.terminate();
+        disconnected += 1;
+      }
+    }
+    return disconnected;
   }
 
   /**
@@ -183,16 +324,29 @@ export class WebSocketServer {
    * Handle new WebSocket connection
    */
   private async handleConnection(ws: AuthenticatedWebSocket, req: IncomingMessage): Promise<void> {
-    const userId = await this.authenticate(req);
+    const identity = await this.authenticate(req);
 
-    if (!userId) {
+    if (!identity) {
       logger.warn('WebSocket connection rejected: authentication failed');
-      ws.close(1008, 'Unauthorized');
+      this.rejectConnection(ws, 1008, 'Unauthorized');
       return;
     }
 
-    ws.userId = userId;
+    // Authentication and connection registration are separated by an await.
+    // If revocation won that race, never add a socket that the revoker could
+    // not yet see; otherwise registration stays synchronous until it is listed.
+    if (
+      identity.kind === 'device'
+      && (!identity.deviceId || !isDeviceRegistered(identity.deviceId))
+    ) {
+      logger.warn({ deviceId: identity.deviceId }, 'Revoked device WebSocket rejected');
+      ws.terminate();
+      return;
+    }
+
+    const { userId } = identity;
     ws.connectionId = randomUUID();
+    ws.identity = identity;
     terminalManager.registerConnection(ws.connectionId);
 
     // Add to connection set for this user
@@ -203,17 +357,17 @@ export class WebSocketServer {
 
     logger.info({ userId, totalConnections: this.connections.get(userId)!.size }, 'WebSocket connected');
 
-    // Set initial alive state
-    ws.isAlive = true;
+    this.heartbeat.noteAlive(ws);
 
     // Setup pong handler
     ws.on('pong', () => {
-      ws.isAlive = true;
+      this.heartbeat.noteAlive(ws);
       logger.debug({ userId }, 'WebSocket pong received');
     });
 
     // Setup event handlers
     ws.on('message', (data: Buffer) => {
+      this.heartbeat.noteAlive(ws);
       this.handleMessage(ws, data);
     });
 
@@ -336,7 +490,7 @@ export class WebSocketServer {
    * Handle incoming WebSocket message
    */
   private async handleMessage(ws: AuthenticatedWebSocket, data: Buffer): Promise<void> {
-    const userId = ws.userId!;
+    const userId = ws.identity!.userId;
     let requestId: string | undefined;
 
     try {
@@ -344,7 +498,11 @@ export class WebSocketServer {
       requestId = message.requestId;
       logReceivedClientTransportMessage(userId, message);
 
-      if (!verifyClientSessionAccess(userId, message, this.sendToUser.bind(this))) {
+      if (!verifyClientSessionAccess(
+        userId,
+        message,
+        (_requestUserId, response) => this.sendToConnectionId(ws.connectionId!, response),
+      )) {
         return;
       }
 
@@ -373,103 +531,42 @@ export class WebSocketServer {
   /**
    * Authenticate WebSocket connection via cookie JWT
    */
-  private async authenticate(req: IncomingMessage): Promise<string | null> {
+  private async authenticate(req: IncomingMessage): Promise<WebSocketIdentity | null> {
     try {
-      if (isElectronAuthBypassEnabled()) {
-        const userId = await getElectronAuthUserId();
-        if (userId) {
-          logger.debug({ userId }, 'WebSocket authenticated through Electron local mode');
-          return userId;
-        }
-      }
+      const input = requestGateInputFromUpgrade(req);
+      const decision = await evaluateRequestAndLog(input);
+      if (!decision.allow) return null;
 
-      // Parse cookies from request headers
-      const cookieHeader = req.headers.cookie || '';
-      const cookies = Object.fromEntries(
-        cookieHeader.split(';').map(c => {
-          const [key, ...rest] = c.trim().split('=');
-          return [key, rest.join('=')];
-        })
-      );
-
-      const token = cookies['jwt'];
-
-      if (!token) {
-        logger.warn('WebSocket connection without JWT cookie');
-        return null;
-      }
-
-      // Verify JWT using RSA public key (same as API routes)
-      const payload = await verifyToken(token);
-
-      if (!payload) {
-        logger.warn('WebSocket JWT verification failed');
-        return null;
-      }
-
-      const user = await findUserById(payload.sub);
-      if (!user) {
-        logger.warn({ userId: payload.sub }, 'WebSocket JWT user not found');
-        return null;
-      }
-
-      logger.debug({
-        userId: user.id,
-        username: user.username,
-        }, 'WebSocket authenticated');
-
-      return user.id;
+      logger.debug({ userId: decision.userId, kind: decision.kind }, 'WebSocket authenticated');
+      return {
+        userId: decision.userId,
+        kind: decision.kind,
+        ...(decision.deviceId ? { deviceId: decision.deviceId } : {}),
+      };
     } catch (err) {
       logger.error({ error: err }, 'WebSocket auth error');
       return null;
     }
   }
 
-  /**
-   * Start ping/pong heartbeat to detect dead connections
-   */
-  private startPingPong(): void {
-    this.pingInterval = setInterval(() => {
-      if (!this.wss) return;
-
-      this.wss.clients.forEach((ws: WebSocket) => {
-        const authWs = ws as AuthenticatedWebSocket;
-
-        // Check if client responded to last ping
-        if (authWs.isAlive === false) {
-          logger.warn({
-            userId: authWs.userId,
-            }, 'WebSocket connection dead, terminating');
-          return ws.terminate();
-        }
-
-        // Mark as waiting for pong
-        authWs.isAlive = false;
-        ws.ping();
-
-        logger.debug({ userId: authWs.userId }, 'WebSocket ping sent');
-      });
-    }, this.PING_INTERVAL);
-
-    logger.info({ interval: this.PING_INTERVAL }, 'Ping/pong heartbeat started');
-  }
-
-  /**
-   * Stop ping/pong heartbeat (for graceful shutdown)
-   */
-  private stopPingPong(): void {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-      logger.info('Ping/pong heartbeat stopped');
-    }
+  private rejectConnection(ws: WebSocket, code: number, reason: string): void {
+    // A peer on a suspended or broken link may never acknowledge the close
+    // frame. Bound that wait so rejected sockets cannot consume the cap.
+    ws.on('error', () => {});
+    ws.close(code, reason);
+    const terminateTimer = setTimeout(() => {
+      if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
+    }, this.rejectionGraceMs);
+    terminateTimer.unref?.();
+    ws.once('close', () => clearTimeout(terminateTimer));
   }
 
   /**
    * Graceful shutdown (called by server.ts)
    */
   async shutdown(): Promise<void> {
-    this.stopPingPong();
+    this.heartbeat.stop();
+    uninstallDiffStatsSafetySweep();
     this.analysisUnsubscribe?.();
     this.analysisUnsubscribe = null;
     await terminalManager.shutdownAll();

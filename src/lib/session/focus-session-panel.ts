@@ -1,5 +1,7 @@
 import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 export interface SessionPanelLocation {
   tabId: string;
@@ -54,11 +56,14 @@ export function activateSessionPanel(
   const location = options.location ?? tabStore.findSessionLocation(sessionId);
   if (!location) return false;
 
+  useWorkspacePeekStore.getState().close();
+
   if (location.tabId !== tabStore.activeTabId) {
     tabStore.setActiveTab(location.tabId);
   }
 
   usePanelStore.getState().setActivePanelId(location.panelId);
+  projectViewWorkspaceState.markSessionRead(sessionId);
 
   if (options.focus !== false) {
     focusPanelControl(location.panelId);

@@ -19,7 +19,7 @@ test('right panel keeps read-only Git surfaces and removes Tools and mutation ac
   assert.match(panel, /WorkspaceFilePanel/);
   assert.match(panel, /MemoryPanel/);
   assert.equal(fs.existsSync(new URL('../src/components/git/agent-context-panel.tsx', import.meta.url)), false);
-  assert.match(read('src/lib/telemetry/client.ts'), /allowedGitTabs = new Set\(\['git', 'files', 'memory'\]\)/);
+  assert.match(read('src/lib/telemetry/client.ts'), /allowedGitTabs = new Set\(\['git', 'files', 'scripts', 'memory'\]\)/);
 });
 
 test('Goal is absent from UI, transport, persistence, and Codex provider integration', () => {

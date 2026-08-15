@@ -4,12 +4,32 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 39;
+
+/**
+ * v38 needs the authenticated agent environment before legacy path evidence
+ * can be registered as a host-openable Worktree location.
+ */
+export const CANONICAL_WORKTREE_BOOTSTRAP_META_KEY = 'canonical_worktree_bootstrap_v38';
 
 export const CREATE_TABLES = `
 CREATE TABLE IF NOT EXISTS _meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worktrees (
+  id                 TEXT PRIMARY KEY,
+  filesystem_path    TEXT,
+  canonical_path_key TEXT UNIQUE,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS worktree_identity_reconciliation_authorizations (
+  old_worktree_id TEXT NOT NULL,
+  new_worktree_id TEXT NOT NULL,
+  PRIMARY KEY (old_worktree_id, new_worktree_id)
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -19,6 +39,9 @@ CREATE TABLE IF NOT EXISTS projects (
   provider      TEXT,
   visible       INTEGER NOT NULL DEFAULT 1,
   sort_order    INTEGER NOT NULL DEFAULT 0,
+  preparation_script TEXT,
+  preparation_after_script TEXT,
+  project_worktree_id TEXT,
   registered_at TEXT NOT NULL,
   updated_at    TEXT NOT NULL
 );
@@ -36,6 +59,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   work_dir         TEXT,
   worktree_branch  TEXT,
   worktree_managed INTEGER NOT NULL DEFAULT 0,
+  worktree_id      TEXT,
+  scope_branch     TEXT,
   archived         INTEGER NOT NULL DEFAULT 0,
   archived_at      TEXT,
   worktree_deleted_at TEXT,
@@ -87,11 +112,16 @@ CREATE TABLE IF NOT EXISTS collections (
 
 CREATE TABLE IF NOT EXISTS tasks (
   id               TEXT PRIMARY KEY,
+  public_worktree_id TEXT NOT NULL UNIQUE,
   project_id       TEXT NOT NULL,
   title            TEXT NOT NULL,
   collection_id    TEXT,
   workflow_status   TEXT NOT NULL DEFAULT 'todo',
   worktree_branch  TEXT,
+  worktree_path    TEXT,
+  creation_scope_worktree_id TEXT,
+  creation_scope_branch TEXT,
+  start_point      TEXT,
   archived         INTEGER NOT NULL DEFAULT 0,
   archived_at      TEXT,
   worktree_deleted_at TEXT,
@@ -105,6 +135,16 @@ CREATE TABLE IF NOT EXISTS tasks (
   pr_unsupported   INTEGER NOT NULL DEFAULT 0,
   remote_branch_exists INTEGER,
   pr_head_ref_oid  TEXT,
+  pr_relation      TEXT,
+  pr_status_known  INTEGER NOT NULL DEFAULT 0,
+  preparation_status TEXT NOT NULL DEFAULT 'never_run',
+  preparation_started_at TEXT,
+  preparation_finished_at TEXT,
+  preparation_exit_code INTEGER,
+  preparation_output TEXT,
+  preparation_script TEXT,
+  preparation_phase TEXT,
+  preparation_after_script TEXT,
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL
 );
@@ -138,6 +178,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_sort_order
 CREATE INDEX IF NOT EXISTS idx_sessions_task
   ON sessions(task_id);
 
+CREATE INDEX IF NOT EXISTS idx_sessions_worktree_scope
+  ON sessions(worktree_id, scope_branch);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_collection
   ON sessions(collection_id);
 
@@ -155,6 +198,12 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project
 
 CREATE INDEX IF NOT EXISTS idx_tasks_collection
   ON tasks(collection_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_public_worktree_id
+  ON tasks(public_worktree_id);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_creation_scope
+  ON tasks(creation_scope_worktree_id, creation_scope_branch);
 
 CREATE INDEX IF NOT EXISTS idx_conv_messages_session
   ON conversation_messages(session_id, id ASC);

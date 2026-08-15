@@ -1,5 +1,8 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+
 import type { ComponentType, ReactNode } from 'react';
 import { X as XIcon } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
@@ -39,12 +42,14 @@ export function ModalShell({
 
   function handleOverlayClick(event: React.MouseEvent<HTMLDivElement>) {
     if (event.target === event.currentTarget) {
+      void captureTelemetryUiControl('dialog.close', 'dialog');
       onClose();
     }
   }
 
   return (
     <div
+      data-telemetry-ignore="manual_capture"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={handleOverlayClick}
       data-testid={overlayTestId}
@@ -77,6 +82,7 @@ export function ModalShell({
             </div>
           </div>
           <button
+            {...telemetryClickAttributes('dialog.close', 'dialog')}
             onClick={onClose}
             className="rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text)"
             aria-label={t('common.close')}

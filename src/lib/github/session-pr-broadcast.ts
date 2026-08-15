@@ -20,6 +20,7 @@ export function installSessionPrStatusBroadcast(broadcast: BroadcastFn): void {
         type: 'session_pr_status_update',
         sessionId: update.sessionId,
         prStatus: update.prStatus,
+        prStatusKnown: update.prStatusKnown,
         prUnsupported: update.prUnsupported,
         remoteBranchExists: update.remoteBranchExists,
       });

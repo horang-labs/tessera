@@ -2,6 +2,7 @@ import {
   getSpecialSessionSourceSessionId,
   isSpecialSession,
 } from '@/lib/constants/special-sessions';
+import { isOptimisticSessionId } from '@/lib/session/session-id';
 
 export function getWorkspaceSourceSessionId(
   sessionId: string | null | undefined,
@@ -20,6 +21,44 @@ export function resolveActiveWorkspaceSessionId({
 }): string | null {
   return getWorkspaceSourceSessionId(activePanelSessionId)
     ?? getWorkspaceSourceSessionId(activeSessionId);
+}
+
+/**
+ * Session-backed file tabs intentionally expose their source Session to Git,
+ * unread, and selection logic. They are still their own tab surface, so the
+ * Session→panel bridge must not use that source identity to jump back to the
+ * chat tab that owns the Session.
+ */
+export function shouldBridgeActiveSessionToPanel({
+  activePanelSessionId,
+  activePanelWorkspaceSessionId,
+  renderedActiveSessionId,
+  currentActiveSessionId,
+  projectsLoaded,
+}: {
+  activePanelSessionId: string | null | undefined;
+  activePanelWorkspaceSessionId: string | null | undefined;
+  renderedActiveSessionId: string | null | undefined;
+  currentActiveSessionId: string | null | undefined;
+  projectsLoaded: boolean;
+}): boolean {
+  // The panel→Session effect runs before the reverse bridge. If it corrected a
+  // stale Session selection during this same commit, the reverse effect still
+  // carries the old rendered value and must not undo the panel navigation.
+  if (renderedActiveSessionId !== currentActiveSessionId) return false;
+  if (activePanelSessionId && isSpecialSession(activePanelSessionId)) return false;
+  return !projectsLoaded || activePanelWorkspaceSessionId !== null;
+}
+
+export function resolveCanonicalGitTargetSessionId({
+  activeSessionId,
+  peekWorktreeId,
+}: {
+  activeSessionId: string | null | undefined;
+  peekWorktreeId: string | null | undefined;
+}): string | null {
+  if (peekWorktreeId || isOptimisticSessionId(activeSessionId)) return null;
+  return activeSessionId ?? null;
 }
 
 /**

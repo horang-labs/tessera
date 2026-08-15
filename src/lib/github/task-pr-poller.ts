@@ -6,8 +6,8 @@
  */
 
 import logger from '@/lib/logger';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUserId } from '@/lib/auth/electron-user';
+import { isElectronRuntime } from '@/lib/electron-runtime';
+import { resolveServerDefaultUserId } from '@/lib/server-default-user';
 import { SettingsManager } from '@/lib/settings/manager';
 import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import type { AgentEnvironment } from '@/lib/settings/types';
@@ -84,10 +84,11 @@ class TaskPrPoller {
 export const taskPrPoller = new TaskPrPoller();
 
 async function resolvePollerAgentEnvironment(): Promise<AgentEnvironment | undefined> {
-  if (!isElectronAuthBypassEnabled()) return undefined;
+  if (!isElectronRuntime()) return undefined;
 
   try {
-    const userId = await getElectronAuthUserId();
+    const userId = await resolveServerDefaultUserId();
+    if (!userId) return undefined;
     const settings = await SettingsManager.load(userId, { silent: true });
     return settings.agentEnvironment;
   } catch {

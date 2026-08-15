@@ -1,6 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { resolveCodexAccountHome } from '@/lib/codex-home';
+import {
+  isBridgedAgentEnvironment,
+  resolveAgentHomeFilesystemPath,
+  type FilesystemBrowseEnvironment,
+} from '@/lib/filesystem/path-environment';
+import { parseWslUncRoot } from '@/lib/workspace-files/wsl-inotify-bridge';
 import type {
   ProviderTerminalSessionObserver,
   ProviderTerminalSessionObserverOptions,
@@ -10,7 +17,7 @@ import {
   type ProviderSessionArtifactCandidate,
 } from '../terminal-session-artifact-observer';
 
-function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | null {
+function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | false | null {
   let firstLine = '';
   try {
     const descriptor = fs.openSync(filePath, 'r');
@@ -31,7 +38,7 @@ function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | nul
       type?: unknown;
       payload?: Record<string, unknown>;
     };
-    if (entry.type !== 'session_meta' || !entry.payload) return null;
+    if (entry.type !== 'session_meta' || !entry.payload) return false;
     const providerSessionId = typeof entry.payload.session_id === 'string'
       ? entry.payload.session_id.trim()
       : typeof entry.payload.id === 'string'
@@ -41,24 +48,54 @@ function readCodexFork(filePath: string): ProviderSessionArtifactCandidate | nul
       ? entry.payload.forked_from_id.trim()
       : '';
     if (!providerSessionId || !previousProviderSessionId || providerSessionId === previousProviderSessionId) {
-      return null;
+      return false;
     }
     return {
       activation: 'active',
       providerSessionId,
       previousProviderSessionId,
-      transcriptPath: filePath,
+      // Watching uses a server-openable path, but persisted provider paths stay
+      // in the CLI's filesystem domain and are translated only when opened.
+      transcriptPath: parseWslUncRoot(filePath)?.posixPath ?? filePath,
     };
   } catch {
     return null;
   }
 }
 
+/**
+ * Where Codex records rollouts, as a path *this server* can open. Across a
+ * bridge both `os.homedir()` and `CODEX_HOME` describe the server rather than
+ * the CLI, so neither can name the file the agent actually wrote.
+ */
+export async function resolveCodexSessionsDir(options: {
+  environment: FilesystemBrowseEnvironment;
+  /** Overrides the sessions root (tests). */
+  sessionsDir?: string;
+}): Promise<string> {
+  if (options.sessionsDir) return options.sessionsDir;
+  if (isBridgedAgentEnvironment(options.environment)) {
+    return path.join(
+      await resolveAgentHomeFilesystemPath(options.environment),
+      '.codex',
+      'sessions',
+    );
+  }
+  return path.join(resolveCodexAccountHome(), 'sessions');
+}
+
 export function createCodexTerminalSessionObserver(
-  options: ProviderTerminalSessionObserverOptions & { sessionsDir?: string },
+  options: ProviderTerminalSessionObserverOptions & {
+    sessionsDir?: string;
+    /** Overrides the resolved environment (tests). */
+    environment?: FilesystemBrowseEnvironment;
+  },
 ): ProviderTerminalSessionObserver {
   return createTerminalSessionArtifactObserver({
-    root: options.sessionsDir ?? path.join(resolveCodexAccountHome(), 'sessions'),
+    root: (async () => resolveCodexSessionsDir({
+      environment: options.environment ?? await getAgentEnvironment(options.userId),
+      sessionsDir: options.sessionsDir,
+    }))(),
     matchesPath: (relativePath) => relativePath.endsWith('.jsonl'),
     readCandidate: readCodexFork,
     currentProviderSessionId: options.currentProviderSessionId,

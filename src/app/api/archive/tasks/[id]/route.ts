@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import {
   permanentlyDeleteArchivedTask,
-  pruneExpiredArchivedWorktrees,
   setTaskArchived,
 } from '@/lib/archive/archive-service';
-import { SettingsManager } from '@/lib/settings/manager';
 import * as dbTasks from '@/lib/db/tasks';
 import logger from '@/lib/logger';
 import {
@@ -17,6 +15,7 @@ import {
   broadcastTaskMutation,
   getOriginClientIdFromRequest,
 } from '@/lib/ws/mutation-broadcast';
+import { getTaskProjectViewIds } from '@/lib/projects/project-view-projection';
 
 export async function PATCH(
   req: NextRequest,
@@ -44,20 +43,29 @@ export async function PATCH(
 
   try {
     const projectId = dbTasks.getTask(id)?.projectId;
+    const affectedProjectIds = getTaskProjectViewIds(id);
     await setTaskArchived(id, archived, auth.userId);
-    if (archived) {
-      const settings = await SettingsManager.load(auth.userId);
-      if (settings.autoDeleteArchivedWorktrees) {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
-      }
-    }
     if (projectId) {
       const originClientId = getOriginClientIdFromRequest(req);
-      broadcastTaskMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+      broadcastTaskMutation(auth.userId, {
+        kind: 'updated',
+        projectId,
+        taskId: id,
+        archived,
+        affectedProjectIds,
+        originClientId,
+      });
       // Sessions linked to this task carry archived/isReadOnly state too.
-      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+      broadcastSessionMutation(auth.userId, {
+        kind: 'updated',
+        projectId,
+        taskId: id,
+        archived,
+        affectedProjectIds,
+        originClientId,
+      });
     }
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, affectedProjectIds });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update task archive state';
     const handoffConflict = isTerminalHandoffConflictError(error) || isSessionOperationConflictError(error);
@@ -89,8 +97,8 @@ export async function DELETE(
     await permanentlyDeleteArchivedTask(auth.userId, id);
     if (projectId) {
       const originClientId = getOriginClientIdFromRequest(req);
-      broadcastTaskMutation(auth.userId, { kind: 'deleted', projectId, originClientId });
-      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, originClientId });
+      broadcastTaskMutation(auth.userId, { kind: 'deleted', projectId, taskId: id, originClientId });
+      broadcastSessionMutation(auth.userId, { kind: 'updated', projectId, taskId: id, originClientId });
     }
     return NextResponse.json({ ok: true });
   } catch (error) {

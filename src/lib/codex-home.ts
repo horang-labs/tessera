@@ -31,7 +31,7 @@ export function writeCodexOverlayMarker(overlayHome: string, accountHome: string
   );
 }
 
-function readMarkedAccountHome(overlayHome: string): string | undefined {
+export function readCodexOverlayAccountHome(overlayHome: string): string | undefined {
   try {
     const marker = JSON.parse(
       fs.readFileSync(path.join(overlayHome, CODEX_OVERLAY_MARKER), 'utf8'),
@@ -74,7 +74,7 @@ export function resolveCodexAccountHome(
     cwd: options.cwd,
     homeDir,
   });
-  const markedAccountHome = readMarkedAccountHome(resolvedHome);
+  const markedAccountHome = readCodexOverlayAccountHome(resolvedHome);
   if (markedAccountHome) return markedAccountHome;
   const overlayRoot = path.join(getTesseraDataDir({
     env,
@@ -93,6 +93,72 @@ export function resolveCodexAccountHome(
   }
 
   return defaultHome;
+}
+
+/**
+ * `.../codex-overlay/session-<terminal-id>/<rest>` — matched by segment rather
+ * than against a resolved data dir so it also recognises an overlay path that
+ * was reported by a CLI in another environment (WSL guest, Windows host).
+ */
+const CODEX_OVERLAY_PATH_PATTERN = /^(.*)[/\\]codex-overlay[/\\](session-[^/\\]+)[/\\](.+)$/;
+const SAFE_OVERLAY_TERMINAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * Returns the terminal that owned an overlay-backed rollout path. Codex stores
+ * this absolute path in its account database, so callers may need to recreate
+ * the overlay's `sessions` alias after the owning PTY has exited.
+ */
+export function extractCodexOverlayTerminalId(
+  transcriptPath: string,
+): string | undefined {
+  const match = transcriptPath.match(CODEX_OVERLAY_PATH_PATTERN);
+  if (!match) return undefined;
+  const [, , overlayName, relativePath] = match;
+  const [firstSegment] = relativePath.split(/[/\\]/, 1);
+  if (firstSegment !== 'sessions' || !SAFE_OVERLAY_TERMINAL_ID.test(overlayName)) {
+    return undefined;
+  }
+  return overlayName;
+}
+
+/**
+ * Map a rollout path recorded under a per-session overlay home back to the real
+ * account home.
+ *
+ * Overlays are deleted when the terminal closes (`cleanupCodexOverlayForTerminal`),
+ * so a stored `transcript_path` pointing into one is dead on arrival. The
+ * rollout itself survives: `sessions/` is a symlink into the account home, so
+ * the same relative path resolves there.
+ *
+ * Non-overlay paths and unresolvable candidates are returned untouched — the
+ * caller reports a missing transcript, which is the honest outcome.
+ */
+export function resolveCodexAccountTranscriptPath(
+  transcriptPath: string,
+  options: ResolveCodexAccountHomeOptions = {},
+): string {
+  const match = transcriptPath.match(CODEX_OVERLAY_PATH_PATTERN);
+  if (!match) return transcriptPath;
+
+  const [, dataDir, overlayName, relativePath] = match;
+  const pathModule = /^[a-zA-Z]:[\\/]|^\\\\/.test(transcriptPath) ? path.win32 : path.posix;
+  const segments = relativePath.split(/[/\\]/).filter(Boolean);
+
+  const candidateHomes = [
+    // The overlay is still on disk (session running): its marker is exact.
+    readCodexOverlayAccountHome(pathModule.join(dataDir, 'codex-overlay', overlayName)),
+    // Default layout — the data dir sits next to `.codex` under the same home.
+    pathModule.join(pathModule.dirname(dataDir), '.codex'),
+    resolveCodexAccountHome(options),
+  ];
+
+  for (const accountHome of candidateHomes) {
+    if (!accountHome) continue;
+    const candidate = pathModule.join(accountHome, ...segments);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return transcriptPath;
 }
 
 export function buildCodexAccountEnvironment(

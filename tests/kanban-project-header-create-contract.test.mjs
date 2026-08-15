@@ -19,7 +19,7 @@ test('all-projects kanban exposes quick create from project headers', () => {
 });
 
 test('single-project kanban keeps quick create in column headers', () => {
-  assert.equal(columnSource.match(/!groupByProject && \(/g)?.length, 2);
+  assert.equal(columnSource.match(/!groupByProject && isEditable \? \(/g)?.length, 2);
   assert.match(columnSource, /testId="kanban-column-add-btn"/);
   assert.match(columnSource, /testId="kanban-workflow-column-add-btn"/);
 });

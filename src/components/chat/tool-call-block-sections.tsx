@@ -1,11 +1,13 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { CheckCircle, Loader2, XCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
 import type { ToolCallKind } from '@/types/tool-call-kind';
 import { ErrorBlock } from './shared/error-block';
-import { renderToolCallResult, TOOL_STATUS_TEXT } from './tool-call-block-utils';
+import { renderToolCallResult, TOOL_STATUS_TEXT, formatElapsedSeconds } from './tool-call-block-utils';
 
 export function ToolCallBlockHeader({
   toolName,
@@ -16,6 +18,7 @@ export function ToolCallBlockHeader({
   statusColor,
   isError,
   isRunning,
+  elapsedSeconds,
   onToggle,
 }: {
   toolName: string;
@@ -26,10 +29,12 @@ export function ToolCallBlockHeader({
   statusColor: string;
   isError: boolean;
   isRunning: boolean;
+  elapsedSeconds?: number;
   onToggle: () => void;
 }) {
   return (
     <button
+      {...telemetryClickAttributes('message.tool.toggle', 'message')}
       onClick={onToggle}
       data-testid={`tool-call-${toolName.toLowerCase()}-header`}
       className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-(--tool-header-hover)"
@@ -41,10 +46,17 @@ export function ToolCallBlockHeader({
           <div className="truncate font-mono text-[11px] text-(--text-muted)">{summary}</div>
         )}
       </div>
-      <div className="ml-auto flex h-3 w-3 shrink-0 items-center justify-center">
-        {isRunning && <Loader2 className="h-3 w-3 animate-spin text-(--accent)" />}
-        {status === 'completed' && <CheckCircle className={`h-3 w-3 ${TOOL_STATUS_TEXT.completed}`} />}
-        {isError && <XCircle className={`h-3 w-3 ${TOOL_STATUS_TEXT.error}`} />}
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        {isRunning && elapsedSeconds != null && (
+          <span className="text-[10px] font-mono tabular-nums text-(--text-muted)">
+            {formatElapsedSeconds(elapsedSeconds)}
+          </span>
+        )}
+        <div className="flex h-3 w-3 items-center justify-center">
+          {isRunning && <Loader2 className="h-3 w-3 animate-spin text-(--accent)" />}
+          {status === 'completed' && <CheckCircle className={`h-3 w-3 ${TOOL_STATUS_TEXT.completed}`} />}
+          {isError && <XCircle className={`h-3 w-3 ${TOOL_STATUS_TEXT.error}`} />}
+        </div>
       </div>
     </button>
   );
@@ -103,6 +115,7 @@ export function ToolCallBlockContent({
         <div className="px-2.5 py-2">
           <ErrorBlock message={loadError} title="Failed to load output" />
           <button
+            {...telemetryClickAttributes('message.result.open', 'message')}
             data-testid="tool-output-retry"
             onClick={(event) => {
               event.stopPropagation();
@@ -133,6 +146,7 @@ export function ToolCallBlockContent({
             </pre>
             {isLong && !isOutputExpanded && (
               <button
+                {...telemetryClickAttributes('message.result.open', 'message')}
                 onClick={(event) => {
                   event.stopPropagation();
                   onToggleOutput();
@@ -144,6 +158,7 @@ export function ToolCallBlockContent({
             )}
             {isOutputExpanded && isLong && (
               <button
+                {...telemetryClickAttributes('message.result.open', 'message')}
                 onClick={(event) => {
                   event.stopPropagation();
                   onToggleOutput();

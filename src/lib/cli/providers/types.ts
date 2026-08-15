@@ -25,6 +25,7 @@ export type { ParsedMessage, ParsedMessageSideEffect } from './message-types';
 export type {
   CliRawLogEvent,
   CliRawLogSink,
+  GeneratedText,
   GeneratedTitle,
   ProviderMeta,
   SpawnOptions,

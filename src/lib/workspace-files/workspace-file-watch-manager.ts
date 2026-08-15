@@ -3,15 +3,20 @@ import chokidar, { type FSWatcher } from "chokidar";
 import { getFilesystemPathModule } from "@/lib/filesystem/host-path";
 import logger from "@/lib/logger";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
+import type { AgentEnvironment } from "@/lib/settings/types";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
 import {
   applyMaxFiles,
   isIgnoredWorkspacePath,
+  MAX_WORKSPACE_FILES,
   normalizeWorkspaceRelativePath,
+  scanWorkspaceDirectory,
   type WorkspaceFileWalkResult,
   walkWorkspaceFiles,
+  workspaceRelativeDirname,
 } from "./workspace-file-scan";
 import {
+  buildInotifyExcludeRegex,
   type BridgeEvent,
   isWslDistroRunning,
   parseWslUncRoot,
@@ -38,14 +43,10 @@ interface WorkspaceRootChangeListener {
   onChange: (root: string) => void;
 }
 
-interface PendingWatchEvent {
-  eventName: WatchEventName;
-  relativePath: string;
-}
-
 interface WatchEventStats {
   isDirectory(): boolean;
   isFile(): boolean;
+  isSymbolicLink?(): boolean;
 }
 
 interface WorkspaceWatchEntry {
@@ -53,22 +54,33 @@ interface WorkspaceWatchEntry {
   bridgeActive: boolean;
   closeTimer: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
+  /**
+   * Directories in their own right. A folder with no files in it changes no
+   * file path, so without this set an empty one is invisible to the index and
+   * its creation would never reach a subscriber.
+   */
+  directories: Set<string>;
   files: Set<string>;
   lastIndexedAt: number;
   pendingAddedPaths: Set<string>;
   pendingChangedPaths: Set<string>;
   pendingDeletedPaths: Set<string>;
-  pendingEventsBeforeReady: PendingWatchEvent[];
   pendingHasMoreChangedPaths: boolean;
+  /** Directories to re-read, mapped to whether the whole subtree is suspect. */
+  pendingRescanDirs: Map<string, boolean>;
   pendingTreeChanged: boolean;
   pollTimer: NodeJS.Timeout | null;
   ready: boolean;
   readyPromise: Promise<void>;
+  /** A full re-walk was asked for while one was already running or not yet possible. */
+  refreshRequested: boolean;
   refreshing: boolean;
+  rescanning: boolean;
   root: string;
   rootChangeListeners: Map<string, WorkspaceRootChangeListener>;
   status: WatchStatus;
   subscribers: Map<string, WorkspaceFileSubscriber>;
+  symlinks: Set<string>;
   truncated: boolean;
   version: number;
   watchMode: WatchMode;
@@ -79,6 +91,10 @@ interface WorkspaceWatchEntry {
 
 const CHANGE_DEBOUNCE_MS = 300;
 const MAX_CHANGED_PATHS_PER_EVENT = 200;
+// Past this many invalidated directories, re-reading each one costs more than
+// one walk of the whole tree, so the rescan collapses into a full refresh. The
+// same trade-off the event batch makes when it stops tracking individual paths.
+const MAX_RESCAN_DIRECTORIES = 64;
 // Sweep cadence for poll-mode roots. With a live inotify bridge the sweep is
 // only a consistency backstop; without one it is the sole change source and
 // must stay near-real-time.
@@ -127,6 +143,7 @@ export class WorkspaceFileWatchManager {
   private readonly rootBySessionId = new Map<string, string>();
 
   async subscribe(options: {
+    agentEnvironment: AgentEnvironment;
     connectionId: string;
     sendToUser: WsSendToUser;
     sessionId: string;
@@ -138,7 +155,10 @@ export class WorkspaceFileWatchManager {
       return;
     }
 
-    const root = await this.resolveRootForSession(options.sessionId);
+    const root = await this.resolveRootForSession(
+      options.sessionId,
+      options.agentEnvironment,
+    );
     if (this.closedConnectionIds.has(options.connectionId) || this.canceledSubscriberKeys.delete(key)) {
       return;
     }
@@ -316,9 +336,9 @@ export class WorkspaceFileWatchManager {
   }
 
   /** Fire-and-forget index prewarm for a Windows-hosted WSL workspace. */
-  warmSessionWorkspace(sessionId: string): void {
+  warmSessionWorkspace(sessionId: string, agentEnvironment: AgentEnvironment): void {
     void (async () => {
-      const root = await this.resolveRootForSession(sessionId);
+      const root = await this.resolveRootForSession(sessionId, agentEnvironment);
       if (!root || !isWindowsHostedWslRoot(root)) return;
       const entry = this.getOrCreateEntry(root);
       this.touchEntry(entry);
@@ -334,11 +354,16 @@ export class WorkspaceFileWatchManager {
     if (entry.watchMode === "poll" && Date.now() - entry.lastIndexedAt > staleAfterMs) {
       void this.refreshPollIndex(entry);
     }
-    return applyMaxFiles(entry.files);
+    return applyMaxFiles(entry.files, entry.symlinks, entry.directories);
   }
 
-  private async resolveRootForSession(sessionId: string): Promise<string | null> {
-    const root = await resolveSessionWorkspaceFilesystemRoot(sessionId);
+  private async resolveRootForSession(
+    sessionId: string,
+    agentEnvironment: AgentEnvironment,
+  ): Promise<string | null> {
+    const root = await resolveSessionWorkspaceFilesystemRoot(sessionId, {
+      agentEnvironment,
+    });
     if (!root) return null;
     const canonicalRoot = await resolveCanonicalWorkspaceRoot(root);
     this.rootBySessionId.set(sessionId, canonicalRoot);
@@ -355,22 +380,26 @@ export class WorkspaceFileWatchManager {
       bridgeActive: false,
       closeTimer: null,
       debounceTimer: null,
+      directories: new Set(),
       files: new Set(),
       lastIndexedAt: 0,
       pendingAddedPaths: new Set(),
       pendingChangedPaths: new Set(),
       pendingDeletedPaths: new Set(),
-      pendingEventsBeforeReady: [],
       pendingHasMoreChangedPaths: false,
+      pendingRescanDirs: new Map(),
       pendingTreeChanged: false,
       pollTimer: null,
       ready: false,
       readyPromise: Promise.resolve(),
+      refreshRequested: false,
       refreshing: false,
+      rescanning: false,
       root,
       rootChangeListeners: new Map(),
       status: "starting",
       subscribers: new Map(),
+      symlinks: new Set(),
       truncated: false,
       version: 0,
       watchMode: wslRoot ? "poll" : "watch",
@@ -387,15 +416,12 @@ export class WorkspaceFileWatchManager {
   private async bootstrapEntry(entry: WorkspaceWatchEntry): Promise<void> {
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
+      entry.directories = new Set(snapshot.directories);
       entry.files = new Set(snapshot.files);
+      entry.symlinks = new Set(snapshot.symlinks);
       entry.truncated = snapshot.truncated;
       entry.lastIndexedAt = Date.now();
       entry.ready = true;
-
-      const pending = entry.pendingEventsBeforeReady.splice(0);
-      for (const event of pending) {
-        this.applyWatchEvent(entry, event.eventName, event.relativePath);
-      }
 
       if (entry.status !== "fallback") {
         entry.status = "active";
@@ -406,9 +432,23 @@ export class WorkspaceFileWatchManager {
         truncated: entry.truncated,
       }, "Workspace file watch index ready");
     } catch (error) {
+      // Still ready: the index is empty and `status` keeps callers off it, but
+      // a permanently unready entry would queue invalidations forever and never
+      // act on one. Serving falls back to a direct walk in the meantime.
+      entry.ready = true;
       entry.status = "fallback";
       logger.warn({ error, root: entry.root }, "Failed to bootstrap workspace file index");
     }
+
+    // The walk observed each directory once, at whatever moment it arrived
+    // there. Anything written to a directory it had already passed — a worktree
+    // preparation script copying files in, most of all — is only in the
+    // invalidations collected meanwhile.
+    if (entry.refreshRequested) {
+      entry.refreshRequested = false;
+      void this.refreshPollIndex(entry);
+    }
+    void this.runPendingRescans(entry);
   }
 
   private startWatcher(entry: WorkspaceWatchEntry): void {
@@ -458,10 +498,6 @@ export class WorkspaceFileWatchManager {
         if (!this.isWatchEventShape(eventName, stats)) return;
         const relativePath = toWorkspaceRelativePath(entry.root, String(filePath));
         if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
-        if (!entry.ready) {
-          entry.pendingEventsBeforeReady.push({ eventName, relativePath });
-          return;
-        }
         this.applyWatchEvent(entry, eventName, relativePath);
       });
 
@@ -493,54 +529,208 @@ export class WorkspaceFileWatchManager {
 
   private isWatchEventShape(eventName: WatchEventName, stats?: WatchEventStats): boolean {
     if (!stats) return true;
-    if (eventName === "add" || eventName === "change") return stats.isFile();
+    // With followSymlinks:false chokidar lstats every entry, so a symlink is
+    // neither isFile() nor isDirectory() and arrives as "add" whatever it points
+    // at. Admit it here; the rescan stats the target and decides whether it
+    // belongs in the index, applying the same rule as the initial walk.
+    if (eventName === "add" || eventName === "change") {
+      return stats.isFile() || Boolean(stats.isSymbolicLink?.());
+    }
     if (eventName === "addDir") return stats.isDirectory();
     return true;
   }
 
+  /**
+   * Turn a watch event into an invalidation rather than an index mutation.
+   *
+   * Trusting the event stream as the index means every event the kernel or the
+   * bridge fails to deliver is a file the tree never shows again. Recording
+   * which directory to re-read instead makes a lost event cost nothing as long
+   * as *some* event for that directory arrives — and the poll sweep is the
+   * backstop for when none does.
+   */
   private applyWatchEvent(
     entry: WorkspaceWatchEntry,
     eventName: WatchEventName,
     relativePath: string,
   ): void {
+    const parentDir = workspaceRelativeDirname(relativePath);
     switch (eventName) {
       case "add":
-        entry.files.add(relativePath);
-        this.scheduleChange(entry, relativePath, {
-          added: true,
-          treeChanged: true,
-        });
-        return;
-      case "unlink":
-        entry.files.delete(relativePath);
-        this.scheduleChange(entry, relativePath, {
-          deleted: true,
-          treeChanged: true,
-        });
-        return;
-      case "unlinkDir": {
-        const prefix = `${relativePath}/`;
-        const deletedPaths: string[] = [];
-        for (const filePath of Array.from(entry.files)) {
-          if (filePath.startsWith(prefix)) {
-            entry.files.delete(filePath);
-            deletedPaths.push(filePath);
-          }
-        }
-        this.scheduleChange(entry, relativePath, {
-          deleted: true,
-          deletedPaths,
-          treeChanged: true,
-        });
-        return;
-      }
-      case "addDir":
-        this.scheduleChange(entry, relativePath, { treeChanged: true });
-        return;
       case "change":
-        this.scheduleChange(entry, relativePath, { treeChanged: false });
+      case "unlink":
+        this.invalidateDirectory(entry, parentDir, false);
+        return;
+      case "addDir":
+      case "unlinkDir":
+        // The subtree, not just the entry: a directory that appears is already
+        // full by the time a watch reaches it, and one that disappears takes
+        // its contents with it. Either way what was held for it is unusable.
+        this.invalidateDirectory(entry, relativePath, true);
+        this.invalidateDirectory(entry, parentDir, false);
         return;
     }
+  }
+
+  private invalidateDirectory(
+    entry: WorkspaceWatchEntry,
+    relativeDir: string,
+    recursive: boolean,
+  ): void {
+    const existing = entry.pendingRescanDirs.get(relativeDir);
+    entry.pendingRescanDirs.set(relativeDir, Boolean(existing) || recursive);
+
+    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
+    const timer = setTimeout(() => {
+      entry.debounceTimer = null;
+      void this.runPendingRescans(entry);
+    }, CHANGE_DEBOUNCE_MS);
+    timer.unref?.();
+    entry.debounceTimer = timer;
+  }
+
+  /**
+   * Re-read every invalidated directory, then publish what actually changed.
+   *
+   * Directories invalidated while this runs are picked up by the loop rather
+   * than dropped: an in-flight scan read the tree as it was before they were
+   * queued, so letting it stand for them would lose exactly the writes that
+   * arrive in bursts.
+   */
+  private async runPendingRescans(entry: WorkspaceWatchEntry): Promise<void> {
+    // Nothing to reconcile against until the initial walk lands; the events are
+    // still queued and replay into invalidations once it does.
+    if (!entry.ready || entry.rescanning || entry.pendingRescanDirs.size === 0) return;
+
+    entry.rescanning = true;
+    let changed = false;
+    try {
+      while (entry.pendingRescanDirs.size > 0) {
+        if (this.entriesByRoot.get(entry.root) !== entry) return;
+        const targets = Array.from(entry.pendingRescanDirs.entries());
+        entry.pendingRescanDirs.clear();
+
+        if (targets.length > MAX_RESCAN_DIRECTORIES) {
+          await this.refreshPollIndex(entry);
+          continue;
+        }
+
+        // Shallowest first, so a subtree rescan subsumes the individual
+        // directories under it instead of racing them.
+        targets.sort(([a], [b]) => a.length - b.length);
+        for (const [relativeDir, recursive] of targets) {
+          if (this.entriesByRoot.get(entry.root) !== entry) return;
+          if (await this.rescanDirectory(entry, relativeDir, recursive)) changed = true;
+        }
+      }
+    } catch (error) {
+      logger.warn({ error, root: entry.root }, "Workspace directory rescan failed");
+    } finally {
+      entry.rescanning = false;
+    }
+
+    if (!changed) return;
+    entry.pendingTreeChanged = true;
+    if (entry.debounceTimer) {
+      clearTimeout(entry.debounceTimer);
+      entry.debounceTimer = null;
+    }
+    this.flushChanges(entry);
+  }
+
+  /** Reconcile the index for one directory with what is on disk right now. */
+  private async rescanDirectory(
+    entry: WorkspaceWatchEntry,
+    relativeDir: string,
+    recursive: boolean,
+  ): Promise<boolean> {
+    const result = await scanWorkspaceDirectory(entry.root, relativeDir, {
+      limit: MAX_WORKSPACE_FILES,
+      recursive,
+    });
+    if (this.entriesByRoot.get(entry.root) !== entry) return false;
+
+    const prefix = relativeDir ? `${relativeDir}/` : "";
+    // A directory that is gone takes its whole subtree with it, whatever the
+    // event claimed to be about.
+    const wholeSubtree = recursive || result.missing;
+    const inScope = (filePath: string): boolean => {
+      if (prefix && !filePath.startsWith(prefix)) return false;
+      if (wholeSubtree) return true;
+      return filePath.indexOf("/", prefix.length) === -1;
+    };
+
+    const previous = new Set<string>();
+    for (const filePath of entry.files) {
+      if (inScope(filePath)) previous.add(filePath);
+    }
+    const next = new Set(result.missing ? [] : result.files);
+    const nextSymlinks = new Set(result.missing ? [] : result.symlinks);
+
+    let changed = this.reconcileDirectories(entry, relativeDir, inScope, result);
+    for (const filePath of previous) {
+      if (next.has(filePath)) continue;
+      entry.files.delete(filePath);
+      entry.symlinks.delete(filePath);
+      this.addPendingPath(entry, entry.pendingDeletedPaths, filePath);
+      this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
+      changed = true;
+    }
+    for (const filePath of next) {
+      if (!previous.has(filePath)) {
+        entry.files.add(filePath);
+        this.addPendingPath(entry, entry.pendingAddedPaths, filePath);
+        this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
+        changed = true;
+      }
+      // A path swapped between a real file and a link keeps its name, so only
+      // the marker moves — the badge would stay stale without this.
+      if (nextSymlinks.has(filePath)) {
+        if (!entry.symlinks.has(filePath)) {
+          entry.symlinks.add(filePath);
+          changed = true;
+        }
+      } else if (entry.symlinks.delete(filePath)) {
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /**
+   * Bring the directory index in line with one rescanned scope.
+   *
+   * Directory names stay out of `addedPaths` / `deletedPaths`: those lists are
+   * read as file paths — the file tab treats a lone delete+add pair as a rename
+   * of *its* file — so a folder appearing there would be mistaken for one. A
+   * directory change is a tree change and nothing more.
+   */
+  private reconcileDirectories(
+    entry: WorkspaceWatchEntry,
+    relativeDir: string,
+    inScope: (relativePath: string) => boolean,
+    result: { directories: string[]; missing: boolean },
+  ): boolean {
+    // The scanned directory itself is inside its own scope: it is what goes
+    // away when the scan reports the directory missing.
+    const inDirectoryScope = (dirPath: string): boolean =>
+      (Boolean(relativeDir) && dirPath === relativeDir) || inScope(dirPath);
+
+    const nextDirectories = new Set(result.missing ? [] : result.directories);
+    if (!result.missing && relativeDir) nextDirectories.add(relativeDir);
+
+    let changed = false;
+    for (const dirPath of entry.directories) {
+      if (!inDirectoryScope(dirPath) || nextDirectories.has(dirPath)) continue;
+      entry.directories.delete(dirPath);
+      changed = true;
+    }
+    for (const dirPath of nextDirectories) {
+      if (entry.directories.has(dirPath)) continue;
+      entry.directories.add(dirPath);
+      changed = true;
+    }
+    return changed;
   }
 
   private setPollCadence(entry: WorkspaceWatchEntry, intervalMs: number): void {
@@ -556,6 +746,7 @@ export class WorkspaceFileWatchManager {
   private startBridge(entry: WorkspaceWatchEntry, wslRoot: WslUncRoot): void {
     const bridge = new WslInotifyBridge({
       root: wslRoot,
+      excludeRegex: buildInotifyExcludeRegex(wslRoot.posixPath),
       onEvent: (event) => this.handleBridgeEvent(entry, event),
       onEstablished: () => {
         if (this.entriesByRoot.get(entry.root) !== entry) return;
@@ -586,18 +777,24 @@ export class WorkspaceFileWatchManager {
   private handleBridgeEvent(entry: WorkspaceWatchEntry, event: BridgeEvent): void {
     const relativePath = normalizeWorkspaceRelativePath(event.relativePath);
     if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
-    if (!entry.ready) {
-      entry.pendingEventsBeforeReady.push({ eventName: event.eventName, relativePath });
-      return;
-    }
+    // A moved-in directory carries no per-file events, and a nested one may not
+    // even announce itself — applyWatchEvent invalidates the subtree so the
+    // rescan reads it rather than trusting what arrived. Events that land
+    // before the initial walk finishes are recorded the same way; the walk can
+    // only see the tree as it was when it passed each directory, so whatever it
+    // raced is exactly what these invalidations recover.
     this.applyWatchEvent(entry, event.eventName, relativePath);
-    // A moved-in directory carries no per-file events; re-walk to pick up its
-    // contents (refreshing flag coalesces bursts).
-    if (event.eventName === "addDir") void this.refreshPollIndex(entry);
   }
 
   private async refreshPollIndex(entry: WorkspaceWatchEntry): Promise<void> {
-    if (entry.refreshing || !entry.ready) return;
+    // A sweep already under way started reading the tree before this request
+    // existed, so it cannot answer it. Remember the request and re-run once it
+    // finishes instead of dropping it — dropping is how a burst of writes ends
+    // up permanently missing from the index.
+    if (entry.refreshing || !entry.ready) {
+      entry.refreshRequested = true;
+      return;
+    }
     // Touching \\wsl.localhost boots a stopped distro; after `wsl --shutdown`
     // stay quiet and serve the last snapshot until the distro is back.
     if (
@@ -607,18 +804,31 @@ export class WorkspaceFileWatchManager {
     ) {
       return;
     }
-    if (entry.refreshing || !entry.ready) return;
+    if (entry.refreshing || !entry.ready) {
+      entry.refreshRequested = true;
+      return;
+    }
     entry.refreshing = true;
+    entry.refreshRequested = false;
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
       if (this.entriesByRoot.get(entry.root) !== entry) return;
       const previous = entry.files;
+      const previousSymlinks = entry.symlinks;
+      const previousDirectories = entry.directories;
       const next = new Set(snapshot.files);
+      const nextSymlinks = new Set(snapshot.symlinks);
+      const nextDirectories = new Set(snapshot.directories);
+      entry.directories = nextDirectories;
       entry.files = next;
+      entry.symlinks = nextSymlinks;
       entry.truncated = snapshot.truncated;
       entry.lastIndexedAt = Date.now();
 
-      let changed = false;
+      // A folder created or removed with nothing in it moves no file path, so
+      // the file diff below cannot see it at all.
+      let changed = previousDirectories.size !== nextDirectories.size
+        || Array.from(nextDirectories).some((dirPath) => !previousDirectories.has(dirPath));
       for (const filePath of next) {
         if (previous.has(filePath)) continue;
         changed = true;
@@ -630,6 +840,25 @@ export class WorkspaceFileWatchManager {
         changed = true;
         this.addPendingPath(entry, entry.pendingDeletedPaths, filePath);
         this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
+      }
+      // Swapping a file for a link to the same path leaves the name set
+      // untouched, so only the marker moves. Treat that as a tree change or the
+      // badge would stay stale until some unrelated edit forces a reload. It
+      // also backfills markers for adds the inotify bridge reported without
+      // stat'ing the entry (a 9P stat per event is too expensive there).
+      if (!changed) {
+        for (const filePath of nextSymlinks) {
+          if (previousSymlinks.has(filePath)) continue;
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) {
+        for (const filePath of previousSymlinks) {
+          if (nextSymlinks.has(filePath)) continue;
+          changed = true;
+          break;
+        }
       }
       if (changed) {
         entry.pendingTreeChanged = true;
@@ -648,33 +877,11 @@ export class WorkspaceFileWatchManager {
       logger.warn({ error, root: entry.root }, "Workspace poll index refresh failed");
     } finally {
       entry.refreshing = false;
+      if (entry.refreshRequested && this.entriesByRoot.get(entry.root) === entry) {
+        entry.refreshRequested = false;
+        void this.refreshPollIndex(entry);
+      }
     }
-  }
-
-  private scheduleChange(
-    entry: WorkspaceWatchEntry,
-    relativePath: string,
-    options: {
-      added?: boolean;
-      deleted?: boolean;
-      deletedPaths?: string[];
-      treeChanged: boolean;
-    },
-  ): void {
-    if (options.treeChanged) {
-      entry.pendingTreeChanged = true;
-    }
-    this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
-    if (options.added) this.addPendingPath(entry, entry.pendingAddedPaths, relativePath);
-    if (options.deleted) this.addPendingPath(entry, entry.pendingDeletedPaths, relativePath);
-    for (const deletedPath of options.deletedPaths ?? []) {
-      this.addPendingPath(entry, entry.pendingDeletedPaths, deletedPath);
-    }
-
-    if (entry.debounceTimer) {
-      clearTimeout(entry.debounceTimer);
-    }
-    entry.debounceTimer = setTimeout(() => this.flushChanges(entry), CHANGE_DEBOUNCE_MS);
   }
 
   private addPendingPath(

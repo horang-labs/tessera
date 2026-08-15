@@ -9,13 +9,20 @@ import {
   type ProviderExecutionCapabilities,
 } from '@/lib/session/agent-execution-mode';
 import { cn } from '@/lib/utils';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
-export type ExecutionModeSelectorDensity = 'regular' | 'compact';
+/** `mini` keeps only the PTY/GUI token, for popovers too narrow for the full label. */
+export type ExecutionModeSelectorDensity = 'regular' | 'compact' | 'mini';
 
 export interface ExecutionModeSelectorProps {
   value: AgentExecutionMode;
   onChange: (mode: AgentExecutionMode) => void;
-  providerId: string;
+  providerId?: string;
+  /**
+   * Capabilities to gate the radios with, when they don't come from a single
+   * provider — e.g. the union across the providers a picker offers.
+   */
+  capabilities?: ProviderExecutionCapabilities;
   density?: ExecutionModeSelectorDensity;
   className?: string;
   name?: string;
@@ -36,15 +43,17 @@ export function ExecutionModeSelector({
   value,
   onChange,
   providerId,
+  capabilities: capabilitiesOverride,
   density = 'regular',
   className,
   name,
 }: ExecutionModeSelectorProps) {
   const { t } = useI18n();
   const generatedName = useId();
-  const capabilities = getProviderExecutionCapabilities(providerId);
+  const capabilities = capabilitiesOverride ?? getProviderExecutionCapabilities(providerId ?? '');
   const options = getExecutionModeSelectorOptions(value, capabilities);
-  const compact = density === 'compact';
+  const mini = density === 'mini';
+  const compact = density === 'compact' || mini;
 
   return (
     <div className={className} data-density={density}>
@@ -53,15 +62,17 @@ export function ExecutionModeSelector({
           'gap-0.5 rounded-lg border border-(--divider) p-0.5',
           compact
             ? 'grid w-full grid-cols-2 bg-[color-mix(in_srgb,var(--input-bg)_78%,var(--sidebar-bg))]'
-            : 'inline-flex max-w-full bg-(--sidebar-bg)',
+            : 'grid w-full grid-cols-1 bg-(--sidebar-bg) sm:inline-flex sm:w-auto sm:max-w-full',
         )}
         role="radiogroup"
       >
         {options.map(({ mode, checked, disabled }) => {
           const fullLabel = t(`settings.executionMode.${mode}.label`);
-          const label = compact
-            ? fullLabel.replace(/\s*\((PTY|GUI)\)$/, ' · $1')
-            : fullLabel;
+          const label = mini
+            ? fullLabel.match(/\((PTY|GUI)\)$/)?.[1] ?? fullLabel
+            : compact
+              ? fullLabel.replace(/\s*\((PTY|GUI)\)$/, ' · $1')
+              : fullLabel;
           const description = t(`settings.executionMode.${mode}.description`);
           const disabledReason = disabled ? t('settings.executionMode.unsupported') : undefined;
           return (
@@ -69,8 +80,10 @@ export function ExecutionModeSelector({
               key={mode}
               title={disabledReason ?? description}
               className={cn(
-                'relative flex min-w-0 items-center gap-1.5 rounded-md border transition-colors',
-                compact ? 'px-1.5 py-1.5' : 'px-1.5 py-1',
+                'relative flex min-w-0 items-center rounded-md border transition-colors',
+                mini ? 'gap-1 px-1.5 py-1' : 'gap-1.5',
+                !mini && (compact ? 'px-1.5 py-1.5' : 'px-1.5 py-1'),
+                !compact && 'w-full sm:w-auto',
                 checked
                   ? compact
                     ? 'border-transparent bg-[color-mix(in_srgb,var(--accent)_14%,var(--input-bg))] text-(--text-primary)'
@@ -84,6 +97,7 @@ export function ExecutionModeSelector({
               data-testid={`execution-mode-${mode}`}
             >
               <input
+                {...telemetryClickAttributes('creation.execution_mode', 'new_session')}
                 type="radio"
                 name={name ?? generatedName}
                 value={mode}
@@ -91,10 +105,16 @@ export function ExecutionModeSelector({
                 disabled={disabled}
                 onChange={() => onChange(mode)}
                 className="h-3 w-3 shrink-0 rounded-full accent-(--accent) outline-none focus-visible:ring-2 focus-visible:ring-(--accent) focus-visible:ring-offset-1 focus-visible:ring-offset-(--input-bg)"
+                aria-label={mini ? fullLabel : undefined}
                 aria-describedby={disabled ? `${generatedName}-${mode}-reason` : undefined}
               />
-              <span className="min-w-0">
-                <span className={cn('block truncate font-medium', compact ? 'text-[9px]' : 'text-[10px]')}>
+              <span className="min-w-0 flex-1">
+                <span
+                  className={cn(
+                    'block font-medium',
+                    compact ? 'truncate text-[9px]' : 'whitespace-nowrap text-[10px]',
+                  )}
+                >
                   {label}
                 </span>
               </span>

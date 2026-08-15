@@ -250,6 +250,8 @@ interface UseVirtualMessageListResult {
   virtualizer: Virtualizer<HTMLDivElement, Element>;
   /** Whether the list is auto-scrolling to bottom */
   autoScroll: boolean;
+  /** True only when the list overflows its container — see the hook body. */
+  canScrollToBottom: boolean;
   setAutoScroll: React.Dispatch<React.SetStateAction<boolean>>;
   /** Scroll handler to attach to the scroll container */
   handleScroll: () => void;
@@ -408,6 +410,74 @@ export function useVirtualMessageList({
   };
 
   const totalSize = virtualizer.getTotalSize();
+
+  /**
+   * Keep the baseline `handleScroll` compares against inside the range the layout
+   * still permits.
+   *
+   * Whenever the scrollable range shrinks — content collapsing (a tool group
+   * folding into its summary bar, a block remeasured after highlighting) or the
+   * viewport growing (the composer snapping back to one row after send) — the
+   * browser quietly pulls scrollTop down to the new maximum and reports it as an
+   * ordinary scroll event. `handleScroll` reads any drop as the user pulling away
+   * from the tail, so a list pinned to the bottom detaches on its own and stays
+   * detached for the rest of the turn.
+   *
+   * Lowering the baseline here, before the clamp lands, is what lets that check
+   * stay unconditional. Gating it instead — on a real input, on distance, on
+   * anything — delays detaching by a frame, and one frame is enough for the pin to
+   * drag the viewport back down while the user is still trying to scroll away.
+   * That trade is what makes scrolling feel like it fights back.
+   *
+   * Only a scrollTop already past the new maximum moves, so a reader parked
+   * mid-conversation keeps their baseline untouched and still detaches normally.
+   */
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const absorbPendingClamp = () => {
+      prevScrollTopRef.current = Math.min(
+        prevScrollTopRef.current,
+        getMaxScrollTop(container),
+      );
+    };
+
+    // Content growth does not resize the container and a pane resize does not
+    // change content, so watch the element and re-run on totalSize to cover both.
+    absorbPendingClamp();
+    const observer = new ResizeObserver(absorbPendingClamp);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [scrollContainerRef, totalSize]);
+
+  /**
+   * Whether the list actually has somewhere to scroll to.
+   *
+   * `autoScroll` only flips on through a scroll event or an initial restore, so
+   * a conversation short enough to fit leaves it false forever — nothing ever
+   * scrolls. Anything gated purely on `!autoScroll` would then show up on a list
+   * that is already fully visible.
+   */
+  const [canScrollToBottom, setCanScrollToBottom] = useState(false);
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) {
+      setCanScrollToBottom(false);
+      return;
+    }
+    const measure = () => {
+      setCanScrollToBottom(
+        container.scrollHeight - container.clientHeight > NEAR_BOTTOM_THRESHOLD_PX,
+      );
+    };
+    measure();
+    // Content growth alone does not resize the container, and a pane resize does
+    // not change content — watch the element and re-run on totalSize to cover both.
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [scrollContainerRef, totalSize]);
 
   const captureScrollPosition = useCallback((container: HTMLDivElement): ScrollPositionSnapshot => {
     const scrollTop = container.scrollTop;
@@ -950,6 +1020,7 @@ export function useVirtualMessageList({
   return {
     virtualizer,
     autoScroll,
+    canScrollToBottom,
     setAutoScroll: setAutoScrollFromCaller,
     handleScroll,
     handleWheel,

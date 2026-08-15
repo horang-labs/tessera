@@ -40,6 +40,12 @@ test('browser telemetry waits for the server bootstrap install id', () => {
   assert.doesNotMatch(telemetryProviderSource, /settingsServerHostInfo/);
 });
 
+test('browser telemetry retries bootstrap after authentication succeeds', () => {
+  assert.match(telemetryProviderSource, /useAuthStore\(\(state\) => state\.isAuthenticated\)/);
+  assert.match(telemetryProviderSource, /if \(!isAuthenticated\) return undefined/);
+  assert.match(telemetryProviderSource, /\}, \[isAuthenticated\]\)/);
+});
+
 test('first-run skip state is persisted with a reason and exposed on server telemetry', () => {
   assert.match(telemetryServerStateSource, /firstRunSkipReason: FirstRunSkipReason \| null/);
   assert.match(telemetryServerStateSource, /existing_install_data/);

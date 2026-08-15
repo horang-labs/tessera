@@ -27,11 +27,21 @@ import {
 } from './process-manager-runtime';
 import { gracefulKillProcess } from './process-termination';
 import { isSessionHandedOffToTerminal } from '../terminal/terminal-handoff-lock';
+import { prepareManagedProviderLaunchResources } from '../control/managed-provider-launch';
 
 type SessionLifecycle = 'spawned' | 'resumed';
 type ControlResponsePayload =
   | { subtype: 'success'; request_id: string; response: Record<string, any> }
   | { subtype: 'error'; request_id: string; error: string };
+
+function shareAsyncDisposer(dispose?: () => Promise<void>): (() => Promise<void>) | undefined {
+  if (!dispose) return undefined;
+  let pending: Promise<void> | undefined;
+  return () => {
+    pending ??= dispose();
+    return pending;
+  };
+}
 
 export class ProcessManager {
   private processes = new Map<string, ProcessInfo>();
@@ -50,6 +60,7 @@ export class ProcessManager {
     provider: CliProvider,
     cliProcess: ChildProcess,
     spawnOptions: SpawnOptions,
+    disposeLaunchResources?: () => Promise<void>,
   ): ProcessInfo {
     const now = new Date();
     return {
@@ -65,6 +76,7 @@ export class ProcessManager {
       reasoningEffort: spawnOptions.reasoningEffort,
       serviceTier: spawnOptions.serviceTier,
       fastMode: spawnOptions.fastMode,
+      disposeLaunchResources: shareAsyncDisposer(disposeLaunchResources),
     };
   }
 
@@ -94,13 +106,26 @@ export class ProcessManager {
     spawnOptions: SpawnOptions,
     lifecycle: SessionLifecycle,
     cwd?: string,
+    disposeLaunchResources?: () => Promise<void>,
   ): void {
-    const processInfo = this.createProcessInfo(sessionId, userId, provider, cliProcess, spawnOptions);
+    const processInfo = this.createProcessInfo(
+      sessionId,
+      userId,
+      provider,
+      cliProcess,
+      spawnOptions,
+      disposeLaunchResources,
+    );
     this.attachSkillSource(processInfo);
 
     this.processes.set(sessionId, processInfo);
     const startupMessages = this.consumeProviderStartupMessages(processInfo);
     this.setupProcessHandlers(sessionId, userId, cliProcess);
+    if (spawnOptions.managedLaunch?.skillOverlay) {
+      this.dispatchParsedMessages(sessionId, userId, [{
+        serverMessage: { type: 'skills_changed', sessionId },
+      }]);
+    }
     this.dispatchParsedMessages(sessionId, userId, startupMessages);
     provider.onSessionReady?.(cliProcess, sessionId);
 
@@ -114,8 +139,12 @@ export class ProcessManager {
   }
 
   private clearSessionRuntimeState(sessionId: string): void {
+    const disposeLaunchResources = this.processes.get(sessionId)?.disposeLaunchResources;
     this.processes.delete(sessionId);
     this.stdinQueue.delete(sessionId);
+    void disposeLaunchResources?.().catch((error) => {
+      logger.debug({ sessionId, error }, 'Managed CLI launch resource cleanup skipped');
+    });
   }
 
   private getProcessOrWarn(sessionId: string, failureMessage: string): ProcessInfo | null {
@@ -186,8 +215,12 @@ export class ProcessManager {
       return;
     }
 
+    const disposeLaunchResources = existingInfo.disposeLaunchResources;
     await gracefulKillProcess(sessionId, existingInfo.process);
     this.clearSessionRuntimeState(sessionId);
+    await disposeLaunchResources?.().catch((error) => {
+      logger.debug({ sessionId, error }, 'Managed CLI launch resource cleanup skipped');
+    });
   }
 
   private async spawnAndRegisterSession(
@@ -198,14 +231,25 @@ export class ProcessManager {
     spawnOptions: SpawnOptions,
     lifecycle: SessionLifecycle,
   ): Promise<boolean> {
+    let launchResources: Awaited<ReturnType<typeof prepareManagedProviderLaunchResources>> | null = null;
     try {
       if (isSessionHandedOffToTerminal(sessionId)) {
         logger.warn({ sessionId, userId }, 'Blocked CLI spawn while session is handed off to terminal');
         return false;
       }
-      const { process: cliProcess, ok, error } = await provider.spawn(cwd, spawnOptions);
+      launchResources = await prepareManagedProviderLaunchResources({
+        sessionId,
+        userId,
+      });
+      const resolvedSpawnOptions: SpawnOptions = {
+        ...spawnOptions,
+        managedLaunch: launchResources.managedLaunch,
+      };
+      const { process: cliProcess, ok, error } = await provider.spawn(cwd, resolvedSpawnOptions);
 
       if (!ok) {
+        await launchResources.dispose().catch(() => undefined);
+        launchResources = null;
         logger.error({
           sessionId,
           userId,
@@ -218,13 +262,27 @@ export class ProcessManager {
       // initialization. Never register the late process beside the TUI owner.
       if (isSessionHandedOffToTerminal(sessionId)) {
         await gracefulKillProcess(sessionId, cliProcess);
+        await launchResources.dispose().catch(() => undefined);
+        launchResources = null;
         logger.warn({ sessionId, userId }, 'Discarded late CLI spawn after terminal handoff');
         return false;
       }
 
-      this.registerRunningProcess(sessionId, userId, provider, cliProcess, spawnOptions, lifecycle, cwd);
+      const disposeLaunchResources = launchResources.dispose;
+      launchResources = null;
+      this.registerRunningProcess(
+        sessionId,
+        userId,
+        provider,
+        cliProcess,
+        resolvedSpawnOptions,
+        lifecycle,
+        cwd,
+        disposeLaunchResources,
+      );
       return true;
     } catch (err) {
+      await launchResources?.dispose().catch(() => undefined);
       logger.error({
         sessionId,
         userId,
@@ -288,8 +346,12 @@ export class ProcessManager {
     logger.info({ sessionId, userId: info.userId }, 'Closing session');
     sessionHistory.flushSession(sessionId);
 
+    const disposeLaunchResources = info.disposeLaunchResources;
     await gracefulKillProcess(sessionId, info.process);
     this.clearSessionRuntimeState(sessionId);
+    await disposeLaunchResources?.().catch((error) => {
+      logger.debug({ sessionId, error }, 'Managed CLI launch resource cleanup skipped');
+    });
   }
 
   /**
@@ -643,11 +705,18 @@ export class ProcessManager {
     logger.info({ count: this.processes.size }, 'Cleaning up all processes');
 
     const cleanupPromises: Promise<void>[] = [];
+    const resourceCleanupPromises: Promise<void>[] = [];
     for (const [sessionId, info] of this.processes.entries()) {
       cleanupPromises.push(gracefulKillProcess(sessionId, info.process));
+      if (info.disposeLaunchResources) {
+        resourceCleanupPromises.push(info.disposeLaunchResources().catch((error) => {
+          logger.debug({ sessionId, error }, 'Managed CLI launch resource cleanup skipped');
+        }));
+      }
     }
 
     await Promise.all(cleanupPromises);
+    await Promise.all(resourceCleanupPromises);
 
     this.processes.clear();
     this.stdinQueue.clear();
@@ -885,6 +954,10 @@ export class ProcessManager {
     this.healthCheckInterval = setInterval(() => {
       this.performHealthCheck();
     }, 5000); // 5s interval
+    // Importing the singleton must not own a short-lived command or test
+    // process. Long-running servers are already kept alive by their listeners;
+    // while they are alive this interval continues to run normally.
+    this.healthCheckInterval.unref();
   }
 
   /**

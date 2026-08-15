@@ -1,8 +1,9 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { homedir } from "os";
 import * as dbSessions from "@/lib/db/sessions";
 import { execCli, isRunningInWsl, type CliEnvironment } from "@/lib/cli/cli-exec";
+import { resolveAgentHomeFilesystemPath } from "@/lib/filesystem/path-environment";
+import { buildWslFilesystemPathProbe } from "@/lib/filesystem/wsl-path-probe";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
 import { resolveClaudeConfigDirForEnvironment } from "@/lib/skill/skill-loader";
 import { getMemoryProviderKind } from "@/lib/memory/memory-provider";
@@ -66,7 +67,9 @@ export async function resolveOpenCodeConfigDirForEnvironment(
       // not by rc files), so the user's login shell adds nothing but latency.
       // See resolveClaudeConfigDirForEnvironment. NOTE: codex deliberately does
       // NOT do this — its probe reads `$CODEX_HOME`, which lives in the rc.
-      ["-c", 'printf "%s" "$HOME/.config/opencode"'],
+      // The answer goes to `fs.stat`, so it must come back host-openable —
+      // see buildWslFilesystemPathProbe.
+      ["-c", buildWslFilesystemPathProbe("$HOME/.config/opencode")],
       "wsl",
       5000,
       { loginShell: false },
@@ -91,7 +94,8 @@ export async function resolveOpenCodeConfigDirForEnvironment(
     if (result.ok && wslConfigDir) return wslConfigDir;
   }
 
-  return path.join(homedir(), ".config", "opencode");
+  // The agent's home, never this server's — see resolveCodexHomeForEnvironment.
+  return path.join(await resolveAgentHomeFilesystemPath(environment), ".config", "opencode");
 }
 
 export function getOpenCodeRulesSession(sessionId: string): dbSessions.SessionRow | null {
@@ -117,7 +121,9 @@ export async function resolveOpenCodeRulesContext(
   const opencodeConfigDir = await resolveOpenCodeConfigDirForEnvironment(environment);
   return {
     opencodeConfigDir,
-    projectRoot: await resolveSessionWorkspaceFilesystemRoot(sessionId),
+    projectRoot: await resolveSessionWorkspaceFilesystemRoot(sessionId, {
+      agentEnvironment: environment,
+    }),
     exists: await directoryExists(opencodeConfigDir),
   };
 }

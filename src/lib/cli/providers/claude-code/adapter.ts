@@ -11,7 +11,10 @@
  */
 
 import { randomUUID } from 'crypto';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import type { ChildProcess } from 'child_process';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type {
   CliProvider,
   CheckStatusOptions,
@@ -19,6 +22,7 @@ import type {
   SpawnOptions,
   SpawnResult,
   ParsedMessage,
+  GeneratedText,
   GeneratedTitle,
   TranslatedText,
   CliRawLogSink,
@@ -45,8 +49,16 @@ import { getRateLimitData } from '@/lib/rate-limit/fetcher';
 import { buildClaudeRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import {
   createClaudeTerminalSessionObserver,
-  isClaudeBackgroundTerminalSessionFork,
+  resolveClaudeBackgroundTerminalSessionFork,
 } from './terminal-session-observer';
+import {
+  createClaudeTranscriptDecoderState,
+  decodeClaudeTranscriptLine,
+} from './transcript-decoder';
+import {
+  fingerprintTranscriptFile,
+  resolveClaudeTranscriptPath,
+} from './transcript-path';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -132,7 +144,64 @@ export class ClaudeCodeAdapter implements CliProvider {
 
   createTerminalSessionObserver = createClaudeTerminalSessionObserver;
 
-  isBackgroundTerminalSessionFork = isClaudeBackgroundTerminalSessionFork;
+  resolveBackgroundTerminalSessionFork = resolveClaudeBackgroundTerminalSessionFork;
+
+  /** Identity of the transcript file backing this session (see CliProvider). */
+  async readTerminalTranscriptFingerprint(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<string | null> {
+    return fingerprintTranscriptFile(await resolveClaudeTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
+    }));
+  }
+
+  /**
+   * Replays a PTY session's Claude transcript as Tessera history events.
+   * Streamed line-by-line: a long session's transcript can reach tens of MB and
+   * must not be buffered whole just to decode it.
+   */
+  async readTerminalTranscriptEvents(options: {
+    sessionId: string;
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<SessionHistoryEvent[] | null> {
+    const filePath = await resolveClaudeTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
+    });
+    if (!filePath) return null;
+
+    const decoderState = createClaudeTranscriptDecoderState(options.sessionId);
+    const events: SessionHistoryEvent[] = [];
+    const stream = createReadStream(filePath, { encoding: 'utf-8' });
+
+    try {
+      const lines = createInterface({ input: stream, crlfDelay: Infinity });
+      for await (const line of lines) {
+        events.push(...decodeClaudeTranscriptLine(line, decoderState));
+      }
+    } catch (error) {
+      // A transcript that vanished mid-read (session cleared, rotated) is the
+      // same "nothing to show" case as never finding one.
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      logger.warn({
+        sessionId: options.sessionId,
+        filePath,
+        error: (error as Error).message,
+      }, 'Failed to read Claude terminal transcript');
+      return null;
+    } finally {
+      stream.destroy();
+    }
+
+    return events;
+  }
 
   /**
    * Checks whether the Claude Code CLI binary is available.
@@ -275,6 +344,9 @@ export class ClaudeCodeAdapter implements CliProvider {
     if (Object.keys(settings).length > 0) {
       args.push('--settings', JSON.stringify(settings));
     }
+    if (options.managedLaunch?.skillOverlay) {
+      args.push('--plugin-dir', options.managedLaunch.skillOverlay.rootDir);
+    }
 
     return args;
   }
@@ -294,6 +366,7 @@ export class ClaudeCodeAdapter implements CliProvider {
     // Do NOT set MAX_THINKING_TOKENS — it forces legacy budget_tokens mode
     // and disables adaptive thinking, which breaks --effort on Opus/Sonnet 4.6.
     delete spawnEnv.MAX_THINKING_TOKENS;
+    Object.assign(spawnEnv, options.managedLaunch?.environment ?? {});
     const agentEnv = await getAgentEnvironment(options.userId);
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
 
@@ -302,7 +375,9 @@ export class ClaudeCodeAdapter implements CliProvider {
       shell: false,
       env: spawnEnv as NodeJS.ProcessEnv,
       detached: getRuntimePlatform() !== 'win32',
-    }, agentEnv);
+    }, agentEnv, {
+      guestEnvironment: options.managedLaunch?.guestEnvironment,
+    });
     this._attachRawLog(cliProcess, options.rawLog, {
       providerId: PROVIDER_ID,
       command,
@@ -395,6 +470,30 @@ export class ClaudeCodeAdapter implements CliProvider {
       logger.warn({
         error: (err as Error).message,
       }, 'ClaudeCodeAdapter: generateTitle failed');
+      return null;
+    }
+  }
+
+  /**
+   * Runs a caller-built prompt one-shot and returns the model's raw reply.
+   * Unlike generateTitle this attaches no system prompt and no length clamp —
+   * the title contract (30 characters, title-shaped instructions) would silently
+   * cut a caller's answer in half.
+   *
+   * Returns null on any error/timeout/empty (fail-open).
+   */
+  async generateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<GeneratedText | null> {
+    try {
+      const text = await this._callCliRaw(prompt, userId, model ? ['--model', model] : []);
+      return text.trim() ? { text: text.trim() } : null;
+    } catch (err) {
+      logger.warn({
+        error: (err as Error).message,
+      }, 'ClaudeCodeAdapter: generateText failed');
       return null;
     }
   }

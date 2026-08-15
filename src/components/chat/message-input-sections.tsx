@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import Image from 'next/image';
 import { FileText } from 'lucide-react';
 import type { SessionRefItem } from '@/types/session-ref';
@@ -66,10 +68,13 @@ export function MessageInputAttachmentStrip({
               <span className="absolute bottom-1 left-1 text-[10px] bg-black/60 text-white px-1 rounded">
                 📷 {attachment.id}
               </span>
+              {/* Visible below the Phone viewport step, hover-revealed from `sm` up: a
+                  phone has no hover for the reveal to run on (#250). */}
               <button
+                {...telemetryClickAttributes('composer.attachment.remove', 'composer')}
                 type="button"
                 onClick={() => onRemoveAttachment(attachment.id)}
-                className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-full bg-black/60 text-white text-xs opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                 aria-label={renderRemoveLabel(attachment.id)}
               >
                 &times;
@@ -90,10 +95,12 @@ export function MessageInputAttachmentStrip({
             >
               {attachment.fileName}
             </span>
+            {/* Visible below the Phone viewport step, for the same reason as above (#250). */}
             <button
+              {...telemetryClickAttributes('composer.attachment.remove', 'composer')}
               type="button"
               onClick={() => onRemoveAttachment(attachment.id)}
-              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-(--text-muted) hover:text-(--text-primary) text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-(--text-muted) hover:text-(--text-primary) text-xs opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
               aria-label={renderRemoveLabel(attachment.id)}
             >
               &times;
@@ -147,6 +154,7 @@ export function MessageInputWebSpeechBar({
         </span>
       </div>
       <button
+        {...telemetryClickAttributes('composer.voice.stop', 'composer')}
         onClick={onStop}
         className="px-2 py-1 rounded-md text-xs font-medium transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover)"
         aria-label={stopLabel}
@@ -164,6 +172,7 @@ export function MessageInputSkillChip({
 }: MessageInputSkillChipProps) {
   return (
     <button
+      {...telemetryClickAttributes('composer.skill.remove', 'composer')}
       type="button"
       onClick={onRemove}
       className="ml-3 shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-(--accent)/20 text-(--accent-light) border border-(--accent)/40 hover:bg-(--accent)/30 transition-colors cursor-pointer"

@@ -1,25 +1,27 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { verifyToken } from '@/lib/auth/jwt';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
-import { getElectronAuthUserId } from '@/lib/auth/electron-user';
-import { findUserById } from '@/lib/users';
+import { requestGateInputFromNextRequest } from '@/lib/auth/next-request-gate';
+import {
+  evaluateRequestAndLog,
+  isOriginDenial,
+  type CredentialKind,
+} from '@/lib/auth/request-gate';
 
-async function getAuthenticatedUserId(request: NextRequest): Promise<string | null> {
-  if (isElectronAuthBypassEnabled()) {
-    return getElectronAuthUserId();
+type AuthenticatedUser = { userId: string; kind: CredentialKind; deviceId?: string };
+type AuthenticationResult = AuthenticatedUser | { originDenied: true } | null;
+
+async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticationResult> {
+  const input = requestGateInputFromNextRequest(request);
+  const decision = await evaluateRequestAndLog(input);
+  if (decision.allow) {
+    return {
+      userId: decision.userId,
+      kind: decision.kind,
+      ...(decision.deviceId ? { deviceId: decision.deviceId } : {}),
+    };
   }
-
-  const token = request.cookies.get('jwt')?.value;
-  if (!token) return null;
-
-  const payload = await verifyToken(token);
-  if (!payload) return null;
-
-  const user = await findUserById(payload.sub);
-  return user?.id ?? null;
+  return isOriginDenial(decision) ? { originDenied: true } : null;
 }
 
-type AuthenticatedUser = { userId: string };
 type UnauthorizedResponse = { response: NextResponse };
 
 /**
@@ -30,10 +32,18 @@ export async function requireAuthenticatedUserId(
   request: NextRequest,
   unauthorizedBody: unknown = { error: 'Unauthorized' }
 ): Promise<AuthenticatedUser | UnauthorizedResponse> {
-  const userId = await getAuthenticatedUserId(request);
-  if (!userId) {
+  const authenticated = await getAuthenticatedUser(request);
+  if (!authenticated) {
     return { response: NextResponse.json(unauthorizedBody, { status: 401 }) };
   }
+  if ('originDenied' in authenticated) {
+    return {
+      response: NextResponse.json(
+        { error: 'Origin not allowed' },
+        { status: 403 },
+      ),
+    };
+  }
 
-  return { userId };
+  return authenticated;
 }

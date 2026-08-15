@@ -6,8 +6,11 @@ import { Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { getProjectColor } from '@/lib/constants/project-strip';
-import { getKanbanMultiSessionDragIds } from '@/lib/dnd/panel-session-drag';
-import { mergeTasksWithLiveSessions } from '@/lib/tasks/merge-tasks-with-live-sessions';
+import {
+  getKanbanMultiSessionDragIds,
+  setPanelSessionDragData,
+} from '@/lib/dnd/panel-session-drag';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { useBoardStore } from '@/stores/board-store';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -20,8 +23,20 @@ import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { Collection } from '@/types/collection';
 import { CollectionQuickCreateSheet } from '@/components/chat/collection-quick-create-sheet';
 import { KanbanChatCard, KanbanTaskCard } from './kanban-card';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 type KanbanQuickCreateColumn = 'chat' | WorkflowStatus;
+export type KanbanColumnInteractionMode = 'editable' | 'filtered';
+
+function setPanelOnlySessionDragData(
+  e: React.DragEvent,
+  sessionId: string | null | undefined,
+): void {
+  setPanelSessionDragData(e.dataTransfer, sessionId);
+  e.dataTransfer.effectAllowed = 'move';
+}
 
 function KanbanQuickCreateButton({
   project,
@@ -59,6 +74,7 @@ function KanbanQuickCreateButton({
       onMouseDown={(event) => event.stopPropagation()}
     >
       <button
+        {...telemetryClickAttributes('board.column.add_chat', 'workspace_board')}
         type="button"
         disabled={project === null}
         title={project === null ? t('task.board.selectProjectToCreate') : undefined}
@@ -105,6 +121,7 @@ function PortfolioProjectHeader({
   collection,
   collections,
   isQuickCreateOpen,
+  interactionMode,
   onToggleQuickCreate,
   onCloseQuickCreate,
 }: {
@@ -114,6 +131,7 @@ function PortfolioProjectHeader({
   collection: Collection | null;
   collections: Collection[];
   isQuickCreateOpen: boolean;
+  interactionMode: KanbanColumnInteractionMode;
   onToggleQuickCreate: (column: KanbanQuickCreateColumn, projectId: string) => void;
   onCloseQuickCreate: () => void;
 }) {
@@ -131,16 +149,18 @@ function PortfolioProjectHeader({
         {project.displayName}
       </span>
       <span className="text-[0.625rem] tabular-nums text-(--text-muted)">{count}</span>
-      <KanbanQuickCreateButton
-        project={project}
-        column={column}
-        collection={collection}
-        collections={collections}
-        isOpen={isQuickCreateOpen}
-        onToggle={onToggleQuickCreate}
-        onClose={onCloseQuickCreate}
-        testId={`kanban-project-add-${column}-${project.encodedDir}`}
-      />
+      {interactionMode === 'editable' ? (
+        <KanbanQuickCreateButton
+          project={project}
+          column={column}
+          collection={collection}
+          collections={collections}
+          isOpen={isQuickCreateOpen}
+          onToggle={onToggleQuickCreate}
+          onClose={onCloseQuickCreate}
+          testId={`kanban-project-add-${column}-${project.encodedDir}`}
+        />
+      ) : null}
     </div>
   );
 }
@@ -159,6 +179,7 @@ interface KanbanChatColumnProps {
   createProject: ProjectGroup | null;
   activeSessionId: string | null;
   quickCreateProjectId: string | null;
+  interactionMode: KanbanColumnInteractionMode;
   onCardDragStart: (sessionId: string, e: React.DragEvent) => void;
   onCardDragEnd: (e: React.DragEvent) => void;
   onCardDragOver: (sessionId: string, status: string, e: React.DragEvent) => void;
@@ -177,7 +198,6 @@ interface KanbanChatColumnProps {
   onCardDelete?: (taskId: string) => void;
   onCardOpenInNewTab?: (taskId: string) => void;
   onCardGenerateTitle?: (taskId: string) => void;
-  onCardMoveToProject?: (taskId: string) => void;
   onCardMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onCardStopProcess?: (taskId: string) => void;
 }
@@ -192,6 +212,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   createProject,
   activeSessionId,
   quickCreateProjectId,
+  interactionMode,
   onCardDragStart,
   onCardDragEnd,
   onCardDragOver,
@@ -209,12 +230,14 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   onCardDelete,
   onCardOpenInNewTab,
   onCardGenerateTitle,
-  onCardMoveToProject,
   onCardMoveToCollection,
   onCardStopProcess,
 }: KanbanChatColumnProps) {
   const { t } = useI18n();
-  const isDragOver = useBoardStore((s) => s.dragOverStatus === 'chat' && s.draggingTaskId !== null);
+  const isEditable = interactionMode === 'editable';
+  const isDragOver = useBoardStore((s) =>
+    isEditable && s.dragOverStatus === 'chat' && s.draggingTaskId !== null
+  );
   const dropIndicator = useBoardStore((s) => s.dropIndicator);
   const chatGroups = useMemo(() => {
     if (!groupByProject) {
@@ -250,7 +273,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
         <span className="text-[0.625rem] font-semibold tabular-nums px-[7px] py-px rounded-[10px] bg-(--board-count-bg) text-(--board-count-text)">
           {chats.length}
         </span>
-        {!groupByProject && (
+        {!groupByProject && isEditable ? (
           <KanbanQuickCreateButton
             project={createProject}
             column="chat"
@@ -261,7 +284,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
             onClose={onCloseQuickCreate}
             testId="kanban-column-add-btn"
           />
-        )}
+        ) : null}
       </div>
 
       {/* Cards */}
@@ -273,9 +296,9 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
           isDragOver && 'rounded-[14px] bg-[color-mix(in_srgb,var(--accent)_4%,transparent)]',
         )}
         data-testid="kanban-column-cards"
-        onDragOver={(e) => onColumnDragOver('chat', e)}
-        onDragLeave={(e) => onColumnDragLeave('chat', e)}
-        onDrop={(e) => onColumnDrop('chat', e)}
+        onDragOver={isEditable ? (e) => onColumnDragOver('chat', e) : undefined}
+        onDragLeave={isEditable ? (e) => onColumnDragLeave('chat', e) : undefined}
+        onDrop={isEditable ? (e) => onColumnDrop('chat', e) : undefined}
       >
         <div className="flex flex-col gap-2.5">
           {chatGroups.map((group, groupIndex) => (
@@ -288,6 +311,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
                   collection={collection}
                   collections={collectionsByProject[group.project.encodedDir] ?? collections}
                   isQuickCreateOpen={quickCreateProjectId === group.project.encodedDir}
+                  interactionMode={interactionMode}
                   onToggleQuickCreate={onToggleQuickCreate}
                   onCloseQuickCreate={onCloseQuickCreate}
                 />
@@ -300,9 +324,12 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
                     isActive={session.id === activeSessionId}
                     dropIndicatorBefore={dropIndicator?.targetSessionId === session.id && dropIndicator.position === 'before'}
                     dropIndicatorAfter={dropIndicator?.targetSessionId === session.id && dropIndicator.position === 'after'}
-                    onDragStart={(e) => onCardDragStart(session.id, e)}
-                    onDragEnd={onCardDragEnd}
-                    onDragOverItem={(e) => onCardDragOver(session.id, 'chat', e)}
+                    dragEnabled
+                    onDragStart={isEditable
+                      ? (e) => onCardDragStart(session.id, e)
+                      : (e) => setPanelOnlySessionDragData(e, session.id)}
+                    onDragEnd={isEditable ? onCardDragEnd : undefined}
+                    onDragOverItem={isEditable ? (e) => onCardDragOver(session.id, 'chat', e) : undefined}
                     onClick={(e) => onCardClick(session, e)}
                     onDoubleClick={() => onCardDoubleClick(session)}
                     onStatusChange={onCardStatusChange}
@@ -312,7 +339,6 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
                     onDelete={onCardDelete}
                     onOpenInNewTab={onCardOpenInNewTab}
                     onGenerateTitle={onCardGenerateTitle}
-                    onMoveToProject={onCardMoveToProject}
                     onMoveToCollection={onCardMoveToCollection}
                     onStopProcess={onCardStopProcess}
                     collections={collectionsByProject[session.projectDir] ?? collections}
@@ -323,11 +349,11 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
           ))}
         </div>
 
-        {chats.length === 0 && (
+        {chats.length === 0 && isEditable ? (
           <div className="flex items-center justify-center py-6 text-[0.6875rem] text-(--text-muted) opacity-40">
             {t('task.board.emptyColumn')}
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -339,6 +365,8 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
 
 interface KanbanWorkflowColumnProps {
   status: WorkflowStatus;
+  /** The Project View currently on screen; null only for unfiltered All Projects. */
+  projectViewId: string | null;
   tasks: TaskEntity[];
   chats: UnifiedSession[];
   collection: Collection | null;
@@ -347,9 +375,9 @@ interface KanbanWorkflowColumnProps {
   projects: ProjectGroup[];
   groupByProject: boolean;
   createProject: ProjectGroup | null;
-  sessionsByTaskId: Record<string, UnifiedSession[]>;
   activeSessionId: string | null;
   quickCreateProjectId: string | null;
+  interactionMode: KanbanColumnInteractionMode;
   onToggleQuickCreate: (column: KanbanQuickCreateColumn, projectId: string) => void;
   onCloseQuickCreate: () => void;
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
@@ -357,7 +385,7 @@ interface KanbanWorkflowColumnProps {
   onChatDragStart: (sessionId: string, e: React.DragEvent) => void;
   onChatDragEnd: (e: React.DragEvent) => void;
   onChatDragOver: (sessionId: string, status: string, e: React.DragEvent) => void;
-  onAddSession?: (task: TaskEntity, providerId?: string) => void;
+  onAddSession?: (task: TaskEntity, providerId?: string, executionMode?: AgentExecutionMode) => void;
   onTaskContextMenu?: (task: TaskEntity, anchorRect: DOMRect) => void;
   onTaskRename?: (taskId: string, newTitle: string) => void;
   onChatArchive?: (sessionId: string) => void;
@@ -367,7 +395,6 @@ interface KanbanWorkflowColumnProps {
   onSessionDelete?: (sessionId: string) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
-  onSessionMoveToProject?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
   renamingTaskId?: string | null;
   onTaskRenameComplete?: (taskId: string) => void;
@@ -375,6 +402,7 @@ interface KanbanWorkflowColumnProps {
 
 export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   status,
+  projectViewId,
   tasks,
   chats,
   collection,
@@ -383,9 +411,9 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   projects,
   groupByProject,
   createProject,
-  sessionsByTaskId,
   activeSessionId,
   quickCreateProjectId,
+  interactionMode,
   onToggleQuickCreate,
   onCloseQuickCreate,
   onSessionClick,
@@ -403,29 +431,41 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   renamingTaskId,
   onTaskRenameComplete,
 }: KanbanWorkflowColumnProps) {
   const { t } = useI18n();
+  const isEditable = interactionMode === 'editable';
   const config = WORKFLOW_STATUS_CONFIG[status];
-  const tasksWithLiveSessions = useMemo(
-    () => mergeTasksWithLiveSessions(tasks, Object.values(sessionsByTaskId).flat()),
-    [sessionsByTaskId, tasks],
-  );
   const projectGroups = useMemo(() => {
     if (!groupByProject) {
-      return [{ project: null, tasks: tasksWithLiveSessions, chats }];
+      return [{ project: null, tasks, chats }];
     }
     return projects.map((project) => ({
       project,
-      tasks: tasksWithLiveSessions.filter((task) => task.projectId === project.encodedDir),
+      tasks: tasks.filter((task) => task.projectId === project.encodedDir),
       chats: chats.filter((session) => session.projectDir === project.encodedDir),
     }));
-  }, [chats, groupByProject, projects, tasksWithLiveSessions]);
+  }, [chats, groupByProject, projects, tasks]);
+
+  const handlePanelOnlyTaskDragStart = useCallback((
+    task: TaskEntity,
+    e: React.DragEvent,
+  ) => {
+    setPanelOnlySessionDragData(e, task.sessions[0]?.id);
+  }, []);
+
+  const handlePanelOnlyChatDragStart = useCallback((
+    session: UnifiedSession,
+    e: React.DragEvent,
+  ) => {
+    setPanelOnlySessionDragData(e, session.id);
+  }, []);
   // DnD: highlight when a task card is dragged over this column
-  const isDragOver = useBoardStore((s) => s.dragOverStatus === status && s.draggingTaskId !== null);
+  const isDragOver = useBoardStore((s) =>
+    isEditable && s.dragOverStatus === status && s.draggingTaskId !== null
+  );
   const dropIndicator = useBoardStore((s) => s.dropIndicator);
 
   const handleTaskDragOver = useCallback((taskId: string, e: React.DragEvent) => {
@@ -439,9 +479,14 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       return;
     }
 
-    const taskStore = useTaskStore.getState();
-    const draggingTask = taskStore.getTask(draggingTaskId);
-    const targetTask = taskStore.getTask(taskId);
+    const draggingTask = projectViewWorkspaceState.resolveTask(
+      draggingTaskId,
+      projectViewId ?? undefined,
+    );
+    const targetTask = projectViewWorkspaceState.resolveTask(
+      taskId,
+      projectViewId ?? undefined,
+    );
     if (!draggingTask || !targetTask) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
@@ -449,7 +494,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       return;
     }
 
-    if (draggingTask.projectId !== targetTask.projectId) {
+    if (draggingTask.projectViewId !== targetTask.projectViewId) {
       if (useBoardStore.getState().dropIndicator) {
         useBoardStore.getState().setDropIndicator(null);
       }
@@ -477,7 +522,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     if (current?.targetSessionId !== taskId || current.position !== position) {
       useBoardStore.getState().setDropIndicator({ targetSessionId: taskId, position });
     }
-  }, [status]);
+  }, [projectViewId, status]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (
@@ -528,10 +573,14 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     const taskId = e.dataTransfer.getData(TASK_ENTITY_DND_MIME);
     const chatSessionId = e.dataTransfer.getData(TASK_DND_MIME);
     const multiSessionIds = getKanbanMultiSessionDragIds(e.dataTransfer);
-    const draggedTask = taskId ? taskStore.getTask(taskId) : undefined;
+    const draggedTask = taskId
+      ? projectViewWorkspaceState.resolveTask(taskId, projectViewId ?? undefined)
+      : undefined;
     const sessionStore = useSessionStore.getState();
-    const draggedChatSession = chatSessionId ? sessionStore.getSession(chatSessionId) : undefined;
-    const sourceProjectId = draggedTask?.projectId ?? draggedChatSession?.projectDir;
+    const draggedChatSession = chatSessionId
+      ? projectViewWorkspaceState.resolveSession(chatSessionId, projectViewId ?? undefined)
+      : undefined;
+    const sourceProjectId = draggedTask?.projectViewId ?? draggedChatSession?.projectDir;
     const visibleProjectIds = new Set(projects.map((project) => project.encodedDir));
 
     const isProjectInDropScope = (projectId: string) => {
@@ -548,10 +597,13 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       const seenChatIds = new Set<string>();
 
       for (const selectedSessionId of multiSessionIds) {
-        const selectedTask = taskStore.getTaskBySessionId(selectedSessionId);
+        const selectedTask = projectViewWorkspaceState.resolveTaskBySessionId(
+          selectedSessionId,
+          projectViewId ?? undefined,
+        );
         if (selectedTask) {
           if (
-            !isProjectInDropScope(selectedTask.projectId) ||
+            !isProjectInDropScope(selectedTask.projectViewId) ||
             seenTaskIds.has(selectedTask.id)
           ) {
             continue;
@@ -561,7 +613,10 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           continue;
         }
 
-        const selectedSession = sessionStore.getSession(selectedSessionId);
+        const selectedSession = projectViewWorkspaceState.resolveSession(
+          selectedSessionId,
+          projectViewId ?? undefined,
+        );
         if (
           !selectedSession ||
           selectedSession.taskId ||
@@ -575,23 +630,51 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       }
 
       const movingTaskIds = selectedTaskIds.filter((selectedTaskId) => {
-        const selectedTask = taskStore.getTask(selectedTaskId);
+        const selectedTask = projectViewWorkspaceState.resolveTask(
+          selectedTaskId,
+          projectViewId ?? undefined,
+        );
         return selectedTask && selectedTask.workflowStatus !== status;
       });
       const movingChatIds = selectedChatIds.filter((selectedChatId) => {
-        const selectedSession = sessionStore.getSession(selectedChatId);
+        const selectedSession = projectViewWorkspaceState.resolveSession(
+          selectedChatId,
+          projectViewId ?? undefined,
+        );
         return selectedSession && selectedSession.workflowStatus !== status;
       });
 
       if (movingTaskIds.length + movingChatIds.length > 0) {
         for (const movingTaskId of movingTaskIds) {
-          taskStore.updateTask(movingTaskId, { workflowStatus: status });
+          taskStore.updateTask(
+            movingTaskId,
+            { workflowStatus: status },
+            projectViewId ?? undefined,
+          );
         }
         for (const movingChatId of movingChatIds) {
-          sessionStore.updateChatWorkflowStatus(movingChatId, status);
+          sessionStore.updateChatWorkflowStatus(
+            movingChatId,
+            status,
+            projectViewId ?? undefined,
+          );
         }
         boardStore.flashDrop(taskId || chatSessionId || movingTaskIds[0] || movingChatIds[0]);
         useSelectionStore.getState().clearSelection();
+        if (movingTaskIds.length > 0) {
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'task',
+            move_kind: 'workflow_status',
+            item_count: movingTaskIds.length,
+          });
+        }
+        if (movingChatIds.length > 0) {
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'chat',
+            move_kind: 'workflow_status',
+            item_count: movingChatIds.length,
+          });
+        }
         finishDrop();
         return;
       }
@@ -613,12 +696,29 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, chatSessionId);
-          sessionStore.reorderProjectSessions(session.projectDir, filtered);
+          sessionStore.reorderProjectSessions(
+            projectViewId ?? session.projectDir,
+            filtered,
+          );
           boardStore.flashDrop(chatSessionId);
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'chat',
+            move_kind: 'reorder',
+            item_count: 1,
+          });
         }
       } else if (session && !session.taskId && session.workflowStatus !== status) {
-        sessionStore.updateChatWorkflowStatus(chatSessionId, status);
+        sessionStore.updateChatWorkflowStatus(
+          chatSessionId,
+          status,
+          projectViewId ?? undefined,
+        );
         boardStore.flashDrop(chatSessionId);
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'chat',
+          move_kind: 'workflow_status',
+          item_count: 1,
+        });
       }
 
       finishDrop();
@@ -626,12 +726,13 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
     }
 
     if (taskId) {
-      const task = draggedTask ?? taskStore.getTask(taskId);
+      const task = draggedTask
+        ?? projectViewWorkspaceState.resolveTask(taskId, projectViewId ?? undefined);
       const indicator = boardStore.dropIndicator;
 
       if (task && task.workflowStatus === status && indicator) {
         const orderedIds = tasks
-          .filter((item) => item.projectId === task.projectId)
+          .filter((item) => item.projectViewId === task.projectViewId)
           .slice()
           .sort((a, b) => a.sortOrder - b.sortOrder)
           .map((item) => item.id);
@@ -641,17 +742,31 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         if (targetIdx !== -1) {
           const insertIdx = indicator.position === 'before' ? targetIdx : targetIdx + 1;
           filtered.splice(insertIdx, 0, taskId);
-          taskStore.reorderTasks(filtered, task.projectId);
+          taskStore.reorderTasks(filtered, projectViewId ?? task.projectViewId);
           boardStore.flashDrop(taskId);
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'task',
+            move_kind: 'reorder',
+            item_count: 1,
+          });
         }
       } else if (task && task.workflowStatus !== status) {
-        taskStore.updateTask(taskId, { workflowStatus: status });
+        taskStore.updateTask(
+          taskId,
+          { workflowStatus: status },
+          projectViewId ?? undefined,
+        );
         boardStore.flashDrop(taskId);
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'task',
+          move_kind: 'workflow_status',
+          item_count: 1,
+        });
       }
     }
 
     finishDrop();
-  }, [chats, groupByProject, projects, status, tasks]);
+  }, [chats, groupByProject, projectViewId, projects, status, tasks]);
 
   // Card drag-over: Ring Gradient highlight using column status color
   const dragOverStyle = isDragOver
@@ -678,9 +793,9 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
       style={dragOverStyle}
       data-testid="kanban-column"
       data-status={status}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragOver={isEditable ? handleDragOver : undefined}
+      onDragLeave={isEditable ? handleDragLeave : undefined}
+      onDrop={isEditable ? handleDrop : undefined}
     >
       {/* Column header */}
       <div className={cn(
@@ -728,10 +843,10 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
             : undefined
           }
         >
-          {tasksWithLiveSessions.length + chats.length}
+          {tasks.length + chats.length}
         </span>
 
-        {!groupByProject && (
+        {!groupByProject && isEditable ? (
           <KanbanQuickCreateButton
             project={createProject}
             column={status}
@@ -742,7 +857,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
             onClose={onCloseQuickCreate}
             testId="kanban-workflow-column-add-btn"
           />
-        )}
+        ) : null}
       </div>
 
       {/* Cards */}
@@ -765,6 +880,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                   collection={collection}
                   collections={collectionsByProject[group.project.encodedDir] ?? collections}
                   isQuickCreateOpen={quickCreateProjectId === group.project.encodedDir}
+                  interactionMode={interactionMode}
                   onToggleQuickCreate={onToggleQuickCreate}
                   onCloseQuickCreate={onCloseQuickCreate}
                 />
@@ -777,7 +893,11 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     activeSessionId={activeSessionId}
                     dropIndicatorBefore={dropIndicator?.targetSessionId === task.id && dropIndicator.position === 'before'}
                     dropIndicatorAfter={dropIndicator?.targetSessionId === task.id && dropIndicator.position === 'after'}
-                    onDragOverItem={(e) => handleTaskDragOver(task.id, e)}
+                    dragEnabled
+                    onDragStart={isEditable
+                      ? undefined
+                      : (e) => handlePanelOnlyTaskDragStart(task, e)}
+                    onDragOverItem={isEditable ? (e) => handleTaskDragOver(task.id, e) : undefined}
                     onSessionClick={onSessionClick}
                     onSessionDoubleClick={onSessionDoubleClick}
                     onAddSession={onAddSession}
@@ -787,7 +907,6 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     onSessionDelete={onSessionDelete}
                     onSessionOpenInNewTab={onSessionOpenInNewTab}
                     onSessionGenerateTitle={onSessionGenerateTitle}
-                    onSessionMoveToProject={onSessionMoveToProject}
                     onSessionStopProcess={onSessionStopProcess}
                     isRenameRequested={renamingTaskId === task.id}
                     onRenameComplete={() => onTaskRenameComplete?.(task.id)}
@@ -800,9 +919,12 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     isActive={session.id === activeSessionId}
                     dropIndicatorBefore={dropIndicator?.targetSessionId === session.id && dropIndicator.position === 'before'}
                     dropIndicatorAfter={dropIndicator?.targetSessionId === session.id && dropIndicator.position === 'after'}
-                    onDragStart={(e) => onChatDragStart(session.id, e)}
-                    onDragEnd={onChatDragEnd}
-                    onDragOverItem={(e) => onChatDragOver(session.id, status, e)}
+                    dragEnabled
+                    onDragStart={isEditable
+                      ? (e) => onChatDragStart(session.id, e)
+                      : (e) => handlePanelOnlyChatDragStart(session, e)}
+                    onDragEnd={isEditable ? onChatDragEnd : undefined}
+                    onDragOverItem={isEditable ? (e) => onChatDragOver(session.id, status, e) : undefined}
                     onClick={(e) => onSessionClick(session, e)}
                     onDoubleClick={() => onSessionDoubleClick(session)}
                     onStatusChange={onChatStatusChange}
@@ -812,9 +934,12 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     onDelete={onSessionDelete}
                     onOpenInNewTab={onSessionOpenInNewTab}
                     onGenerateTitle={onSessionGenerateTitle}
-                    onMoveToProject={onSessionMoveToProject}
                     onMoveToCollection={(sessionId, collectionId) =>
-                      useSessionStore.getState().updateSessionCollection(sessionId, collectionId)
+                      useSessionStore.getState().updateSessionCollection(
+                        sessionId,
+                        collectionId,
+                        session.projectDir,
+                      )
                     }
                     onStopProcess={onSessionStopProcess}
                     collections={collectionsByProject[session.projectDir]}
@@ -826,7 +951,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         </div>
 
         {/* Empty state */}
-        {tasksWithLiveSessions.length + chats.length === 0 && (
+        {tasks.length + chats.length === 0 && isEditable ? (
           <div
             className={cn(
               'flex items-center justify-center py-6',
@@ -840,7 +965,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           >
             {t('task.board.emptyColumn')}
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

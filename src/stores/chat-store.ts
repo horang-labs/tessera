@@ -105,6 +105,12 @@ export interface ChatState {
   // bar reads this projection instead of depending on the paginated message list.
   todoSnapshots: Map<string, TodoItem[]>;
 
+  // Wall-clock start of an in-flight compaction, keyed by session. Drives the
+  // docked compacting bar. Set from the CLI's `status: "compacting"` frame, or
+  // optimistically when the user runs /compact on a provider that only reports
+  // completion (Codex); cleared when the phase closes.
+  compactingStartedAt: Map<string, number>;
+
   // Assistant text blocks currently waiting for text flush, keyed by session.
   // This drives only the inline streaming dots. It is intentionally separate
   // from turnInFlightBySession, which can stay true during thinking/tools.
@@ -131,6 +137,11 @@ export interface ChatState {
   // Turn lifecycle state. True means the CLI is still processing this session's turn.
   turnInFlightBySession: Record<string, boolean>;
 
+  // Sessions whose message landed but whose CLI has not been started yet,
+  // because the worktree's blocking preparation is still running. Nothing is
+  // shown for a session that never waits, so this stays empty in the usual case.
+  awaitingPreparationBySession: Record<string, boolean>;
+
   // 에러 상태 (NEW)
   errors: Map<string, string>; // sessionId → error message
 
@@ -153,6 +164,9 @@ export interface ChatState {
   // Per-session draft input text (preserved across session switches)
   draftInputs: Map<string, string>;
 
+  // Explicit requests for a mounted composer to replace its local editable text.
+  preparedAgentRequests: Map<string, { revision: number; text: string }>;
+
   // Per-session scroll position (preserved across session switches)
   scrollPositions: Map<string, ScrollPositionSnapshot>;
 
@@ -173,6 +187,8 @@ export interface ChatState {
   // Actions
   isHistoryLoaded: (sessionId: string) => boolean;
   setDraftInput: (sessionId: string, text: string) => void;
+  prepareAgentRequest: (sessionId: string, text: string) => void;
+  consumePreparedAgentRequest: (sessionId: string, revision: number) => void;
   getDraftInput: (sessionId: string) => string;
   getTranslationView: (sessionId: string) => 'original' | 'translation';
   setTranslationView: (sessionId: string, view: 'original' | 'translation') => void;
@@ -184,9 +200,11 @@ export interface ChatState {
   getScrollPosition: (sessionId: string) => ScrollPositionSnapshot | undefined;
   setActiveInteractivePrompt: (sessionId: string, prompt: ActiveInteractivePrompt | null) => void;
   setTodoSnapshot: (sessionId: string, snapshot: TodoItem[]) => void;
+  setCompacting: (sessionId: string, startedAt: number | null) => void;
   recordPromptHistoryItem: (sessionId: string, item: AgentPromptHistoryItem) => void;
   resolvePromptHistoryItem: (sessionId: string, promptId: string) => void;
   setTurnInFlight: (sessionId: string, inFlight: boolean) => void;
+  setAwaitingPreparation: (sessionId: string, awaiting: boolean) => void;
   setTurnsInFlight: (sessionIds: readonly string[]) => void;
   setError: (sessionId: string, message: string) => void;
   clearError: (sessionId: string) => void;
@@ -212,6 +230,11 @@ export interface ChatState {
     toolUseResult?: any;
     agentContext?: AgentContextEvent[];
     hasOutput?: boolean;
+  }) => void;
+  updateToolCallProgress: (sessionId: string, toolUseId: string, progress: {
+    elapsedTimeSeconds: number;
+    heartbeat?: boolean;
+    taskId?: string;
   }) => void;
   attachMessageTranslation: (sessionId: string, targetMessageId: string, update: {
     translatedContent?: string;
@@ -309,18 +332,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   assistantTextFlushTimers: new Map(),
   readOnlyPagination: new Map(),
   turnInFlightBySession: {},
+  awaitingPreparationBySession: {},
   errors: new Map(),
   toolOutputCache: new Map(),
   activeInteractivePrompt: new Map(),
   promptHistory: new Map(),
   historyLoaded: new Set(),
   draftInputs: new Map(),
+  preparedAgentRequests: new Map(),
   translationView: new Map(),
   messageViewOverride: new Map(),
   translateQueue: new Map(),
   scrollPositions: new Map(),
   dismissedWorkflowTaskIds: new Set(),
   todoSnapshots: new Map(),
+  compactingStartedAt: new Map(),
 
   isHistoryLoaded: (sessionId) => get().historyLoaded.has(sessionId),
 
@@ -335,6 +361,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { todoSnapshots: updated };
     }),
 
+  setCompacting: (sessionId, startedAt) =>
+    set((state) => {
+      const current = state.compactingStartedAt.get(sessionId);
+
+      if (startedAt === null) {
+        if (current === undefined) return {};
+        const updated = new Map(state.compactingStartedAt);
+        updated.delete(sessionId);
+        return { compactingStartedAt: updated };
+      }
+
+      // Keep the earliest start. An optimistic open (user ran /compact) must not
+      // be pushed forward by the CLI's own `compacting` frame, which only lands
+      // once the current turn drains — otherwise the bar would restart at 0%.
+      if (current !== undefined) return {};
+
+      const updated = new Map(state.compactingStartedAt);
+      updated.set(sessionId, startedAt);
+      return { compactingStartedAt: updated };
+    }),
+
   setDraftInput: (sessionId, text) =>
     set((state) => {
       const updated = new Map(state.draftInputs);
@@ -344,6 +391,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         updated.delete(sessionId);
       }
       return { draftInputs: updated };
+    }),
+
+  prepareAgentRequest: (sessionId, text) =>
+    set((state) => {
+      const drafts = new Map(state.draftInputs);
+      drafts.set(sessionId, text);
+      const prepared = new Map(state.preparedAgentRequests);
+      prepared.set(sessionId, {
+        revision: (prepared.get(sessionId)?.revision ?? 0) + 1,
+        text,
+      });
+      return { draftInputs: drafts, preparedAgentRequests: prepared };
+    }),
+
+  consumePreparedAgentRequest: (sessionId, revision) =>
+    set((state) => {
+      if (state.preparedAgentRequests.get(sessionId)?.revision !== revision) return {};
+      const prepared = new Map(state.preparedAgentRequests);
+      prepared.delete(sessionId);
+      return { preparedAgentRequests: prepared };
     }),
 
   getDraftInput: (sessionId) => get().draftInputs.get(sessionId) || '',
@@ -451,6 +518,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         inFlight,
       ),
     }));
+  },
+
+  setAwaitingPreparation: (sessionId, awaiting) => {
+    if (Boolean(get().awaitingPreparationBySession[sessionId]) === awaiting) return;
+    set((state) => {
+      const next = { ...state.awaitingPreparationBySession };
+      if (awaiting) next[sessionId] = true;
+      else delete next[sessionId];
+      return { awaitingPreparationBySession: next };
+    });
   },
 
   setTurnsInFlight: (sessionIds) => {
@@ -747,6 +824,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const clearedDrafts = new Map(state.draftInputs);
       clearedDrafts.delete(sessionId);
+      const clearedPreparedAgentRequests = new Map(state.preparedAgentRequests);
+      clearedPreparedAgentRequests.delete(sessionId);
 
       const clearedScrollPositions = new Map(state.scrollPositions);
       clearedScrollPositions.delete(sessionId);
@@ -756,6 +835,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const clearedTodoSnapshots = new Map(state.todoSnapshots);
       clearedTodoSnapshots.delete(sessionId);
+
+      const clearedCompacting = new Map(state.compactingStartedAt);
+      clearedCompacting.delete(sessionId);
 
       return {
         messages: updatedMessages,
@@ -777,8 +859,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         activeInteractivePrompt: clearedPrompts,
         promptHistory: clearedPromptHistory,
         draftInputs: clearedDrafts,
+        preparedAgentRequests: clearedPreparedAgentRequests,
         scrollPositions: clearedScrollPositions,
         todoSnapshots: clearedTodoSnapshots,
+        compactingStartedAt: clearedCompacting,
       };
     }),
 
@@ -793,6 +877,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return msg;
       });
+      const messages = new Map(state.messages);
+      messages.set(sessionId, updatedMessages);
+      return { messages };
+    }),
+
+  updateToolCallProgress: (sessionId, toolUseId, progress) =>
+    set((state) => {
+      const sessionMessages = state.messages.get(sessionId) || [];
+      // Live tool cards carry the `hist-tool-<toolUseId>` id assigned by the
+      // replay reducer; match by toolUseId field as a fallback for safety.
+      const targetId = `hist-tool-${toolUseId}`;
+      let changed = false;
+      const updatedMessages = sessionMessages.map((msg) => {
+        if (
+          'type' in msg &&
+          msg.type === 'tool_call' &&
+          msg.status === 'running' &&
+          (msg.id === targetId || msg.toolUseId === toolUseId)
+        ) {
+          changed = true;
+          return { ...msg, toolProgress: { ...(msg.toolProgress ?? {}), ...progress } };
+        }
+        return msg;
+      });
+      if (!changed) return state;
       const messages = new Map(state.messages);
       messages.set(sessionId, updatedMessages);
       return { messages };

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { createContext } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Panel, PanelDropEdge, PanelNode, PanelStore, PanelStoreState, TabPanelData } from '@/types/panel';
+import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
 import { useSessionStore } from '@/stores/session-store';
 
 export const EMPTY_PANELS: Record<string, Panel> = Object.freeze({});
@@ -89,8 +90,11 @@ function cloneTabPanelTree(tabData: TabPanelData): TabPanelData | null {
     panels[newPanelId] = {
       id: newPanelId,
       sessionId: oldPanel.sessionId,
+      worktreeId: oldPanel.worktreeId ?? null,
+      creationMode: oldPanel.creationMode ?? null,
       terminalId: oldPanel.terminalId ?? null,
       terminalSessionId: oldPanel.terminalSessionId ?? null,
+      terminalCwd: oldPanel.terminalCwd ?? null,
     };
   }
 
@@ -128,7 +132,7 @@ function replaceLeafWithExistingLeaf(node: PanelNode, sourcePanelId: string, tar
 // --- 개발 환경 불변 조건 검증 ---
 
 function assertInvariants(tabData: TabPanelData): void {
-  if (process.env.NODE_ENV !== 'development') return;
+  if (!DEBUG_DIAGNOSTICS) return;
 
   // 불변 조건 1: activePanelId는 panels에 존재해야 함
   if (!tabData.panels[tabData.activePanelId]) {
@@ -213,7 +217,12 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
           ...tabData,
           panels: {
             ...tabData.panels,
-            [tabData.activePanelId]: { ...activePanel, sessionId },
+            [tabData.activePanelId]: {
+              ...activePanel,
+              sessionId,
+              worktreeId: null,
+              creationMode: null,
+            },
           },
         },
       },
@@ -305,12 +314,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
           sessionId: targetPanel.sessionId,
           terminalId: targetPanel.terminalId ?? null,
           terminalSessionId: targetPanel.terminalSessionId ?? null,
+          terminalCwd: targetPanel.terminalCwd ?? null,
         },
         [targetPanelId]: {
           ...targetPanel,
           sessionId: sourcePanel.sessionId,
           terminalId: sourcePanel.terminalId ?? null,
           terminalSessionId: sourcePanel.terminalSessionId ?? null,
+          terminalCwd: sourcePanel.terminalCwd ?? null,
         },
       };
       const nextTabData: TabPanelData = {
@@ -480,11 +491,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     useSessionStore.getState().setActiveSession(sessionId);
   },
 
-  assignSession: (panelId, sessionId) => {
-    get().assignSessionInTab(get().activeTabId, panelId, sessionId);
+  assignSession: (panelId, sessionId, worktreeId) => {
+    get().assignSessionInTab(get().activeTabId, panelId, sessionId, worktreeId);
   },
 
-  assignSessionInTab: (tabId, panelId, sessionId) => {
+  assignSessionInTab: (tabId, panelId, sessionId, worktreeId) => {
     const state = get();
     const tabData = state.tabPanels[tabId];
     if (!tabData) return;
@@ -498,7 +509,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
           p => p.sessionId === sessionId && !(candidateTabId === tabId && p.id === panelId)
         );
         if (duplicate) {
-          if (process.env.NODE_ENV === 'development') {
+          if (DEBUG_DIAGNOSTICS) {
             console.warn('[panel-store] assignSessionInTab() no-op: session already open in tab', candidateTabId, 'panel', duplicate.id);
           }
           return;
@@ -508,7 +519,15 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
 
     const nextPanels = {
       ...tabData.panels,
-      [panelId]: { ...tabData.panels[panelId], sessionId, terminalId: null, terminalSessionId: null },
+      [panelId]: {
+        ...tabData.panels[panelId],
+        sessionId,
+        worktreeId: worktreeId ?? null,
+        creationMode: null,
+        terminalId: null,
+        terminalSessionId: null,
+        terminalCwd: null,
+      },
     };
     const fallbackActivePanelId =
       sessionId === null && panelId === tabData.activePanelId
@@ -534,6 +553,61 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     }
   },
 
+  assignWorktree: (panelId, worktreeId) => {
+    const state = get();
+    const tabData = state.tabPanels[state.activeTabId];
+    const panel = tabData?.panels[panelId];
+    if (!tabData || !panel) return;
+
+    set({
+      tabPanels: {
+        ...state.tabPanels,
+        [state.activeTabId]: {
+          ...tabData,
+          activePanelId: panelId,
+          panels: {
+            ...tabData.panels,
+            [panelId]: {
+              ...panel,
+              sessionId: null,
+              worktreeId,
+              creationMode: null,
+              terminalId: null,
+              terminalSessionId: null,
+              terminalCwd: null,
+            },
+          },
+        },
+      },
+    });
+    useSessionStore.getState().setActiveSession(null);
+  },
+
+  startWorktreeCreation: (panelId, mode) => {
+    const state = get();
+    const tabData = state.tabPanels[state.activeTabId];
+    const panel = tabData?.panels[panelId];
+    if (!tabData || !panel) return;
+
+    set({
+      tabPanels: {
+        ...state.tabPanels,
+        [state.activeTabId]: {
+          ...tabData,
+          panels: {
+            ...tabData.panels,
+            [panelId]: {
+              ...panel,
+              sessionId: null,
+              worktreeId: null,
+              creationMode: mode,
+            },
+          },
+        },
+      },
+    });
+  },
+
   rebindSession: (previousSessionId, sessionId) => {
     const state = get();
     let changed = false;
@@ -554,7 +628,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     }
   },
 
-  assignTerminal: (panelId, terminalId, terminalSessionId = null) => {
+  assignTerminal: (panelId, terminalId, terminalSessionId = null, terminalCwd = null) => {
     const state = get();
     const tabData = state.tabPanels[state.activeTabId];
     if (!tabData) return;
@@ -563,7 +637,15 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
 
     const nextPanels = {
       ...tabData.panels,
-      [panelId]: { ...panel, sessionId: null, terminalId, terminalSessionId },
+      [panelId]: {
+        ...panel,
+        sessionId: null,
+        worktreeId: null,
+        creationMode: null,
+        terminalId,
+        terminalSessionId,
+        terminalCwd,
+      },
     };
     const nextTabData: TabPanelData = {
       ...tabData,

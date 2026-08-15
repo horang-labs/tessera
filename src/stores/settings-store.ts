@@ -6,6 +6,9 @@ import { DEFAULT_SETTINGS } from '@/lib/settings/defaults';
 import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { i18n } from '@/lib/i18n';
 import { useBoardStore, type ViewMode } from '@/stores/board-store';
+import { useCommandStore } from '@/stores/command-store';
+import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export const SETTINGS_STORAGE_KEY = 'tessera:settings';
 export const SETTINGS_SYNC_CHANNEL = 'tessera:settings-sync';
@@ -89,6 +92,15 @@ function syncI18nLanguage(language: UserSettings['language']): void {
   void i18n.changeLanguage(language);
 }
 
+function invalidateSkillCatalogsWhenTesseraCliChanges(
+  prior: UserSettings,
+  next: UserSettings,
+): void {
+  if (prior.tesseraCliEnabled !== next.tesseraCliEnabled) {
+    useCommandStore.getState().invalidateAll();
+  }
+}
+
 interface SettingsSyncMessage {
   type: 'settings-updated';
   settings: UserSettings;
@@ -139,10 +151,35 @@ export function isSettingsSyncMessage(message: unknown): message is SettingsSync
     && typeof value.senderId === 'string';
 }
 
+/** The sections the settings panel is divided into. */
+export type SettingsSectionId =
+  | 'general'
+  | 'project'
+  | 'appearance'
+  | 'models'
+  | 'remote-access'
+  | 'development'
+  | 'git';
+
+/**
+ * What a caller can say about where settings should land.
+ *
+ * A surface that opens settings for a reason usually knows more than "open
+ * settings" — which section, and sometimes which project. Saying it here beats
+ * making the user find it again.
+ */
+export interface OpenSettingsOptions {
+  section?: SettingsSectionId;
+  /** The project whose settings prompted this, when one did. */
+  projectId?: string;
+}
+
 interface SettingsState {
   settings: UserSettings;
   serverHostInfo: ServerHostInfo | null;
   isOpen: boolean;
+  /** Where the panel should open, consumed by the panel as it opens. */
+  openRequest: OpenSettingsOptions | null;
   isLoading: boolean;
   pendingSaveCount: number;
 
@@ -158,7 +195,7 @@ interface SettingsState {
   getSidebarWidth: (mode: ViewMode, projectDir?: string | null) => number;
   setSidebarWidth: (width: number, mode?: ViewMode, projectDir?: string | null) => void;
 
-  open: () => void;
+  open: (options?: OpenSettingsOptions) => void;
   close: () => void;
   updateSettings: (partial: Partial<UserSettings>, options?: UpdateSettingsOptions) => Promise<void>;
   reset: () => Promise<void>;
@@ -166,12 +203,18 @@ interface SettingsState {
   applyExternalSettings: (settings: UserSettings) => void;
 }
 
+type PersistedSettingsState = Pick<
+  SettingsState,
+  'settings' | 'sidebarCollapsed' | 'sidebarWidth' | 'sidebarWidths' | 'projectSidebarWidths'
+>;
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
       settings: DEFAULT_SETTINGS,
       serverHostInfo: null,
       isOpen: false,
+      openRequest: null,
       isLoading: false,
       pendingSaveCount: 0,
       sidebarCollapsed: false, // BR-TOGGLE-001: 기본 펼침
@@ -182,15 +225,26 @@ export const useSettingsStore = create<SettingsState>()(
       projectSidebarWidths: {},
       sidebarWidth: LIST_SIDEBAR_MIN_WIDTH, // 레거시 호환용 alias (list width)
 
-      open: () => set({ isOpen: true }),
+      open: (options) => set({ isOpen: true, openRequest: options ?? null }),
       close: () => {
         if (get().pendingSaveCount > 0) return;
-        set({ isOpen: false });
+        // The request goes with the panel: reopening from somewhere that says
+        // nothing must not land wherever the last caller pointed.
+        set({ isOpen: false, openRequest: null });
       },
       applyExternalSettings: (externalSettings) => {
+        const prior = get().settings;
         const settings = normalizeUserSettings(externalSettings);
         set({ settings });
+        invalidateSkillCatalogsWhenTesseraCliChanges(prior, settings);
         syncI18nLanguage(settings.language);
+        if (JSON.stringify(prior.providerCustomModels) !== JSON.stringify(settings.providerCustomModels)) {
+          void import('@/hooks/use-provider-session-options').then(
+            ({ invalidateProviderSessionOptionsClientCache }) => {
+              invalidateProviderSessionOptionsClientCache();
+            },
+          );
+        }
       },
 
       // REQ-007: Sidebar toggle
@@ -301,6 +355,20 @@ export const useSettingsStore = create<SettingsState>()(
           const { useProvidersStore } = await import('@/stores/providers-store');
           useProvidersStore.getState().refresh();
         }
+        if (saved && partial.providerCustomModels) {
+          const { invalidateProviderSessionOptionsClientCache } = await import(
+            '@/hooks/use-provider-session-options'
+          );
+          invalidateProviderSessionOptionsClientCache();
+        }
+        if (saved) {
+          invalidateSkillCatalogsWhenTesseraCliChanges(prior, updated);
+        }
+        if (saved) {
+          for (const setting of Object.keys(partial)) {
+            void captureTelemetryEvent('settings_changed', { setting });
+          }
+        }
       },
 
       reset: async () => {
@@ -323,6 +391,11 @@ export const useSettingsStore = create<SettingsState>()(
           if (!response.ok) {
             throw new Error(`Settings reset failed with status ${response.status}`);
           }
+          invalidateSkillCatalogsWhenTesseraCliChanges(prior, defaults);
+          const { invalidateProviderSessionOptionsClientCache } = await import(
+            '@/hooks/use-provider-session-options'
+          );
+          invalidateProviderSessionOptionsClientCache();
         } catch (error) {
           console.error('Failed to reset settings', error);
           set({ settings: prior });
@@ -339,11 +412,13 @@ export const useSettingsStore = create<SettingsState>()(
           if (response.ok) {
             const data = await response.json();
             const settings = normalizeUserSettings(data.settings);
+            const prior = get().settings;
             set({
               settings,
               serverHostInfo: data.serverHostInfo ?? null,
               isLoading: false,
             });
+            invalidateSkillCatalogsWhenTesseraCliChanges(prior, settings);
             syncI18nLanguage(settings.language);
           } else {
             set({ isLoading: false });
@@ -356,6 +431,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'tessera:settings',
+      storage: createUiJsonStorage<PersistedSettingsState>(),
       partialize: (state) => ({
         settings: state.settings,
         sidebarCollapsed: state.sidebarCollapsed,

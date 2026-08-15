@@ -120,6 +120,46 @@ test('a new provider session creates one durable PTY child and preserves the par
   assert.equal(result.projectId, 'project-1');
 });
 
+test('a fork that runs outside the parent checkout leaves its worktree behind', () => {
+  // Claude forks a conversation out of a linked worktree into the origin tree
+  // the parent branched from. The child therefore reports its own directory,
+  // and the parent's worktree identity must not travel with it: resuming there
+  // would run in the wrong tree, and `worktree_managed` would offer the origin
+  // checkout up for worktree removal.
+  dbSessions.createSession('worktree-parent', 'project-1', 'Parallel worktrees', 'claude-code', {
+    workDir: '/tmp/worktrees/feature-x',
+    providerState: JSON.stringify({
+      kind: 'terminal',
+      launched: true,
+      terminalProviderSessionId: 'claude-parent',
+    }),
+  });
+  dbSessions.updateSession('worktree-parent', {
+    worktree_branch: 'feature/x',
+    worktree_managed: 1,
+  });
+
+  const result = reconcileTerminalProviderSession({
+    sourceSessionId: 'worktree-parent',
+    identity: { providerId: 'claude-code', providerSessionId: 'claude-fork' },
+    activation: 'background',
+    workDir: '/tmp/origin-checkout',
+  });
+
+  assert.equal(result.kind, 'created');
+  const child = dbSessions.getSession(result.sessionId);
+  assert.equal(child?.title, 'Parallel worktrees (Fork)');
+  assert.equal(child?.work_dir, '/tmp/origin-checkout');
+  assert.equal(child?.worktree_branch, null);
+  assert.equal(child?.worktree_managed, 0);
+
+  // The parent keeps its own worktree, and the PTY it is still running in.
+  const parent = dbSessions.getSession('worktree-parent');
+  assert.equal(parent?.work_dir, '/tmp/worktrees/feature-x');
+  assert.equal(parent?.worktree_branch, 'feature/x');
+  assert.equal(parent?.worktree_managed, 1);
+});
+
 test('duplicate and stale-pane observations resolve to the existing child', () => {
   dbSessions.createSession('dedup-parent', 'project-1', 'Deduplicate fork', 'claude-code', {
     workDir: '/tmp/project-1',

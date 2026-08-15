@@ -43,7 +43,12 @@ test('memory dir resolution uses provider-specific environment-aware config dirs
   assert.doesNotMatch(memoryLibSource, /homedir\(\)/);
   assert.match(codexMemorySource, /resolveCodexHomeForEnvironment/);
   assert.match(codexMemorySource, /process\.env\.CODEX_HOME/);
-  assert.match(codexMemorySource, /path\.join\(homedir\(\), "\.codex"\)/);
+  // The fallback must land on the *agent's* home. `homedir()` is the server's,
+  // which across a bridge is the wrong filesystem entirely — the panel then
+  // stats a path that cannot exist and reports "No user instructions" for a
+  // populated home. See tests/memory-bridged-config-home.test.ts.
+  assert.match(codexMemorySource, /resolveAgentHomeFilesystemPath\(environment\), "\.codex"\)/);
+  assert.doesNotMatch(codexMemorySource, /homedir\(\)/);
 });
 
 test('memory/context is gated to Claude Code, Codex, and OpenCode sessions on both client and server', () => {
@@ -132,7 +137,9 @@ test('Codex memories are shown as user-global memory with explanatory rows', () 
 
 test('OpenCode context follows the official rules manual and exposes no memory files', () => {
   assert.match(opencodeMemorySource, /resolveOpenCodeConfigDirForEnvironment/);
-  assert.match(opencodeMemorySource, /path\.join\(homedir\(\), "\.config", "opencode"\)/);
+  // Agent's home, not the server's — see the codex assertion above.
+  assert.match(opencodeMemorySource, /resolveAgentHomeFilesystemPath\(environment\), "\.config", "opencode"\)/);
+  assert.doesNotMatch(opencodeMemorySource, /homedir\(\)/);
   assert.match(opencodeMemorySource, /"AGENTS\.md"/);
   assert.match(opencodeMemorySource, /"CLAUDE\.md"/);
   assert.match(opencodeMemorySource, /"opencode\.json"/);

@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { memo, useState } from 'react';
 import {
   Loader2,
@@ -262,6 +264,7 @@ export const WorkflowCard = memo(function WorkflowCard({
       {/* Header (click to collapse; optional dismiss button on the right) */}
       <div className="flex w-full items-center">
         <button
+          {...telemetryClickAttributes('message.workflow.toggle', 'message')}
           type="button"
           onClick={() => setCollapsed((v) => !v)}
           aria-expanded={!collapsed}
@@ -286,6 +289,7 @@ export const WorkflowCard = memo(function WorkflowCard({
 
         {onDismiss && (
           <button
+            {...telemetryClickAttributes('message.workflow.dismiss', 'message')}
             type="button"
             onClick={() => onDismiss(taskId)}
             aria-label="Dismiss workflow"

@@ -10,13 +10,16 @@ import { EmptyPanelState } from '@/components/panel/empty-panel-state';
 import { ARCHIVE_DASHBOARD_SESSION_ID, SKILLS_DASHBOARD_SESSION_ID } from '@/lib/constants/special-sessions';
 import { SkillDashboard } from '@/components/skills/skill-dashboard';
 import { ArchiveDashboard } from '@/components/archive/archive-dashboard';
-import { WorkspaceExplorerTab } from '@/components/workspace/workspace-explorer-tab';
 import { WorkspaceFileTab } from '@/components/workspace/workspace-file-tab';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
+import { WorktreeOverview } from '@/components/worktree/worktree-overview';
+import { useTaskStore } from '@/stores/task-store';
+import { useTabStore } from '@/stores/tab-store';
+import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import {
   parseMemoryFileSessionId,
-  parseWorkspaceExplorerSessionId,
+  parseWorktreeFileSessionId,
   parseWorkspaceFileSessionId,
 } from '@/lib/workspace-tabs/special-session';
 
@@ -39,6 +42,38 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
   const terminalSessionId = usePanelStore(
     (state) => state.tabPanels[tabId]?.panels[panelId]?.terminalSessionId ?? null,
   );
+  const terminalCwd = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.terminalCwd ?? null,
+  );
+  const worktreeId = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.worktreeId ?? null,
+  );
+  const tabProjectDir = useTabStore(
+    (state) => state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null,
+  );
+  const loadedProjects = useLoadedProjectViews();
+  const worktree = (() => {
+    if (!worktreeId) return null;
+    const projects = tabProjectDir
+      ? loadedProjects.filter(
+          (project) => project.encodedDir === tabProjectDir || project.decodedPath === tabProjectDir,
+        )
+      : loadedProjects;
+    return projects.find((project) => project.projectWorktree?.id === worktreeId)?.projectWorktree ?? null;
+  })();
+  const linkedWorktree = useTaskStore((state) => {
+    if (!worktreeId) return null;
+    if (tabProjectDir) {
+      return state.tasksByProject[tabProjectDir]?.find(
+        (candidate) => candidate.worktreeId === worktreeId,
+      ) ?? null;
+    }
+    for (const tasks of Object.values(state.tasksByProject)) {
+      const task = tasks.find((candidate) => candidate.worktreeId === worktreeId);
+      if (task) return task;
+    }
+    return state.tasks.find((candidate) => candidate.worktreeId === worktreeId) ?? null;
+  });
 
   const content = (() => {
     if (terminalId) {
@@ -47,20 +82,40 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
           panelId={panelId}
           terminalId={terminalId}
           terminalSessionId={terminalSessionId}
+          terminalCwd={terminalCwd}
         />
       );
     }
     if (sessionId === SKILLS_DASHBOARD_SESSION_ID) return <SkillDashboard />;
     if (sessionId === ARCHIVE_DASHBOARD_SESSION_ID) return <ArchiveDashboard />;
     if (sessionId) {
-      const explorerRef = parseWorkspaceExplorerSessionId(sessionId);
-      if (explorerRef) return <WorkspaceExplorerTab key={sessionId} explorerRef={explorerRef} />;
       const fileRef = parseWorkspaceFileSessionId(sessionId);
       if (fileRef) return <WorkspaceFileTab key={sessionId} fileRef={fileRef} panelId={panelId} />;
+      const worktreeFileRef = parseWorktreeFileSessionId(sessionId);
+      if (worktreeFileRef) {
+        return <WorkspaceFileTab key={sessionId} fileRef={worktreeFileRef} panelId={panelId} />;
+      }
       const memoryRef = parseMemoryFileSessionId(sessionId);
       if (memoryRef) return <MemoryFileTab key={sessionId} memoryRef={memoryRef} panelId={panelId} />;
     }
     if (sessionId) return <ChatArea sessionId={sessionId} panelId={panelId} />;
+    if (worktreeId && worktree) {
+      return (
+        <WorktreeOverview
+          branch={worktree.currentBranch}
+          displayPath={worktree.displayPath}
+        />
+      );
+    }
+    if (worktreeId && linkedWorktree?.workDir) {
+      return (
+        <WorktreeOverview
+          branch={linkedWorktree.worktreeBranch ?? null}
+          displayPath={linkedWorktree.workDir}
+          label="Linked Worktree"
+        />
+      );
+    }
     return <EmptyPanelState panelId={panelId} />;
   })();
 

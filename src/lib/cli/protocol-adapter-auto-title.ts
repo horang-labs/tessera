@@ -4,6 +4,7 @@ import { generateAITitle } from '../session/ai-title-generator';
 import { SettingsManager } from '../settings/manager';
 import { syncSingleSessionTaskTitleFromSession } from '../task-title-sync';
 import type { AppServerMessage } from '../ws/message-types';
+import { captureServerTelemetryEvent } from '../telemetry/server';
 
 interface MaybeAutoGenerateProtocolTitleArgs {
   autoTitleTriggered: Set<string>;
@@ -24,6 +25,7 @@ export function maybeAutoGenerateProtocolTitle({
   autoTitleTriggered.add(sessionId);
 
   void (async () => {
+    let telemetryOptedIn = false;
     try {
       const dbSession = dbSessions.getSession(sessionId);
       if (!dbSession || dbSession.has_custom_title) {
@@ -32,6 +34,7 @@ export function maybeAutoGenerateProtocolTitle({
       }
 
       const settings = await SettingsManager.load(userId);
+      telemetryOptedIn = settings.telemetry.enabled;
       if (!settings.notifications?.aiTitleRefinement) {
         autoTitleTriggered.delete(sessionId);
         return;
@@ -76,9 +79,23 @@ export function maybeAutoGenerateProtocolTitle({
         title: result.title,
         fallback: result.fallback === true,
       }, 'Auto-generated AI title');
+
+      if (telemetryOptedIn) {
+        void captureServerTelemetryEvent('ai_title_generation_result', {
+          source: 'automatic',
+          result: result.fallback ? 'fallback' : 'success',
+        });
+      }
     } catch (error: any) {
       autoTitleTriggered.delete(sessionId);
       logger.warn({ sessionId, error: error.message }, 'Auto-title generation failed');
+
+      if (telemetryOptedIn) {
+        void captureServerTelemetryEvent('ai_title_generation_result', {
+          source: 'automatic',
+          result: 'failed',
+        });
+      }
     }
   })();
 }

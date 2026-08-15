@@ -5,9 +5,24 @@ import { getSessionStatusGroup } from '@/types/task';
 import { useChatStore } from './chat-store';
 import { useTaskStore } from './task-store';
 import { useTabStore } from './tab-store';
+import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
 import { toast } from './notification-store';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import {
+  readUiStorageItem,
+  removeUiStorageItem,
+  writeUiStorageItem,
+} from '@/lib/persistence/ui-storage';
+import {
+  findSessionProjectDir,
+  LAST_ACTIVE_PROJECT_DIR_KEY,
+  resolveLastActiveProjectDir,
+} from '@/lib/session/last-active-project';
+import {
+  isBranchRenameWarningDismissed,
+  persistBranchRenameWarningDismissal,
+} from '@/lib/projects/branch-rename-warning';
 import {
   applySessionRuntimeLiveness,
   beginSessionRuntimeConnection,
@@ -18,13 +33,51 @@ import {
   resolveSessionRuntimeLiveness,
   type SessionRuntimeLiveness,
 } from '@/lib/session/session-runtime-liveness';
+import { resolveStoredSessionAppearance } from '@/lib/projects/stored-session-resolution';
+
+const ACTIVE_SESSION_STORAGE_KEY = 'tessera:active-session';
+
+function readPersistedActiveSessionId(): string | null {
+  const persisted = readUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
+  if (persisted) return persisted;
+
+  // Migrate the pre-Electron-bridge refresh key. sessionStorage does not
+  // survive a native window restart, but an in-place browser upgrade can still
+  // carry it long enough for us to move it into durable UI storage.
+  try {
+    const legacy = sessionStorage.getItem('activeSessionId');
+    if (legacy) writeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY, legacy);
+    return legacy;
+  } catch {
+    return null;
+  }
+}
+
+function findStoredSession(
+  state: Pick<SessionState, 'projects' | 'retainedSessions'>,
+  sessionId: string,
+  projectDir?: string | null,
+): UnifiedSession | undefined {
+  return resolveStoredSessionAppearance(
+    state.projects,
+    state.retainedSessions,
+    sessionId,
+    projectDir,
+  );
+}
 
 
 export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
   activeSessionId: string | null;
+  /** True after the first successful Project load attempts saved/fallback restoration. */
+  didHydrateActiveSession: boolean;
+  /** Project containing the most recently activated real conversation. */
+  lastActiveProjectDir: string | null;
   runtimeLiveness: SessionRuntimeLiveness;
+  /** Sessions hidden by projection but still needed by an open Project-local tab. */
+  retainedSessions: Record<string, UnifiedSession>;
 
   // REQ-002: Session creation loading state
   creatingSessionId: string | null;
@@ -35,7 +88,12 @@ export interface SessionState {
   beginRuntimeConnection: () => void;
 
   // Actions - Project loading
-  loadProjects: () => Promise<void>;
+  loadProjects: (options?: {
+    restoredActiveSessionId?: string | null;
+    restoredActiveTabId?: string;
+  }) => Promise<void>;
+  updateProjectWorktreeBranch: (worktreeId: string, branch: string | null) => void;
+  dismissBranchRenameWarning: (projectId: string) => void;
   loadMoreSessions: (encodedDir: string) => Promise<void>;
   loadMoreByStatusGroup: (encodedDir: string, statusGroup: string) => Promise<void>;
 
@@ -43,6 +101,8 @@ export interface SessionState {
   setActiveSession: (sessionId: string | null) => void;
   addSession: (session: UnifiedSession, options?: { activate?: boolean }) => void;
   removeSession: (sessionId: string) => void;
+  /** Retain a navigable Session without inserting it into a direct Project Session page. */
+  retainSession: (session: UnifiedSession) => void;
   upsertSession: (session: UnifiedSession) => void;
   removeProject: (encodedDir: string) => void;
   updateSessionTitle: (sessionId: string, title: string, hasCustomTitle?: boolean) => void;
@@ -69,14 +129,21 @@ export interface SessionState {
   ) => void;
   setCreatingSession: (sessionId: string | null) => void;
   setLoadingSession: (sessionId: string | null) => void;
-  getSession: (sessionId: string) => UnifiedSession | undefined;
 
   // Unread count actions (for FEAT-002)
   incrementUnreadCount: (sessionId: string) => void;
   clearUnreadCount: (sessionId: string) => void;
   // Task workflow actions (Unit 1 — Task Board Sidebar v2)
-  updateLinkedTaskWorkflowStatus: (sessionId: string, workflowStatus: string) => void;
-  updateChatWorkflowStatus: (sessionId: string, workflowStatus: WorkflowStatus | null) => void;
+  updateLinkedTaskWorkflowStatus: (
+    sessionId: string,
+    workflowStatus: string,
+    projectViewId?: string,
+  ) => void;
+  updateChatWorkflowStatus: (
+    sessionId: string,
+    workflowStatus: WorkflowStatus | null,
+    projectViewId?: string,
+  ) => void;
   syncTaskWorkflowStatus: (
     taskId: string,
     previousWorkflowStatus: NonNullable<UnifiedSession['workflowStatus']>,
@@ -84,12 +151,14 @@ export interface SessionState {
     touchedSessionId?: string
   ) => void;
   applyWorkflowStatusPromotions: (taskIds: string[]) => void;
-  updateSessionCollection: (sessionId: string, collectionId: string | null) => void;
+  updateSessionCollection: (
+    sessionId: string,
+    collectionId: string | null,
+    projectViewId?: string,
+  ) => void;
   syncTaskCollectionId: (taskId: string, collectionId: string | null) => void;
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
-  setTaskIdForSessions: (sessionIds: string[], taskId: string | null) => void;
   toggleArchive: (sessionId: string, archived: boolean) => void;
-  moveSession: (sessionId: string, targetProjectId: string) => void;
 
   // Task selectors
   getSessionsByStatusGroup: (
@@ -124,19 +193,24 @@ export interface SessionState {
   hasRunningWorkflow: (sessionId: string) => boolean;
 
   /** Apply updated diff stats to every session whose id is in the set. */
-  applyDiffStatsUpdate: (sessionIds: string[], diffStats: UnifiedSession['diffStats']) => void;
+  applyDiffStatsUpdate: (
+    sessionIds: string[],
+    diffStats: UnifiedSession['diffStats'],
+    workDir?: string,
+  ) => void;
 
 }
 
 function mapApiSessionToUnified(
   s: any,
-  fallbackProjectDir: string,
+  viewProjectId: string,
   runtimeLiveness?: SessionRuntimeLiveness,
 ): UnifiedSession {
   const session: UnifiedSession = {
     id: s.id,
     title: s.title,
-    projectDir: s.projectDir ?? fallbackProjectDir,
+    projectDir: viewProjectId,
+    originProjectId: s.originProjectId,
     isRunning: s.isRunning,
     status: s.status as SessionStatus,
     lastModified: s.lastModified,
@@ -146,6 +220,8 @@ function mapApiSessionToUnified(
     hasCustomTitle: s.hasCustomTitle ?? false,
     workflowStatus: s.workflowStatus ?? undefined,
     worktreeBranch: s.worktreeBranch ?? undefined,
+    worktreeId: s.worktreeId ?? undefined,
+    scopeBranch: s.scopeBranch ?? undefined,
     kind: s.kind ?? undefined,
     workDir: s.workDir ?? undefined,
     archived: s.archived ?? false,
@@ -328,11 +404,41 @@ function replaceCollectionIdInProjects(
   }));
 }
 
+function mapRetainedSessions(
+  retainedSessions: Record<string, UnifiedSession>,
+  update: (session: UnifiedSession) => UnifiedSession,
+): Record<string, UnifiedSession> {
+  let next = retainedSessions;
+  for (const [id, session] of Object.entries(retainedSessions)) {
+    const updated = update(session);
+    if (updated === session) continue;
+    if (next === retainedSessions) next = { ...retainedSessions };
+    next[id] = updated;
+  }
+  return next;
+}
+
+function updateRetainedSession(
+  retainedSessions: Record<string, UnifiedSession>,
+  sessionId: string,
+  update: (session: UnifiedSession) => UnifiedSession,
+): Record<string, UnifiedSession> {
+  return mapRetainedSessions(
+    retainedSessions,
+    (session) => session.id === sessionId ? update(session) : session,
+  );
+}
+
+let latestProjectLoadRequest = 0;
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
   activeSessionId: null,
+  didHydrateActiveSession: false,
+  lastActiveProjectDir: null,
   runtimeLiveness: createSessionRuntimeLiveness(),
+  retainedSessions: {},
   creatingSessionId: null,
   loadingSessionId: null,
 
@@ -340,52 +446,76 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ runtimeLiveness: beginSessionRuntimeConnection() }),
 
   // Project loading
-  loadProjects: async () => {
+  loadProjects: async (options) => {
+    const requestId = ++latestProjectLoadRequest;
     try {
       const res = await fetch('/api/sessions/projects');
       if (!res.ok) throw new Error('Failed to load projects');
       const data: { projects: any[] } = await res.json();
+      // Keep Project-local open conversations addressable even when the live
+      // projection hides them. The workspace boundary owns lifetime across
+      // materialized panels, inactive Project snapshots, and Peek. Dynamic
+      // import avoids the existing tab/panel/session store initialization cycle.
+      const { projectViewWorkspaceState } = await import(
+        '@/lib/projects/project-view-workspace-state-client'
+      );
+      const openSessionIds = new Set(projectViewWorkspaceState.getOpenSessionIds());
 
       const projects: ProjectGroup[] = data.projects.map((p) => {
         const sessions = p.sessions.map((s: any) => mapApiSessionToUnified(s, p.encodedDir));
 
-        // Compute per-status cursors from the highest sort_order loaded per status
-        const cursorByStatus: Record<string, string | null> = {};
         const countByStatus: Record<string, number> = p.countByStatus ?? {};
-        for (const status of Object.keys(countByStatus)) {
-          const statusSessions = sessions
-            .filter((s: UnifiedSession) => getSessionStatusGroup(s) === status);
-          if (statusSessions.length > 0) {
-            const maxSortOrder = Math.max(...statusSessions.map((s: UnifiedSession) => s.sortOrder ?? 0));
-            cursorByStatus[status] = String(maxSortOrder);
-          } else {
-            cursorByStatus[status] = null;
-          }
-        }
+        const cursorByStatus: Record<string, string | null> = p.cursorByStatus ?? {};
 
         return {
           encodedDir: p.encodedDir,
           displayName: p.displayName,
           decodedPath: p.decodedPath,
           displayPath: p.displayPath,
+          projectWorktree: p.projectWorktree,
+          branchRenameWarning: p.branchRenameWarning
+            && !isBranchRenameWarningDismissed(p.encodedDir, p.branchRenameWarning)
+            ? p.branchRenameWarning
+            : undefined,
           isCurrent: p.isCurrent,
+          hasPreparationScript: p.hasPreparationScript,
           sessions,
           totalSessions: p.totalSessions,
           allLoaded: sessions.length >= p.totalSessions,
           loadedCount: sessions.length,
-          nextCursor: sessions.length > 0
-            ? String(Math.max(...sessions.map((s: any) => s.sortOrder ?? 0)))
-            : null,
+          nextCursor: p.nextCursor ?? null,
           loadBatchIndex: 0,
           countByStatus,
           cursorByStatus,
         };
       });
 
-      set((state) => ({
-        projects: applySessionRuntimeLiveness(projects, state.runtimeLiveness),
-      }));
+      if (requestId !== latestProjectLoadRequest) return;
+
+      set((state) => {
+        const nextProjects = applySessionRuntimeLiveness(projects, state.runtimeLiveness);
+        const incomingSessionIds = new Set(
+          nextProjects.flatMap((project) => project.sessions.map((session) => session.id)),
+        );
+        const previousSessions = [
+          ...state.projects.flatMap((project) => project.sessions),
+          ...Object.values(state.retainedSessions),
+        ];
+        const retainedSessions: Record<string, UnifiedSession> = {};
+        for (const session of previousSessions) {
+          if (openSessionIds.has(session.id) && !incomingSessionIds.has(session.id)) {
+            retainedSessions[session.id] = session;
+          }
+        }
+        return { projects: nextProjects, retainedSessions };
+      });
       const loadedProjects = get().projects;
+      const storedLastActiveProjectDir = readUiStorageItem(LAST_ACTIVE_PROJECT_DIR_KEY);
+      const lastActiveProjectDir = resolveLastActiveProjectDir(
+        loadedProjects,
+        storedLastActiveProjectDir ?? get().lastActiveProjectDir,
+      );
+      set({ lastActiveProjectDir });
 
       // Initialize turn lifecycle state from server isGenerating state.
       const generatingSessionIds: string[] = [];
@@ -400,38 +530,119 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         useChatStore.getState().setTurnsInFlight(generatingSessionIds);
       }
 
-      // Restore previously active session from sessionStorage, or auto-activate
-      let autoActiveId: string | null = null;
-      try {
-        const savedId = sessionStorage.getItem('activeSessionId');
-        // Verify saved session still exists in loaded projects
-        if (savedId) {
-          const exists = loadedProjects.some((p) =>
-            p.sessions.some((s) => s.id === savedId)
+      if (!get().didHydrateActiveSession) {
+        // Restore previously active session from sessionStorage, or auto-activate.
+        // This is startup hydration, not a general Project reload behavior: after
+        // it completes, null is a deliberate board-only selection that passive
+        // mutation refreshes must preserve.
+        let autoActiveId: string | null = null;
+        const hasRestoredWorkspaceSelection = options
+          && Object.prototype.hasOwnProperty.call(options, 'restoredActiveSessionId');
+        if (hasRestoredWorkspaceSelection) {
+          const restoredId = options.restoredActiveSessionId;
+          if (restoredId && loadedProjects.some((project) =>
+            project.sessions.some((session) => session.id === restoredId)
+          )) {
+            autoActiveId = restoredId;
+          }
+        } else {
+          try {
+            const savedId = readPersistedActiveSessionId();
+            // Verify saved session still exists in loaded projects
+            if (savedId) {
+              const exists = loadedProjects.some((p) =>
+                p.sessions.some((s) => s.id === savedId)
+              );
+              if (exists) autoActiveId = savedId;
+            }
+          } catch {
+            // Ignore storage errors
+          }
+        }
+
+        // Fallback only when there was no explicit restored tab selection.
+        if (!autoActiveId && !hasRestoredWorkspaceSelection) {
+          const lastActiveProject = loadedProjects.find(
+            (project) => project.encodedDir === lastActiveProjectDir,
           );
-          if (exists) autoActiveId = savedId;
+          const currentProject = loadedProjects.find((project) => project.isCurrent);
+          const fallbackProject = [lastActiveProject, currentProject, ...loadedProjects]
+            .find((project) => project && project.sessions.length > 0);
+          if (fallbackProject) {
+            const runningSession = fallbackProject.sessions.find((session) => session.isRunning);
+            autoActiveId = runningSession?.id ?? fallbackProject.sessions[0].id;
+          }
         }
-      } catch {
-        // Ignore storage errors
-      }
 
-      // Fallback: first running session or first session of current project
-      if (!autoActiveId) {
-        const currentProject = loadedProjects.find((p) => p.isCurrent);
-        if (currentProject && currentProject.sessions.length > 0) {
-          const runningSession = currentProject.sessions.find((s) => s.isRunning);
-          autoActiveId = runningSession?.id || currentProject.sessions[0].id;
-        } else if (loadedProjects.length > 0 && loadedProjects[0].sessions.length > 0) {
-          autoActiveId = loadedProjects[0].sessions[0].id;
+        if (hasRestoredWorkspaceSelection) {
+          // Runtime startup events can temporarily select a background PTY.
+          // The persisted active panel is authoritative for cold restoration,
+          // including an intentionally empty tab.
+          get().setActiveSession(autoActiveId);
+        } else if (autoActiveId && !get().activeSessionId) {
+          get().setActiveSession(autoActiveId);
         }
-      }
-
-      if (autoActiveId && !get().activeSessionId) {
-        get().setActiveSession(autoActiveId);
+        if (options?.restoredActiveTabId) {
+          const tabStore = useTabStore.getState();
+          if (tabStore.tabs.some((tab) => tab.id === options.restoredActiveTabId)) {
+            tabStore.setActiveTab(options.restoredActiveTabId);
+          }
+        }
+        set({ didHydrateActiveSession: true });
       }
     } catch (err) {
       console.error('Failed to load projects:', err);
     }
+  },
+
+  updateProjectWorktreeBranch: (worktreeId, branch) => {
+    const affectedProjectIds = get().projects
+      .filter((project) => project.projectWorktree?.id === worktreeId)
+      .map((project) => project.encodedDir);
+    const changed = get().projects.some(
+      (project) => project.projectWorktree?.id === worktreeId
+        && project.projectWorktree.currentBranch !== branch,
+    );
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.projectWorktree?.id === worktreeId
+          ? {
+              ...project,
+              branchRenameWarning:
+                project.projectWorktree.currentBranch === branch
+                  ? project.branchRenameWarning
+                  : undefined,
+              projectWorktree: {
+                ...project.projectWorktree,
+                currentBranch: branch,
+              },
+            }
+          : project,
+      ),
+    }));
+    if (changed) {
+      void get().loadProjects();
+      void Promise.all(
+        affectedProjectIds.map((projectId) => useTaskStore.getState().loadTasks(projectId, {
+          setCurrent: useTaskStore.getState().currentProjectId === projectId,
+        })),
+      );
+    }
+  },
+
+  dismissBranchRenameWarning: (projectId) => {
+    const warning = get().projects.find(
+      (project) => project.encodedDir === projectId,
+    )?.branchRenameWarning;
+    if (!warning) return;
+    persistBranchRenameWarningDismissal(projectId, warning);
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.encodedDir === projectId
+          ? { ...project, branchRenameWarning: undefined }
+          : project,
+      ),
+    }));
   },
 
   loadMoreSessions: async (encodedDir: string) => {
@@ -528,23 +739,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // Session management
   setActiveSession: (sessionId) => {
-    set({ activeSessionId: sessionId });
-    // Persist to sessionStorage for restoration after page refresh
+    const state = get();
+    const activatedProjectDir = findSessionProjectDir(state.projects, sessionId);
+    set({
+      activeSessionId: sessionId,
+      lastActiveProjectDir: activatedProjectDir ?? state.lastActiveProjectDir,
+    });
+    // Persist outside the renderer origin so an Electron restart restores the
+    // same focused Session even when Chromium's sessionStorage is gone.
     try {
       if (sessionId !== null) {
-        sessionStorage.setItem('activeSessionId', sessionId);
+        writeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY, sessionId);
       } else {
-        sessionStorage.removeItem('activeSessionId');
+        removeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
       }
     } catch {
       // Ignore storage errors (SSR, private browsing, etc.)
     }
+    if (activatedProjectDir) {
+      writeUiStorageItem(LAST_ACTIVE_PROJECT_DIR_KEY, activatedProjectDir);
+    }
   },
 
-  addSession: (session: UnifiedSession, options) =>
+  addSession: (session: UnifiedSession, options) => {
+    let activatedProjectDir: string | null = null;
     set((state) => {
-      // Normalize projectDir — handle undefined from WebSocket messages missing workDir
-      const projectDir = session.projectDir || 'unknown';
+      const { projectDir } = session;
       // Apply defensive defaults for task metadata fields
       session = {
         ...session,
@@ -573,9 +793,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           nextCursor: null,
           loadBatchIndex: 0,
         };
+        if (options?.activate !== false) activatedProjectDir = newProject.encodedDir;
         return {
           projects: [...state.projects, newProject],
           activeSessionId: options?.activate === false ? state.activeSessionId : session.id,
+          lastActiveProjectDir: options?.activate === false
+            ? state.lastActiveProjectDir
+            : newProject.encodedDir,
         };
       }
 
@@ -589,14 +813,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       project.totalSessions += 1;
       project.loadedCount += 1;
       updatedProjects[projectIndex] = project;
+      if (options?.activate !== false) activatedProjectDir = project.encodedDir;
 
       return {
         projects: updatedProjects,
         activeSessionId: options?.activate === false ? state.activeSessionId : session.id,
+        lastActiveProjectDir: options?.activate === false
+          ? state.lastActiveProjectDir
+          : project.encodedDir,
       };
-    }),
+    });
+    if (activatedProjectDir) {
+      writeUiStorageItem(LAST_ACTIVE_PROJECT_DIR_KEY, activatedProjectDir);
+    }
+  },
 
-  removeSession: (sessionId) =>
+  removeSession: (sessionId) => {
     set((state) => {
       const updatedProjects = state.projects.map((project) => ({
         ...project,
@@ -610,10 +842,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         newActiveId = null; // 빈 상태 표시 (자동 전환 안 함)
       }
 
-      // Clear activeSessionId from sessionStorage if it's the deleted session
+      // Clear the persisted focus if it points at the deleted Session.
       if (state.activeSessionId === sessionId) {
         try {
-          sessionStorage.removeItem('activeSessionId');
+          removeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
         } catch {
           // Ignore storage errors
         }
@@ -625,17 +857,39 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         runningWorkflowSessionIds.delete(sessionId);
       }
 
+      const retainedSessions = { ...state.retainedSessions };
+      delete retainedSessions[sessionId];
+
       return {
         projects: updatedProjects,
+        retainedSessions,
         activeSessionId: newActiveId,
         runningWorkflowSessionIds,
         runtimeLiveness: forgetSessionRuntime(state.runtimeLiveness, sessionId),
+      };
+    });
+    retireProjectViewSessionSurfaces(sessionId);
+  },
+
+  retainSession: (session) =>
+    set((state) => {
+      return {
+        retainedSessions: {
+          ...state.retainedSessions,
+          [session.id]: {
+            ...session,
+            archived: session.archived ?? false,
+            isReadOnly: session.isReadOnly ?? session.archived ?? false,
+            hasStarted: session.hasStarted ?? session.isRunning ?? false,
+            sortOrder: session.sortOrder ?? 0,
+          },
+        },
       };
     }),
 
   upsertSession: (session) =>
     set((state) => {
-      const projectDir = session.projectDir || 'unknown';
+      const { projectDir } = session;
       const normalizedSession: UnifiedSession = {
         ...session,
         projectDir,
@@ -644,6 +898,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         hasStarted: session.hasStarted ?? session.isRunning ?? false,
         sortOrder: session.sortOrder ?? 0,
       };
+
+      if (state.retainedSessions[normalizedSession.id]) {
+        return {
+          retainedSessions: {
+            ...state.retainedSessions,
+            [normalizedSession.id]: {
+              ...state.retainedSessions[normalizedSession.id],
+              ...normalizedSession,
+            },
+          },
+        };
+      }
 
       let matchedProject = false;
       let matchedSession = false;
@@ -704,7 +970,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (project && project.sessions.some((s) => s.id === state.activeSessionId)) {
         newActiveId = null;
         try {
-          sessionStorage.removeItem('activeSessionId');
+          removeUiStorageItem(ACTIVE_SESSION_STORAGE_KEY);
         } catch {
           // Ignore
         }
@@ -717,65 +983,74 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }),
 
   updateSessionTitle: (sessionId, title, hasCustomTitle) =>
-    set((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((s) =>
-          s.id === sessionId
-            ? {
-                ...s,
-                title,
-                ...(hasCustomTitle !== undefined && { hasCustomTitle }),
-              }
-            : s
-        ),
-      })),
-    })),
+    set((state) => {
+      const update = (session: UnifiedSession) => ({
+        ...session,
+        title,
+        ...(hasCustomTitle !== undefined && { hasCustomTitle }),
+      });
+      return {
+        projects: state.projects.map((project) => ({
+          ...project,
+          sessions: project.sessions.map((session) =>
+            session.id === sessionId ? update(session) : session
+          ),
+        })),
+        retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
+      };
+    }),
 
   touchSessionActivity: (sessionId, touchedAt) =>
     set((state) => {
       const nextTouchedAt = touchedAt ?? new Date().toISOString();
+      const update = (session: UnifiedSession) => {
+        if (session.lastModified && session.lastModified >= nextTouchedAt) return session;
+        return { ...session, lastModified: nextTouchedAt };
+      };
       return {
         projects: state.projects.map((project) => ({
           ...project,
           sessions: project.sessions.map((session) => {
-            if (session.id !== sessionId) return session;
-            if (session.lastModified && session.lastModified >= nextTouchedAt) return session;
-            return { ...session, lastModified: nextTouchedAt };
+            return session.id === sessionId ? update(session) : session;
           }),
         })),
+        retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
       };
     }),
 
   updateSessionStatus: (sessionId, status) =>
-    set((state) => ({
-      projects: state.projects.map((project) => {
-        const idx = project.sessions.findIndex((s) => s.id === sessionId);
-        if (idx === -1) return project;
+    set((state) => {
+      const now = new Date().toISOString();
+      const update = (session: UnifiedSession) => ({
+        ...session,
+        status,
+        lastModified: now,
+        ...(status === 'running' && { hasStarted: true }),
+      });
+      return {
+        projects: state.projects.map((project) => {
+          const idx = project.sessions.findIndex((s) => s.id === sessionId);
+          if (idx === -1) return project;
 
-        const now = new Date().toISOString();
-        const updatedSession = {
-          ...project.sessions[idx],
-          status,
-          lastModified: now,
-          ...(status === 'running' && { hasStarted: true }),
-        };
+          const updatedSession = update(project.sessions[idx]);
 
-        // Move to top when session becomes active (running)
-        if (status === 'running' && idx > 0) {
-          const sessions = [...project.sessions];
-          sessions.splice(idx, 1);
-          return { ...project, sessions: [updatedSession, ...sessions] };
-        }
+          // Move to top when session becomes active (running)
+          if (status === 'running' && idx > 0) {
+            const sessions = [...project.sessions];
+            sessions.splice(idx, 1);
+            return { ...project, sessions: [updatedSession, ...sessions] };
+          }
 
-        return {
-          ...project,
-          sessions: project.sessions.map((s) =>
-            s.id === sessionId ? updatedSession : s
-          ),
-        };
-      }),
-    })),
+          return {
+            ...project,
+            sessions: project.sessions.map((s) =>
+              s.id === sessionId ? updatedSession : s
+            ),
+          };
+        }),
+        retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
+      };
+    }),
 
   markSessionReadOnly: (sessionId, isReadOnly) =>
     set((state) => ({
@@ -785,16 +1060,39 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           s.id === sessionId ? { ...s, isReadOnly } : s
         ),
       })),
+      retainedSessions: updateRetainedSession(
+        state.retainedSessions,
+        sessionId,
+        (session) => ({ ...session, isReadOnly }),
+      ),
     })),
 
   markSessionRunning: (sessionId, tesseraSessionId, runtimeConfig) => {
-    const providerId = get().getSession(sessionId)?.provider;
+    const providerId = findStoredSession(get(), sessionId)?.provider;
     if (providerId) {
       void captureTelemetryEvent('agent_session_started', {
         provider_id: providerId,
       });
     }
 
+    const update = (session: UnifiedSession): UnifiedSession => ({
+      ...session,
+      isRunning: true,
+      hasStarted: true,
+      isReadOnly: false,
+      status: 'running',
+      tesseraSessionId,
+      ...(runtimeConfig?.model !== undefined && { model: runtimeConfig.model }),
+      ...(runtimeConfig?.reasoningEffort !== undefined && {
+        reasoningEffort: runtimeConfig.reasoningEffort,
+      }),
+      ...(runtimeConfig?.serviceTier !== undefined && {
+        serviceTier: runtimeConfig.serviceTier,
+      }),
+      ...(runtimeConfig?.fastMode !== undefined && { fastMode: runtimeConfig.fastMode }),
+      ...(runtimeConfig?.sessionMode !== undefined && { sessionMode: runtimeConfig.sessionMode }),
+      ...(runtimeConfig?.accessMode !== undefined && { accessMode: runtimeConfig.accessMode }),
+    });
     set((state) => ({
       runtimeLiveness: recordSessionRuntimeEvent(
         state.runtimeLiveness,
@@ -805,34 +1103,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       projects: state.projects.map((project) => ({
         ...project,
         sessions: project.sessions.map((s) =>
-          s.id === sessionId
-            ? {
-                ...s,
-                isRunning: true,
-                hasStarted: true,
-                isReadOnly: false,
-                status: 'running' as SessionStatus,
-                tesseraSessionId,
-                ...(runtimeConfig?.model !== undefined && { model: runtimeConfig.model }),
-                ...(runtimeConfig?.reasoningEffort !== undefined && {
-                  reasoningEffort: runtimeConfig.reasoningEffort,
-                }),
-                ...(runtimeConfig?.serviceTier !== undefined && {
-                  serviceTier: runtimeConfig.serviceTier,
-                }),
-                ...(runtimeConfig?.fastMode !== undefined && {
-                  fastMode: runtimeConfig.fastMode,
-                }),
-                ...(runtimeConfig?.sessionMode !== undefined && {
-                  sessionMode: runtimeConfig.sessionMode,
-                }),
-                ...(runtimeConfig?.accessMode !== undefined && {
-                  accessMode: runtimeConfig.accessMode,
-                }),
-              }
-            : s
+          s.id === sessionId ? update(s) : s
         ),
       })),
+      retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
     }));
   },
 
@@ -843,6 +1117,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         runningWorkflowSessionIds = new Set(runningWorkflowSessionIds);
         runningWorkflowSessionIds.delete(sessionId);
       }
+      const update = (session: UnifiedSession): UnifiedSession => ({
+        ...session,
+        isRunning: false,
+        status: 'stopped',
+        tesseraSessionId: undefined,
+      });
       return {
         runningWorkflowSessionIds,
         runtimeLiveness: recordSessionRuntimeEvent(
@@ -854,16 +1134,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         projects: state.projects.map((project) => ({
           ...project,
           sessions: project.sessions.map((s) =>
-            s.id === sessionId
-              ? {
-                  ...s,
-                  isRunning: false,
-                  status: 'stopped' as SessionStatus,
-                  tesseraSessionId: undefined,
-                }
-              : s
+            s.id === sessionId ? update(s) : s
           ),
         })),
+        retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
       };
     }),
 
@@ -891,7 +1165,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionId,
         running,
       );
-      return changed ? { projects, runtimeLiveness } : { runtimeLiveness };
+      const retainedSessions = updateRetainedSession(
+        state.retainedSessions,
+        sessionId,
+        (session) => session.isRunning === running
+          ? session
+          : {
+              ...session,
+              isRunning: running,
+              hasStarted: running ? true : session.hasStarted,
+              status: running ? 'running' : 'stopped',
+            },
+      );
+      return changed || retainedSessions !== state.retainedSessions
+        ? { projects, retainedSessions, runtimeLiveness }
+        : { runtimeLiveness };
     }),
 
   applyGuiRuntimeSnapshot: (activeSessionIds) =>
@@ -904,6 +1192,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return {
         runtimeLiveness,
         projects: applySessionRuntimeLiveness(state.projects, runtimeLiveness),
+        retainedSessions: mapRetainedSessions(
+          state.retainedSessions,
+          (session) => resolveSessionRuntimeLiveness(session, runtimeLiveness),
+        ),
       };
     }),
 
@@ -917,38 +1209,36 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return {
         runtimeLiveness,
         projects: applySessionRuntimeLiveness(state.projects, runtimeLiveness),
+        retainedSessions: mapRetainedSessions(
+          state.retainedSessions,
+          (session) => resolveSessionRuntimeLiveness(session, runtimeLiveness),
+        ),
       };
     }),
 
   updateSessionRuntimeConfig: (sessionId, runtimeConfig) =>
-    set((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((s) =>
-          s.id === sessionId
-            ? {
-                ...s,
-                ...(runtimeConfig.model !== undefined && { model: runtimeConfig.model }),
-                ...(runtimeConfig.reasoningEffort !== undefined && {
-                  reasoningEffort: runtimeConfig.reasoningEffort,
-                }),
-                ...(runtimeConfig.serviceTier !== undefined && {
-                  serviceTier: runtimeConfig.serviceTier,
-                }),
-                ...(runtimeConfig.fastMode !== undefined && {
-                  fastMode: runtimeConfig.fastMode,
-                }),
-                ...(runtimeConfig.sessionMode !== undefined && {
-                  sessionMode: runtimeConfig.sessionMode,
-                }),
-                ...(runtimeConfig.accessMode !== undefined && {
-                  accessMode: runtimeConfig.accessMode,
-                }),
-              }
-            : s
-        ),
-      })),
-    })),
+    set((state) => {
+      const update = (session: UnifiedSession): UnifiedSession => ({
+        ...session,
+        ...(runtimeConfig.model !== undefined && { model: runtimeConfig.model }),
+        ...(runtimeConfig.reasoningEffort !== undefined && {
+          reasoningEffort: runtimeConfig.reasoningEffort,
+        }),
+        ...(runtimeConfig.serviceTier !== undefined && { serviceTier: runtimeConfig.serviceTier }),
+        ...(runtimeConfig.fastMode !== undefined && { fastMode: runtimeConfig.fastMode }),
+        ...(runtimeConfig.sessionMode !== undefined && { sessionMode: runtimeConfig.sessionMode }),
+        ...(runtimeConfig.accessMode !== undefined && { accessMode: runtimeConfig.accessMode }),
+      });
+      return {
+        projects: state.projects.map((project) => ({
+          ...project,
+          sessions: project.sessions.map((s) =>
+            s.id === sessionId ? update(s) : s
+          ),
+        })),
+        retainedSessions: updateRetainedSession(state.retainedSessions, sessionId, update),
+      };
+    }),
 
   setCreatingSession: (sessionId) => set({ creatingSessionId: sessionId }),
 
@@ -958,17 +1248,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   setLoadingSession: (sessionId) => set({ loadingSessionId: sessionId }),
 
-  getSession: (sessionId: string): UnifiedSession | undefined => {
-    const { projects } = get();
-    for (const project of projects) {
-      const session = project.sessions.find((s) => s.id === sessionId);
-      if (session) return session;
-    }
-    return undefined;
-  },
-
   // Unread count actions
-  incrementUnreadCount: (sessionId) =>
+  incrementUnreadCount: (sessionId) => {
+    const nextUnreadCount = (findStoredSession(get(), sessionId)?.unreadCount ?? 0) + 1;
     set((state) => ({
       // Notification handlers already decide whether the session is visibly
       // active. Re-checking the hidden tab's activeSessionId here breaks
@@ -981,9 +1263,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             : s
         ),
       })),
-    })),
+      retainedSessions: updateRetainedSession(
+        state.retainedSessions,
+        sessionId,
+        (session) => ({ ...session, unreadCount: (session.unreadCount || 0) + 1 }),
+      ),
+    }));
+    useTaskStore.getState().setLinkedSessionUnreadCount(sessionId, nextUnreadCount);
+  },
 
-  clearUnreadCount: (sessionId) =>
+  clearUnreadCount: (sessionId) => {
     set((state) => ({
       projects: state.projects.map((project) => ({
         ...project,
@@ -991,35 +1280,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           s.id === sessionId ? { ...s, unreadCount: 0 } : s
         ),
       })),
-    })),
+      retainedSessions: updateRetainedSession(
+        state.retainedSessions,
+        sessionId,
+        (session) => ({ ...session, unreadCount: 0 }),
+      ),
+    }));
+    useTaskStore.getState().setLinkedSessionUnreadCount(sessionId, 0);
+  },
 
   // Task workflow actions
-  updateLinkedTaskWorkflowStatus: (sessionId, workflowStatus) => {
-    const session = get().getSession(sessionId);
+  updateLinkedTaskWorkflowStatus: (sessionId, workflowStatus, projectViewId) => {
+    const session = findStoredSession(get(), sessionId, projectViewId);
     if (!session?.taskId || workflowStatus === 'chat') return;
 
     const nextWorkflowStatus = workflowStatus as NonNullable<UnifiedSession['workflowStatus']>;
-    const previousWorkflowStatus = session.workflowStatus ?? 'todo';
-    if (nextWorkflowStatus === previousWorkflowStatus) return;
+    if (nextWorkflowStatus === (session.workflowStatus ?? 'todo')) return;
 
-    const taskId = session.taskId;
-    get().syncTaskWorkflowStatus(taskId, previousWorkflowStatus, nextWorkflowStatus, sessionId);
-
-    useTaskStore.getState().updateTask(taskId, { workflowStatus: nextWorkflowStatus as any }).then((ok) => {
-      if (ok) return;
-
-      get().syncTaskWorkflowStatus(taskId, nextWorkflowStatus, previousWorkflowStatus);
-      console.warn(`[session-store] updateLinkedTaskWorkflowStatus rollback for task ${taskId}`);
-    });
+    void useTaskStore.getState().updateTask(
+      session.taskId,
+      { workflowStatus: nextWorkflowStatus },
+      projectViewId ?? session.projectDir,
+    );
   },
 
-  updateChatWorkflowStatus: (sessionId, workflowStatus) => {
-    const session = get().getSession(sessionId);
+  updateChatWorkflowStatus: (sessionId, workflowStatus, projectViewId) => {
+    const session = findStoredSession(get(), sessionId, projectViewId);
     if (!session) return;
 
     if (session.taskId) {
       if (workflowStatus) {
-        get().updateLinkedTaskWorkflowStatus(sessionId, workflowStatus);
+        get().updateLinkedTaskWorkflowStatus(sessionId, workflowStatus, projectViewId);
       }
       return;
     }
@@ -1034,6 +1325,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionId,
         previousStatusGroup,
         workflowStatus,
+      ),
+      retainedSessions: updateRetainedSession(
+        state.retainedSessions,
+        sessionId,
+        (retained) => ({
+          ...retained,
+          workflowStatus: workflowStatus ?? undefined,
+          lastModified: new Date().toISOString(),
+        }),
       ),
     }));
 
@@ -1052,6 +1352,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           sessionId,
           workflowStatus ?? 'chat',
           previousWorkflowStatus,
+        ),
+        retainedSessions: updateRetainedSession(
+          state.retainedSessions,
+          sessionId,
+          (retained) => ({
+            ...retained,
+            workflowStatus: previousWorkflowStatus ?? undefined,
+            lastModified: new Date().toISOString(),
+          }),
         ),
       }));
       console.warn(`[session-store] updateChatWorkflowStatus rollback for session ${sessionId}`);
@@ -1078,40 +1387,63 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
   },
 
-  updateSessionCollection: (sessionId, collectionId) => {
-    const session = get().getSession(sessionId);
+  updateSessionCollection: (sessionId, collectionId, projectViewId) => {
+    const session = findStoredSession(get(), sessionId, projectViewId);
     if (!session) return;
 
     if (session.taskId) {
-      void useTaskStore.getState().updateTask(session.taskId, { collectionId });
+      void useTaskStore.getState().updateTask(
+        session.taskId,
+        { collectionId },
+        projectViewId ?? session.projectDir,
+      );
       return;
     }
 
-    const prev = session.collectionId;
+    const targetProjectViewId = projectViewId ?? session.projectDir;
+    const previousCollectionId = session.collectionId;
 
     // Optimistic update
     set((state) => ({
       projects: state.projects.map((project) => ({
         ...project,
         sessions: project.sessions.map((s) =>
-          s.id === sessionId ? { ...s, collectionId: collectionId ?? undefined } : s
+          project.encodedDir === targetProjectViewId && s.id === sessionId
+            ? { ...s, collectionId: collectionId ?? undefined }
+            : s
         ),
       })),
+      retainedSessions: updateRetainedSession(
+        state.retainedSessions,
+        sessionId,
+        (retained) => retained.projectDir === targetProjectViewId
+          ? { ...retained, collectionId: collectionId ?? undefined }
+          : retained,
+      ),
     }));
 
     // Server sync with rollback
     fetchWithClientId(`/api/sessions/${sessionId}/collection`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ collectionId }),
+      body: JSON.stringify({ collectionId, projectViewId: targetProjectViewId }),
     }).catch(() => {
       set((state) => ({
         projects: state.projects.map((project) => ({
           ...project,
-          sessions: project.sessions.map((s) =>
-            s.id === sessionId ? { ...s, collectionId: prev } : s
+          sessions: project.sessions.map((candidate) =>
+            project.encodedDir === targetProjectViewId && candidate.id === sessionId
+              ? { ...candidate, collectionId: previousCollectionId }
+              : candidate
           ),
         })),
+        retainedSessions: updateRetainedSession(
+          state.retainedSessions,
+          sessionId,
+          (retained) => retained.projectDir === targetProjectViewId
+            ? { ...retained, collectionId: previousCollectionId }
+            : retained,
+        ),
       }));
     });
   },
@@ -1125,47 +1457,48 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   replaceCollectionId: (fromCollectionId, toCollectionId) => {
     set((state) => ({
       projects: replaceCollectionIdInProjects(state.projects, fromCollectionId, toCollectionId),
-    }));
-  },
-
-  setTaskIdForSessions: (sessionIds, taskId) => {
-    if (sessionIds.length === 0) return;
-
-    const targetIds = new Set(sessionIds);
-    set((state) => ({
-      projects: state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.map((session) =>
-          targetIds.has(session.id)
-            ? { ...session, taskId: taskId ?? undefined }
-            : session
-        ),
-      })),
+      retainedSessions: mapRetainedSessions(
+        state.retainedSessions,
+        (session) => session.collectionId === fromCollectionId
+          ? { ...session, collectionId: toCollectionId ?? undefined }
+          : session,
+      ),
     }));
   },
 
   toggleArchive: (sessionId, archived) => {
-    const session = get().getSession(sessionId);
+    const session = findStoredSession(get(), sessionId);
+    const archivedAt = archived ? new Date().toISOString() : undefined;
+    const updateArchive = (target: UnifiedSession): UnifiedSession => ({
+      ...target,
+      archived,
+      archivedAt,
+      isReadOnly: archived,
+    });
 
     // Capture previous value for rollback
     const prevArchived = session?.archived;
     const prevArchivedAt = session?.archivedAt;
+
+    // A task-owned session archived on its own leaves its task's session list.
+    // Held for rollback so a failed request puts the row back where it was.
+    const removedTaskSession = archived
+      ? useTaskStore.getState().removeTaskSession(sessionId)
+      : null;
 
     // Optimistic update
     set((state) => ({
       projects: state.projects.map((project) => ({
         ...project,
         sessions: project.sessions.map((s) =>
-          s.id === sessionId
-            ? {
-                ...s,
-                archived,
-                archivedAt: archived ? new Date().toISOString() : undefined,
-                isReadOnly: archived ? true : false,
-              }
-            : s
+          s.id === sessionId ? updateArchive(s) : s
         ),
       })),
+      retainedSessions: updateRetainedSession(
+        state.retainedSessions,
+        sessionId,
+        updateArchive,
+      ),
     }));
 
     fetchWithClientId(`/api/sessions/${sessionId}/archive`, {
@@ -1187,7 +1520,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
 
         if (archived) {
-          useTabStore.getState().retireSessionSurface(sessionId);
+          retireProjectViewSessionSurfaces(sessionId);
         }
 
         if (result.cleanupError) {
@@ -1196,6 +1529,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       })
       .catch(() => {
         // Rollback on any network or server error
+        if (removedTaskSession) {
+          useTaskStore.getState().restoreTaskSession(removedTaskSession);
+        }
         if (prevArchived !== undefined) {
           set((state) => ({
             projects: state.projects.map((project) => ({
@@ -1211,111 +1547,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                   : s
               ),
             })),
+            retainedSessions: updateRetainedSession(
+              state.retainedSessions,
+              sessionId,
+              (retained) => ({
+                ...retained,
+                archived: prevArchived,
+                archivedAt: prevArchivedAt,
+                isReadOnly: prevArchived,
+              }),
+            ),
           }));
           console.warn(`[session-store] toggleArchive rollback for session ${sessionId}`);
         }
       });
-  },
-
-  moveSession: (sessionId, targetProjectId) => {
-    // Find session and source project for rollback
-    const state = get();
-    let session: UnifiedSession | undefined;
-    let sourceProject: ProjectGroup | undefined;
-    for (const p of state.projects) {
-      const s = p.sessions.find((s) => s.id === sessionId);
-      if (s) { session = s; sourceProject = p; break; }
-    }
-    if (!session || !sourceProject) return;
-
-    const targetProject = state.projects.find(
-      (p) => p.decodedPath === targetProjectId || p.encodedDir === targetProjectId
-    );
-    if (!targetProject || targetProject.encodedDir === sourceProject.encodedDir) return;
-
-    const movedSession: UnifiedSession = {
-      ...session,
-      projectDir: targetProject.encodedDir,
-      lastModified: new Date().toISOString(),
-    };
-
-    // Optimistic update: remove from source, add to target
-    const sessionStatus = getSessionStatusGroup(session);
-    set((state) => ({
-      projects: state.projects.map((p) => {
-        if (p.encodedDir === sourceProject!.encodedDir) {
-          const counts = { ...p.countByStatus };
-          if (sessionStatus && counts[sessionStatus] != null) {
-            counts[sessionStatus] = Math.max(0, counts[sessionStatus] - 1);
-          }
-          return {
-            ...p,
-            sessions: p.sessions.filter((s) => s.id !== sessionId),
-            totalSessions: Math.max(0, p.totalSessions - 1),
-            loadedCount: Math.max(0, p.loadedCount - 1),
-            countByStatus: counts,
-          };
-        }
-        if (p.encodedDir === targetProject!.encodedDir) {
-          const counts = { ...p.countByStatus };
-          if (sessionStatus) {
-            counts[sessionStatus] = (counts[sessionStatus] ?? 0) + 1;
-          }
-          return {
-            ...p,
-            sessions: [movedSession, ...p.sessions],
-            totalSessions: p.totalSessions + 1,
-            loadedCount: p.loadedCount + 1,
-            countByStatus: counts,
-          };
-        }
-        return p;
-      }),
-    }));
-
-    // Server sync with rollback
-    fetchWithClientId(`/api/sessions/${sessionId}/move`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetProjectId }),
-    }).then((res) => {
-      if (!res.ok) throw new Error('Move failed');
-    }).catch(() => {
-      // Rollback: move session back to source
-      set((state) => ({
-        projects: state.projects.map((p) => {
-          if (p.encodedDir === targetProject!.encodedDir) {
-            const counts = { ...p.countByStatus };
-            if (sessionStatus && counts[sessionStatus] != null) {
-              counts[sessionStatus] = Math.max(0, counts[sessionStatus] - 1);
-            }
-            return {
-              ...p,
-              sessions: p.sessions.filter((s) => s.id !== sessionId),
-              totalSessions: Math.max(0, p.totalSessions - 1),
-              loadedCount: Math.max(0, p.loadedCount - 1),
-              countByStatus: counts,
-            };
-          }
-          if (p.encodedDir === sourceProject!.encodedDir) {
-            const counts = { ...p.countByStatus };
-            if (sessionStatus) {
-              counts[sessionStatus] = (counts[sessionStatus] ?? 0) + 1;
-            }
-            return {
-              ...p,
-              sessions: [session!, ...p.sessions],
-              totalSessions: p.totalSessions + 1,
-              loadedCount: p.loadedCount + 1,
-              countByStatus: counts,
-            };
-          }
-          return p;
-        }),
-      }));
-      console.warn(`[session-store] moveSession rollback for session ${sessionId}`);
-      toast.error('Failed to move session');
-    });
   },
 
   getSessionsByStatusGroup: (projectDir, statusGroup, excludeArchived = true) => {
@@ -1353,10 +1598,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Session reorder within a project-scoped sidebar grouping (optimistic + server sync)
   reorderProjectSessions: (projectDir, orderedIds) => {
     // Optimistic update: rewrite sortOrder for matching sessions
+    const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
     set((state) => ({
       projects: state.projects.map((p) => {
         if (p.encodedDir !== projectDir) return p;
-        const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
         return {
           ...p,
           sessions: p.sessions.map((s) =>
@@ -1366,13 +1611,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           ),
         };
       }),
+      retainedSessions: mapRetainedSessions(
+        state.retainedSessions,
+        (session) => session.projectDir === projectDir && orderMap.has(session.id)
+          ? { ...session, sortOrder: orderMap.get(session.id)! }
+          : session,
+      ),
     }));
 
     // Persist to server
     fetchWithClientId('/api/sessions/reorder', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: projectDir, orderedIds }),
+      body: JSON.stringify({ orderedIds }),
     }).catch(() => {
       get().loadProjects();
     });
@@ -1390,6 +1641,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             : s
         ),
       })),
+      retainedSessions: mapRetainedSessions(
+        state.retainedSessions,
+        (session) => orderMap.has(session.id)
+          ? { ...session, sortOrder: orderMap.get(session.id)! }
+          : session,
+      ),
     }));
     fetchWithClientId('/api/sessions/reorder', {
       method: 'PATCH',
@@ -1428,8 +1685,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
   hasRunningWorkflow: (sessionId) => get().runningWorkflowSessionIds.has(sessionId),
 
-  applyDiffStatsUpdate: (sessionIds, diffStats) => {
-    if (sessionIds.length === 0) return;
+  applyDiffStatsUpdate: (sessionIds, diffStats, workDir) => {
+    if (sessionIds.length === 0 && !workDir) return;
     const targets = new Set(sessionIds);
     set((state) => {
       let projectsChanged = false;
@@ -1441,12 +1698,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           projectChanged = true;
           return { ...session, diffStats };
         });
+        const nextProjectWorktree = workDir && project.projectWorktree?.path === workDir
+          && project.projectWorktree.diffStats !== diffStats
+          ? { ...project.projectWorktree, diffStats }
+          : project.projectWorktree;
+        if (nextProjectWorktree !== project.projectWorktree) projectChanged = true;
         if (!projectChanged) return project;
         projectsChanged = true;
-        return { ...project, sessions: nextSessions };
+        return { ...project, sessions: nextSessions, projectWorktree: nextProjectWorktree };
       });
-      if (!projectsChanged) return state;
-      return { projects: nextProjects };
+      const retainedSessions = mapRetainedSessions(
+        state.retainedSessions,
+        (session) => targets.has(session.id) && session.diffStats !== diffStats
+          ? { ...session, diffStats }
+          : session,
+      );
+      if (!projectsChanged && retainedSessions === state.retainedSessions) return state;
+      return { projects: nextProjects, retainedSessions };
     });
   },
 

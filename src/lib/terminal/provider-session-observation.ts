@@ -1,4 +1,5 @@
 import logger from '@/lib/logger';
+import * as dbSessions from '@/lib/db/sessions';
 import { broadcastSessionMutation } from '@/lib/ws/mutation-broadcast';
 import type { PaneTokenEntry } from './pane-token-registry';
 import type { TerminalProviderSessionIdentity } from './provider-session-identity';
@@ -14,8 +15,10 @@ export function observeTerminalProviderSession(options: {
   identity: TerminalProviderSessionIdentity;
   activation: 'active' | 'background';
   origin?: TerminalProviderSessionOrigin;
+  /** Where the observed conversation runs, when it left the parent's directory. */
+  workDir?: string;
 }): { ignored: boolean; sessionId: string | null } {
-  const { pane, identity, activation, origin } = options;
+  const { pane, identity, activation, origin, workDir } = options;
   const activeSessionId = pane.sessionId
     ? terminalManager.getSessionIdForTerminal(pane.terminalId, pane.userId)
     : null;
@@ -52,11 +55,14 @@ export function observeTerminalProviderSession(options: {
     identity,
     activation,
     ...(origin ? { origin } : {}),
+    ...(workDir ? { workDir } : {}),
   });
   if (reconciliation.kind === 'created') {
     broadcastSessionMutation(pane.userId, {
       kind: 'created',
       projectId: reconciliation.projectId,
+      sessionId: reconciliation.sessionId,
+      taskId: dbSessions.getSession(reconciliation.sessionId)?.task_id ?? undefined,
     });
   }
   const rebound = !isBackgroundIdentity

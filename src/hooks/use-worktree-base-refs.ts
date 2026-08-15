@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import type { WorktreeCreationSource } from '@/lib/worktrees/create';
+
+export type WorktreeCreationMode = WorktreeCreationSource['mode'];
 
 export type WorktreeBaseRefKind = 'local' | 'remote' | 'detached';
 
@@ -15,6 +18,17 @@ interface WorktreeBaseRefsResponse {
   error?: string;
 }
 
+export function resolveWorktreeCreationSource(
+  mode: WorktreeCreationMode,
+  selectedBaseRefForCreate: string | undefined,
+  selectedRef: WorktreeBaseRef | null,
+): WorktreeCreationSource | null {
+  if (mode === 'checkout-branch') {
+    return selectedRef ? { mode, branch: selectedRef.name } : null;
+  }
+  return { mode, baseRef: selectedBaseRefForCreate ?? null };
+}
+
 export function useWorktreeBaseRefs(projectDir: string | null | undefined) {
   const [refs, setRefs] = useState<WorktreeBaseRef[]>([]);
   const [selectedBaseRef, setSelectedBaseRef] = useState('');
@@ -23,6 +37,7 @@ export function useWorktreeBaseRefs(projectDir: string | null | undefined) {
   const [loadedProjectDir, setLoadedProjectDir] = useState<string | null>(null);
   const [hasUserSelectedBaseRef, setHasUserSelectedBaseRef] = useState(false);
   const [currentBaseRefName, setCurrentBaseRefName] = useState<string | null>(null);
+  const [creationMode, setCreationMode] = useState<WorktreeCreationMode>('branch-off');
 
   useEffect(() => {
     if (!projectDir) {
@@ -36,6 +51,7 @@ export function useWorktreeBaseRefs(projectDir: string | null | undefined) {
       setError(null);
       setHasUserSelectedBaseRef(false);
       setCurrentBaseRefName(null);
+      setCreationMode('branch-off');
     });
 
     const params = new URLSearchParams({ projectDir });
@@ -81,6 +97,10 @@ export function useWorktreeBaseRefs(projectDir: string | null | undefined) {
     setHasUserSelectedBaseRef(true);
   }, []);
 
+  const chooseCreationMode = useCallback((mode: WorktreeCreationMode) => {
+    setCreationMode(mode);
+  }, []);
+
   const isStale = Boolean(projectDir && loadedProjectDir !== projectDir);
   const effectiveRefs = useMemo(
     () => projectDir && !isStale ? refs : [],
@@ -99,6 +119,14 @@ export function useWorktreeBaseRefs(projectDir: string | null | undefined) {
       && effectiveSelectedBaseRef !== currentBaseRefName
       ? effectiveSelectedBaseRef
       : undefined;
+  const worktreeSourceForCreate = useMemo(
+    () => resolveWorktreeCreationSource(
+      creationMode,
+      selectedBaseRefForCreate,
+      selectedRef,
+    ),
+    [creationMode, selectedBaseRefForCreate, selectedRef],
+  );
 
   return {
     refs: effectiveRefs,
@@ -106,6 +134,9 @@ export function useWorktreeBaseRefs(projectDir: string | null | undefined) {
     selectedBaseRefForCreate,
     selectedRef,
     setSelectedBaseRef: chooseBaseRef,
+    creationMode,
+    setCreationMode: chooseCreationMode,
+    worktreeSourceForCreate,
     isLoading: Boolean(projectDir) && (isLoading || isStale),
     error: projectDir && !isStale ? error : null,
   };

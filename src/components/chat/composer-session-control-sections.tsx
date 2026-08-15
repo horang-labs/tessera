@@ -1,6 +1,5 @@
 'use client';
 
-import { useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Gauge, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type {
@@ -8,6 +7,8 @@ import type {
   ProviderReasoningEffortOption,
 } from '@/lib/cli/provider-session-options';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
 
 interface SessionControlMenuOption {
   value: ProviderSessionMode | ProviderSessionAccessMode;
@@ -29,6 +30,7 @@ interface ComposerSessionControlMenuProps {
   options: SessionControlMenuOption[];
   selectedValue: ProviderSessionMode | ProviderSessionAccessMode;
   onSelect: (value: ProviderSessionMode | ProviderSessionAccessMode) => void;
+  telemetryControl: TelemetryUiControl;
 }
 
 interface ComposerModelMenuProps {
@@ -37,11 +39,7 @@ interface ComposerModelMenuProps {
   selectedModel: string;
   loadingLabel: string;
   onSelectModel: (model: string) => void;
-  allowCustomModel?: boolean;
-  customLabel?: string;
-  customPlaceholder?: string;
-  customApplyLabel?: string;
-  customHint?: string;
+  telemetryControl: TelemetryUiControl;
 }
 
 interface ComposerReasoningEffortMenuProps {
@@ -51,6 +49,7 @@ interface ComposerReasoningEffortMenuProps {
   /** Disable spawn-only options (requiresRestart) while the session is running. */
   disableRestartRequired?: boolean;
   restartRequiredTooltip?: string;
+  telemetryControl: TelemetryUiControl;
 }
 
 interface ComposerReadonlyReasoningBadgeProps {
@@ -69,6 +68,7 @@ export function ComposerSessionRunState({
   if (isRunning) {
     return (
       <button
+        {...telemetryClickAttributes('composer.stop', 'composer')}
         type="button"
         onClick={onStop}
         data-composer-control="run-state"
@@ -109,11 +109,13 @@ export function ComposerSessionControlMenu({
   options,
   selectedValue,
   onSelect,
+  telemetryControl,
 }: ComposerSessionControlMenuProps) {
   return (
     <>
       {options.map((option) => (
         <button
+          {...telemetryClickAttributes(telemetryControl, 'composer')}
           key={option.value}
           type="button"
           data-composer-menu-item
@@ -143,43 +145,13 @@ export function ComposerModelMenu({
   selectedModel,
   loadingLabel,
   onSelectModel,
-  allowCustomModel = false,
-  customLabel,
-  customPlaceholder,
-  customApplyLabel,
-  customHint,
+  telemetryControl,
 }: ComposerModelMenuProps) {
-  const isListedModel = modelOptions.some((option) => option.value === selectedModel);
-  // Seed the field with the active model when it isn't one of the listed options,
-  // so opening the menu shows (and lets you edit) the current custom selection.
-  const [customValue, setCustomValue] = useState(() =>
-    !isListedModel && selectedModel ? selectedModel : '',
-  );
-
-  const submitCustomModel = () => {
-    const trimmed = customValue.trim();
-    if (trimmed) {
-      onSelectModel(trimmed);
-    }
-  };
-
-  const handleCustomKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      submitCustomModel();
-      return;
-    }
-    // Let Escape bubble to close the menu; keep every other key (typing, arrows,
-    // Home/End) inside the input instead of triggering menu arrow-navigation.
-    if (event.key !== 'Escape') {
-      event.stopPropagation();
-    }
-  };
-
   return (
     <>
       {modelOptions.map((option) => (
         <button
+          {...telemetryClickAttributes(telemetryControl, 'composer')}
           key={option.value}
           type="button"
           data-composer-menu-item
@@ -201,38 +173,6 @@ export function ComposerModelMenu({
           {loadingLabel}
         </div>
       )}
-      {allowCustomModel && (
-        <div className="mt-1 border-t border-(--chat-header-border) px-3 py-2">
-          {customLabel && (
-            <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-(--text-muted)">
-              {customLabel}
-            </div>
-          )}
-          <div className="flex items-center gap-1.5">
-            <input
-              type="text"
-              value={customValue}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder={customPlaceholder}
-              onChange={(event) => setCustomValue(event.target.value)}
-              onKeyDown={handleCustomKeyDown}
-              className="h-7 min-w-0 flex-1 rounded-md border border-(--divider) bg-(--input-bg) px-2 text-xs text-(--text-primary) outline-none focus:border-(--accent)/50"
-            />
-            <button
-              type="button"
-              onClick={submitCustomModel}
-              disabled={customValue.trim().length === 0}
-              className="h-7 shrink-0 rounded-md border border-(--divider) px-2.5 text-[11px] text-(--text-secondary) transition-colors hover:border-(--accent)/40 hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {customApplyLabel}
-            </button>
-          </div>
-          {customHint && (
-            <div className="mt-1.5 text-[10px] leading-snug text-(--text-muted)">{customHint}</div>
-          )}
-        </div>
-      )}
     </>
   );
 }
@@ -243,6 +183,7 @@ export function ComposerReasoningEffortMenu({
   onSelect,
   disableRestartRequired,
   restartRequiredTooltip,
+  telemetryControl,
 }: ComposerReasoningEffortMenuProps) {
   return (
     <>
@@ -250,6 +191,7 @@ export function ComposerReasoningEffortMenu({
         const isDisabled = disableRestartRequired === true && option.requiresRestart === true;
         return (
           <button
+            {...telemetryClickAttributes(telemetryControl, 'composer')}
             key={option.value}
             type="button"
             data-composer-menu-item

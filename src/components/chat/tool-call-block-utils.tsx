@@ -54,6 +54,14 @@ export function resolveToolUseId(id: string, explicitToolUseId?: string): string
   return historyMatch ? historyMatch[1] : null;
 }
 
+/** "42s" below a minute, "3m 05s" above — for live tool_progress elapsed ticks. */
+export function formatElapsedSeconds(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
 export function shortenToolName(name: string): string {
   if (name.startsWith('mcp__')) {
     const lastSeparator = name.lastIndexOf('__');

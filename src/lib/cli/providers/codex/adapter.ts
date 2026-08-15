@@ -14,20 +14,24 @@
  *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
  *  3. Await response id=1 (server confirms protocol)
  *  4. Write initialized notification
- *  5. Write thread/start request (id=2)
- *  6. Await response id=2 (server returns threadId)
+ *  5. Optionally register Tessera's session-scoped skill root
+ *  6. Write thread/start request and await its response
  *  7. For each user turn: write turn/start notification with user input text
  */
 
 import { randomUUID } from 'crypto';
 import fs from 'fs';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import path from 'path';
 import type { ChildProcess } from 'child_process';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type {
   CliProvider,
   SpawnOptions,
   SpawnResult,
   ParsedMessage,
+  GeneratedText,
   GeneratedTitle,
   TranslatedText,
   SkillSource,
@@ -37,6 +41,12 @@ import type {
   CliRawLogSink,
 } from '../types';
 import { createCodexTerminalSessionObserver } from './terminal-session-observer';
+import {
+  createCodexTranscriptDecoderState,
+  decodeCodexTranscriptLine,
+} from './transcript-decoder';
+import { fingerprintTranscriptFile } from '../claude-code/transcript-path';
+import { resolveCodexTranscriptPath } from './transcript-path';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
@@ -69,6 +79,7 @@ import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 
 const CLI_TIMEOUT_MS = 120_000;
+const SKILLS_REQUEST_TIMEOUT_MS = 10_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
 const TITLE_REASONING_EFFORT = 'low';
 const PROVIDER_ID = 'codex';
@@ -214,11 +225,10 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
 export class CodexAdapter implements CliProvider {
   /**
    * Counter for JSON-RPC request IDs used by sendMessage / sendInterrupt.
-   * Starts at 3 because the handshake reserves local ids 1 and 2 (initialize
-   * and thread/start|resume). This avoids id collisions when the handshake
-   * response is still being parsed.
+   * Starts at 4 because a managed handshake can reserve local ids 1 through 3
+   * (initialize, skills/extraRoots/set, and thread/start|resume).
    */
-  private _nextRequestId = 3;
+  private _nextRequestId = 4;
 
   /**
    * Maps a CLI child process to its Codex threadId (set during handshake).
@@ -278,6 +288,63 @@ export class CodexAdapter implements CliProvider {
   createTerminalSessionObserver = createCodexTerminalSessionObserver;
 
   detectTerminalConversationReset = codexScreenShowsConversationReset;
+
+  /** Identity of the rollout file backing this session (see CliProvider). */
+  async readTerminalTranscriptFingerprint(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<string | null> {
+    return fingerprintTranscriptFile(await resolveCodexTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
+    }));
+  }
+
+  /**
+   * Replays a PTY session's Codex rollout as Tessera history events.
+   * Streamed line-by-line: rollouts routinely reach tens of MB and must not be
+   * buffered whole just to decode them.
+   */
+  async readTerminalTranscriptEvents(options: {
+    sessionId: string;
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<SessionHistoryEvent[] | null> {
+    const filePath = await resolveCodexTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
+    });
+    if (!filePath) return null;
+
+    const decoderState = createCodexTranscriptDecoderState();
+    const events: SessionHistoryEvent[] = [];
+    const stream = createReadStream(filePath, { encoding: 'utf-8' });
+
+    try {
+      const lines = createInterface({ input: stream, crlfDelay: Infinity });
+      for await (const line of lines) {
+        events.push(...decodeCodexTranscriptLine(line, decoderState));
+      }
+    } catch (error) {
+      // A rollout that vanished mid-read (overlay cleaned up) is the same
+      // "nothing to show" case as never finding one.
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+      logger.warn({
+        sessionId: options.sessionId,
+        filePath,
+        error: (error as Error).message,
+      }, 'Failed to read Codex terminal transcript');
+      return null;
+    } finally {
+      stream.destroy();
+    }
+
+    return events;
+  }
 
   canResumeTerminalAfterRestart(providerState: string | null): boolean {
     if (!providerState) return false;
@@ -384,8 +451,8 @@ export class CodexAdapter implements CliProvider {
    *  2. Write initialize request (id=1, protocolVersion "2025-01-01")
    *  3. Await response id=1
    *  4. Write initialized notification
-   *  5. Write thread/start request (id=2)
-   *  6. Await response id=2, extract threadId
+   *  5. Optionally register a session-scoped skill root
+   *  6. Write thread/start request, await its response, and extract threadId
    *  7. Store threadId on the protocol parser
    *
    * The sessionId in SpawnOptions is used to key the parser's per-session state.
@@ -396,13 +463,19 @@ export class CodexAdapter implements CliProvider {
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
     const cliWorkDir = normalizeCwdForCliEnvironment(workDir, agentEnv);
 
+    const spawnEnv: Record<string, string | undefined> = {
+      ...process.env,
+      ...(options.managedLaunch?.environment ?? {}),
+    };
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
       shell: false,
-      env: process.env as NodeJS.ProcessEnv,
+      env: spawnEnv as NodeJS.ProcessEnv,
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
-    }, agentEnv);
+    }, agentEnv, {
+      guestEnvironment: options.managedLaunch?.guestEnvironment,
+    });
     this._attachRawLog(cliProcess, options.rawLog, {
       providerId: PROVIDER_ID,
       command,
@@ -819,20 +892,19 @@ export class CodexAdapter implements CliProvider {
    * to 100 chars, descriptions to 500 chars. Entries with empty names are
    * filtered out. The `path` field from SkillMetadata is preserved in SkillInfo.
    *
-   * Returns null if no threadId is available for the process.
+   * Skills are scoped by working directory, independently of the active thread.
+   * Requests bypass Codex's cache so an invalidation observes current files.
    */
   createSkillSource(sessionId: string, proc: ChildProcess): SkillSource | null {
     return {
       listSkills: async (): Promise<SkillInfo[]> => {
-        const threadId = this._processThreadIds.get(proc);
-        if (!threadId) {
-          logger.debug('CodexAdapter: createSkillSource.listSkills — no threadId', { sessionId });
-          return [];
+        const cwd = this._processRuntimeConfig.get(proc)?.cwd;
+        if (!cwd) {
+          throw new Error('Codex skill discovery is unavailable: session cwd is missing');
         }
 
         if (!proc.stdin?.writable) {
-          logger.debug('CodexAdapter: createSkillSource.listSkills — stdin not writable', { sessionId });
-          return [];
+          throw new Error('Codex skill discovery is unavailable: stdin is not writable');
         }
 
         const requestId = this._nextRequestId++;
@@ -840,22 +912,30 @@ export class CodexAdapter implements CliProvider {
           jsonrpc: '2.0',
           id: requestId,
           method: 'skills/list',
-          params: { threadId },
+          params: {
+            cwds: [cwd],
+            forceReload: true,
+          },
         };
 
         codexProtocolParser.trackPendingRequest(sessionId, requestId, 'skills/list');
         this._writeStdin(proc, 'skills_list', `${JSON.stringify(request)}\n`);
-        logger.debug('CodexAdapter: sent skills/list request', { sessionId, requestId, threadId });
+        logger.debug('CodexAdapter: sent skills/list request', { sessionId, requestId, cwd });
 
         let response: { id: number; result?: Record<string, any>; error?: any };
         try {
-          response = await this._awaitResponse(proc, requestId, 'skills/list');
+          response = await this._awaitResponse(
+            proc,
+            requestId,
+            'skills/list',
+            SKILLS_REQUEST_TIMEOUT_MS,
+          );
         } catch (err) {
           logger.warn('CodexAdapter: skills/list request failed', {
             sessionId,
             error: (err as Error).message,
           });
-          return [];
+          throw err;
         }
 
         // Parse ListSkillsResponseEvent
@@ -925,6 +1005,30 @@ export class CodexAdapter implements CliProvider {
    *
    * Returns null on any error/timeout/empty result (fail-open).
    */
+  /**
+   * Runs a caller-built prompt one-shot and returns the raw agent text, with no
+   * title parsing and no length clamp — see the contract note on `generateText`.
+   *
+   * Returns null on any error/timeout/empty (fail-open).
+   */
+  async generateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<GeneratedText | null> {
+    try {
+      const extra = model ? ['-c', `model="${model}"`] : [];
+      const text = await this._execOneShot(prompt, userId, extra);
+      const t = text.trim();
+      return t ? { text: t } : null;
+    } catch (err) {
+      logger.warn('CodexAdapter: generateText failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
   async translateText(
     prompt: string,
     userId?: string,
@@ -952,11 +1056,11 @@ export class CodexAdapter implements CliProvider {
    *  1. Writes initialize request (id=1)
    *  2. Awaits success response with id=1
    *  3. Writes initialized notification
-   *  4. Determines thread method: thread/resume (if options.resume && options.threadId)
+   *  4. Optionally registers session-scoped skill roots
+   *  5. Determines thread method: thread/resume (if options.resume && options.threadId)
    *     or thread/start (new session or fallback when threadId is missing)
-   *  5. Writes the thread request (id=2)
-   *  6. Awaits response with id=2 and extracts threadId
-   *  7. Stores threadId on the protocol parser for the given sessionId
+   *  6. Writes the thread request and awaits its response
+   *  7. Extracts and stores threadId on the protocol parser for the given sessionId
    *
    * Uses a local nextId counter (starting at 1) to avoid interleaving with the
    * singleton this._nextRequestId used by sendMessage / sendInterrupt.
@@ -966,7 +1070,7 @@ export class CodexAdapter implements CliProvider {
     sessionId: string,
     options?: SpawnOptions,
   ): Promise<void> {
-    // Local counter: ids 1 and 2 are reserved for handshake steps.
+    // Local counter: ids are reserved for the complete handshake sequence.
     // Using a local counter prevents id interleaving when multiple spawns
     // happen concurrently before any sendMessage calls.
     let nextId = 1;
@@ -1000,6 +1104,32 @@ export class CodexAdapter implements CliProvider {
     };
     this._writeStdin(proc, 'handshake_initialized', `${JSON.stringify(initializedNotification)}\n`);
     logger.info('CodexAdapter: sent initialized notification', { sessionId });
+
+    if (options?.managedLaunch?.skillOverlay) {
+      const skillsRequestId = nextId++;
+      const skillsRequest: JsonRpcRequest = {
+        jsonrpc: '2.0',
+        id: skillsRequestId,
+        method: 'skills/extraRoots/set',
+        params: { extraRoots: [options.managedLaunch.skillOverlay.skillsDir] },
+      };
+      codexProtocolParser.trackPendingRequest(
+        sessionId,
+        skillsRequestId,
+        'skills/extraRoots/set',
+      );
+      this._writeStdin(
+        proc,
+        'handshake_skills_extra_roots',
+        `${JSON.stringify(skillsRequest)}\n`,
+      );
+      await this._awaitResponse(
+        proc,
+        skillsRequestId,
+        'skills/extraRoots/set',
+        startupTimeoutMs,
+      );
+    }
 
     // Step 4: Determine whether to resume an existing thread or start a new one
     const isResume = options?.resume === true && !!options?.threadId;

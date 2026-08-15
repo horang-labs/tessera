@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState } from 'react';
 import { Brain, Clock, Zap, CheckCircle } from 'lucide-react';
 import type { ThinkingMessage } from '@/types/chat';
@@ -62,6 +64,7 @@ function ThinkingBlockBody({
       alignWithMessageBody && MESSAGE_BODY_OFFSET_CLASS,
     )}>
       <button
+        {...telemetryClickAttributes('message.thinking.toggle', 'message')}
         onClick={hasBody ? () => setIsExpanded(!isExpanded) : undefined}
         disabled={!hasBody}
         className={`flex w-full items-center gap-2 px-2.5 py-1.5 rounded-md border border-(--tool-border) bg-(--tool-bg) text-left transition-colors ${

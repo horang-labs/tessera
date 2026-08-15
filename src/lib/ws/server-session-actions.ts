@@ -16,6 +16,7 @@ import {
 } from '../chat/codex-slash-command-registry';
 import { buildUserMessageDisplayContent } from '../chat/build-user-message-display-content';
 import { refreshSessionDiffStateInBackground } from '../git/session-diff-refresh';
+import { waitForPreparationBeforeAgent } from '../projects/preparation-gate';
 import { SettingsManager } from '../settings/manager';
 import {
   getProviderExecutionCapabilities,
@@ -197,7 +198,7 @@ export async function createSessionFromWebSocket({
     });
     const resolvedWorkDir = workDir || process.cwd();
 
-    persistCreatedSessionRecord({
+    const persistedProject = persistCreatedSessionRecord({
       sessionId: result.sessionId,
       resolvedWorkDir,
       title: result.title,
@@ -212,6 +213,7 @@ export async function createSessionFromWebSocket({
       type: 'session_created',
       sessionId: result.sessionId,
       status: 'ready',
+      projectId: persistedProject.projectId,
       workDir: resolvedWorkDir,
       provider: resolvedProviderId,
       kind: dbSessions.extractSessionKind(dbSessions.getSession(result.sessionId)?.provider_state ?? null),
@@ -622,7 +624,22 @@ async function ensureSessionProcess({
     });
     return false;
   }
-  const workDir = session.work_dir || process.cwd();
+  const effectiveWorkDir = dbSessions.getSessionWorktreeContext(sessionId)?.workDir;
+  const workDir = effectiveWorkDir || process.cwd();
+
+  // A CLI reads its instruction files once, at startup. Starting it before the
+  // worktree has them means this session never sees them, so the spawn waits —
+  // and the user is told, because a message that sits there unanswered with no
+  // explanation is the one thing worse than waiting.
+  const waited = await waitForPreparationBeforeAgent({
+    workDir: effectiveWorkDir,
+    onWaitStarted: () => {
+      sendToUser(userId, { type: 'session_awaiting_preparation', sessionId });
+    },
+  });
+  if (waited.waited) {
+    sendToUser(userId, { type: 'session_preparation_settled', sessionId });
+  }
 
   const result = await sessionOrchestrator.resumeSession(userId, sessionId, {
     workDir,
@@ -711,9 +728,9 @@ export async function resumeSessionFromWebSocket({
     return;
   }
   try {
-    const sessionRecord = dbSessions.getSession(sessionId);
+    const sessionRecord = dbSessions.getSessionWorktreeContext(sessionId);
     const result = await sessionOrchestrator.resumeSession(userId, sessionId, {
-      workDir: sessionRecord?.work_dir || undefined,
+      workDir: sessionRecord?.workDir || undefined,
       permissionMode,
       sessionMode,
       accessMode,

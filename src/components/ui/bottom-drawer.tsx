@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -86,7 +88,11 @@ export function BottomDrawer({
           aria-label="Resize drawer"
           role="separator"
         >
-          <div className="mx-auto mt-[2px] h-[2px] w-10 rounded-full bg-(--accent) opacity-0 transition-opacity group-hover:opacity-60" />
+          {/* Shown below the Phone viewport step: `hover:` compiles to
+              `@media (hover: hover)`, so on a phone no rule exists to reveal the grip and
+              the handle looks like nothing at all. The reveal is kept from `sm` up (#250).
+              Dragging it still needs a pointer — this only marks where the handle is. */}
+          <div className="mx-auto mt-[2px] h-[2px] w-10 rounded-full bg-(--accent) opacity-60 sm:opacity-0 transition-opacity sm:group-hover:opacity-60" />
         </div>
       ) : null}
 
@@ -103,6 +109,7 @@ export function BottomDrawer({
         </div>
         {headerActions}
         <button
+          {...telemetryClickAttributes('git.diff.close', 'git_panel')}
           onClick={onClose}
           className="shrink-0 rounded p-1.5 text-(--text-muted) transition-colors hover:bg-(--tool-bg) hover:text-(--text-secondary)"
           aria-label="Close drawer"

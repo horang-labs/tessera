@@ -6,6 +6,11 @@ export interface ProviderTerminalLaunchInput {
   codexResumeId?: string;   // codex 전용: 캡처한 rollout session_id (codex resume <id>)
   opencodeResumeId?: string;
   providerSessionActivation?: 'active' | 'background';
+  initialPrompt?: string;
+  claudePluginDir?: string;
+  model?: string;
+  reasoningEffort?: string | null;
+  serviceTier?: string | null;
 }
 
 export interface ProviderTerminalLaunch {
@@ -25,6 +30,38 @@ export const TERMINAL_PROVIDER_COMMANDS: Readonly<Record<string, string>> = {
   opencode: 'opencode',
 };
 
+function buildClaudeSettingsJson(
+  settingsJson: string,
+  reasoningEffort: string | null | undefined,
+): string {
+  if (!reasoningEffort || reasoningEffort === 'auto' || reasoningEffort === 'max') {
+    return settingsJson;
+  }
+  const settings = JSON.parse(settingsJson) as unknown;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('claude terminal launch requires object settings');
+  }
+  const merged = settings as Record<string, unknown>;
+  if (reasoningEffort === 'ultracode') {
+    merged.ultracode = true;
+  } else {
+    merged.effortLevel = reasoningEffort;
+  }
+  return JSON.stringify(merged);
+}
+
+function buildCodexSelectionArgs(input: ProviderTerminalLaunchInput): string[] {
+  const args: string[] = [];
+  if (input.model) args.push('--model', input.model);
+  if (input.reasoningEffort && input.reasoningEffort !== 'auto') {
+    args.push('--config', `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`);
+  }
+  if (input.serviceTier) {
+    args.push('--config', `service_tier=${JSON.stringify(input.serviceTier)}`);
+  }
+  return args;
+}
+
 /**
  * 클라 argv 불신. {providerId, sessionId, resume, ...} 만 받아 서버가 최소 argv 전량 조립.
  *  - claude: hooks는 --settings 인라인 주입.
@@ -33,9 +70,16 @@ export const TERMINAL_PROVIDER_COMMANDS: Readonly<Record<string, string>> = {
  *            (approvals/sandbox는 절대 우회하지 않는다: --dangerously-bypass-approvals-and-sandbox 미사용.)
  */
 export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput): ProviderTerminalLaunch {
+  if (input.initialPrompt !== undefined && input.resume) {
+    throw new Error('initial prompt requires a fresh provider conversation');
+  }
+
   if (input.providerId === 'claude-code') {
     if (!input.settingsJson) throw new Error('claude terminal launch requires settingsJson');
     if (input.providerSessionActivation === 'background') {
+      if (input.initialPrompt !== undefined) {
+        throw new Error('initial prompt cannot attach to a background provider session');
+      }
       return {
         command: TERMINAL_PROVIDER_COMMANDS['claude-code'],
         // The daemon inherited hooks when `/fork` created it. Claude's attach
@@ -45,23 +89,45 @@ export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput):
     }
     return {
       command: TERMINAL_PROVIDER_COMMANDS['claude-code'],
-      args: [input.resume ? '--resume' : '--session-id', input.sessionId, '--settings', input.settingsJson],
+      args: [
+        input.resume ? '--resume' : '--session-id',
+        input.sessionId,
+        ...(input.model ? ['--model', input.model] : []),
+        ...(input.reasoningEffort === 'max' ? ['--effort', 'max'] : []),
+        '--settings',
+        buildClaudeSettingsJson(input.settingsJson, input.reasoningEffort),
+        ...(input.claudePluginDir ? ['--plugin-dir', input.claudePluginDir] : []),
+        ...(input.initialPrompt !== undefined ? ['--', input.initialPrompt] : []),
+      ],
     };
   }
 
   if (input.providerId === 'codex') {
+    const selectionArgs = buildCodexSelectionArgs(input);
     // 신규는 세션식별 인자 없음(codex가 rollout id 자체 발급).
     // resume는 이전 훅에서 캡처한 codexResumeId 필요.
     if (input.resume && input.codexResumeId) {
-      return { command: TERMINAL_PROVIDER_COMMANDS.codex, args: ['resume', input.codexResumeId] };
+      return {
+        command: TERMINAL_PROVIDER_COMMANDS.codex,
+        args: [...selectionArgs, 'resume', input.codexResumeId],
+      };
     }
-    return { command: TERMINAL_PROVIDER_COMMANDS.codex, args: [] };
+    return {
+      command: TERMINAL_PROVIDER_COMMANDS.codex,
+      args: [
+        ...selectionArgs,
+        ...(input.initialPrompt !== undefined ? ['--', input.initialPrompt] : []),
+      ],
+    };
   }
 
   if (input.providerId === 'opencode') {
     const args: string[] = [];
     if (input.resume && input.opencodeResumeId) {
       args.push('--session', input.opencodeResumeId);
+    }
+    if (input.initialPrompt !== undefined) {
+      args.push('--prompt', input.initialPrompt);
     }
     return { command: TERMINAL_PROVIDER_COMMANDS.opencode, args };
   }

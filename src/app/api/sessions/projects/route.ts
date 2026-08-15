@@ -1,4 +1,3 @@
-import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { processManager } from '@/lib/cli/process-manager';
 import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
@@ -7,6 +6,8 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
+import { hasPreparationScript } from '@/lib/projects/preparation-script-policy';
+import { getProjectViewProjection } from '@/lib/projects/project-view-projection';
 import {
   isElectronAppRuntimeProjectPath,
   shouldAutoRegisterCurrentProject,
@@ -50,19 +51,6 @@ export async function GET(req: NextRequest) {
     const currentProjectId = process.cwd();
     const shouldRegisterCurrentProject = shouldAutoRegisterCurrentProject(currentProjectId);
 
-    // Ensure the currently running workspace always appears in the project list.
-    // This matters for sibling worktrees because the Tessera DB is shared across
-    // worktrees, but a fresh worktree may not be registered yet. Packaged
-    // Electron runs the server from the app resources directory, which is not a
-    // user project and must not be auto-imported.
-    if (shouldRegisterCurrentProject && !dbProjects.isRegistered(currentProjectId)) {
-      dbProjects.registerProject(
-        currentProjectId,
-        currentProjectId,
-        path.basename(currentProjectId)
-      );
-    }
-
     // Load all registered projects from DB
     const projects = dbProjects
       .getVisibleProjects()
@@ -70,10 +58,14 @@ export async function GET(req: NextRequest) {
 
     // Build project groups with sessions (per-status limit)
     const projectResults = projects.map((project) => {
-      const result = dbSessions.getSessionsByProjectGrouped(project.id, { limitPerStatus });
+      const { projectWorktree, ...result } = getProjectViewProjection(project.id, {
+        limitPerStatus,
+        activeSessionIds,
+      });
 
       const mapped = result.sessions.map((row) => ({
         ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
+        projectDir: project.id,
         lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
@@ -81,7 +73,10 @@ export async function GET(req: NextRequest) {
       // Diff badge for any session whose work dir is a git worktree (standalone
       // chats included). Cache-miss workDirs schedule a compute + WS push.
       const diffStatsByWorkDir = getCachedOrScheduleBulk(
-        mapped.map((s) => s.workDir ?? undefined),
+        [
+          ...mapped.map((s) => s.workDir ?? undefined),
+          projectWorktree?.filesystemPath ?? undefined,
+        ],
         userId,
       );
       const sessions = mapped.map((s) => ({
@@ -96,10 +91,31 @@ export async function GET(req: NextRequest) {
         displayName: project.display_name,
         decodedPath: project.decoded_path,
         displayPath: formatPathForAgentDisplay(project.decoded_path, agentEnvironment),
+        ...(projectWorktree?.filesystemPath && {
+          projectWorktree: {
+            id: projectWorktree.id,
+            path: projectWorktree.filesystemPath,
+            displayPath: formatPathForAgentDisplay(
+              projectWorktree.filesystemPath,
+              agentEnvironment,
+            ),
+            currentBranch: projectWorktree.currentBranch,
+            diffStats: diffStatsByWorkDir.get(projectWorktree.filesystemPath) ?? undefined,
+          },
+        }),
+        ...(result.branchRenameWarning && {
+          branchRenameWarning: result.branchRenameWarning,
+        }),
         isCurrent: shouldRegisterCurrentProject && project.id === currentProjectId,
+        // Without one there is nothing to prepare, and no surface should offer
+        // it — either stage having something to run counts.
+        hasPreparationScript: hasPreparationScript(project.preparation_script)
+          || hasPreparationScript(project.preparation_after_script),
         sessions,
         totalSessions: result.totalCount,
         countByStatus: result.countByStatus,
+        cursorByStatus: result.cursorByStatus,
+        nextCursor: result.nextCursor,
       };
     });
 

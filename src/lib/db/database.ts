@@ -29,8 +29,17 @@ interface SqlJsStatement {
   free(): void;
 }
 import fs from 'fs';
-import { CREATE_INDEXES, CREATE_TABLES, SCHEMA_VERSION } from './schema';
+import {
+  CANONICAL_WORKTREE_BOOTSTRAP_META_KEY,
+  CREATE_INDEXES,
+  CREATE_TABLES,
+  SCHEMA_VERSION,
+} from './schema';
 import { resolveDatabaseLocation } from './location';
+import {
+  generatePublicWorktreeId,
+  LEGACY_WORKTREE_PATH_FROM_CHILD_SQL,
+} from './worktree-identity';
 import logger from '../logger';
 
 // ── better-sqlite3 compatible wrapper ───────────────────────────────────────
@@ -105,7 +114,7 @@ class DatabaseWrapper {
   _run(sql: string, params: unknown[]): { changes: number; lastInsertRowid: number } {
     this.db.run(sql, params as (string | number | null | Uint8Array)[]);
     const changes = this.db.getRowsModified();
-    if (!this.inTransaction) this.persist();
+    if (!this.inTransaction && changes > 0) this.persist();
     return { changes, lastInsertRowid: 0 };
   }
 
@@ -218,6 +227,15 @@ function ensureLatestSchema(db: DatabaseWrapper): void {
   addColumnIfMissing(db, 'sessions', 'reasoning_effort', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'service_tier', 'TEXT');
   addColumnIfMissing(db, 'sessions', 'chat_workflow_status', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
+  addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
+  addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
+  addPullRequestRevisionColumns(db);
+  addPreparationStatusColumns(db);
+  ensureWorktreeIdentityColumns(db);
+  ensureCanonicalWorktreeRegistry(db);
+  ensureWorktreeCreationScopeColumns(db);
 }
 
 /**
@@ -455,6 +473,9 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     if (!taskCols.some(c => c.name === 'sort_order')) {
       db.exec(`ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
     }
+    if (!taskCols.some(c => c.name === 'public_worktree_id')) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN public_worktree_id TEXT`);
+    }
 
     // Add task_id and collection_id to sessions
     const cols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
@@ -522,7 +543,7 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
 
     if (wtSessions.length > 0) {
       const insertTask = db.prepare(
-        'INSERT INTO tasks (id, project_id, title, collection_id, workflow_status, worktree_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO tasks (id, public_worktree_id, project_id, title, collection_id, workflow_status, worktree_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       );
       const linkSession = db.prepare('UPDATE sessions SET task_id = ? WHERE id = ?');
 
@@ -534,7 +555,17 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
         else if (s.task_status === 'in_review') wfStatus = 'in_review';
         else if (s.task_status === 'done' || s.task_status === 'cancelled' || s.task_status === 'stopped') wfStatus = 'done';
 
-        insertTask.run(taskId, s.project_id, s.title, s.collection_id, wfStatus, s.worktree_branch, s.created_at, s.updated_at);
+        insertTask.run(
+          taskId,
+          generatePublicWorktreeId(),
+          s.project_id,
+          s.title,
+          s.collection_id,
+          wfStatus,
+          s.worktree_branch,
+          s.created_at,
+          s.updated_at,
+        );
         linkSession.run(taskId, s.id);
       }
       logger.info({ count: wtSessions.length }, 'Migrated worktree sessions to tasks');
@@ -990,6 +1021,237 @@ function runMigrations(db: DatabaseWrapper, fromVersion: number): void {
     `);
     logger.info('Migration v29 applied: terminal provider session registry added');
   }
+
+  if (fromVersion < 30) {
+    addColumnIfMissing(db, 'projects', 'preparation_script', 'TEXT');
+    logger.info('Migration v30 applied: projects.preparation_script column added');
+  }
+
+  if (fromVersion < 31) {
+    addPreparationStatusColumns(db);
+    logger.info('Migration v31 applied: task preparation status columns added');
+  }
+
+  if (fromVersion < 32) {
+    // The stored script becomes the `before` stage, which is what it already
+    // behaved like — everything in it ran before an agent could be started.
+    addColumnIfMissing(db, 'projects', 'preparation_after_script', 'TEXT');
+    addPreparationStatusColumns(db);
+    logger.info('Migration v32 applied: preparation split into before and after stages');
+  }
+
+  if (fromVersion < 33) {
+    ensureWorktreeIdentityColumns(db);
+    logger.info('Migration v33 applied: persisted public Worktree identity and checkout path');
+  }
+
+  if (fromVersion < 34) {
+    addPullRequestRevisionColumns(db);
+    backfillPullRequestRevisionColumns(db);
+    logger.info('Migration v34 applied: PR revision relation and probe knownness added');
+  }
+
+  // v34 is already released on dev for PR revision tracking. Worktree
+  // migrations therefore continue at v35 in the merged history.
+  if (fromVersion < 35) {
+    ensureCanonicalWorktreeRegistry(db);
+    logger.info('Migration v35 applied: canonical Worktrees and Project roots added');
+  }
+
+  if (fromVersion < 36) {
+    addColumnIfMissing(db, 'sessions', 'worktree_id', 'TEXT');
+    addColumnIfMissing(db, 'sessions', 'scope_branch', 'TEXT');
+    logger.info('Migration v36 applied: immutable Session Worktree and branch scope');
+  }
+
+  if (fromVersion < 37) {
+    ensureWorktreeCreationScopeColumns(db);
+    logger.info('Migration v37 applied: immutable Worktree creation scope and start point');
+  }
+
+  if (fromVersion < 38) {
+    ensureWorktreeCreationScopeColumns(db);
+    logger.info('Migration v38 applied: canonical Worktree identity reconciliation');
+  }
+
+  if (fromVersion < 39) {
+    ensureCanonicalWorktreeRegistry(db);
+    ensureWorktreeCreationScopeColumns(db);
+    markCanonicalWorktreeBootstrapPending(db);
+    // Databases produced by the feature branch can already be at v38 without
+    // dev's v34 PR columns. These calls are intentionally idempotent.
+    addPullRequestRevisionColumns(db);
+    backfillPullRequestRevisionColumns(db);
+    logger.info('Migration v39 applied: canonical Project View bootstrap pending and PR revision schema reconciled');
+  }
+}
+
+function addPullRequestRevisionColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'pr_relation', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'pr_status_known', 'INTEGER NOT NULL DEFAULT 0');
+}
+
+function backfillPullRequestRevisionColumns(db: DatabaseWrapper): void {
+  // Legacy rows have no topology result. Keep open/merged conservative until
+  // the next poll; closed PRs are always historical by policy.
+  db.exec(`
+    UPDATE tasks
+    SET pr_relation = CASE
+      WHEN pr_state = 'closed' THEN 'historical'
+      WHEN pr_state IN ('open', 'merged') THEN 'current'
+      ELSE NULL
+    END
+    WHERE pr_relation IS NULL
+  `);
+  db.exec(`
+    UPDATE tasks
+    SET pr_status_known = 1
+    WHERE pr_unsupported = 0
+      AND pr_last_synced IS NOT NULL
+      AND pr_status_known = 0
+  `);
+}
+
+function markCanonicalWorktreeBootstrapPending(db: DatabaseWrapper): void {
+  db.prepare(`
+    INSERT OR IGNORE INTO _meta (key, value) VALUES (?, 'pending')
+  `).run(CANONICAL_WORKTREE_BOOTSTRAP_META_KEY);
+}
+
+function ensureWorktreeCreationScopeColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'creation_scope_worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'creation_scope_branch', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'start_point', 'TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktree_identity_reconciliation_authorizations (
+      old_worktree_id TEXT NOT NULL,
+      new_worktree_id TEXT NOT NULL,
+      PRIMARY KEY (old_worktree_id, new_worktree_id)
+    )
+  `);
+  const existingTrigger = db.prepare(`
+    SELECT sql FROM sqlite_master
+    WHERE type = 'trigger' AND name = 'trg_tasks_creation_scope_immutable'
+  `).get() as { sql: string | null } | undefined;
+  if (existingTrigger?.sql?.includes('worktree_identity_reconciliation_authorizations')) return;
+  db.exec(`
+    DROP TRIGGER IF EXISTS trg_tasks_creation_scope_immutable;
+    CREATE TRIGGER trg_tasks_creation_scope_immutable
+    BEFORE UPDATE OF creation_scope_worktree_id, creation_scope_branch ON tasks
+    FOR EACH ROW
+    WHEN OLD.creation_scope_worktree_id IS NOT NULL
+      AND (
+        NEW.creation_scope_branch IS NOT OLD.creation_scope_branch
+        OR (
+          NEW.creation_scope_worktree_id IS NOT OLD.creation_scope_worktree_id
+          AND NOT EXISTS (
+            SELECT 1 FROM worktree_identity_reconciliation_authorizations
+            WHERE old_worktree_id = OLD.creation_scope_worktree_id
+              AND new_worktree_id = NEW.creation_scope_worktree_id
+          )
+        )
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'Worktree Creation Scope is immutable');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_start_point_immutable
+    BEFORE UPDATE OF start_point ON tasks
+    FOR EACH ROW
+    WHEN OLD.start_point IS NOT NULL AND NEW.start_point IS NOT OLD.start_point
+    BEGIN
+      SELECT RAISE(ABORT, 'Worktree Start Point is immutable');
+    END;
+  `);
+}
+
+function ensureCanonicalWorktreeRegistry(db: DatabaseWrapper): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktrees (
+      id                 TEXT PRIMARY KEY,
+      filesystem_path    TEXT,
+      canonical_path_key TEXT UNIQUE,
+      created_at         TEXT NOT NULL,
+      updated_at         TEXT NOT NULL
+    )
+  `);
+  addColumnIfMissing(db, 'projects', 'project_worktree_id', 'TEXT');
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO worktrees (
+      id, filesystem_path, canonical_path_key, created_at, updated_at
+    )
+    SELECT public_worktree_id, NULL, NULL, ?, ?
+    FROM tasks
+    WHERE public_worktree_id IS NOT NULL AND public_worktree_id != ''
+  `).run(now, now);
+}
+
+function ensureWorktreeIdentityColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'public_worktree_id', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'worktree_path', 'TEXT');
+
+  const missingIds = db.prepare(`
+    SELECT id
+    FROM tasks
+    WHERE public_worktree_id IS NULL OR public_worktree_id = ''
+    ORDER BY id
+  `).all() as Array<{ id: string }>;
+  const assignId = db.prepare(`
+    UPDATE tasks
+    SET public_worktree_id = ?
+    WHERE id = ? AND (public_worktree_id IS NULL OR public_worktree_id = '')
+  `);
+  for (const row of missingIds) {
+    assignId.run(generatePublicWorktreeId(), row.id);
+  }
+
+  db.exec(`
+    UPDATE tasks
+    SET worktree_path = ${LEGACY_WORKTREE_PATH_FROM_CHILD_SQL}
+    WHERE worktree_path IS NULL
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_public_worktree_id
+    ON tasks(public_worktree_id)
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_public_worktree_id_insert
+    BEFORE INSERT ON tasks
+    FOR EACH ROW
+    WHEN NEW.public_worktree_id IS NULL
+      OR LENGTH(NEW.public_worktree_id) <= 3
+      OR SUBSTR(NEW.public_worktree_id, 1, 3) <> 'wt_'
+    BEGIN
+      SELECT RAISE(ABORT, 'A persisted wt_-prefixed public Worktree ID is required');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_tasks_public_worktree_id_update
+    BEFORE UPDATE OF public_worktree_id ON tasks
+    FOR EACH ROW
+    WHEN NEW.public_worktree_id IS NULL
+      OR LENGTH(NEW.public_worktree_id) <= 3
+      OR SUBSTR(NEW.public_worktree_id, 1, 3) <> 'wt_'
+    BEGIN
+      SELECT RAISE(ABORT, 'A persisted wt_-prefixed public Worktree ID is required');
+    END;
+  `);
+}
+
+/** Preparation status belongs to the worktree, and the task is what owns one. */
+function addPreparationStatusColumns(db: DatabaseWrapper): void {
+  addColumnIfMissing(db, 'tasks', 'preparation_status', `TEXT NOT NULL DEFAULT 'never_run'`);
+  addColumnIfMissing(db, 'tasks', 'preparation_started_at', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_finished_at', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_exit_code', 'INTEGER');
+  addColumnIfMissing(db, 'tasks', 'preparation_output', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_script', 'TEXT');
+  // Which stage is in flight, and what the second one ran. A run recorded
+  // before the split has neither, and reads as a `before` stage that ran
+  // everything — which is what it did.
+  addColumnIfMissing(db, 'tasks', 'preparation_phase', 'TEXT');
+  addColumnIfMissing(db, 'tasks', 'preparation_after_script', 'TEXT');
 }
 
 /**

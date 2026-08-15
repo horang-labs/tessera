@@ -5,7 +5,6 @@ import * as dbTasks from '@/lib/db/tasks';
 import * as dbSessions from '@/lib/db/sessions';
 import { collectionExists } from '@/lib/db/collections';
 import logger from '@/lib/logger';
-import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { syncSingleSessionSessionTitleFromTask } from '@/lib/task-title-sync';
 import { suppressDiffAutoPromoteForTask } from '@/lib/git/worktree-diff-auto-promote';
 import { getCachedDiffStats } from '@/lib/git/worktree-diff-stats-cache';
@@ -73,12 +72,13 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { title, collectionId, workflowStatus, worktreeBranch, summary } = body as {
+  const { title, collectionId, workflowStatus, worktreeBranch, summary, projectViewId } = body as {
     title?: unknown;
     collectionId?: unknown;
     workflowStatus?: unknown;
     worktreeBranch?: unknown;
     summary?: unknown;
+    projectViewId?: unknown;
   };
 
   const patch: Record<string, unknown> = {};
@@ -90,10 +90,13 @@ export async function PATCH(
     patch.title = title.trim();
   }
   if (collectionId !== undefined) {
+    const collectionProjectId = typeof projectViewId === 'string' && projectViewId.length > 0
+      ? projectViewId
+      : task.projectId;
     if (
       typeof collectionId === 'string' &&
       collectionId.trim().length > 0 &&
-      !collectionExists(collectionId.trim(), task.projectId)
+      !collectionExists(collectionId.trim(), collectionProjectId)
     ) {
       return NextResponse.json({ error: 'Collection not found' }, { status: 404 });
     }
@@ -131,7 +134,7 @@ export async function PATCH(
   }
 
   try {
-    const linkedSession = typeof patch.title === 'string' && task.sessions.length === 1
+    const linkedSession = task.sessions.length === 1
       ? dbSessions.getSession(task.sessions[0].id)
       : undefined;
     const applyPatch = async () => {
@@ -157,7 +160,7 @@ export async function PATCH(
         throw error;
       }
     };
-    if (linkedSession) {
+    if (linkedSession && typeof patch.title === 'string') {
       await withExclusiveTesseraSessionOperation(linkedSession.id, applyPatch);
     } else {
       await applyPatch();
@@ -167,12 +170,19 @@ export async function PATCH(
     broadcastTaskMutation(auth.userId, {
       kind: 'updated',
       projectId: task.projectId,
+      taskId: id,
+      sessionId: linkedSession?.id,
+      ...(typeof patch.title === 'string' && { title: patch.title }),
+      ...(typeof patch.workflow_status === 'string' && {
+        workflowStatus: patch.workflow_status as typeof task.workflowStatus,
+      }),
       originClientId,
     });
     if (patch.workflow_status !== undefined) {
       broadcastSessionMutation(auth.userId, {
         kind: 'updated',
         projectId: task.projectId,
+        taskId: id,
         originClientId,
       });
     }
@@ -183,56 +193,5 @@ export async function PATCH(
       return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
     }
     return NextResponse.json({ error: 'Failed to update task' }, { status: 500 });
-  }
-}
-
-/**
- * DELETE /api/tasks/[id]
- * Deletes a task and all child sessions.
- */
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const auth = await requireAuthenticatedUserId(req);
-  if ('response' in auth) return auth.response;
-
-  const { id } = await params;
-
-  const task = dbTasks.getTask(id, getActiveSessionIds());
-  if (!task) {
-    return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-  }
-
-  try {
-    for (const session of task.sessions) {
-      await sessionOrchestrator.deleteSession(auth.userId, session.id);
-    }
-
-    const { deletedSessionCount: fallbackDeletedSessionCount } = dbTasks.deleteTask(id);
-    const deletedSessionCount = task.sessions.length + fallbackDeletedSessionCount;
-    logger.info({ taskId: id, deletedSessionCount }, 'Task deleted via API');
-    const originClientId = getOriginClientIdFromRequest(req);
-    broadcastTaskMutation(auth.userId, {
-      kind: 'deleted',
-      projectId: task.projectId,
-      originClientId,
-    });
-    broadcastSessionMutation(auth.userId, {
-      kind: 'updated',
-      projectId: task.projectId,
-      originClientId,
-    });
-    return NextResponse.json({
-      ok: true,
-      deletedSessionCount,
-      unlinkedCount: deletedSessionCount,
-    });
-  } catch (err: unknown) {
-    logger.error({ id, error: err }, 'Failed to delete task');
-    if (isTerminalHandoffConflictError(err) || isSessionOperationConflictError(err)) {
-      return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
-    }
-    return NextResponse.json({ error: 'Failed to delete task' }, { status: 500 });
   }
 }

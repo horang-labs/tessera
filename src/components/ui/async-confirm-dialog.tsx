@@ -6,6 +6,16 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader } from '@/components/ui/dialog';
 import { DialogHero } from '@/components/ui/dialog-hero';
 import { cn } from '@/lib/utils';
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+  type TelemetryUiSurface,
+} from '@/lib/telemetry/ui-click';
+
+interface ConfirmDialogTelemetryTarget {
+  control: TelemetryUiControl;
+  surface: TelemetryUiSurface;
+}
 
 interface AsyncConfirmDialogProps {
   open: boolean;
@@ -24,6 +34,8 @@ interface AsyncConfirmDialogProps {
   cancelTestId?: string;
   confirmTestId?: string;
   errorLogLabel?: string;
+  cancelTelemetry?: ConfirmDialogTelemetryTarget;
+  confirmTelemetry?: ConfirmDialogTelemetryTarget;
 }
 
 export function AsyncConfirmDialog({
@@ -43,6 +55,8 @@ export function AsyncConfirmDialog({
   cancelTestId,
   confirmTestId,
   errorLogLabel = 'Confirm dialog error:',
+  cancelTelemetry,
+  confirmTelemetry,
 }: AsyncConfirmDialogProps) {
   const [submitting, setSubmitting] = useState(false);
   // Dialog closed → submitting is always false; no useEffect needed.
@@ -77,6 +91,10 @@ export function AsyncConfirmDialog({
 
         <div className="flex justify-end gap-3">
           <Button
+            {...(cancelTelemetry ? telemetryClickAttributes(
+              cancelTelemetry.control,
+              cancelTelemetry.surface,
+            ) : {})}
             onClick={onCancel}
             disabled={isSubmitting}
             variant="outline"
@@ -85,6 +103,10 @@ export function AsyncConfirmDialog({
             {cancelLabel}
           </Button>
           <Button
+            {...(confirmTelemetry ? telemetryClickAttributes(
+              confirmTelemetry.control,
+              confirmTelemetry.surface,
+            ) : {})}
             onClick={handleConfirm}
             disabled={isSubmitting}
             className={cn(confirmButtonClassName)}

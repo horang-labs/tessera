@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { getProject, getVisibleProjects } from '@/lib/db/projects';
-import { getSession } from '@/lib/db/sessions';
+import { getSession, getSessionWorktreeContext } from '@/lib/db/sessions';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type {
   TerminalCwdResolution,
@@ -11,23 +11,26 @@ import type {
   TerminalResolvedShell,
   TerminalShellKind,
 } from './types';
+import { buildPosixOpenCodeOverlayActivation } from '@/lib/cli/providers/opencode/config-overlay';
 
 export function resolveTerminalCwd(candidate?: string | null): string {
-  if (candidate) {
-    try {
-      const stat = fs.statSync(candidate);
-      if (stat.isDirectory()) {
-        return candidate;
-      }
-    } catch {
-      // Fall through to home directory.
-    }
+  const requestedCwd = candidate?.trim();
+  if (!requestedCwd) {
+    throw new Error('Terminal cwd is required.');
   }
 
-  return os.homedir();
+  try {
+    if (fs.statSync(requestedCwd).isDirectory()) {
+      return requestedCwd;
+    }
+  } catch {
+    // Fail closed below. A terminal must never silently start somewhere else.
+  }
+
+  throw new Error('Terminal cwd does not exist or is not a directory.');
 }
 
-let cachedWindowsHostedWslRoot: string | null | undefined;
+let cachedWindowsHostedWslRoot: string | undefined;
 
 function resolveExistingDirectory(candidate: string, allowedRoots: string[] = []): string | null {
   for (const candidatePath of buildDirectoryResolutionCandidates(candidate, allowedRoots)) {
@@ -76,15 +79,6 @@ function addAllowedRoot(allowedRoots: string[], seenRoots: Set<string>, root?: s
   if (!normalizedRoot || seenRoots.has(normalizedRoot)) return;
   seenRoots.add(normalizedRoot);
   allowedRoots.push(normalizedRoot);
-}
-
-function resolveFirstExistingAllowedRoot(allowedRoots: string[]): string | null {
-  for (const root of allowedRoots) {
-    const existingRoot = resolveExistingDirectory(root, allowedRoots);
-    if (existingRoot) return existingRoot;
-  }
-
-  return null;
 }
 
 function isWindowsDrivePath(value: string): boolean {
@@ -160,9 +154,10 @@ function getWindowsHostedWslDefaultRoot(): string | null {
       ['-e', 'sh', '-c', 'printf "%s" "${WSL_DISTRO_NAME:-}"'],
       { encoding: 'utf8', timeout: 2000, windowsHide: true },
     ).trim();
-    cachedWindowsHostedWslRoot = distro ? `\\\\wsl.localhost\\${distro}` : null;
+    if (!distro) return null;
+    cachedWindowsHostedWslRoot = `\\\\wsl.localhost\\${distro}`;
   } catch {
-    cachedWindowsHostedWslRoot = null;
+    return null;
   }
 
   return cachedWindowsHostedWslRoot;
@@ -231,9 +226,21 @@ function resolveWindowsNativeTerminalCwd(cwd: string, env: NodeJS.ProcessEnv): s
   return cwd;
 }
 
-function quoteBashArg(value: string): string {
+export function quoteBashArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
+
+/**
+ * POSIX snippet that leaves the user's login shell in `$shell`.
+ * `wsl.exe -e sh -c` starts a non-login shell with none of the PATH the user's
+ * agents run with, so anything meant to run the way they expect has to find
+ * that shell first. Shared so every WSL entry point looks in the same places.
+ */
+export const WSL_LOGIN_SHELL_DISCOVERY = [
+  'shell="${SHELL:-}"',
+  'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
+  'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
+];
 
 function buildPosixCommand(program: string, args: string[]): string {
   return [program, ...args].map(quoteBashArg).join(' ');
@@ -275,9 +282,7 @@ function getLaunchArgv(launchSpec?: TerminalLaunchSpec): { program: string; args
 function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): string {
   const lines = [
     `cd -- ${quoteBashArg(cwd)} 2>/dev/null || cd ~`,
-    'shell="${SHELL:-}"',
-    'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
-    'if [ -z "$shell" ] || [ ! -x "$shell" ]; then shell="$(command -v bash 2>/dev/null || command -v sh)"; fi',
+    ...WSL_LOGIN_SHELL_DISCOVERY,
   ];
   const launch = getLaunchArgv(launchSpec);
   if (launch) {
@@ -293,6 +298,7 @@ function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): s
     // 되돌린다 — orca의 powershell-osc133-bootstrap(ORCA_CODEX_HOME 복원) 미러.
     const inner =
       'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
+      + buildPosixOpenCodeOverlayActivation()
       + `exec ${buildPosixCommand(launch.program, launch.args)}`;
     lines.push('WSL_LAUNCH_SHELL="$shell"; export WSL_LAUNCH_SHELL');
     lines.push(`exec "$shell" -l -i -c ${quoteBashArg(inner)}`);
@@ -305,50 +311,39 @@ function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): s
 export function resolveAllowedTerminalCwd(options: {
   cwd?: string | null;
   sessionId?: string | null;
-  allowFallback?: boolean;
 }): TerminalCwdResolution {
   const requestedCwd = options.cwd?.trim();
-  const allowFallback = options.allowFallback !== false;
+  if (!requestedCwd) {
+    return { ok: false, message: 'Terminal cwd is required.' };
+  }
+
   const allowedRoots: string[] = [];
   const seenRoots = new Set<string>();
 
   const session = options.sessionId ? getSession(options.sessionId) : null;
-  if (session?.project_id) {
+  if (options.sessionId && !session) {
+    return { ok: false, message: 'The session workspace is unavailable.' };
+  }
+
+  if (session) {
+    addAllowedRoot(
+      allowedRoots,
+      seenRoots,
+      options.sessionId ? getSessionWorktreeContext(options.sessionId)?.workDir : null,
+    );
     addAllowedRoot(allowedRoots, seenRoots, getProject(session.project_id)?.decoded_path);
+  } else {
+    for (const project of getVisibleProjects()) {
+      addAllowedRoot(allowedRoots, seenRoots, project.decoded_path);
+    }
   }
-
-  for (const project of getVisibleProjects()) {
-    addAllowedRoot(allowedRoots, seenRoots, project.decoded_path);
-  }
-
-  addAllowedRoot(allowedRoots, seenRoots, session?.work_dir);
 
   if (allowedRoots.length === 0) {
     return { ok: false, message: 'No project is available for terminal startup.' };
   }
 
-  if (!requestedCwd) {
-    if (!allowFallback) {
-      return { ok: false, message: 'This command requires the session workspace to be available.' };
-    }
-    const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
-    if (fallbackCwd) {
-      return { ok: true, cwd: fallbackCwd };
-    }
-
-    return { ok: false, message: 'No registered project directory exists on this server.' };
-  }
-
   const resolvedCandidate = resolveExistingDirectory(requestedCwd, allowedRoots);
   if (!resolvedCandidate) {
-    if (!allowFallback) {
-      return { ok: false, message: 'The session workspace no longer exists. The command was not opened.' };
-    }
-    const fallbackCwd = resolveFirstExistingAllowedRoot(allowedRoots);
-    if (fallbackCwd) {
-      return { ok: true, cwd: fallbackCwd };
-    }
-
     return { ok: false, message: 'Terminal cwd does not exist or is not a directory.' };
   }
 
@@ -434,6 +429,7 @@ export function resolveTerminalShell(options: {
         // CODEX_HOME 재단언은 buildWslTerminalScript의 inner와 같은 이유 —
         // macOS -l 셸도 .zprofile이 CODEX_HOME을 덮으면 오버레이가 무시된다.
         'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
+        + buildPosixOpenCodeOverlayActivation()
         + `exec ${buildPosixCommand(launch.program, launch.args)}`,
       ],
       cwd,

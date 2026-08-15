@@ -1,25 +1,14 @@
-import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
-import { useBoardStore } from '@/stores/board-store';
-import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
-export function getInitialTerminalCwd(sessionId?: string | null): string | null {
-  const sessionState = useSessionStore.getState();
+export function getInitialTerminalCwd(
+  sessionId?: string | null,
+  explicitCwd?: string | null,
+): string | null {
   const selectionSessionId = getSessionSelectionId(sessionId ?? null);
   if (selectionSessionId) {
-    const activeSession = sessionState.getSession(selectionSessionId);
-    if (activeSession?.workDir) {
-      return activeSession.workDir;
-    }
+    return projectViewWorkspaceState.resolveSession(selectionSessionId)?.workDir ?? null;
   }
 
-  const selectedProjectDir = useBoardStore.getState().selectedProjectDir;
-  if (selectedProjectDir && selectedProjectDir !== ALL_PROJECTS_SENTINEL) {
-    const selectedProject = sessionState.projects.find(
-      (project) => project.encodedDir === selectedProjectDir,
-    );
-    return selectedProject?.decodedPath ?? null;
-  }
-
-  return sessionState.projects[0]?.decodedPath ?? null;
+  return explicitCwd?.trim() || null;
 }

@@ -13,13 +13,19 @@ import {
 import { AsyncConfirmDialog } from '@/components/ui/async-confirm-dialog';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
-import { useWorktreeRetentionSettingsUpdate } from '@/hooks/use-worktree-retention-settings-update';
 import { useSessionStore } from '@/stores/session-store';
-import { useTaskStore } from '@/stores/task-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import {
+  projectViewWorkspaceState,
+  refreshProjectViewWorkspaceMutation,
+} from '@/lib/projects/project-view-workspace-state-client';
 import type { UnifiedSession } from '@/types/chat';
+import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import type { ArchiveItem, ArchiveProjectOption } from '@/lib/archive/archive-service';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 
@@ -84,7 +90,8 @@ function primarySessionFromItem(item: ArchiveItem): UnifiedSession | null {
   return {
     id: session.id,
     title: session.title,
-    projectDir: item.projectId,
+    projectDir: item.workDir ?? item.projectId,
+    originProjectId: item.projectId,
     isRunning: session.isRunning,
     status: session.isRunning ? 'running' : 'completed',
     lastModified: session.lastModified,
@@ -96,9 +103,47 @@ function primarySessionFromItem(item: ArchiveItem): UnifiedSession | null {
     workDir: item.workDir,
     worktreeDeletedAt: item.worktreeDeletedAt,
     workflowStatus: item.workflowStatus as UnifiedSession['workflowStatus'],
-    taskId: item.kind === 'task' ? item.id : undefined,
+    taskId: item.kind === 'task' ? item.id : item.taskId,
     collectionId: item.collectionId,
     sortOrder: 0,
+  };
+}
+
+function taskSessionFromArchiveItem(
+  session: ArchiveItem['sessions'][number],
+  projectId: string,
+): TaskSession {
+  return {
+    id: session.id,
+    originProjectId: projectId,
+    title: session.title,
+    provider: session.provider,
+    lastModified: session.lastModified,
+    isRunning: session.isRunning,
+    sortOrder: 0,
+  };
+}
+
+function taskFromArchiveItem(item: ArchiveItem): TaskEntity {
+  return {
+    id: item.id,
+    worktreeId: item.worktreeId,
+    projectId: item.projectId,
+    projectViewId: item.projectId,
+    title: item.title,
+    collectionId: item.collectionId,
+    workflowStatus: (item.workflowStatus ?? 'todo') as WorkflowStatus,
+    worktreeBranch: item.worktreeBranch,
+    workDir: item.workDir,
+    worktreeManaged: item.worktreeManaged,
+    archived: false,
+    worktreeDeletedAt: item.worktreeDeletedAt,
+    sortOrder: 0,
+    sessions: item.sessions
+      .filter((session) => !session.archived)
+      .map((session) => taskSessionFromArchiveItem(session, item.projectId)),
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   };
 }
 
@@ -197,12 +242,6 @@ export function ArchiveDashboard() {
     void loadArchive();
   }, [loadArchive]);
 
-  const {
-    settings,
-    updateSettings,
-    retentionConfirmDialog,
-  } = useWorktreeRetentionSettingsUpdate({ onApplied: loadArchive });
-
   const chatItems = chatState.items;
   const taskItems = taskState.items;
 
@@ -249,25 +288,57 @@ export function ArchiveDashboard() {
   }, [handleSessionClick]);
 
   const restoreItem = useCallback(async (item: ArchiveItem) => {
+    const restoredSession = primarySessionFromItem(item);
+    const rollbackWorkspace = item.kind === 'task'
+      ? projectViewWorkspaceState.applyTaskRestoreMutation({
+          task: taskFromArchiveItem(item),
+          affectedProjectIds: item.affectedProjectIds,
+        })
+      : restoredSession
+        ? projectViewWorkspaceState.applySessionRestoreMutation({
+            session: restoredSession,
+            taskSession: taskSessionFromArchiveItem(item.sessions[0], item.projectId),
+            affectedProjectIds: item.affectedProjectIds,
+          })
+        : undefined;
     const endpoint = item.kind === 'task'
       ? `/api/archive/tasks/${item.id}`
       : `/api/sessions/${item.id}/archive`;
-    const res = await fetchWithClientId(endpoint, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ archived: false }),
-    });
+    let res: Response;
+    try {
+      res = await fetchWithClientId(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: false }),
+      });
+    } catch {
+      rollbackWorkspace?.();
+      setError(t('archive.errors.restoreFailed'));
+      return;
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
+      rollbackWorkspace?.();
       setError(body.error ?? t('archive.errors.restoreFailed'));
       return;
     }
-    await Promise.all([
-      loadArchive(),
-      useSessionStore.getState().loadProjects(),
-    ]);
-    if (item.kind === 'task') {
-      await useTaskStore.getState().loadTasks(item.projectId, { setCurrent: false });
+    const result = await res.json().catch(() => ({})) as {
+      taskId?: string;
+      affectedProjectIds?: string[];
+    };
+    try {
+      await Promise.all([
+        loadArchive(),
+        refreshProjectViewWorkspaceMutation({
+          projectId: item.projectId,
+          sessionId: item.kind === 'chat' ? item.id : undefined,
+          taskId: item.kind === 'task' ? item.id : result.taskId,
+          affectedProjectIds: result.affectedProjectIds ?? item.affectedProjectIds,
+        }),
+      ]);
+    } catch (error) {
+      console.error(error);
+      setError(t('archive.errors.loadFailed'));
     }
   }, [loadArchive, t]);
 
@@ -289,8 +360,8 @@ export function ArchiveDashboard() {
   }, [loadArchive, t]);
 
   const deleteWorktreeOnly = useCallback(async (item: ArchiveItem) => {
-    if (item.kind !== 'task') return;
-    const res = await fetch(`/api/archive/tasks/${item.id}/worktree`, { method: 'DELETE' });
+    if (!item.worktreeId) return;
+    const res = await fetch(`/api/worktrees/${item.worktreeId}`, { method: 'DELETE' });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       const message = body.error ?? t('archive.errors.deleteWorktreeFailed');
@@ -336,10 +407,12 @@ export function ArchiveDashboard() {
     setBulkWorktreeDeleteOpen(false);
 
     if (body.result?.errors.length) {
-      setError(t('archive.errors.bulkPartial', {
+      const summary = t('archive.errors.bulkPartial', {
         removed: body.result.removed,
         errors: body.result.errors.length,
-      }));
+      });
+      const details = [...new Set(body.result.errors.map((entry) => entry.error))].join(' ');
+      setError(`${summary} ${details}`);
     } else {
       setError(null);
     }
@@ -368,6 +441,7 @@ export function ArchiveDashboard() {
               <p className="text-xs text-(--text-muted)">{t('archive.description')}</p>
             </div>
             <button
+              {...telemetryClickAttributes('archive.retry', 'archive')}
               onClick={loadArchive}
               className="inline-flex items-center gap-1.5 rounded-lg border border-(--divider) px-3 py-1.5 text-xs text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
             >
@@ -380,6 +454,7 @@ export function ArchiveDashboard() {
             <div className="relative w-full max-w-[360px] sm:w-[360px]">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--text-muted)" />
               <input
+                {...telemetryClickAttributes('archive.search', 'archive')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t('archive.searchPlaceholder')}
@@ -387,6 +462,7 @@ export function ArchiveDashboard() {
               />
             </div>
             <select
+              {...telemetryClickAttributes('archive.project_filter', 'archive')}
               value={projectFilter}
               onChange={(event) => setProjectFilter(event.target.value)}
               className="ml-auto h-8 rounded-lg border border-(--input-border) bg-(--input-bg) px-2.5 text-xs text-(--text-primary) outline-none focus:border-(--accent)"
@@ -405,32 +481,14 @@ export function ArchiveDashboard() {
       <main className="mx-auto max-w-[1320px] space-y-4 px-6 py-5">
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-(--divider) bg-(--board-card-bg) p-3">
           <div className="flex flex-wrap items-center gap-3 text-xs text-(--text-muted)">
-            <span>{settings.autoDeleteArchivedWorktrees ? t('archive.autoDeleteOn') : t('archive.autoDeleteOff')}</span>
-            <span>{t('archive.retentionInfo', { days: settings.archivedWorktreeRetentionDays })}</span>
             <span>{t('archive.loadedCount', { loaded: visibleItemCount, total: summary?.total ?? 0 })}</span>
             <span>{t('archive.worktreesPresent', { count: loadedWorktreesPresent })}</span>
             <span>{t('archive.worktreesDeleted', { count: loadedWorktreesDeleted })}</span>
             <span>{t('archive.worktreesMissing', { count: loadedWorktreesMissing })}</span>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <label className="flex items-center gap-1.5 text-xs text-(--text-muted)">
-              <input
-                type="checkbox"
-                checked={settings.autoDeleteArchivedWorktrees}
-                onChange={(event) => void updateSettings({ autoDeleteArchivedWorktrees: event.target.checked })}
-                className="accent-(--accent)"
-              />
-              {t('archive.autoLabel')}
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={365}
-              value={settings.archivedWorktreeRetentionDays}
-              onChange={(event) => void updateSettings({ archivedWorktreeRetentionDays: Math.max(1, Number(event.target.value) || 1) })}
-              className="h-7 w-16 rounded-md border border-(--input-border) bg-(--input-bg) px-2 text-xs text-(--text-primary) outline-none"
-            />
             <button
+              {...telemetryClickAttributes('archive.bulk_delete', 'archive')}
               onClick={() => setBulkWorktreeDeleteOpen(true)}
               disabled={isLoading || visibleItemCount === 0}
               className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[color-mix(in_srgb,var(--status-error-text)_32%,var(--divider))] bg-[color-mix(in_srgb,var(--status-error-text)_8%,transparent)] px-2.5 text-xs font-medium text-(--status-error-text) transition-colors hover:bg-(--status-error-bg) disabled:cursor-not-allowed disabled:opacity-50"
@@ -494,6 +552,8 @@ export function ArchiveDashboard() {
       </main>
 
       <AsyncConfirmDialog
+        cancelTelemetry={{ control: 'archive.dialog.cancel', surface: 'archive' }}
+        confirmTelemetry={{ control: 'archive.dialog.confirm', surface: 'archive' }}
         open={deleteTarget !== null}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={confirmDeleteItem}
@@ -523,6 +583,8 @@ export function ArchiveDashboard() {
       />
 
       <AsyncConfirmDialog
+        cancelTelemetry={{ control: 'archive.dialog.cancel', surface: 'archive' }}
+        confirmTelemetry={{ control: 'archive.dialog.confirm', surface: 'archive' }}
         open={worktreeDeleteTarget !== null}
         onCancel={() => setWorktreeDeleteTarget(null)}
         onConfirm={confirmDeleteWorktree}
@@ -557,6 +619,8 @@ export function ArchiveDashboard() {
       />
 
       <AsyncConfirmDialog
+        cancelTelemetry={{ control: 'archive.dialog.cancel', surface: 'archive' }}
+        confirmTelemetry={{ control: 'archive.dialog.confirm', surface: 'archive' }}
         open={bulkWorktreeDeleteOpen}
         onCancel={() => setBulkWorktreeDeleteOpen(false)}
         onConfirm={confirmDeleteAllWorktrees}
@@ -586,7 +650,6 @@ export function ArchiveDashboard() {
           </>
         )}
       />
-      {retentionConfirmDialog}
     </div>
   );
 }
@@ -630,6 +693,7 @@ function ArchiveLoadMore({
   return (
     <div className="flex items-center justify-center border-x border-b border-(--divider) bg-(--board-card-bg) px-3 py-2">
       <button
+        {...telemetryClickAttributes('archive.load_more', 'archive')}
         onClick={onClick}
         disabled={isLoading}
         className="rounded-lg border border-(--divider) px-3 py-1.5 text-xs text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:opacity-50"
@@ -660,27 +724,204 @@ function EmptyTableRow({ colSpan, t }: { colSpan: number; t: TranslateFn }) {
   );
 }
 
-function RowActions({ children }: { children: React.ReactNode }) {
+function RowActions({ children, stacked = false }: { children: React.ReactNode; stacked?: boolean }) {
   return (
-    <div className="flex items-center justify-end gap-1.5">
+    <div
+      className={cn(
+        'flex items-center gap-1.5',
+        // In a stacked row the actions own a line of their own, so they read
+        // from the left like everything above them and wrap rather than
+        // pushing each other off the screen.
+        stacked ? 'mt-2 flex-wrap justify-start' : 'justify-end',
+      )}
+    >
       {children}
     </div>
   );
 }
 
+/**
+ * One labelled value in a stacked row.
+ *
+ * A stacked row has no header above it, so a bare project name, path and
+ * timestamp would read as three anonymous strings. The label is the column
+ * header the desktop shows, in the same style, moved inline.
+ */
+function StackedField({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="mt-1 flex gap-1.5 text-[0.6875rem] leading-4">
+      <span className="shrink-0 uppercase tracking-wide text-(--text-muted)">{label}</span>
+      <span className={cn('min-w-0 flex-1 break-words text-(--text-secondary)', valueClassName)} title={value}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The archive actions for a chat row. Shared by both presentations so the
+ * phone can never end up offering a different set of actions, or the same
+ * actions under different labels, from the desktop.
+ */
+function ChatRowActions({
+  item,
+  onRestore,
+  onDelete,
+  t,
+  stacked = false,
+}: {
+  item: ArchiveItem;
+  onRestore: (item: ArchiveItem) => void;
+  onDelete: (item: ArchiveItem) => void;
+  t: TranslateFn;
+  stacked?: boolean;
+}) {
+  return (
+    <RowActions stacked={stacked}>
+      {item.canRestore && (
+        <ActionButton telemetryControl="archive.item.restore" tone="primary" onClick={() => onRestore(item)}>
+          <RotateCcw className="h-3 w-3" />
+          {t('archive.actions.restore')}
+        </ActionButton>
+      )}
+      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)}>
+        <Trash2 className="h-3 w-3" />
+        {t('archive.actions.delete')}
+      </ActionButton>
+    </RowActions>
+  );
+}
+
+/**
+ * The archive actions for a task row. Shared for the same reason as the chat
+ * ones, and more sharply: "delete worktree" and "delete" are two irreversible
+ * actions a phone user tells apart by their labels.
+ */
+function TaskRowActions({
+  item,
+  onRestore,
+  onDelete,
+  onDeleteWorktree,
+  t,
+  stacked = false,
+}: {
+  item: ArchiveItem;
+  onRestore: (item: ArchiveItem) => void;
+  onDelete: (item: ArchiveItem) => void;
+  onDeleteWorktree: (item: ArchiveItem) => void;
+  t: TranslateFn;
+  stacked?: boolean;
+}) {
+  return (
+    <RowActions stacked={stacked}>
+      {item.canRestore && (
+        <ActionButton telemetryControl="archive.item.restore" tone="primary" onClick={() => onRestore(item)}>
+          <RotateCcw className="h-3 w-3" />
+          {t('archive.actions.restore')}
+        </ActionButton>
+      )}
+      {item.worktreeStatus === 'present' && item.worktreeManaged && !item.sharedWorktree && (
+        <ActionButton telemetryControl="archive.item.delete_worktree" tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
+          <FolderX className="h-3 w-3" />
+          {t('archive.actions.deleteWorktree')}
+        </ActionButton>
+      )}
+      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)}>
+        <Trash2 className="h-3 w-3" />
+        {t('archive.actions.delete')}
+      </ActionButton>
+    </RowActions>
+  );
+}
+
+/**
+ * A task's title, or its title above the list of sessions archived with it.
+ * Shared by both presentations so every session stays reachable on a phone.
+ *
+ * A desktop truncates what will not fit and puts the rest in a `title`
+ * tooltip. A phone has no pointer to hover with, so a truncated title is
+ * simply gone — and it is the one value that says which archived task this
+ * is. In a stacked row the text wraps instead, which the extra height a
+ * stacked row already costs makes free.
+ */
+function TaskTitleBlock({
+  item,
+  onOpenSession,
+  stacked = false,
+}: {
+  item: ArchiveItem;
+  onOpenSession: (item: ArchiveItem, sessionId: string) => void;
+  stacked?: boolean;
+}) {
+  const fit = stacked ? 'break-words' : 'truncate';
+  const singleSession = item.sessions.length === 1 ? item.sessions[0] : null;
+
+  if (singleSession) {
+    return (
+      <button
+        {...telemetryClickAttributes('archive.session.open', 'archive')}
+        onClick={() => onOpenSession(item, singleSession.id)}
+        className={cn('block max-w-full text-left font-medium text-(--text-primary) hover:underline', fit)}
+        title={item.title}
+      >
+        {item.title}
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className={cn('max-w-full font-medium text-(--text-primary)', fit)}
+        title={item.title}
+      >
+        {item.title}
+      </div>
+      <ul className="mt-1.5 space-y-0.5 border-l border-(--divider) pl-2.5">
+        {item.sessions.map((session) => (
+          <li key={session.id} data-testid={`archive-task-session-row-${session.id}`}>
+            <button
+              {...telemetryClickAttributes('archive.session.open', 'archive')}
+              onClick={() => onOpenSession(item, session.id)}
+              className={cn(
+                'block w-full max-w-full text-left text-[0.6875rem] text-(--text-secondary) hover:text-(--text-primary) hover:underline',
+                fit,
+              )}
+              title={session.title}
+            >
+              {session.title}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 function ActionButton({
   children,
+  telemetryControl,
   tone = 'neutral',
   onClick,
   title,
 }: {
   children: React.ReactNode;
+  telemetryControl: TelemetryUiControl;
   tone?: 'neutral' | 'primary' | 'danger' | 'dangerOutline';
   onClick: React.MouseEventHandler<HTMLButtonElement>;
   title?: string;
 }) {
   return (
     <button
+      {...telemetryClickAttributes(telemetryControl, 'archive')}
       onClick={onClick}
       title={title}
       className={cn(
@@ -712,6 +953,48 @@ function ChatArchiveTable({
   onDelete: (item: ArchiveItem) => void;
   t: TranslateFn;
 }) {
+  const isPhone = usePhoneViewport();
+
+  // 820px of fixed columns cannot be read on a 360px screen, so below the
+  // breakpoint each row stacks into a block instead. Same rows, same values,
+  // same actions under the same labels — only the arrangement differs.
+  if (isPhone) {
+    return (
+      <TableShell>
+        <table className="w-full table-fixed border-collapse text-xs">
+          <tbody>
+            {items.length === 0 ? (
+              <EmptyTableRow colSpan={1} t={t} />
+            ) : items.map((item) => (
+              <tr
+                key={item.id}
+                className="border-b border-(--divider) last:border-b-0"
+                data-testid={`archive-chat-row-${item.id}`}
+              >
+                <td className="px-3 py-2.5">
+                  <button
+                    {...telemetryClickAttributes('archive.session.open', 'archive')}
+                    onClick={() => onOpen(item)}
+                    className="block w-full break-words text-left font-medium text-(--text-primary)"
+                    title={item.title}
+                  >
+                    {item.title}
+                  </button>
+                  <StackedField label={t('archive.columns.project')} value={item.projectName} />
+                  <StackedField
+                    label={t('archive.columns.archived')}
+                    value={formatRelativeTime(item.archivedAt, t)}
+                  />
+                  <ChatRowActions item={item} onRestore={onRestore} onDelete={onDelete} t={t} stacked />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableShell>
+    );
+  }
+
   return (
     <TableShell>
       <table className="min-w-[820px] w-full table-fixed border-collapse text-xs">
@@ -740,6 +1023,7 @@ function ChatArchiveTable({
             >
               <td className="h-10 min-w-0 px-3">
                 <button
+                  {...telemetryClickAttributes('archive.session.open', 'archive')}
                   onClick={() => onOpen(item)}
                   className="block max-w-full truncate text-left font-medium text-(--text-primary) hover:underline"
                   title={item.title}
@@ -754,18 +1038,7 @@ function ChatArchiveTable({
                 {formatRelativeTime(item.archivedAt, t)}
               </td>
               <td className="h-10 px-3">
-                <RowActions>
-                  {item.canRestore && (
-                    <ActionButton tone="primary" onClick={() => onRestore(item)}>
-                      <RotateCcw className="h-3 w-3" />
-                      {t('archive.actions.restore')}
-                    </ActionButton>
-                  )}
-                  <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
-                    <Trash2 className="h-3 w-3" />
-                    {t('archive.actions.delete')}
-                  </ActionButton>
-                </RowActions>
+                <ChatRowActions item={item} onRestore={onRestore} onDelete={onDelete} t={t} />
               </td>
             </tr>
           ))}
@@ -790,6 +1063,53 @@ function TaskArchiveTable({
   onDeleteWorktree: (item: ArchiveItem) => void;
   t: TranslateFn;
 }) {
+  const isPhone = usePhoneViewport();
+
+  // Same treatment as the chat table, and 930px of fixed columns rather than
+  // 820. The worktree path is the one value long enough to need breaking
+  // anywhere, so it is the one field that wraps mid-token.
+  if (isPhone) {
+    return (
+      <TableShell>
+        <table className="w-full table-fixed border-collapse text-xs">
+          <tbody>
+            {items.length === 0 ? (
+              <EmptyTableRow colSpan={1} t={t} />
+            ) : items.map((item) => (
+              <tr
+                key={item.id}
+                className="border-b border-(--divider) last:border-b-0"
+                data-testid={`archive-task-row-${item.id}`}
+              >
+                <td className="px-3 py-2.5">
+                  <TaskTitleBlock item={item} onOpenSession={onOpenSession} stacked />
+                  <StackedField
+                    label={t('archive.columns.worktree')}
+                    value={getWorktreeText(item, t)}
+                    valueClassName={cn('break-all font-mono', getWorktreeTone(item))}
+                  />
+                  <StackedField label={t('archive.columns.project')} value={item.projectName} />
+                  <StackedField
+                    label={t('archive.columns.archived')}
+                    value={formatRelativeTime(item.archivedAt, t)}
+                  />
+                  <TaskRowActions
+                    item={item}
+                    onRestore={onRestore}
+                    onDelete={onDelete}
+                    onDeleteWorktree={onDeleteWorktree}
+                    t={t}
+                    stacked
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableShell>
+    );
+  }
+
   return (
     <TableShell>
       <table className="min-w-[930px] w-full table-fixed border-collapse text-xs">
@@ -812,80 +1132,35 @@ function TaskArchiveTable({
         <tbody>
           {items.length === 0 ? (
             <EmptyTableRow colSpan={5} t={t} />
-          ) : items.map((item) => {
-            const hasMultipleSessions = item.sessions.length > 1;
-            const singleSession = !hasMultipleSessions ? item.sessions[0] : null;
-            return (
-              <tr
-                key={item.id}
-                className="border-b border-(--divider) last:border-b-0 hover:bg-(--sidebar-hover)"
-                data-testid={`archive-task-row-${item.id}`}
-              >
-                <td className="min-w-0 px-3 py-2 align-top">
-                  {singleSession ? (
-                    <button
-                      onClick={() => onOpenSession(item, singleSession.id)}
-                      className="block max-w-full truncate text-left font-medium text-(--text-primary) hover:underline"
-                      title={item.title}
-                    >
-                      {item.title}
-                    </button>
-                  ) : (
-                    <>
-                      <div
-                        className="max-w-full truncate font-medium text-(--text-primary)"
-                        title={item.title}
-                      >
-                        {item.title}
-                      </div>
-                      <ul className="mt-1.5 space-y-0.5 border-l border-(--divider) pl-2.5">
-                        {item.sessions.map((session) => (
-                          <li key={session.id} data-testid={`archive-task-session-row-${session.id}`}>
-                            <button
-                              onClick={() => onOpenSession(item, session.id)}
-                              className="block w-full max-w-full truncate text-left text-[0.6875rem] text-(--text-secondary) hover:text-(--text-primary) hover:underline"
-                              title={session.title}
-                            >
-                              {session.title}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </td>
-                <td className={cn('min-w-0 px-3 py-2 align-top font-mono text-[0.6875rem]', getWorktreeTone(item))}>
-                  <span className="block truncate" title={getWorktreeText(item, t)}>{getWorktreeText(item, t)}</span>
-                </td>
-                <td className="min-w-0 px-3 py-2 align-top text-(--text-muted)">
-                  <span className="block truncate">{item.projectName}</span>
-                </td>
-                <td className="px-3 py-2 align-top text-(--text-muted)">
-                  {formatRelativeTime(item.archivedAt, t)}
-                </td>
-                <td className="px-3 py-2 align-top">
-                  <RowActions>
-                    {item.canRestore && (
-                      <ActionButton tone="primary" onClick={() => onRestore(item)}>
-                        <RotateCcw className="h-3 w-3" />
-                        {t('archive.actions.restore')}
-                      </ActionButton>
-                    )}
-                    {item.worktreeStatus === 'present' && item.worktreeManaged && (
-                      <ActionButton tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
-                        <FolderX className="h-3 w-3" />
-                        {t('archive.actions.deleteWorktree')}
-                      </ActionButton>
-                    )}
-                    <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
-                      <Trash2 className="h-3 w-3" />
-                      {t('archive.actions.delete')}
-                    </ActionButton>
-                  </RowActions>
-                </td>
-              </tr>
-            );
-          })}
+          ) : items.map((item) => (
+            <tr
+              key={item.id}
+              className="border-b border-(--divider) last:border-b-0 hover:bg-(--sidebar-hover)"
+              data-testid={`archive-task-row-${item.id}`}
+            >
+              <td className="min-w-0 px-3 py-2 align-top">
+                <TaskTitleBlock item={item} onOpenSession={onOpenSession} />
+              </td>
+              <td className={cn('min-w-0 px-3 py-2 align-top font-mono text-[0.6875rem]', getWorktreeTone(item))}>
+                <span className="block truncate" title={getWorktreeText(item, t)}>{getWorktreeText(item, t)}</span>
+              </td>
+              <td className="min-w-0 px-3 py-2 align-top text-(--text-muted)">
+                <span className="block truncate">{item.projectName}</span>
+              </td>
+              <td className="px-3 py-2 align-top text-(--text-muted)">
+                {formatRelativeTime(item.archivedAt, t)}
+              </td>
+              <td className="px-3 py-2 align-top">
+                <TaskRowActions
+                  item={item}
+                  onRestore={onRestore}
+                  onDelete={onDelete}
+                  onDeleteWorktree={onDeleteWorktree}
+                  t={t}
+                />
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </TableShell>

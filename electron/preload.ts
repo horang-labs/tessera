@@ -1,10 +1,28 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { PairingDecision } from '../src/lib/auth/pairing-contract';
 import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
   isElectron: true,
+  // Renderer console mirroring. The main process only registers these channels in a debug
+  // build, so on a release send() lands on no listener and costs nothing. See
+  // src/lib/renderer-console-bridge.ts.
+  logRendererConsole: (level: string, text: string) =>
+    ipcRenderer.send('renderer-console-log', { level, text }),
+  notifyRendererConsoleBridgeReady: () =>
+    ipcRenderer.send('renderer-console-bridge-ready'),
+  supportsTailscaleFirewallConfiguration:
+    ipcRenderer.sendSync('supports-tailscale-firewall-configuration'),
   getServerPort: () => ipcRenderer.invoke('get-server-port'),
+  getRemoteAccessAddressCandidates: () =>
+    ipcRenderer.invoke('get-remote-access-address-candidates'),
+  configureTailscaleFirewall: () => ipcRenderer.invoke('configure-tailscale-firewall'),
+  createPairingCode: (action: 'issue' | 'rotate') =>
+    ipcRenderer.invoke('create-pairing-code', action),
+  listPairingRequests: () => ipcRenderer.invoke('list-pairing-requests'),
+  decidePairingRequest: (requestId: string, decision: PairingDecision) =>
+    ipcRenderer.invoke('decide-pairing-request', { requestId, decision }),
   readTerminalClipboard: () =>
     ipcRenderer.invoke('read-terminal-clipboard') as Promise<TerminalClipboardPayload>,
   writeTerminalClipboardText: (text: string) =>
@@ -56,7 +74,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('window-state-changed', listener);
     };
   },
-  openBoardWindow: (payload?: { projectDir?: string | null; collectionFilter?: string | null }) =>
+  openBoardWindow: (payload?: {
+    projectDir?: string | null;
+    collectionFilter?: string | null;
+    runningFilter?: boolean;
+  }) =>
     ipcRenderer.invoke('open-board-window', payload),
   closeBoardPopouts: () => ipcRenderer.invoke('close-board-popouts'),
   getPopoutState: () => ipcRenderer.invoke('get-popout-state'),
@@ -142,6 +164,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('ui-collection-filter-changed', listener);
     return () => {
       ipcRenderer.removeListener('ui-collection-filter-changed', listener);
+    };
+  },
+  uiKanbanRunningFilterChanged: (active: boolean) =>
+    ipcRenderer.send('ui-kanban-running-filter-changed', { active }),
+  onUiKanbanRunningFilterChanged: (callback: (active: boolean) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { active?: boolean }
+    ) => {
+      if (typeof payload?.active !== 'boolean') return;
+      callback(payload.active);
+    };
+    ipcRenderer.on('ui-kanban-running-filter-changed', listener);
+    return () => {
+      ipcRenderer.removeListener('ui-kanban-running-filter-changed', listener);
     };
   },
   onTitlebarMenuCommand: (callback: (command: string) => void) => {

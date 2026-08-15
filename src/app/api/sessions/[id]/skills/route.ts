@@ -2,14 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import { processManager } from '@/lib/cli/process-manager';
+import { listClaudeSkills } from '@/lib/cli/providers/claude-code/skill-discovery-client';
+import { listCodexSkills } from '@/lib/cli/providers/codex/skill-discovery-client';
+import { listOpenCodeCommands } from '@/lib/cli/providers/opencode/command-discovery-client';
+import type { SkillInfo } from '@/lib/cli/providers/skill-types';
+import { prependPendingTesseraCliSkill } from '@/lib/control/pending-tessera-cli-skill';
+import { waitForPreparationBeforeSkillDiscovery } from '@/lib/projects/preparation-gate';
+import { SettingsManager } from '@/lib/settings/manager';
+import logger from '@/lib/logger';
 
 /**
  * GET /api/sessions/[id]/skills
  *
  * Returns the list of skills available for the given session's CLI provider.
- * Skills are discovered via the SkillSource attached to the active process.
- * If the session has no active process or the provider does not support skill
- * discovery, returns an empty skills array.
+ * Active processes remain authoritative. Fresh GUI sessions use provider-native
+ * discovery that does not start or resume a conversation. Temporary Codex
+ * discovery failures remain retryable instead of becoming a valid empty list.
  */
 export async function GET(
   request: NextRequest,
@@ -31,15 +39,81 @@ export async function GET(
     }
 
     const processInfo = processManager.getProcess(id);
-    const skillSource = processInfo?.skillSource;
+    const providerId = session.provider?.trim();
+    const workDir = dbSessions.getSessionWorktreeContext(id)?.workDir;
 
-    if (!skillSource) {
-      return NextResponse.json({ skills: [] });
+    if (!processInfo) {
+      const preparation = await waitForPreparationBeforeSkillDiscovery({
+        workDir,
+      });
+      if (!preparation.ready) {
+        const code = preparation.reason === 'failed'
+          ? 'preparation_failed'
+          : 'preparation_timed_out';
+        return NextResponse.json(
+          {
+            error: preparation.reason === 'failed'
+              ? 'Worktree preparation failed before skill discovery.'
+              : 'Worktree preparation did not finish before skill discovery.',
+            code,
+            retryable: true,
+          },
+          { status: 503 },
+        );
+      }
     }
 
-    const skills = await skillSource.listSkills();
-    return NextResponse.json({ skills });
-  } catch {
+    let skills: SkillInfo[] = [];
+
+    if (providerId === 'codex') {
+      try {
+        skills = processInfo?.skillSource
+          ? await processInfo.skillSource.listSkills()
+          : await listCodexSkills({
+              userId: auth.userId,
+              workDir,
+            });
+      } catch (error) {
+        logger.warn({
+          sessionId: id,
+          error: error instanceof Error ? error.message : String(error),
+        }, 'Codex skill discovery temporarily failed');
+        return NextResponse.json(
+          { error: 'Skill discovery temporarily failed', retryable: true },
+          { status: 503 },
+        );
+      }
+    } else if (providerId === 'claude-code') {
+      const reportedCommands = processManager.getCommands(id);
+      if (reportedCommands.length > 0) {
+        skills = reportedCommands;
+      } else {
+        skills = await listClaudeSkills({
+          userId: auth.userId,
+          workDir,
+        });
+      }
+    } else if (providerId === 'opencode') {
+      skills = processInfo
+        ? processManager.getCommands(id)
+        : await listOpenCodeCommands({
+            userId: auth.userId,
+            workDir,
+          });
+    }
+
+    const tesseraCliEnabled = !processInfo
+      ? (await SettingsManager.load(auth.userId, { silent: true })).tesseraCliEnabled
+      : false;
+    return NextResponse.json({
+      skills: prependPendingTesseraCliSkill(skills, {
+        providerId,
+        enabled: tesseraCliEnabled,
+        hasProcess: Boolean(processInfo),
+      }),
+    });
+  } catch (error) {
+    logger.warn({ sessionId: id, error }, 'Failed to discover session skills');
     return NextResponse.json({ skills: [] });
   }
 }

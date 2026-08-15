@@ -3,7 +3,11 @@ import { join, basename, resolve } from 'path';
 import { homedir } from 'os';
 import logger from '../logger';
 import { execCli, isRunningInWsl, type CliEnvironment } from '../cli/cli-exec';
-import { getWslHostedWindowsHomeMountPath } from '../filesystem/path-environment';
+import {
+  getWslHostedWindowsHomeMountPath,
+  isBridgedAgentEnvironment,
+} from '../filesystem/path-environment';
+import { buildWslFilesystemPathProbe } from '../filesystem/wsl-path-probe';
 
 export interface SkillInfo {
   name: string;
@@ -84,7 +88,12 @@ export function invalidateClaudeConfigDirCache(): void {
 export async function resolveClaudeConfigDirForEnvironment(
   environment: CliEnvironment,
 ): Promise<string> {
-  const configuredDir = process.env.CLAUDE_CONFIG_DIR?.trim();
+  // `CLAUDE_CONFIG_DIR` describes the environment *this server* runs in. Across
+  // a bridge the claude CLI lives on the other side and never saw this variable,
+  // so honouring it would point at a directory the agent never reads.
+  const configuredDir = isBridgedAgentEnvironment(environment)
+    ? null
+    : process.env.CLAUDE_CONFIG_DIR?.trim();
   if (configuredDir) return resolve(configuredDir);
 
   const cached = claudeConfigDirCache.get(environment);
@@ -99,7 +108,7 @@ export async function resolveClaudeConfigDirForEnvironment(
     // `. "$HOME/.cargo/env"` line). Git resolves its status the same way.
     const result = await execCli(
       'sh',
-      ['-c', 'wslpath -w "$HOME/.claude" 2>/dev/null || printf %s "$HOME/.claude"'],
+      ['-c', buildWslFilesystemPathProbe('$HOME/.claude')],
       'wsl',
       5000,
       { loginShell: false },

@@ -1,8 +1,13 @@
 import type { PermissionMode } from '@/lib/ws/message-types';
 import type { ShortcutId } from '@/lib/keyboard/registry';
-import type { GitActionId } from '@/lib/git/action-templates';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+
+/** Surface a PTY session opens on: its terminal, or the read-only chat view. */
+export type TerminalSessionDefaultView = 'terminal' | 'chat';
+
+/** Which kind of session the creation UIs preselect: a plain chat, or a worktree task. */
+export type NewSessionDefaultKind = 'chat' | 'task';
 import type {
   TerminalDarkThemePresetId,
   TerminalLightThemePresetId,
@@ -24,10 +29,11 @@ export interface SetupState {
 
 export interface GitConfig {
   branchPrefix: string;
-  /** Prepended to every git action prompt. Single shared "tone/policy" layer. */
-  globalGuidelines: string;
-  /** Per-action prompt overrides. Missing or empty entry → default template. */
-  actionTemplates: Partial<Record<GitActionId, string>>;
+  sourceControlAi: {
+    provider: string;
+    /** Empty means the provider CLI's default model. */
+    model?: string;
+  };
 }
 
 export interface ProviderSessionDefaults {
@@ -54,6 +60,21 @@ export interface UserSettings {
   language: Language;
   /** Preferred interaction surface for newly created agent sessions. */
   agentExecutionMode: AgentExecutionMode;
+  /**
+   * Which surface a terminal (PTY) session opens on when it has no per-session
+   * preference yet. Distinct from `agentExecutionMode`, which decides what kind
+   * of session gets created; this only picks the view for one that already is a
+   * PTY session. Defaults to the terminal — the PTY is what those sessions are
+   * for, and the chat view is a read-only lens over the same conversation.
+   */
+  terminalSessionDefaultView: TerminalSessionDefaultView;
+  /**
+   * Which entry the session creation UIs (empty panel, quick-create sheet) start
+   * on. Orthogonal to `agentExecutionMode`: this picks chat vs. worktree task,
+   * not PTY vs. GUI. Places that derive the kind from their own context — the
+   * Kanban board's per-column create button — keep overriding it.
+   */
+  defaultNewSessionKind: NewSessionDefaultKind;
   profile: UserProfileSettings;
   notifications: {
     soundEnabled: boolean;
@@ -80,6 +101,8 @@ export interface UserSettings {
   /** Legacy Claude-only default model, kept for backward compatibility. */
   defaultModel: string;
   providerDefaults: Record<string, ProviderSessionDefaults>;
+  /** Model IDs manually added when a provider CLI does not list them. */
+  providerCustomModels: Record<string, string[]>;
   inactivePanelDimming: number;
   showProviderIcons: boolean;
   showRecentWork: boolean;
@@ -89,6 +112,8 @@ export interface UserSettings {
   geminiApiKey: string;
   favoriteSkills: string[];
   agentEnvironment: AgentEnvironment;
+  /** Inject Tessera's session-scoped control skill into managed GUI and PTY CLIs. */
+  tesseraCliEnabled: boolean;
   cliCommandOverrides: CliCommandOverrides;
   windowsCloseBehavior: WindowsCloseBehavior;
   setup: SetupState;

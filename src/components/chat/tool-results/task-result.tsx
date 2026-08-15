@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, memo } from 'react';
 import { ChevronRight, ChevronDown, CheckCircle, XCircle, Ban, Bot, Clock, Zap, Wrench, Rocket, FileText } from 'lucide-react';
 import type {
@@ -56,6 +58,7 @@ export const TaskResult = memo(function TaskResult({ result }: TaskResultProps) 
         {startedResult.prompt && (
           <div>
             <button
+              {...telemetryClickAttributes('message.result.open', 'message')}
               onClick={(e) => { e.stopPropagation(); setIsResponseExpanded(v => !v); }}
               className="flex items-center gap-1 text-[11px] text-(--accent) hover:text-(--accent-light) transition-colors"
             >
@@ -164,6 +167,7 @@ export const TaskResult = memo(function TaskResult({ result }: TaskResultProps) 
       {responseText && (
         <div>
           <button
+            {...telemetryClickAttributes('message.result.open', 'message')}
             onClick={(e) => { e.stopPropagation(); setIsResponseExpanded(v => !v); }}
             className="flex items-center gap-1 text-[11px] text-(--accent) hover:text-(--accent-light) transition-colors"
           >

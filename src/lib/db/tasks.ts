@@ -5,16 +5,33 @@
 import { getDb } from './database';
 import logger from '../logger';
 import type { WorkflowStatus, TaskEntity, TaskSession } from '@/types/task-entity';
-import type { TaskPrState, TaskPrStatus } from '@/types/task-pr-status';
+import {
+  effectiveTaskPrRelation,
+  type TaskPrRelation,
+  type TaskPrState,
+  type TaskPrStatus,
+} from '@/types/task-pr-status';
+import { createPendingWorktree, getWorktree, resolveCanonicalWorktree } from './worktrees';
+import { readPreparationStatus } from '@/lib/projects/preparation-status-policy';
 import { extractSessionKind } from './sessions';
+import {
+  PARENT_FIRST_WORKTREE_PATH_SQL,
+  resolveEffectiveWorktreeCheckout,
+} from './worktree-identity';
+import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
 
 export interface TaskRow {
   id: string;
+  public_worktree_id: string;
   project_id: string;
   title: string;
   collection_id: string | null;
   workflow_status: string;
   worktree_branch: string | null;
+  worktree_path: string | null;
+  creation_scope_worktree_id: string | null;
+  creation_scope_branch: string | null;
+  start_point: string | null;
   archived: number;
   archived_at: string | null;
   worktree_deleted_at: string | null;
@@ -28,18 +45,43 @@ export interface TaskRow {
   pr_unsupported: number;
   remote_branch_exists: number | null;
   pr_head_ref_oid: string | null;
+  pr_relation: string | null;
+  pr_status_known: number;
+  preparation_status: string | null;
+  preparation_started_at: string | null;
+  preparation_finished_at: string | null;
+  preparation_exit_code: number | null;
+  preparation_output: string | null;
   created_at: string;
   updated_at: string;
 }
 
-function readPrStatusFromRow(row: TaskRow): TaskPrStatus | undefined {
+type TaskPrRow = Pick<
+  TaskRow,
+  | 'pr_number'
+  | 'pr_url'
+  | 'pr_state'
+  | 'pr_merged_at'
+  | 'pr_last_synced'
+  | 'pr_head_ref_oid'
+  | 'pr_relation'
+>;
+
+function readPrStatusFromRow(row: TaskPrRow): TaskPrStatus | undefined {
   if (row.pr_number === null || row.pr_url === null || row.pr_state === null || row.pr_last_synced === null) {
     return undefined;
   }
+  const state = row.pr_state as TaskPrState;
   return {
     number: row.pr_number,
     url: row.pr_url,
-    state: row.pr_state as TaskPrState,
+    state,
+    relation: effectiveTaskPrRelation({
+      state,
+      relation: row.pr_relation === 'current' || row.pr_relation === 'historical'
+        ? (row.pr_relation as TaskPrRelation)
+        : undefined,
+    }),
     mergedAt: row.pr_merged_at ?? undefined,
     lastSynced: row.pr_last_synced,
     headRefOid: row.pr_head_ref_oid ?? undefined,
@@ -48,10 +90,31 @@ function readPrStatusFromRow(row: TaskRow): TaskPrStatus | undefined {
 
 interface SessionForTask {
   id: string;
+  project_id: string;
   title: string;
   provider: string;
   provider_state: string | null;
   updated_at: string;
+}
+
+export interface WorktreeCreationScope {
+  originWorktreeId: string;
+  branch: string | null;
+}
+
+export function hasActiveWorktreeCreationScope(
+  originWorktreeId: string,
+  branch: string,
+): boolean {
+  const row = getDb().prepare(`
+    SELECT 1
+    FROM tasks
+    WHERE creation_scope_worktree_id = ?
+      AND creation_scope_branch = ?
+      AND archived = 0
+    LIMIT 1
+  `).get(originWorktreeId, branch);
+  return Boolean(row);
 }
 
 export interface ArchivedTaskQueryOptions {
@@ -109,22 +172,36 @@ function mapRowToEntity(
   row: TaskRow,
   sessionData: { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean }
 ): TaskEntity {
+  const parentWorkDir = resolveEffectiveWorktreeCheckout(row).path;
   return {
     id: row.id,
+    worktreeId: row.public_worktree_id,
     projectId: row.project_id,
+    projectViewId: row.project_id,
     title: row.title,
     collectionId: row.collection_id ?? undefined,
     workflowStatus: row.workflow_status as WorkflowStatus,
     worktreeBranch: row.worktree_branch ?? undefined,
-    workDir: sessionData.workDir,
-    worktreeManaged: sessionData.worktreeManaged,
+    workDir: parentWorkDir ?? sessionData.workDir,
+    ...(row.creation_scope_worktree_id
+      ? {
+          creationScope: {
+            originWorktreeId: row.creation_scope_worktree_id,
+            branch: row.creation_scope_branch,
+          },
+        }
+      : {}),
+    ...(row.start_point ? { startPoint: row.start_point } : {}),
+    worktreeManaged: parentWorkDir ? true : sessionData.worktreeManaged,
     archived: !!row.archived,
     archivedAt: row.archived_at ?? undefined,
     worktreeDeletedAt: row.worktree_deleted_at ?? undefined,
     summary: row.summary ?? undefined,
     sortOrder: row.sort_order ?? 0,
     prStatus: readPrStatusFromRow(row),
+    prStatusKnown: !!row.pr_status_known,
     prUnsupported: !!row.pr_unsupported,
+    preparationStatus: readPreparationStatus(row.preparation_status),
     remoteBranchExists:
       row.remote_branch_exists === null || row.remote_branch_exists === undefined
         ? undefined
@@ -137,30 +214,74 @@ function mapRowToEntity(
 
 /**
  * Load child sessions for a given task ID.
+ *
+ * Individually archived sessions are left out by default: they no longer belong
+ * to the task's active surfaces (sidebar, board) and are listed as their own
+ * archive entries instead. Callers that need the full set — the archive view of
+ * an archived task, permanent deletion — pass `includeArchived`.
  */
 function loadTaskSessions(
   taskId: string,
-  activeSessionIds: Set<string>
+  activeSessionIds: Set<string>,
+  options: {
+    includeArchived?: boolean;
+    projectViewMembership?: ProjectViewMembership;
+  } = {}
 ): { sessions: TaskSession[]; workDir?: string; worktreeManaged?: boolean } {
   const db = getDb();
+  const canonicalMembership = options.projectViewMembership?.kind === 'canonical-worktree'
+    ? options.projectViewMembership
+    : undefined;
+  const ownership = canonicalMembership
+    ? { sql: 'worktree_id = ?', params: [canonicalMembership.worktreeId] }
+    : { sql: 'task_id = ?', params: [taskId] };
+  const branchScope = canonicalMembership
+    ? {
+        sql: `AND (
+          scope_branch IS NULL
+          OR (? IS NOT NULL AND scope_branch = ?)
+        )`,
+        params: [
+          canonicalMembership.currentBranch,
+          canonicalMembership.currentBranch,
+        ],
+      }
+    : { sql: '', params: [] };
   const rows = db.prepare(`
-    SELECT id, title, provider, provider_state, updated_at, work_dir, worktree_managed
+    SELECT id, project_id, title, provider, provider_state, created_at, updated_at, work_dir, worktree_managed, archived, sort_order
     FROM sessions
-    WHERE task_id = ? AND deleted = 0
-    ORDER BY updated_at DESC
-  `).all(taskId) as (SessionForTask & { work_dir?: string | null; worktree_managed?: number | null })[];
+    WHERE ${ownership.sql}
+      AND deleted = 0
+      ${branchScope.sql}
+    ORDER BY sort_order ASC, created_at DESC
+  `).all(...ownership.params, ...branchScope.params) as (SessionForTask & {
+    work_dir?: string | null;
+    worktree_managed?: number | null;
+    archived?: number | null;
+    created_at: string;
+    sort_order: number;
+  })[];
 
-  const sessions = rows.map((r) => ({
-    id: r.id,
-    title: r.title,
-    provider: r.provider,
-    lastModified: r.updated_at,
-    isRunning: activeSessionIds.has(r.id),
-    kind: extractSessionKind(r.provider_state),
-  }));
+  const sessions = rows
+    .filter((r) => options.includeArchived || !r.archived)
+    .map((r) => ({
+      id: r.id,
+      originProjectId: r.project_id,
+      title: r.title,
+      provider: r.provider,
+      lastModified: r.updated_at,
+      isRunning: activeSessionIds.has(r.id),
+      archived: Boolean(r.archived),
+      kind: extractSessionKind(r.provider_state),
+      sortOrder: r.sort_order,
+    }));
 
-  // Derive workDir from the first session that has one
-  const worktreeRow = rows.find(r => r.work_dir);
+  // Derive workDir from the first session that has one. Archived children still
+  // count: the worktree belongs to the task, not to any single session, and it
+  // must stay resolvable even when the session that recorded it is archived.
+  const worktreeRow = rows
+    .filter((row) => Boolean(row.work_dir?.trim()))
+    .sort((left, right) => left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id))[0];
   const workDir = worktreeRow?.work_dir ?? undefined;
   const worktreeManaged = workDir
     ? rows.some((r) => r.work_dir === workDir && r.worktree_managed === 1)
@@ -172,21 +293,53 @@ function loadTaskSessions(
 /**
  * Get all tasks for a project with their child sessions.
  */
-export function getTasks(
-  projectId: string,
+export function getTasksForProjectView(
+  membership: ProjectViewMembership,
   activeSessionIds: Set<string> = new Set(),
   options: { includeArchived?: boolean } = {}
 ): TaskEntity[] {
   const db = getDb();
+  const where = membership.kind === 'canonical-worktree'
+    ? {
+        sql: `(
+          creation_scope_worktree_id = ?
+          AND (
+            creation_scope_branch IS NULL
+            OR (? IS NOT NULL AND creation_scope_branch = ?)
+          )
+        )`,
+        params: [
+          membership.worktreeId,
+          membership.currentBranch,
+          membership.currentBranch,
+        ],
+      }
+    : { sql: 'project_id = ?', params: [membership.projectId] };
   const rows = db.prepare(`
     SELECT * FROM tasks
-    WHERE project_id = ? ${options.includeArchived ? '' : 'AND archived = 0'}
+    WHERE ${where.sql} ${options.includeArchived ? '' : 'AND archived = 0'}
     ORDER BY sort_order ASC, created_at DESC
-  `).all(projectId) as TaskRow[];
+  `).all(...where.params) as TaskRow[];
 
-  return rows.map((row) =>
-    mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds))
-  );
+  return rows.map((row) => {
+    return mapRowToEntity(
+      row,
+      loadTaskSessions(
+        row.id,
+        activeSessionIds,
+        membership.kind === 'canonical-worktree'
+          ? {
+              projectViewMembership: {
+                kind: 'canonical-worktree',
+                worktreeId: row.public_worktree_id,
+                currentBranch: getWorktree(row.public_worktree_id)?.currentBranch
+                  ?? row.worktree_branch,
+              },
+            }
+          : {},
+      ),
+    );
+  });
 }
 
 /**
@@ -194,12 +347,20 @@ export function getTasks(
  */
 export function getTask(
   id: string,
-  activeSessionIds: Set<string> = new Set()
+  activeSessionIds: Set<string> = new Set(),
+  options: { includeArchivedSessions?: boolean } = {}
 ): TaskEntity | undefined {
   const db = getDb();
   const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow | undefined;
   if (!row) return undefined;
-  return mapRowToEntity(row, loadTaskSessions(id, activeSessionIds));
+  return mapRowToEntity(
+    row,
+    loadTaskSessions(
+      id,
+      activeSessionIds,
+      { includeArchived: options.includeArchivedSessions },
+    )
+  );
 }
 
 export function getArchivedTasks(
@@ -224,8 +385,18 @@ export function getArchivedTasks(
     ${limitSql}
   `).all(...params) as TaskRow[];
 
+  // An archived task owns every child session, including ones that were
+  // archived individually before the task itself was — they are no longer
+  // listed as standalone chat entries, so the task entry has to show them.
   return rows.map((row) =>
-    mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds))
+    mapRowToEntity(
+      row,
+      loadTaskSessions(
+        row.id,
+        activeSessionIds,
+        { includeArchived: true },
+      ),
+    )
   );
 }
 
@@ -250,23 +421,83 @@ export function createTask(params: {
   collectionId?: string;
   workflowStatus?: WorkflowStatus;
   worktreeBranch?: string;
-}): void {
+  worktreePath?: string;
+  creationScope?: WorktreeCreationScope;
+  startPoint?: string;
+}): string {
   const db = getDb();
   const now = new Date().toISOString();
+  const publicWorktreeId = params.worktreePath
+    ? resolveCanonicalWorktree(params.worktreePath)?.id ?? createPendingWorktree()
+    : createPendingWorktree();
   db.prepare(`
-    INSERT INTO tasks (id, project_id, title, collection_id, workflow_status, worktree_branch, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (
+      id, public_worktree_id, project_id, title, collection_id, workflow_status,
+      worktree_branch, worktree_path, creation_scope_worktree_id,
+      creation_scope_branch, start_point, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     params.id,
+    publicWorktreeId,
     params.projectId,
     params.title,
     params.collectionId ?? null,
     params.workflowStatus ?? 'todo',
     params.worktreeBranch ?? null,
+    params.worktreePath ?? null,
+    params.creationScope?.originWorktreeId ?? null,
+    params.creationScope?.branch ?? null,
+    params.startPoint ?? null,
     now,
     now,
   );
   logger.info({ taskId: params.id, projectId: params.projectId }, 'Task created');
+  return publicWorktreeId;
+}
+
+export function setTaskWorktreeCheckout(
+  id: string,
+  checkout: {
+    branch: string;
+    path: string;
+    creationScope?: WorktreeCreationScope;
+    startPoint?: string;
+  },
+): void {
+  const now = new Date().toISOString();
+  const db = getDb();
+  const row = db.prepare('SELECT public_worktree_id FROM tasks WHERE id = ?').get(id) as
+    | { public_worktree_id: string }
+    | undefined;
+  const worktreeId = row
+    ? resolveCanonicalWorktree(checkout.path, row.public_worktree_id)?.id ?? row.public_worktree_id
+    : undefined;
+  db.prepare(`
+    UPDATE tasks
+    SET public_worktree_id = COALESCE(?, public_worktree_id),
+        worktree_branch = ?, worktree_path = ?,
+        creation_scope_worktree_id = CASE
+          WHEN creation_scope_worktree_id IS NULL THEN ?
+          ELSE creation_scope_worktree_id
+        END,
+        creation_scope_branch = CASE
+          WHEN creation_scope_worktree_id IS NULL THEN ?
+          ELSE creation_scope_branch
+        END,
+        start_point = COALESCE(start_point, ?),
+        updated_at = ?
+    WHERE id = ?
+  `).run(
+    worktreeId ?? null,
+    checkout.branch,
+    checkout.path,
+    checkout.creationScope?.originWorktreeId ?? null,
+    checkout.creationScope?.branch ?? null,
+    checkout.startPoint ?? null,
+    now,
+    id,
+  );
 }
 
 /**
@@ -363,23 +594,15 @@ export function setTaskArchived(id: string, archived: boolean): void {
   const db = getDb();
   const now = new Date().toISOString();
   const archivedAt = archived ? now : null;
-  db.transaction(() => {
-    db.prepare(`
-      UPDATE tasks
-      SET archived = ?, archived_at = ?, updated_at = ?
-      WHERE id = ?
-    `).run(archived ? 1 : 0, archivedAt, now, id);
-
-    // Task archive state lives on tasks. Child session archive flags are legacy
-    // standalone-chat state and must not carry meaning for task-owned sessions.
-    db.prepare(`
-      UPDATE sessions
-      SET archived = 0, archived_at = NULL, updated_at = ?
-      WHERE task_id = ?
-        AND deleted = 0
-        AND (archived != 0 OR archived_at IS NOT NULL)
-    `).run(now, id);
-  })();
+  // Archiving a task hides every child session through the task's own flag, so
+  // the per-session flags stay untouched in both directions. A session archived
+  // on its own keeps that state across a task archive/restore round trip —
+  // restoring the task must not resurrect sessions the user put away by hand.
+  db.prepare(`
+    UPDATE tasks
+    SET archived = ?, archived_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(archived ? 1 : 0, archivedAt, now, id);
 }
 
 /**
@@ -404,7 +627,9 @@ export function setTaskPrStatus(
           pr_last_synced = ?,
           pr_unsupported = 1,
           remote_branch_exists = NULL,
-          pr_head_ref_oid = NULL
+          pr_head_ref_oid = NULL,
+          pr_relation = NULL,
+          pr_status_known = 0
       WHERE id = ?
     `).run(new Date().toISOString(), id);
     return;
@@ -423,7 +648,9 @@ export function setTaskPrStatus(
           pr_last_synced = ?,
           pr_unsupported = 0,
           remote_branch_exists = ?,
-          pr_head_ref_oid = NULL
+          pr_head_ref_oid = NULL,
+          pr_relation = NULL,
+          pr_status_known = 1
       WHERE id = ?
     `).run(new Date().toISOString(), remoteFlag, id);
     return;
@@ -438,7 +665,9 @@ export function setTaskPrStatus(
         pr_last_synced = ?,
         pr_unsupported = 0,
         remote_branch_exists = ?,
-        pr_head_ref_oid = ?
+        pr_head_ref_oid = ?,
+        pr_relation = ?,
+        pr_status_known = 1
     WHERE id = ?
   `).run(
     pr.number,
@@ -448,8 +677,19 @@ export function setTaskPrStatus(
     pr.lastSynced,
     remoteFlag,
     pr.headRefOid ?? null,
+    pr.relation,
     id,
   );
+}
+
+/** Preserve the last displayable PR while making creation fail closed. */
+export function markTaskPrStatusUnknown(id: string): void {
+  getDb().prepare(`
+    UPDATE tasks
+    SET pr_unsupported = 0,
+        pr_status_known = 0
+    WHERE id = ?
+  `).run(id);
 }
 
 export interface TaskPrSyncContext {
@@ -457,6 +697,7 @@ export interface TaskPrSyncContext {
   branch: string | null;
   workDir: string | null;
   wasUnsupported: boolean;
+  prStatusKnown: boolean;
   prStatus?: TaskPrStatus;
   remoteBranchExists?: boolean;
 }
@@ -466,44 +707,32 @@ export function getTaskPrSyncContext(id: string): TaskPrSyncContext | null {
   const db = getDb();
   const row = db.prepare(`
     SELECT
-      t.id AS id,
-      t.worktree_branch AS worktree_branch,
-      t.pr_unsupported AS pr_unsupported,
-      t.pr_number AS pr_number,
-      t.pr_url AS pr_url,
-      t.pr_state AS pr_state,
-      t.pr_merged_at AS pr_merged_at,
-      t.pr_last_synced AS pr_last_synced,
-      t.remote_branch_exists AS remote_branch_exists,
-      t.pr_head_ref_oid AS pr_head_ref_oid,
-      (
-        SELECT s.work_dir
-        FROM sessions s
-        WHERE s.task_id = t.id AND s.work_dir IS NOT NULL
-        LIMIT 1
-      ) AS work_dir
-    FROM tasks t
-    WHERE t.id = ?
-  `).get(id) as (Pick<TaskRow, 'id' | 'worktree_branch' | 'pr_unsupported' | 'pr_number' | 'pr_url' | 'pr_state' | 'pr_merged_at' | 'pr_last_synced' | 'remote_branch_exists' | 'pr_head_ref_oid'> & { work_dir: string | null }) | undefined;
+      tasks.id AS id,
+      tasks.worktree_branch AS worktree_branch,
+      tasks.pr_unsupported AS pr_unsupported,
+      tasks.pr_number AS pr_number,
+      tasks.pr_url AS pr_url,
+      tasks.pr_state AS pr_state,
+      tasks.pr_merged_at AS pr_merged_at,
+      tasks.pr_last_synced AS pr_last_synced,
+      tasks.remote_branch_exists AS remote_branch_exists,
+      tasks.pr_head_ref_oid AS pr_head_ref_oid,
+      tasks.pr_relation AS pr_relation,
+      tasks.pr_status_known AS pr_status_known,
+      ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
+    FROM tasks
+    WHERE tasks.id = ?
+  `).get(id) as (Pick<TaskRow, 'id' | 'worktree_branch' | 'pr_unsupported' | 'pr_number' | 'pr_url' | 'pr_state' | 'pr_merged_at' | 'pr_last_synced' | 'remote_branch_exists' | 'pr_head_ref_oid' | 'pr_relation' | 'pr_status_known'> & { work_dir: string | null }) | undefined;
   if (!row) return null;
 
-  const prStatus: TaskPrStatus | undefined =
-    row.pr_number !== null && row.pr_url !== null && row.pr_state !== null && row.pr_last_synced !== null
-      ? {
-          number: row.pr_number,
-          url: row.pr_url,
-          state: row.pr_state as TaskPrState,
-          mergedAt: row.pr_merged_at ?? undefined,
-          lastSynced: row.pr_last_synced,
-          headRefOid: row.pr_head_ref_oid ?? undefined,
-        }
-      : undefined;
+  const prStatus = readPrStatusFromRow(row);
 
   return {
     id: row.id,
     branch: row.worktree_branch,
     workDir: row.work_dir,
     wasUnsupported: !!row.pr_unsupported,
+    prStatusKnown: !!row.pr_status_known,
     prStatus,
     remoteBranchExists:
       row.remote_branch_exists === null || row.remote_branch_exists === undefined
@@ -517,15 +746,15 @@ export function getTasksEligibleForPrSync(): Array<Pick<TaskRow, 'id' | 'project
   const db = getDb();
   const rows = db.prepare(`
     SELECT
-      t.id AS id,
-      t.project_id AS project_id,
-      t.worktree_branch AS worktree_branch,
-      t.pr_unsupported AS pr_unsupported,
-      (SELECT s.work_dir FROM sessions s WHERE s.task_id = t.id AND s.work_dir IS NOT NULL LIMIT 1) AS work_dir
-    FROM tasks t
-    WHERE t.archived = 0
-      AND t.worktree_branch IS NOT NULL
-      AND t.worktree_deleted_at IS NULL
+      tasks.id AS id,
+      tasks.project_id AS project_id,
+      tasks.worktree_branch AS worktree_branch,
+      tasks.pr_unsupported AS pr_unsupported,
+      ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
+    FROM tasks
+    WHERE tasks.archived = 0
+      AND tasks.worktree_branch IS NOT NULL
+      AND tasks.worktree_deleted_at IS NULL
   `).all() as Array<{
     id: string;
     project_id: string;
@@ -584,24 +813,30 @@ export function getTaskBySessionId(
     WHERE s.id = ? AND s.deleted = 0
   `).get(sessionId) as TaskRow | undefined;
   if (!row) return undefined;
-  return mapRowToEntity(row, loadTaskSessions(row.id, activeSessionIds));
+  return mapRowToEntity(
+    row,
+    loadTaskSessions(
+      row.id,
+      activeSessionIds,
+    ),
+  );
 }
 
 /**
- * Add a session to a task by updating sessions.task_id.
+ * The task that owns a worktree, found by the directory itself.
+ *
+ * Preparation status belongs to the task, but what an agent about to be spawned
+ * knows is where it will run. A worktree is only ever backed by one task, so
+ * the directory names it unambiguously.
  */
-export function addSessionToTask(taskId: string, sessionId: string): void {
-  const db = getDb();
-  const now = new Date().toISOString();
-  const task = db.prepare('SELECT collection_id FROM tasks WHERE id = ?')
-    .get(taskId) as { collection_id: string | null } | undefined;
-
-  db.prepare('UPDATE sessions SET task_id = ?, collection_id = ?, updated_at = ? WHERE id = ?')
-    .run(taskId, task?.collection_id ?? null, now, sessionId);
-  // Also touch the task's updated_at
-  db.prepare('UPDATE tasks SET updated_at = ? WHERE id = ?')
-    .run(now, taskId);
-  logger.info({ taskId, sessionId }, 'Session added to task');
+export function findTaskIdForWorktree(workDir: string): string | null {
+  const row = getDb().prepare(`
+    SELECT tasks.id AS task_id
+    FROM tasks
+    WHERE ${PARENT_FIRST_WORKTREE_PATH_SQL} = ?
+    LIMIT 1
+  `).get(workDir) as { task_id: string } | undefined;
+  return row?.task_id ?? null;
 }
 
 /**

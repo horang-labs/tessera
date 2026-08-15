@@ -115,14 +115,11 @@ export function buildCollectionGroups(
   const groupMap = createOrderedGroupMap(collections);
   const liveTasks = mergeTasksWithLiveSessions(tasks, visibleSessions);
   const knownTaskIds = new Set(liveTasks.map((task) => task.id));
-  const visibleTaskIds = new Set(
-    visibleSessions
-      .map((session) => session.taskId)
-      .filter((taskId): taskId is string => !!taskId && knownTaskIds.has(taskId))
-  );
 
   for (const task of liveTasks) {
-    if (!visibleTaskIds.has(task.id)) continue;
+    // The task read model is already the branch-scoped linked Worktree
+    // projection. A Worktree remains present independently of whether any of
+    // its child Sessions also appear in the direct Session projection.
 
     const collectionId = task.collectionId ?? null;
     if (!groupMap.has(collectionId)) {

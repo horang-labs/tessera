@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
+import { useAuthStore } from '@/stores/auth-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import {
   captureTelemetryEvent,
   captureTelemetryFirstRun,
@@ -19,13 +22,19 @@ const IDLE_TIMEOUT_MS = 300_000;
 type TelemetryBootstrapResponse = TelemetryBootstrapInfo;
 
 export function TelemetryProvider() {
+  const pathname = usePathname();
+  if (pathname === '/pair' || pathname.startsWith('/pair/')) return null;
+
+  return <ActiveTelemetryProvider />;
+}
+
+function ActiveTelemetryProvider() {
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const telemetrySettingEnabled = useSettingsStore(
     (state) => state.settings.telemetry.enabled,
   );
-  const activeProviderId = useSessionStore((state) => {
-    if (!state.activeSessionId) return null;
-    return state.getSession(state.activeSessionId)?.provider ?? null;
-  });
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const activeProviderId = useProjectViewSession(activeSessionId)?.provider ?? null;
 
   const [appSessionId] = useState(createTelemetrySessionId);
   const [bootstrap, setBootstrap] = useState<TelemetryBootstrapResponse | null>(null);
@@ -56,6 +65,8 @@ export function TelemetryProvider() {
   }, [appSessionId, contextServerHostInfo, installId]);
 
   useEffect(() => {
+    if (!isAuthenticated) return undefined;
+
     let cancelled = false;
 
     async function loadBootstrap() {
@@ -73,7 +84,7 @@ export function TelemetryProvider() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!bootstrap || !bootstrap.firstRunEligible) return;

@@ -8,6 +8,7 @@ import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { wsClient } from '@/lib/ws/client';
 import type { PermissionMode } from '@/lib/ws/message-types';
 import type { ShortcutId } from '@/lib/keyboard/registry';
@@ -40,6 +41,9 @@ import { useI18n } from '@/lib/i18n';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { UnifiedSession } from '@/types/chat';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import {
   CODEX_NATIVE_COMMAND_EVENT,
   type CodexNativeCommandEventDetail,
@@ -122,6 +126,7 @@ function ComposerToggleButton({
   controlId,
   shortcutId,
   shortcutLabel,
+  telemetryControl,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
@@ -133,9 +138,11 @@ function ComposerToggleButton({
   controlId?: string;
   shortcutId?: ShortcutId;
   shortcutLabel?: string;
+  telemetryControl: TelemetryUiControl;
 }) {
   const button = (
     <button
+      {...telemetryClickAttributes(telemetryControl, 'composer')}
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
@@ -177,6 +184,7 @@ function ComposerControlDropdown({
   disabled = false,
   title,
   shortcutId,
+  telemetryControl,
   shortcutLabel,
   openRequest = 0,
 }: {
@@ -192,6 +200,7 @@ function ComposerControlDropdown({
   disabled?: boolean;
   title?: string;
   shortcutId?: ShortcutId;
+  telemetryControl: TelemetryUiControl;
   shortcutLabel?: string;
   openRequest?: number;
 }) {
@@ -300,6 +309,7 @@ function ComposerControlDropdown({
 
   const trigger = (
     <button
+      {...telemetryClickAttributes(telemetryControl, 'composer')}
       ref={triggerRef}
       type="button"
       onClick={() => {
@@ -822,6 +832,7 @@ function ComposerSessionControlsInner({
       bindings[planShortcut] = (event) => {
         if (!isActivePanelSession()) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'toggle-plan-mode' });
         handlePlanToggle();
       };
     }
@@ -829,6 +840,7 @@ function ComposerSessionControlsInner({
       bindings[fastModeShortcut] = (event) => {
         if (!isActivePanelSession() || !canToggleFastMode) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'toggle-fast-mode' });
         handleFastModeToggle();
       };
     }
@@ -836,6 +848,7 @@ function ComposerSessionControlsInner({
       bindings[modelShortcut] = (event) => {
         if (!isActivePanelSession()) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'open-model-selector' });
         setModelOpenRequest((value) => value + 1);
       };
     }
@@ -843,6 +856,7 @@ function ComposerSessionControlsInner({
       bindings[reasoningShortcut] = (event) => {
         if (!isActivePanelSession() || !canOpenReasoningSelector) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'open-reasoning-selector' });
         setReasoningOpenRequest((value) => value + 1);
       };
     }
@@ -884,6 +898,7 @@ function ComposerSessionControlsInner({
       <div className={cn('flex items-center gap-1.5', !isInline && 'flex-wrap', isInline && 'contents')}>
         {canToggleFastMode && (
           <ComposerToggleButton
+            telemetryControl="composer.fast.toggle"
             icon={Zap}
             label="Fast"
             pressed={isFastModeEnabled}
@@ -898,6 +913,7 @@ function ComposerSessionControlsInner({
         )}
 
         <ComposerToggleButton
+          telemetryControl="composer.plan.toggle"
           icon={Workflow}
           label={modeToggleLabel}
           pressed={sessionMode === 'plan'}
@@ -911,6 +927,7 @@ function ComposerSessionControlsInner({
         />
 
         <ComposerControlDropdown
+          telemetryControl="composer.access.open"
           icon={Shield}
           label={accessLabel}
           testId="access-mode-selector"
@@ -923,6 +940,7 @@ function ComposerSessionControlsInner({
         >
           {(close) => (
             <ComposerSessionControlMenu
+              telemetryControl="composer.access.select"
               footerLabel={accessFooterLabel}
               options={accessOptions}
               selectedValue={accessMode}
@@ -935,6 +953,7 @@ function ComposerSessionControlsInner({
         </ComposerControlDropdown>
 
         <ComposerControlDropdown
+          telemetryControl="composer.model.open"
           icon={Cpu}
           label={modelLabel}
           testId="model-selector"
@@ -948,15 +967,11 @@ function ComposerSessionControlsInner({
         >
           {(close) => (
             <ComposerModelMenu
+              telemetryControl="composer.model.select"
               isLoading={providerSessionOptions.isLoading}
               modelOptions={sessionOptions?.modelOptions ?? []}
               selectedModel={model}
               loadingLabel={t('settings.model.loadingOptions')}
-              allowCustomModel={providerIdForSticky === 'claude-code'}
-              customLabel={t('settings.model.customLabel')}
-              customPlaceholder={t('settings.model.customPlaceholder')}
-              customApplyLabel={t('settings.model.customApply')}
-              customHint={t('settings.model.customHint')}
               onSelectModel={(nextModel) => {
                 handleModelChange(nextModel);
                 close();
@@ -968,6 +983,7 @@ function ComposerSessionControlsInner({
         {sessionOptions?.supportsReasoningEffort && reasoningOptions.length > 0 && (
           canOpenReasoningSelector ? (
             <ComposerControlDropdown
+              telemetryControl="composer.effort.open"
               icon={Gauge}
               label={reasoningLabel}
               testId="reasoning-effort-selector"
@@ -980,6 +996,7 @@ function ComposerSessionControlsInner({
             >
               {(close) => (
                 <ComposerReasoningEffortMenu
+                  telemetryControl="composer.effort.select"
                   options={reasoningOptions}
                   selectedEffort={reasoningEffort}
                   disableRestartRequired={session?.isRunning === true}
@@ -1009,7 +1026,7 @@ export function ComposerSessionControls({
   providerSessionOptions,
   surfaceActive = false,
 }: ComposerSessionControlsProps) {
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useProjectViewSession(sessionId);
   const settings = useSettingsStore((state) => state.settings);
   const providerId = session?.provider?.trim();
   const resolvedProviderId = providerId ?? '';

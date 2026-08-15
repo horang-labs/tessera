@@ -15,6 +15,10 @@ import { AgentMessageGroup } from './agent-message-group';
 import { useShowWaitingIndicator } from '@/hooks/use-show-waiting-indicator';
 import { useVirtualMessageList } from '@/hooks/use-virtual-message-list';
 import { useWebSocket } from '@/hooks/use-websocket';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { useI18n } from '@/lib/i18n';
 import {
   applyProviderSessionRuntimeOverrides,
@@ -24,6 +28,7 @@ import {
   exportSessionReference,
   formatForkConversationPrompt,
 } from '@/lib/session/session-reference';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/notification-store';
 import type { Collection } from '@/types/collection';
@@ -44,12 +49,19 @@ interface MessageListProps {
   messages: EnhancedMessage[];
   isLoading: boolean;
   sessionId: string;
+  projectViewDir?: string | null;
   hasMore: boolean;
   onLoadMore: () => Promise<void> | void;
   isLoadingMore: boolean;
   isSinglePanel?: boolean;
   isTabActive?: boolean;
   isTurnInFlight?: boolean;
+  /**
+   * Forces the waiting indicator on when the turn is owned outside chat-store —
+   * a PTY session replayed as chat, where the provider's hooks are the only
+   * signal that the agent is working.
+   */
+  forceWaitingIndicator?: boolean;
   search?: {
     activeMatchMessageId: string | null;
     activeGroupedRowIndex: number;
@@ -117,12 +129,14 @@ function MessageListSessionView({
   messages,
   isLoading,
   sessionId,
+  projectViewDir,
   hasMore,
   onLoadMore,
   isLoadingMore,
   isSinglePanel = false,
   isTabActive = true,
   isTurnInFlight = false,
+  forceWaitingIndicator = false,
   search,
 }: MessageListProps) {
   'use no memo'; // React Compiler caches virtualizer.getVirtualItems() on the stable instance ref — but the virtualizer is mutable, so we must opt out.
@@ -135,11 +149,15 @@ function MessageListSessionView({
   const [isInjectingFork, setIsInjectingFork] = useState(false);
   const forkAnchorRef = useRef<HTMLElement | null>(null);
   const messagesRef = useRef(messages);
-  const session = useSessionStore((state) => state.getSession(sessionId));
-  const projects = useSessionStore((state) => state.projects);
+  const session = useProjectViewSession(sessionId, projectViewDir);
+  const projects = useLoadedProjectViews();
   const providerId = session?.provider;
   const { sendMessage } = useWebSocket();
-  const showWaitingIndicator = useShowWaitingIndicator(sessionId, messages);
+  const showWaitingIndicator =
+    useShowWaitingIndicator(sessionId, messages) || forceWaitingIndicator;
+  const awaitingPreparation = useChatStore(
+    (state) => Boolean(state.awaitingPreparationBySession[sessionId]),
+  );
   const hasActivePrompt = useChatStore((state) => state.activeInteractivePrompt.has(sessionId));
   const activeProject = useMemo(() => {
     if (!session) return null;
@@ -167,6 +185,7 @@ function MessageListSessionView({
   const {
     virtualizer,
     autoScroll,
+    canScrollToBottom,
     setAutoScroll,
     handleScroll,
     handleWheel,
@@ -260,7 +279,7 @@ function MessageListSessionView({
         untilMessageId: forkSource.message.id,
         untilMessageIndex: forkSource.messageIndex,
       });
-      const targetSession = useSessionStore.getState().getSession(targetSessionId);
+      const targetSession = projectViewWorkspaceState.resolveSession(targetSessionId);
       const { settings } = useSettingsStore.getState();
       const targetProviderId = targetSession?.provider?.trim();
       if (!targetProviderId) {
@@ -342,7 +361,7 @@ function MessageListSessionView({
   // Virtual items to render
   const virtualItems = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
-  const showScrollToBottomButton = messages.length > 0 && !autoScroll;
+  const showScrollToBottomButton = messages.length > 0 && !autoScroll && canScrollToBottom;
 
   return (
     <div className="h-full relative">
@@ -358,7 +377,10 @@ function MessageListSessionView({
           {messages.length === 0 ? (
             showWaitingIndicator ? (
               <div className="pt-3">
-                <WaitingIndicator providerId={providerId} />
+                <WaitingIndicator
+                  providerId={providerId}
+                  awaitingPreparation={awaitingPreparation}
+                />
               </div>
             ) : (
               <MessageListEmptyState
@@ -422,7 +444,12 @@ function MessageListSessionView({
             </div>
           )}
 
-          {messages.length > 0 && showWaitingIndicator && <WaitingIndicator providerId={providerId} />}
+          {messages.length > 0 && showWaitingIndicator && (
+            <WaitingIndicator
+              providerId={providerId}
+              awaitingPreparation={awaitingPreparation}
+            />
+          )}
         </div>
       </MessageListScrollArea>
 

@@ -34,7 +34,7 @@ export type TerminalProviderSessionReconciliationResult = {
  */
 function childTitle(source: dbSessions.SessionRow, origin: TerminalProviderSessionOrigin): string {
   if (origin === 'reset') {
-    return generateDefaultTitle(dbSessions.countActiveSessionsInProject(source.project_id));
+    return generateDefaultTitle(dbSessions.countActiveSessionsInOriginProject(source.project_id));
   }
   const suffix = ' (Fork)';
   return `${source.title.slice(0, Math.max(1, 100 - suffix.length))}${suffix}`;
@@ -56,14 +56,27 @@ function createChildSession(
   source: dbSessions.SessionRow,
   origin: TerminalProviderSessionOrigin,
   providerState: string,
+  workDir?: string,
   onCreated?: (sessionId: string) => void,
 ): string {
   const sessionId = randomUUID();
   const title = childTitle(source, origin);
+  const effectiveCheckout = dbSessions.getSessionWorktreeContext(source.id);
+  // A child that reports its own directory has left the parent's checkout —
+  // Claude runs a `/fork` out of a linked worktree in the origin tree. Its
+  // worktree metadata belongs to the parent's directory, so it cannot come
+  // along: inheriting it would mark the origin checkout as a managed worktree
+  // and expose it to worktree removal.
+  const inheritsCheckout = !workDir || workDir === effectiveCheckout?.workDir;
   getDb().transaction(() => {
     dbSessions.createSession(sessionId, source.project_id, title, source.provider, {
-      workDir: source.work_dir ?? undefined,
-      worktreeManaged: source.worktree_managed === 1,
+      workDir: workDir ?? effectiveCheckout?.workDir ?? undefined,
+      worktreeBranch: inheritsCheckout
+        ? effectiveCheckout?.worktreeBranch ?? undefined
+        : undefined,
+      worktreeManaged: inheritsCheckout
+        ? effectiveCheckout?.worktreeManaged ?? false
+        : false,
       taskId: source.task_id ?? undefined,
       collectionId: source.collection_id ?? undefined,
       model: source.model ?? undefined,
@@ -72,8 +85,8 @@ function createChildSession(
       providerState,
     });
     dbSessions.updateSession(sessionId, {
-      worktree_branch: source.worktree_branch,
-      worktree_managed: source.worktree_managed ?? 0,
+      worktree_branch: inheritsCheckout ? effectiveCheckout?.worktreeBranch ?? null : null,
+      worktree_managed: inheritsCheckout && effectiveCheckout?.worktreeManaged ? 1 : 0,
       chat_workflow_status: source.chat_workflow_status,
     });
     onCreated?.(sessionId);
@@ -105,7 +118,11 @@ export function createPendingTerminalProviderSessionFork(
   ) return null;
 
   return {
-    sessionId: createChildSession(source, 'reset', buildPendingTerminalProviderState()),
+    sessionId: createChildSession(
+      source,
+      'reset',
+      buildPendingTerminalProviderState(),
+    ),
     projectId: source.project_id,
   };
 }
@@ -148,8 +165,13 @@ export function reconcileTerminalProviderSession(options: {
   activation?: TerminalProviderSessionActivation;
   /** Whether the CLI branched the current conversation or started an empty one. */
   origin?: TerminalProviderSessionOrigin;
+  /**
+   * Where the observed conversation runs, when the CLI reported a directory of
+   * its own. Already translated to a path this server can open.
+   */
+  workDir?: string;
 }): TerminalProviderSessionReconciliationResult {
-  const { activation, identity, origin = 'fork', sourceSessionId } = options;
+  const { activation, identity, origin = 'fork', sourceSessionId, workDir } = options;
   const source = dbSessions.getSession(sourceSessionId);
   if (
     !source
@@ -198,6 +220,7 @@ export function reconcileTerminalProviderSession(options: {
     source,
     origin,
     buildTerminalProviderState(identity, activation),
+    workDir,
     (created) => registerIdentity(created, identity),
   );
   return {

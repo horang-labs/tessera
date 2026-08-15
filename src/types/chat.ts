@@ -59,6 +59,12 @@ export interface ToolCallMessage extends BaseEnhancedMessage {
   agentContext?: AgentContextEvent[];
   /** True when output/toolUseResult were stripped for lazy loading (read-only sessions) */
   hasOutput?: boolean;
+  /** Latest live progress tick from the CLI (`tool_progress`) while running. */
+  toolProgress?: {
+    elapsedTimeSeconds: number;
+    heartbeat?: boolean;
+    taskId?: string;
+  };
 }
 
 // Thinking message (NEW)
@@ -180,8 +186,10 @@ export interface UnifiedSession {
   id: string;
   /** Session title -- custom-title if set, otherwise first user prompt */
   title: string;
-  /** Encoded project directory name */
+  /** Project View placement for this rendered appearance; never canonical Worktree identity. */
   projectDir: string;
+  /** Stable representative Project, independent of the Project view showing this Session. */
+  originProjectId: string;
   /** Whether a CLI process is currently running for this session */
   isRunning: boolean;
   /** Session status (only meaningful when isRunning=true) */
@@ -212,6 +220,10 @@ export interface UnifiedSession {
    * Undefined when no worktree is linked.
    */
   worktreeBranch?: string;
+  /** Canonical Worktree that owns this Session. */
+  worktreeId?: string;
+  /** Immutable branch-at-creation metadata used only by Project view projection. */
+  scopeBranch?: string;
   /** Working directory used by this session or managed worktree. */
   workDir?: string;
 
@@ -274,8 +286,14 @@ export interface ProjectGroup {
   decodedPath: string;
   /** Human-readable path formatted for the active agent environment. */
   displayPath?: string;
+  /** Canonical checkout opened by this saved Project view. */
+  projectWorktree?: import('./worktree').ProjectWorktreeSummary;
+  /** One exact external rename that currently hides immutable branch scope. */
+  branchRenameWarning?: import('@/lib/projects/branch-rename-warning').ProjectBranchRenameWarning;
   /** Whether this is the current project (matches process.cwd()) */
   isCurrent: boolean;
+  /** Whether the project has a preparation script for its worktrees to run. */
+  hasPreparationScript?: boolean;
   /** Sessions in this project, sorted by lastModified desc */
   sessions: UnifiedSession[];
   /** Total session count (may exceed sessions.length if truncated) */
@@ -284,7 +302,7 @@ export interface ProjectGroup {
   allLoaded: boolean;
   /** Number of sessions loaded from API so far (for offset calculation) */
   loadedCount: number;
-  /** Cursor for next page of sessions (mtime ISO of oldest loaded session) */
+  /** Opaque cursor for the next page of sessions */
   nextCursor: string | null;
   /** Index tracking how many times "Load More" has been clicked (for progressive batch sizing) */
   loadBatchIndex: number;

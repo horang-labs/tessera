@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useState, useCallback, useRef } from 'react';
+import { memo, useState, useCallback, useMemo, useRef } from 'react';
 import type React from 'react';
 import { GitBranch, MessageSquare, Plus, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -8,16 +8,24 @@ import { useI18n } from '@/lib/i18n';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { setKanbanTaskDragData, setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
+import { useSubSessionCap } from '@/hooks/use-sub-session-cap';
+import { useSubSessionReorder } from '@/hooks/use-sub-session-reorder';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useBoardStore } from '@/stores/board-store';
 import {
   useAnySessionAwaitingUser,
   useIsSessionAwaitingUser,
 } from '@/hooks/use-session-awaiting-user';
-import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useSessionStore } from '@/stores/session-store';
-import { useNotificationStore } from '@/stores/notification-store';
+import {
+  useAnyProjectViewSessionUnread,
+  useProjectViewSessionUnread,
+} from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { useSelectionStore } from '@/stores/selection-store';
 import { useTaskStore } from '@/stores/task-store';
 import { TASK_MULTI_DND_MIME } from '@/types/task';
@@ -27,6 +35,7 @@ import { CHAT_WORKFLOW_ICON_COLOR, CHAT_WORKFLOW_ICON_FILL } from '@/types/task-
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import { TaskContextMenu } from '@/components/chat/task-context-menu';
 import { ProviderQuickMenu } from '@/components/chat/provider-quick-menu';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { useInlineRename } from '@/hooks/use-inline-rename';
 import {
   ArchiveConfirmButton,
@@ -40,11 +49,16 @@ import {
 import { DiffStatsBadge } from '@/components/chat/diff-stats-badge';
 import { ProviderLogoMark } from '@/components/chat/provider-brand';
 import { TaskPrBadge, detectPrMismatch, prMismatchTooltip } from '@/components/chat/task-pr-badge';
+import { TaskPreparationBadge } from '@/components/task/task-preparation-view';
 import {
   useIsSessionProcessing,
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 // --- Helpers ---
 
@@ -101,12 +115,13 @@ function CollectionLabel({
 }
 
 // ============================================================
-// KanbanChatCard -- card for chat sessions (no task association)
+// KanbanChatCard -- card for direct Sessions in the active Project View
 // ============================================================
 
 interface KanbanChatCardProps {
   session: UnifiedSession;
   isActive: boolean;
+  dragEnabled?: boolean;
   dropIndicatorBefore?: boolean;
   dropIndicatorAfter?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
@@ -121,7 +136,6 @@ interface KanbanChatCardProps {
   onDelete?: (taskId: string) => void;
   onOpenInNewTab?: (taskId: string) => void;
   onGenerateTitle?: (taskId: string) => void;
-  onMoveToProject?: (taskId: string) => void;
   onMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onStopProcess?: (sessionId: string) => void;
   collections?: Collection[];
@@ -130,6 +144,7 @@ interface KanbanChatCardProps {
 export const KanbanChatCard = memo(function KanbanChatCard({
   session,
   isActive,
+  dragEnabled = true,
   dropIndicatorBefore,
   dropIndicatorAfter,
   onDragStart,
@@ -144,7 +159,6 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   onDelete,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onMoveToCollection,
   onStopProcess,
   collections: scopedCollections,
@@ -187,19 +201,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   // board→scope→column 경유라, 완료 시 terminal-session-store(isProcessing) 리렌더와
   // board 리렌더 타이밍이 어긋나면 낡은 값을 읽어 unread를 놓친다(칸반 카드는 memo).
   // 리스트뷰가 쓰는 것과 같은 직접 구독으로 타이밍을 일치시킨다.
-  const liveUnreadCount = useSessionStore((state) => {
-    for (const project of state.projects) {
-      const s = project.sessions.find((item) => item.id === session.id);
-      if (s) return s.unreadCount ?? 0;
-    }
-    return session.unreadCount ?? 0;
-  });
-  const hasUnreadNotification = useNotificationStore((state) =>
-    state.notifications.some((notification) =>
-      notification.sessionId === session.id && !notification.read
-    )
-  );
-  const hasUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasUnread = !isActive && hasCanonicalUnread;
   const runtimePresentation = resolveSessionRuntimePresentation(session);
   const visibleUnread = session.kind === 'terminal' && isProcessing ? false : hasUnread;
   const stripeClass = isAwaitingUser
@@ -247,7 +250,6 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const handleDelete = useCallback(() => onDelete?.(session.id), [session.id, onDelete]);
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [session.id, onOpenInNewTab]);
 
-  const handleMoveToProject = useCallback(() => onMoveToProject?.(session.id), [session.id, onMoveToProject]);
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [session.id, onStopProcess]);
   const {
     isConfirmingArchive,
@@ -270,12 +272,16 @@ export const KanbanChatCard = memo(function KanbanChatCard({
       <div
         role="button"
         tabIndex={0}
-        draggable={!isRenaming}
-        onDragStart={!isRenaming ? onDragStart : undefined}
-        onDragEnd={!isRenaming ? onDragEnd : undefined}
-        onDragOver={onDragOverItem}
+        draggable={dragEnabled && !isRenaming}
+        onDragStart={dragEnabled && !isRenaming ? onDragStart : undefined}
+        onDragEnd={dragEnabled && !isRenaming ? onDragEnd : undefined}
+        onDragOver={dragEnabled ? onDragOverItem : undefined}
+        data-telemetry-ignore="manual_capture"
         onClick={(e) => {
-          if (!isRenaming) onClick(e);
+          if (!isRenaming) {
+            void captureTelemetryUiControl('board.chat.open', 'workspace_board');
+            onClick(e);
+          }
         }}
         onDoubleClick={() => {
           if (!isRenaming) onDoubleClick();
@@ -296,7 +302,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
         className={cn(
           // Base layout — flatter card, consistent with list view
           'group/card relative w-full rounded-lg p-2.5 px-3',
-          'text-left cursor-grab select-none',
+          'text-left select-none',
+          dragEnabled ? 'cursor-grab' : 'cursor-default',
           'transition-all duration-150',
           stripeClass,
           isDragging
@@ -401,6 +408,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
             {/* Title — 2 lines max */}
             {isRenaming ? (
               <InlineRenameInput
+                telemetrySurface="workspace_board"
                 inputRef={renameInputRef}
                 value={renameValue}
                 onValueChange={setRenameValue}
@@ -466,6 +474,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
         >
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
+              telemetryControl="task.stop"
+              telemetrySurface="workspace_board"
               onClick={(e) => {
                 e.stopPropagation();
                 e.preventDefault();
@@ -477,6 +487,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           )}
           {canArchiveSession && (
             <ArchiveConfirmButton
+              telemetryControl="task.archive_toggle"
+              telemetrySurface="workspace_board"
               isConfirming={isConfirmingArchive}
               onClick={(e) => {
                 e.stopPropagation();
@@ -498,6 +510,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
             />
           )}
           <OverflowMenuButton
+            telemetryControl="task.menu.open"
+            telemetrySurface="workspace_board"
             buttonRef={moreButtonRef}
             onClick={handleMoreClick}
             size="compact"
@@ -533,7 +547,6 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           onOpenInNewTab={handleOpenInNewTab}
           onGenerateTitle={onGenerateTitle ? () => onGenerateTitle(session.id) : undefined}
           isRunning={runtimePresentation.showRunning}
-          onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
           onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />
@@ -552,6 +565,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
 interface KanbanTaskCardProps {
   task: TaskEntity;
   activeSessionId: string | null;
+  dragEnabled?: boolean;
   /** True when THIS card is the one being dragged */
   isDragging?: boolean;
   /** Drop indicator above/below */
@@ -562,14 +576,13 @@ interface KanbanTaskCardProps {
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: (e: React.DragEvent) => void;
   onDragOverItem?: (e: React.DragEvent) => void;
-  onAddSession?: (task: TaskEntity, providerId?: string) => void;
+  onAddSession?: (task: TaskEntity, providerId?: string, executionMode?: AgentExecutionMode) => void;
   onContextMenu?: (task: TaskEntity, anchorRect: DOMRect) => void;
   onRename?: (taskId: string, newTitle: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
   onSessionDelete?: (sessionId: string) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
-  onSessionMoveToProject?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
@@ -578,6 +591,7 @@ interface KanbanTaskCardProps {
 export const KanbanTaskCard = memo(function KanbanTaskCard({
   task,
   activeSessionId,
+  dragEnabled = true,
   isDragging: isDraggingProp,
   dropIndicatorBefore,
   dropIndicatorAfter,
@@ -593,7 +607,6 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   onSessionDelete,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   isRenameRequested,
   onRenameComplete,
@@ -603,10 +616,11 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
-  const liveProjects = useSessionStore((state) => state.projects);
   const sessionCount = task.sessions.length;
   const isMultiSession = sessionCount > 1;
   const expanded = isMultiSession;
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const isActive = task.sessions.some((s) => s.id === activeSessionId);
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
@@ -620,7 +634,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   // Skip mismatch detection when PR sync is unsupported — we can't trust the
   // (likely empty) prStatus, so flagging "no PR" would be false-positive noise.
-  const prMismatch = task.prUnsupported
+  const prMismatch = task.prUnsupported || task.prStatusKnown === false
     ? null
     : detectPrMismatch(task.workflowStatus, task.prStatus);
   const prMismatchReason = prMismatch ? prMismatchTooltip(prMismatch, task.prStatus?.number, t) : null;
@@ -636,32 +650,25 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
   // Live status from session store (same pattern as list view TaskItemRow)
   const taskSessionIds = task.sessions.map((s) => s.id);
-  const getLiveSession = useCallback((taskSession: TaskSession): UnifiedSession => {
-    for (const project of liveProjects) {
-      const session = project.sessions.find((s) => s.id === taskSession.id);
-      if (session) return session;
-    }
-    return {
-      id: taskSession.id,
-      title: taskSession.title,
-      provider: taskSession.provider,
-      lastModified: taskSession.lastModified,
-      isRunning: taskSession.isRunning,
-      kind: taskSession.kind,
-    } as UnifiedSession;
-  }, [liveProjects]);
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      for (const p of state.projects) {
-        const s = p.sessions.find((ss) => ss.id === id);
-        if (s) return resolveSessionRuntimePresentation(s).showRunning;
-      }
-      const snapshot = task.sessions.find((session) => session.id === id);
-      return snapshot
-        ? resolveSessionRuntimePresentation(snapshot).showRunning
-        : false;
-    })
+  const resolvedTaskSessions = useProjectViewSessions(taskSessionIds, task.projectViewId);
+  const resolvedTaskSessionsById = useMemo(
+    () => new Map(resolvedTaskSessions.map((session) => [session.id, session])),
+    [resolvedTaskSessions],
   );
+  const getLiveSession = useCallback((taskSession: TaskSession): UnifiedSession => {
+    return toLinkedWorktreeSession(
+      task,
+      taskSession,
+      resolvedTaskSessionsById.get(taskSession.id),
+    );
+  }, [resolvedTaskSessionsById, task]);
+  const hasVisibleRuntimeSession = taskSessionIds.some((id) => {
+    const snapshot = task.sessions.find((session) => session.id === id);
+    const session = resolvedTaskSessionsById.get(id) ?? snapshot;
+    return session
+      ? resolveSessionRuntimePresentation(session).showRunning
+      : false;
+  });
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
@@ -671,24 +678,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   // 제거한다. multi-session task에서 한 세션이 활성이면 다른 완료+안읽음 세션의 unread가
   // 다 숨겨져 초록 running 스트라이프로 밀리던 버그(리스트뷰는 단일세션+활성일 때만
   // 억제해 이 문제가 없었다). 활성 세션 자체는 아래 개별 제외로 이미 빠진다.
-  const hasUnreadSession = useSessionStore((state) =>
-    taskSessionIds.some((id) => {
-      if (id === activeSessionId) return false;
-      for (const p of state.projects) {
-        const s = p.sessions.find((ss) => ss.id === id);
-        if (s) return (s.unreadCount ?? 0) > 0;
-      }
-      return false;
-    })
+  const hasVisibleTaskUnread = useAnyProjectViewSessionUnread(
+    taskSessionIds,
+    activeSessionId,
   );
-  const hasUnreadNotification = useNotificationStore((state) =>
-    state.notifications.some((notification) =>
-      notification.sessionId !== activeSessionId
-      && taskSessionIds.includes(notification.sessionId)
-      && !notification.read
-    )
-  );
-  const hasVisibleTaskUnread = hasUnreadSession || hasUnreadNotification;
   const hasTaskStatus = hasProcessingSession || hasAwaitingUserSession || hasVisibleTaskUnread || hasVisibleRuntimeSession;
 
   // PTY turn processing is the live state and outranks stale unread. Once the
@@ -742,20 +735,16 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const handleAddSession = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    const providers = useProvidersStore.getState().providers;
-    const selectable = (providers ?? []).filter((p) => p.status === 'connected');
-    if (selectable.length === 1) {
-      onAddSession?.(task, selectable[0].id);
-      return;
-    }
+    // Always open the menu — even with a single provider the session still needs
+    // its PTY/GUI choice.
     const rect = addButtonRef.current?.getBoundingClientRect();
     if (rect) setProviderMenuAnchor(rect);
-  }, [task, onAddSession]);
+  }, []);
 
   const handleProviderMenuClose = useCallback(() => setProviderMenuAnchor(null), []);
 
-  const handleProviderSelect = useCallback((providerId: string) => {
-    onAddSession?.(task, providerId);
+  const handleProviderSelect = useCallback((providerId: string, executionMode: AgentExecutionMode) => {
+    onAddSession?.(task, providerId, executionMode);
   }, [task, onAddSession]);
 
   const handleArchiveTask = useCallback(() => {
@@ -772,12 +761,15 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
     e.preventDefault();
 
     for (const session of task.sessions) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onSessionStopProcess?.(session.id);
       }
     }
-  }, [onSessionStopProcess, task.sessions]);
+  }, [onSessionStopProcess, task.projectViewId, task.sessions]);
   const {
     inputRef: renameInputRef,
     isRenaming,
@@ -849,12 +841,14 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         role="button"
         tabIndex={isPending ? -1 : 0}
         aria-disabled={isPending || undefined}
-        draggable={!isRenaming && !isPending}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onDragOver={onDragOverItem}
+        draggable={dragEnabled && !isRenaming && !isPending}
+        onDragStart={dragEnabled ? handleDragStart : undefined}
+        onDragEnd={dragEnabled ? handleDragEnd : undefined}
+        onDragOver={dragEnabled ? onDragOverItem : undefined}
+        data-telemetry-ignore="manual_capture"
         onClick={(e) => {
           if (isPending || isRenaming) return;
+          void captureTelemetryUiControl('board.task.open', 'workspace_board');
           handleCardClick(e);
         }}
         onDoubleClick={() => {
@@ -877,7 +871,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         className={cn(
           // Base layout — flatter card, consistent with list view
           'group/card relative w-full rounded-lg p-2.5 px-3',
-          'text-left cursor-grab select-none',
+          'text-left select-none',
+          dragEnabled ? 'cursor-grab' : 'cursor-default',
           'transition-all duration-150',
           stripeClass,
           isPending && 'pointer-events-none opacity-60',
@@ -1030,6 +1025,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
             {/* Title — 2 lines max */}
             {isRenaming ? (
               <InlineRenameInput
+                telemetrySurface="workspace_board"
                 inputRef={renameInputRef}
                 value={renameValue}
                 onValueChange={setRenameValue}
@@ -1063,9 +1059,13 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 isActive={isActive}
               />
               <span className="ml-auto inline-flex items-center gap-1.5">
+                <TaskPreparationBadge
+                  status={task.preparationStatus}
+                />
                 <TaskPrBadge
                   workflowStatus={task.workflowStatus}
                   prStatus={task.prStatus}
+                  prStatusKnown={task.prStatusKnown}
                   prUnsupported={task.prUnsupported}
                   remoteBranchExists={task.remoteBranchExists}
                   branchName={task.worktreeBranch}
@@ -1096,12 +1096,16 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         >
           {hasVisibleRuntimeSession && onSessionStopProcess && (
             <StopProcessButton
+              telemetryControl="task.stop"
+              telemetrySurface="workspace_board"
               onClick={handleStopProcess}
               className="p-0.5 rounded text-(--error) transition-all duration-150 hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] active:scale-90"
               testId="kanban-task-quick-stop-button"
             />
           )}
           <ArchiveConfirmButton
+            telemetryControl="task.archive_toggle"
+            telemetrySurface="workspace_board"
             isConfirming={isConfirmingArchive}
             onClick={(e) => {
               e.stopPropagation();
@@ -1123,6 +1127,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
           {/* Add new session to this task */}
           {onAddSession && (
             <button
+              {...telemetryClickAttributes('board.task.add_session', 'workspace_board')}
               ref={addButtonRef}
               onClick={handleAddSession}
               className={cn(
@@ -1142,6 +1147,8 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
           )}
           {onContextMenu && (
             <OverflowMenuButton
+              telemetryControl="task.menu.open"
+              telemetrySurface="workspace_board"
               buttonRef={moreButtonRef}
               onClick={handleMoreClick}
               className={cn(
@@ -1160,7 +1167,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
           <div className="relative ml-[22px] pl-3 mt-2 border-t border-(--divider) pt-1.5">
             {/* Vertical tree line */}
             <div className="absolute left-0 top-[6px] bottom-2 w-px bg-(--divider)" />
-            {task.sessions.map((s) => (
+            {visibleSessions.map((s) => (
               <KanbanSubSessionItem
                 key={s.id}
                 session={s}
@@ -1178,8 +1185,24 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 onOpenInNewTab={onSessionOpenInNewTab}
                 onGenerateTitle={onSessionGenerateTitle}
                 onStopProcess={onSessionStopProcess}
+                reorder={subSessionReorder}
               />
             ))}
+
+            {showToggle && (
+              <button
+                {...telemetryClickAttributes('board.task.sessions.toggle', 'workspace_board')}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle();
+                }}
+                className="w-full px-2 py-1 text-left text-[0.6875rem] text-(--text-muted) hover:text-(--accent-light)"
+                data-testid="kanban-sub-session-show-more"
+              >
+                {revealed ? t('task.showLess') : t('task.showMore', { count: hiddenCount })}
+              </button>
+            )}
 
             {/* Summary context row */}
             {task.summary && (
@@ -1218,18 +1241,18 @@ function KanbanSubSessionItem({
   onDelete,
   onOpenInNewTab,
   onGenerateTitle,
-  onMoveToProject,
   onStopProcess,
+  reorder,
 }: {
   session: TaskSession;
   isActive: boolean;
+  reorder?: ReturnType<typeof useSubSessionReorder>;
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: (e: React.MouseEvent) => void;
   onRename?: (sessionId: string, newTitle: string) => void;
   onDelete?: (sessionId: string) => void;
   onOpenInNewTab?: (sessionId: string) => void;
   onGenerateTitle?: (sessionId: string) => void;
-  onMoveToProject?: (sessionId: string) => void;
   onStopProcess?: (sessionId: string) => void;
 }) {
   const [isHovered, setIsHovered] = useState(false);
@@ -1238,20 +1261,15 @@ function KanbanSubSessionItem({
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
-  const liveSession = useSessionStore((state) => state.getSession(session.id));
+  const liveSession = useProjectViewSession(session.id);
   const isGeneratingTitle = useSessionStore((state) => state.generatingTitleIds.has(session.id));
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
   const runtimePresentation = resolveSessionRuntimePresentation({
     kind: liveSession?.kind ?? session.kind,
     isRunning: liveIsRunning,
   });
-  const liveUnreadCount = liveSession?.unreadCount ?? 0;
-  const hasUnreadNotification = useNotificationStore((state) =>
-    state.notifications.some((notification) =>
-      notification.sessionId === session.id && !notification.read
-    )
-  );
-  const hasLiveUnread = !isActive && (liveUnreadCount > 0 || hasUnreadNotification);
+  const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
+  const hasLiveUnread = !isActive && hasCanonicalUnread;
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const displayTitle = liveSession?.title ?? session.title;
   const isArchived = liveSession?.archived ?? false;
@@ -1260,7 +1278,6 @@ function KanbanSubSessionItem({
       onDelete ||
       onOpenInNewTab ||
       onGenerateTitle ||
-      onMoveToProject ||
       (runtimePresentation.canStop && onStopProcess),
   );
 
@@ -1301,7 +1318,6 @@ function KanbanSubSessionItem({
   const handleDelete = useCallback(() => onDelete?.(session.id), [onDelete, session.id]);
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [onOpenInNewTab, session.id]);
   const handleGenerateTitle = useCallback(() => onGenerateTitle?.(session.id), [onGenerateTitle, session.id]);
-  const handleMoveToProject = useCallback(() => onMoveToProject?.(session.id), [onMoveToProject, session.id]);
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [onStopProcess, session.id]);
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (isRenaming) {
@@ -1318,10 +1334,22 @@ function KanbanSubSessionItem({
       <div
         role="button"
         draggable={!isRenaming}
-        onDragStart={handleDragStart}
-        onDragEnd={(e) => e.stopPropagation()}
+        onDragStart={(e) => {
+          handleDragStart(e);
+          reorder?.handleDragStart(session.id);
+        }}
+        onDragEnd={(e) => {
+          e.stopPropagation();
+          reorder?.handleDragEnd();
+        }}
+        onDragOver={(e) => reorder?.handleDragOver(e, session.id)}
+        onDrop={(e) => reorder?.handleDrop(e, session.id)}
+        data-telemetry-ignore="manual_capture"
         onClick={(e) => {
-          if (!isRenaming) onClick(e);
+          if (!isRenaming) {
+            void captureTelemetryUiControl('board.subsession.open', 'workspace_board');
+            onClick(e);
+          }
         }}
         onDoubleClick={(e) => {
           if (!isRenaming) onDoubleClick(e);
@@ -1332,6 +1360,7 @@ function KanbanSubSessionItem({
         className={cn(
           'relative flex items-center gap-1.5 px-2 py-1 my-px rounded',
           isRenaming ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
+          reorder?.draggingSessionId === session.id && 'opacity-40',
           'text-[0.75rem] transition-colors duration-150',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--text-primary) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1341,7 +1370,16 @@ function KanbanSubSessionItem({
         )}
         data-session-id={session.id}
         data-testid={`kanban-sub-session-${session.id}`}
+        data-drop-position={reorder?.indicatorFor(session.id) ?? undefined}
       >
+        {reorder?.indicatorFor(session.id) && (
+          <div
+            className={cn(
+              'pointer-events-none absolute inset-x-0 h-0.5 rounded-full bg-(--accent)',
+              reorder.indicatorFor(session.id) === 'before' ? '-top-px' : '-bottom-px',
+            )}
+          />
+        )}
         {/* Tree connector line */}
         <div className="absolute -left-3 top-1/2 w-[10px] h-px bg-(--divider)" />
         {isActive && <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-(--accent)" />}
@@ -1380,6 +1418,7 @@ function KanbanSubSessionItem({
 
         {isRenaming ? (
           <InlineRenameInput
+            telemetrySurface="workspace_board"
             inputRef={renameInputRef}
             value={renameValue}
             onValueChange={setRenameValue}
@@ -1399,6 +1438,8 @@ function KanbanSubSessionItem({
 
         {canOpenMenu && isHovered && !isRenaming && (
           <OverflowMenuButton
+            telemetryControl="task.menu.open"
+            telemetrySurface="workspace_board"
             buttonRef={moreButtonRef}
             onClick={handleMoreClick}
             size="compact"
@@ -1418,7 +1459,6 @@ function KanbanSubSessionItem({
           onOpenInNewTab={onOpenInNewTab ? handleOpenInNewTab : undefined}
           onGenerateTitle={onGenerateTitle ? handleGenerateTitle : undefined}
           isRunning={runtimePresentation.showRunning}
-          onMoveToProject={onMoveToProject ? handleMoveToProject : undefined}
           onStopProcess={runtimePresentation.canStop && onStopProcess ? handleStopProcess : undefined}
           onClose={handleCloseMenu}
         />

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import { useSessionStore } from '@/stores/session-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { useNotificationStore } from '@/stores/notification-store';
 import type { SessionRefItem } from '@/types/session-ref';
 import { SESSION_REF_PLACEHOLDER_REGEX, MAX_SESSION_REFS } from '@/types/session-ref';
@@ -10,6 +11,7 @@ import { useI18n } from '@/lib/i18n';
 import { exportSessionReference, formatSessionReference } from '@/lib/session/session-reference';
 import { isSessionReferenceDragData } from '@/lib/dnd/panel-session-drag';
 import { SESSION_DRAG_MIME } from '@/types/panel';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 interface UseSessionRefsOptions {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -116,7 +118,7 @@ export function useSessionRefs({
         return null;
       }
 
-      const session = useSessionStore.getState().getSession(sessionId);
+      const session = projectViewWorkspaceState.resolveSession(sessionId);
       const kind: 'chat' | 'task' = kindHint ?? (session?.taskId ? 'task' : 'chat');
       return {
         sessionId,
@@ -193,6 +195,11 @@ export function useSessionRefs({
 
     // Export in the background so the drop interaction completes immediately.
     startExportForRef(newSlot, droppedRef.sessionId);
+    void captureTelemetryEvent('workspace_item_moved', {
+      item_type: 'session',
+      move_kind: 'reference',
+      item_count: 1,
+    });
   }, [insertRefPlaceholderAtCursor, startExportForRef, updateRefs, validateDroppedSessionRef]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {

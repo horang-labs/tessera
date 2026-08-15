@@ -3,12 +3,12 @@ import { loginSchema } from '@/lib/validation/auth';
 import { generateToken } from '@/lib/auth/jwt';
 import { createAuthError } from '@/lib/error';
 import { createFirstUser, hasAnyUsers } from '@/lib/users';
-import { isElectronAuthBypassEnabled } from '@/lib/auth/electron-mode';
+import { isElectronRuntime } from '@/lib/electron-runtime';
 import { getAuthCookieOptions } from '@/lib/auth/cookies';
 import type { LoginResponse } from '@/types/auth';
 
 export async function GET() {
-  if (isElectronAuthBypassEnabled()) {
+  if (isElectronRuntime()) {
     return NextResponse.json({ needsAccountSetup: false });
   }
 
@@ -19,7 +19,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    if (isElectronAuthBypassEnabled()) {
+    if (isElectronRuntime()) {
       return NextResponse.json({ needsAccountSetup: false }, { status: 409 });
     }
 

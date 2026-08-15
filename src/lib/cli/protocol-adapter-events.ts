@@ -3,6 +3,7 @@ import logger from '../logger';
 import type { SessionReplayEvent } from '../session-replay-types';
 import type { AppServerMessage, ModelUsageEntry } from '../ws/message-types';
 import type { CliMessage } from './types';
+import { compactStatusFallbackText, parseCompactStatusMetadata } from './compact-status';
 
 const PROTOCOL_TYPED_PROGRESS_TYPES = [
   'bash_progress',
@@ -95,7 +96,15 @@ export function buildProtocolSystemReplayEvent(
     metadata.compactMetadata = raw.compact_metadata || raw.compactMetadata;
   }
 
-  const messageText = raw.content || raw.message?.text || raw.message?.content;
+  // Compaction start/end arrives as a `status` frame, not as text; the client
+  // turns it into the docked compacting bar.
+  const compactStatus = parseCompactStatusMetadata(raw);
+  if (compactStatus) {
+    Object.assign(metadata, compactStatus);
+  }
+
+  const messageText = raw.content || raw.message?.text || raw.message?.content
+    || compactStatusFallbackText(compactStatus);
   if (!messageText && !subtype) {
     const rawString = JSON.stringify(msg);
     logger.warn({

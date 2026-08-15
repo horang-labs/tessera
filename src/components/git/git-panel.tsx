@@ -1,9 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Brain, FileText, GitCommitHorizontal, X } from "lucide-react";
+import { X } from "lucide-react";
+import { useGitStore, type GitPanelTab } from "@/stores/git-store";
+import {
+  WorktreeScriptsPanel,
+  useWorktreeScriptsAvailable,
+} from "@/components/scripts/worktree-scripts-panel";
 import { useElectronPlatform } from "@/hooks/use-electron-platform";
+import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { useI18n } from "@/lib/i18n";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { useSessionStore } from "@/stores/session-store";
@@ -14,43 +20,60 @@ import {
   GitPanelContentSection,
   GitPanelSummarySection,
 } from "./git-panel-sections";
-import { useGitPanelController } from "./use-git-panel-controller";
+import { useSharedGitPanelController } from "./git-panel-controller-context";
 import {
-  openWorkspaceFileTab,
-  previewWorkspaceFileTab,
+  openWorkspaceTargetFileTab,
+  previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
+import { resolveWorkspaceTarget } from '@/types/worktree';
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { MemoryPanel } from "@/components/memory/memory-panel";
 import { cn } from "@/lib/utils";
+import { PHONE_TOUCH_TARGET } from "@/lib/ui/touch-target";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
+import { usePhoneViewport } from "@/hooks/use-phone-viewport";
+import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
+import { usePhoneOverlayNavigation } from "@/hooks/use-phone-overlay-navigation";
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+} from "@/lib/telemetry/ui-click";
 
-type GitPanelTab = "git" | "files" | "memory";
+const NOOP = () => {};
 
+/**
+ * Every tab says what it is.
+ *
+ * Four of them and a narrow panel is a tight fit, so the words are what stays
+ * and the icons go: an unlabelled icon row leaves the reader guessing which
+ * mark means which panel, and guessing costs more than an icon buys.
+ */
 function GitPanelTabButton({
   active,
   children,
-  icon,
   onClick,
+  telemetryControl,
 }: {
   active: boolean;
-  children: ReactNode;
-  icon: ReactNode;
+  children: string;
   onClick: () => void;
+  telemetryControl: TelemetryUiControl;
 }) {
   return (
     <button
       type="button"
       role="tab"
       aria-selected={active}
+      title={children}
       onClick={onClick}
+      {...telemetryClickAttributes(telemetryControl, "right_panel")}
       className={cn(
-        "flex h-6 min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+        "flex h-6 min-w-0 flex-1 items-center justify-center rounded px-1 text-[11px] font-medium transition-colors",
         active
           ? "bg-(--sidebar-bg) text-(--text-primary) shadow-sm"
-          : "text-(--text-muted) hover:text-(--text-primary)",
+          : "text-(--text-muted) hover:bg-(--sidebar-bg)/60 hover:text-(--text-primary)",
       )}
     >
-      {icon}
       <span className="truncate">{children}</span>
     </button>
   );
@@ -58,12 +81,14 @@ function GitPanelTabButton({
 
 export function GitPanel({
   sessionId,
+  worktreeId = null,
   width,
   className,
   closeLabel,
   onClose,
 }: {
   sessionId: string | null;
+  worktreeId?: string | null;
   width: number | string;
   className?: string;
   closeLabel?: string;
@@ -73,21 +98,38 @@ export function GitPanel({
   const electronPlatform = useElectronPlatform();
   const isWindowsElectron = electronPlatform === "win32";
   const isLinuxElectron = electronPlatform === "linux";
-  const controller = useGitPanelController(sessionId);
-  const [activePanelTab, setActivePanelTab] = useState<GitPanelTab>("git");
+  const isPhoneViewport = usePhoneViewport();
+  const controller = useSharedGitPanelController();
+  // The selection lives in the store so a preparation badge can send the user
+  // straight to the Scripts tab.
+  const activePanelTab = useGitStore((state) => state.panelTab);
+  const setActivePanelTab = useGitStore((state) => state.setPanelTab);
   const openedTelemetryRef = useRef(false);
   const resolvedCloseLabel = closeLabel ?? t("chat.closeGitPanel");
+  const dismissPhonePanel = usePhoneOverlayNavigation({
+    enabled: isPhoneViewport && Boolean(onClose),
+    open: Boolean(onClose),
+    onBack: onClose ?? NOOP,
+  });
+  useCloseOnEscape(dismissPhonePanel, {
+    enabled: isPhoneViewport && Boolean(onClose),
+  });
 
-  const sessionProvider = useSessionStore((state) =>
-    sessionId ? state.getSession(sessionId)?.provider?.trim() ?? null : null,
-  );
+  const sessionProvider = useProjectViewSession(sessionId)?.provider?.trim() ?? null;
   const showMemoryTab = supportsMemoryPanel(sessionProvider);
+  const showScriptsTab = useWorktreeScriptsAvailable(sessionId);
+  const fileTarget = useMemo(
+    () => resolveWorkspaceTarget(sessionId, worktreeId),
+    [sessionId, worktreeId],
+  );
 
   // Derive the visible tab instead of forcing state: if the stored selection
-  // is Context but this session can't show it, fall back to Git for rendering
-  // while preserving the selection for supported providers.
-  const effectivePanelTab: GitPanelTab =
-    !showMemoryTab && activePanelTab === "memory" ? "git" : activePanelTab;
+  // is one this session can't show, fall back to Git for rendering while
+  // preserving the selection for sessions that can.
+  const tabUnavailable =
+    (!showMemoryTab && activePanelTab === "memory")
+    || (!showScriptsTab && activePanelTab === "scripts");
+  const effectivePanelTab: GitPanelTab = tabUnavailable ? "git" : activePanelTab;
 
   useEffect(() => {
     openedTelemetryRef.current = false;
@@ -129,6 +171,7 @@ export function GitPanel({
     });
   }, [
     activePanelTab,
+    setActivePanelTab,
     controller.changedFileCount,
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
@@ -136,7 +179,7 @@ export function GitPanel({
   ]);
 
   const openDiffFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId) return;
+    if (!fileTarget) return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "preview_diff",
@@ -146,7 +189,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    previewWorkspaceFileTab(sessionId, "diff", file.path, {
+    previewWorkspaceTargetFileTab(fileTarget, 'diff', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -154,11 +197,11 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
 
   const pinDiffFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId) return;
+    if (!fileTarget) return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "open_diff_tab",
@@ -168,7 +211,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "diff", file.path, {
+    openWorkspaceTargetFileTab(fileTarget, 'diff', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -176,11 +219,11 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
 
   const openReadOnlyFile = useCallback((file: GitChangedFile) => {
-    if (!sessionId || file.state === "deleted") return;
+    if (!fileTarget || file.state === "deleted") return;
     void captureTelemetryEvent("git_file_opened", {
       source: "git_panel",
       action: "open_file_tab",
@@ -190,7 +233,7 @@ export function GitPanel({
       has_changes: Boolean(controller.changedFileCount),
       has_pr: Boolean(controller.data?.prStatus || controller.data?.github.pullRequest),
     });
-    openWorkspaceFileTab(sessionId, "file", file.path, {
+    openWorkspaceTargetFileTab(fileTarget, 'file', file.path, {
       preferKanbanPeek: true,
     });
   }, [
@@ -198,8 +241,28 @@ export function GitPanel({
     controller.data?.github.pullRequest,
     controller.data?.prStatus,
     controller.data?.worktreePath,
-    sessionId,
+    fileTarget,
   ]);
+
+  const summarySection = (
+    <GitPanelSummarySection
+      data={controller.data}
+      loading={controller.loading}
+      error={controller.error}
+      changedFileCount={controller.changedFileCount}
+      onCopyBranch={controller.copyBranch}
+      onCopyWorktreePath={controller.copyWorktreePath}
+      onOpenExternal={controller.openExternal}
+      showDetails={effectivePanelTab === "git"}
+    />
+  );
+  const commitsSection = (
+    <GitPanelCommitsSection
+      data={controller.data}
+      loading={controller.loading}
+      error={controller.error}
+    />
+  );
 
   return (
     <aside
@@ -208,6 +271,9 @@ export function GitPanel({
         className,
       )}
       style={{ width: typeof width === "number" ? `${width}px` : width }}
+      data-testid="git-panel"
+      data-session-target={sessionId ?? undefined}
+      data-worktree-target={worktreeId ?? undefined}
     >
       {isWindowsElectron || isLinuxElectron ? (
         <div className="electron-drag flex h-[40px] shrink-0 items-stretch justify-end border-b border-(--electron-titlebar-border) bg-(--electron-titlebar-bg)">
@@ -215,7 +281,9 @@ export function GitPanel({
         </div>
       ) : null}
 
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-(--chat-header-border) px-2">
+      {/* `max-sm:h-auto` so the close target below can be 44px without
+          overflowing a 29px row (#270). */}
+      <div className="flex h-9 max-sm:h-auto shrink-0 items-center gap-2 border-b border-(--chat-header-border) px-2">
         <div
           role="tablist"
           aria-label={t("gitPanel.tabs.rightPanel")}
@@ -223,23 +291,32 @@ export function GitPanel({
         >
           <GitPanelTabButton
             active={effectivePanelTab === "git"}
-            icon={<GitCommitHorizontal className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("git")}
+            telemetryControl="right_panel.tab.git"
           >
             {t("gitPanel.tabs.git")}
           </GitPanelTabButton>
           <GitPanelTabButton
             active={effectivePanelTab === "files"}
-            icon={<FileText className="h-3.5 w-3.5" />}
             onClick={() => handlePanelTabChange("files")}
+            telemetryControl="right_panel.tab.files"
           >
             {t("gitPanel.tabs.files")}
           </GitPanelTabButton>
+          {showScriptsTab ? (
+            <GitPanelTabButton
+              active={effectivePanelTab === "scripts"}
+              onClick={() => handlePanelTabChange("scripts")}
+              telemetryControl="right_panel.tab.scripts"
+            >
+              {t("gitPanel.tabs.scripts")}
+            </GitPanelTabButton>
+          ) : null}
           {showMemoryTab ? (
             <GitPanelTabButton
               active={effectivePanelTab === "memory"}
-              icon={<Brain className="h-3.5 w-3.5" />}
               onClick={() => handlePanelTabChange("memory")}
+              telemetryControl="right_panel.tab.memory"
             >
               {t("gitPanel.tabs.context")}
             </GitPanelTabButton>
@@ -248,8 +325,12 @@ export function GitPanel({
         {onClose ? (
           <button
             type="button"
-            onClick={onClose}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+            onClick={() => dismissPhonePanel()}
+            {...telemetryClickAttributes("right_panel.close", "right_panel")}
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+              PHONE_TOUCH_TARGET,
+            )}
             aria-label={resolvedCloseLabel}
             title={resolvedCloseLabel}
             data-testid="git-panel-close-btn"
@@ -259,20 +340,22 @@ export function GitPanel({
         ) : null}
       </div>
 
-      <GitPanelSummarySection
-        data={controller.data}
-        loading={controller.loading}
-        error={controller.error}
-        changedFileCount={controller.changedFileCount}
-        onCopyBranch={controller.copyBranch}
-        onCopyWorktreePath={controller.copyWorktreePath}
-        onOpenExternal={controller.openExternal}
-        showDetails={effectivePanelTab === "git"}
-      />
+      {effectivePanelTab === "scripts"
+        || (isPhoneViewport && effectivePanelTab === "git")
+        ? null
+        : summarySection}
 
       {effectivePanelTab === "files" ? (
         <div className="min-h-0 flex-1">
-          <WorkspaceFilePanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+          <WorkspaceFilePanel
+            key={sessionId ?? worktreeId ?? "no-target"}
+            sessionId={sessionId}
+            worktreeId={worktreeId}
+          />
+        </div>
+      ) : effectivePanelTab === "scripts" ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <WorktreeScriptsPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
         </div>
       ) : effectivePanelTab === "memory" ? (
         <div className="min-h-0 flex-1">
@@ -282,10 +365,45 @@ export function GitPanel({
         <>
           <GitPanelContentSection
             sessionId={sessionId}
+            targetSelected={Boolean(sessionId || worktreeId)}
             data={controller.data}
             loading={controller.loading}
             error={controller.error}
             changedFileCount={controller.changedFileCount}
+            failure={{
+              report: controller.actionFailure,
+              onDismiss: controller.dismissActionFailure,
+            }}
+            conflictHandoff={{
+              available: controller.conflictHandoffAvailable,
+              pending: controller.preparingConflictHandoff,
+              onPrepare: () => void controller.prepareConflictHandoff(),
+            }}
+            commit={{
+              draftBlocked: controller.commitDraftBlocked,
+              generateError: controller.generateMessageError,
+              generating: controller.generatingMessage,
+              isSelected: controller.isSelectedForCommit,
+              message: controller.commitMessage,
+              onGenerate: () => void controller.generateCommitMessage(),
+              onMessageChange: controller.setCommitMessage,
+              onSetAllSelected: controller.setAllCommitFilesSelected,
+              onToggleFile: controller.toggleCommitFile,
+              totals: controller.commitTotals,
+            }}
+            primary={{
+              action: controller.primaryAction,
+              pendingVerb: controller.pendingVerb,
+              onRun: () => void controller.runPrimaryAction(),
+            }}
+            phoneScrollableContent={isPhoneViewport ? {
+              summary: summarySection,
+              commits: commitsSection,
+            } : undefined}
+            menu={{
+              actions: controller.menuActions,
+              onRun: (id) => void controller.runMenuAction(id),
+            }}
             selectedPath={controller.selectedPath}
             setSelectedPath={controller.setSelectedPath}
             onCopyFilePath={controller.copyFilePath}
@@ -294,13 +412,10 @@ export function GitPanel({
             onOpenReadOnlyFile={openReadOnlyFile}
           />
 
-          <GitPanelCommitsSection
-            data={controller.data}
-            loading={controller.loading}
-            error={controller.error}
-          />
+          {isPhoneViewport ? null : commitsSection}
         </>
       )}
+
     </aside>
   );
 }

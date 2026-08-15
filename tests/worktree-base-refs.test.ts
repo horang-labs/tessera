@@ -5,13 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { createGitWorktree } from '../src/lib/worktrees/create';
 import {
-  buildGitWorktreeAddArgs,
   listWorktreeBaseRefs,
   validateWorktreeBaseRef,
   type WorktreeBaseRef,
 } from '../src/lib/worktrees/base-refs';
 import type { GitRunner } from '../src/lib/worktrees/git-runner';
+import { resolveWorktreeCreationSource } from '../src/hooks/use-worktree-base-refs';
 
 const execFileAsync = promisify(execFile);
 
@@ -113,10 +114,11 @@ test('validateWorktreeBaseRef only accepts listed refs and verifies they point t
   ]);
 });
 
-test('validated remote base refs can create a real worktree branch from that commit', async () => {
+test('branch-off creates from local and remote refs, records each base, and never adopts an upstream', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-worktree-add-'));
   const repoDir = path.join(tmp, 'repo');
-  const worktreePath = path.join(tmp, 'worktrees', 'task');
+  const localWorktreePath = path.join(tmp, 'worktrees', 'local');
+  const remoteWorktreePath = path.join(tmp, 'worktrees', 'remote');
   try {
     await git(['init', repoDir], tmp);
     await git(['config', 'user.email', 'test@example.com'], repoDir);
@@ -135,26 +137,60 @@ test('validated remote base refs can create a real worktree branch from that com
     const refs = await listWorktreeBaseRefs(repoDir, runGit);
     assert.equal(await validateWorktreeBaseRef(repoDir, 'origin/develop', refs, runGit), true);
 
-    await execFileAsync('git', buildGitWorktreeAddArgs(repoDir, worktreePath, 'tw/test', 'origin/develop'));
+    await createGitWorktree({
+      projectDir: repoDir,
+      worktreePath: localWorktreePath,
+      branchName: 'tw/local',
+      source: { mode: 'branch-off', baseRef: 'main' },
+      runGit,
+    });
+    await createGitWorktree({
+      projectDir: repoDir,
+      worktreePath: remoteWorktreePath,
+      branchName: 'tw/remote',
+      source: { mode: 'branch-off', baseRef: 'origin/develop' },
+      runGit,
+    });
 
-    const { stdout: branch } = await git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreePath);
-    const { stdout: subject } = await git(['show', '-s', '--format=%s', 'HEAD'], worktreePath);
-    assert.equal(branch.trim(), 'tw/test');
-    assert.equal(subject.trim(), 'develop');
+    assert.equal(
+      (await git(['rev-parse', '--abbrev-ref', 'HEAD'], localWorktreePath)).stdout.trim(),
+      'tw/local',
+    );
+    assert.equal(
+      (await git(['show', '-s', '--format=%s', 'HEAD'], localWorktreePath)).stdout.trim(),
+      'main',
+    );
+    assert.equal(
+      (await git(['config', '--get', 'branch.tw/local.base'], repoDir)).stdout.trim(),
+      'refs/heads/main',
+    );
+    assert.equal(
+      (await git(['rev-parse', '--abbrev-ref', 'HEAD'], remoteWorktreePath)).stdout.trim(),
+      'tw/remote',
+    );
+    assert.equal(
+      (await git(['show', '-s', '--format=%s', 'HEAD'], remoteWorktreePath)).stdout.trim(),
+      'develop',
+    );
+    assert.equal(
+      (await git(['config', '--get', 'branch.tw/remote.base'], repoDir)).stdout.trim(),
+      'refs/remotes/origin/develop',
+    );
+
+    // A remote-tracking start point must stay a start point. Git's default
+    // `branch.autoSetupMerge` would make `origin/develop` this branch's
+    // upstream, which is what bare `git push` and bare `git pull` obey: the
+    // push would be refused for a name mismatch and the pull would merge
+    // `develop` in. Asserted against the config pair rather than `@{upstream}`
+    // because that pair is the whole of Git's definition (`upstream-config.ts`).
+    const { stdout: upstreamConfig } = await git(
+      ['config', '--get-regexp', '^branch\\.tw/(local|remote)\\.(remote|merge)$'],
+      repoDir,
+    ).catch(() => ({ stdout: '' }));
+    assert.equal(upstreamConfig.trim(), '');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
-});
-
-test('buildGitWorktreeAddArgs preserves old behavior without baseRef and appends explicit baseRef when selected', () => {
-  assert.deepEqual(
-    buildGitWorktreeAddArgs('/repo', '/worktree', 'tw/test', null),
-    ['-C', '/repo', 'worktree', 'add', '/worktree', '-b', 'tw/test'],
-  );
-  assert.deepEqual(
-    buildGitWorktreeAddArgs('/repo', '/worktree', 'tw/test', 'origin/main'),
-    ['-C', '/repo', 'worktree', 'add', '/worktree', '-b', 'tw/test', 'origin/main'],
-  );
 });
 
 const routePath = new URL('../src/app/api/worktrees/route.ts', import.meta.url);
@@ -176,7 +212,7 @@ test('worktree route validates selected baseRef before add', () => {
   assert.match(source, /baseRef must be a string/);
   assert.match(source, /INVALID_BASE_REF/);
   assert.match(source, /validateWorktreeBaseRef\([\s\S]*availableBaseRefs[\s\S]*runGit[\s\S]*\)/);
-  assert.match(source, /buildGitWorktreeAddArgs/);
+  assert.match(source, /createGitWorktree/);
 });
 
 test('worktree refs route exposes the base-ref listing endpoint used by the client', () => {
@@ -210,51 +246,97 @@ test('client hook loads worktree base refs, defaults to current ref, and only su
   assert.doesNotMatch(source, /[^A-Za-z]fetch\(`/);
 });
 
+test('client source selection preserves branch-off defaults and sends exact checkout refs', () => {
+  const currentRef = { name: 'main', label: 'main', kind: 'local' as const, current: true };
+  const remoteRef = {
+    name: 'origin/feature/review',
+    label: 'origin/feature/review',
+    kind: 'remote' as const,
+    current: false,
+  };
+
+  assert.deepEqual(
+    resolveWorktreeCreationSource('branch-off', undefined, currentRef),
+    { mode: 'branch-off', baseRef: null },
+  );
+  assert.deepEqual(
+    resolveWorktreeCreationSource('branch-off', 'develop', currentRef),
+    { mode: 'branch-off', baseRef: 'develop' },
+  );
+  assert.deepEqual(
+    resolveWorktreeCreationSource('checkout-branch', undefined, remoteRef),
+    { mode: 'checkout-branch', branch: 'origin/feature/review' },
+  );
+  assert.equal(resolveWorktreeCreationSource('checkout-branch', undefined, null), null);
+});
+
 const sessionHookPath = new URL('../src/hooks/use-worktree-session.ts', import.meta.url);
 
 function sessionHookSource() {
   return fs.readFileSync(sessionHookPath, 'utf8');
 }
 
-test('worktree session creation sends selected baseRef to the worktree API', () => {
+test('worktree session creation sends the tagged source to the worktree API', () => {
   const source = sessionHookSource();
 
-  assert.match(source, /baseRef\?: string/);
-  assert.match(source, /baseRef,/);
-  assert.match(source, /JSON\.stringify\(\{[\s\S]*baseRef,[\s\S]*\}\)/);
+  assert.match(source, /worktreeSource: WorktreeCreationSource/);
+  assert.match(source, /source: worktreeSource/);
+  assert.doesNotMatch(source, /baseRef\?: string/);
 });
 
 const quickCreatePath = new URL('../src/components/chat/collection-quick-create-sheet.tsx', import.meta.url);
-const enI18nPath = new URL('../src/lib/i18n/en.ts', import.meta.url);
+const controlPath = new URL('../src/components/task/worktree-start-from-control.tsx', import.meta.url);
+const i18nTypesPath = new URL('../src/lib/i18n/types.ts', import.meta.url);
+const localePaths = ['en', 'ko', 'ja', 'zh'].map(
+  (locale) => [locale, new URL(`../src/lib/i18n/${locale}.ts`, import.meta.url)] as const,
+);
 
 function quickCreateSource() {
   return fs.readFileSync(quickCreatePath, 'utf8');
 }
 
-function enI18nSource() {
-  return fs.readFileSync(enI18nPath, 'utf8');
-}
-
-test('collection quick create sheet renders and submits a base ref selector', () => {
+test('collection quick create sheet submits either source and only shows slug inputs for branch-off', () => {
   const source = quickCreateSource();
 
   assert.match(source, /useWorktreeBaseRefs/);
   assert.match(source, /WorktreeStartFromControl/);
   assert.match(source, /collection-task-base-ref/);
-  assert.match(source, /selectedBaseRefForCreate/);
-  assert.match(source, /baseRef: selectedBaseRefForCreate/);
-  assert.doesNotMatch(source, /isLoadingBaseRefs \|\| !selectedBaseRef/);
+  assert.match(source, /worktreeSource: worktreeSourceForCreate/);
+  assert.match(source, /worktreeCreationMode === 'branch-off'/);
+  assert.match(source, /worktreeSourceForCreate\.mode === 'branch-off'[\s\S]*isManagedWorktreeSlugInputAllowed/);
+  assert.match(source, /result\.error \?\? t\('errors\.unknownError'\)/);
 });
 
-test('English i18n includes worktree base ref selector copy', () => {
-  const source = enI18nSource();
+test('shared control shows the source choice, dynamic ref label, and grouped refs at narrow widths', () => {
+  const source = fs.readFileSync(controlPath, 'utf8');
 
+  assert.match(source, /data-testid=\{`\$\{testId\}-source-mode`\}/);
+  assert.match(source, /worktreeSourceBranchOff/);
+  assert.match(source, /worktreeSourceCheckout/);
+  assert.match(source, /checkoutBranchLabel/);
   assert.match(source, /baseRefLabel/);
-  assert.match(source, /baseRefLoading/);
-  assert.match(source, /baseRefUnavailable/);
   assert.match(source, /baseRefLocalGroup/);
   assert.match(source, /baseRefRemoteGroup/);
-  assert.match(source, /Start from/);
+  assert.match(source, /min-w-0 w-full/);
+});
+
+test('source selection copy is declared in the i18n contract and all four locales', () => {
+  const keys = [
+    'worktreeSourceLabel',
+    'worktreeSourceBranchOff',
+    'worktreeSourceCheckout',
+    'checkoutBranchLabel',
+    'checkoutBranchUnavailable',
+    'errorCheckoutBranchRequired',
+  ];
+  const typesSource = fs.readFileSync(i18nTypesPath, 'utf8');
+  for (const key of keys) {
+    assert.match(typesSource, new RegExp(`${key}: string;`), `types.ts missing ${key}`);
+    for (const [locale, localePath] of localePaths) {
+      const source = fs.readFileSync(localePath, 'utf8');
+      assert.match(source, new RegExp(`${key}:`), `${locale}.ts missing ${key}`);
+    }
+  }
 });
 
 const emptyPanelPath = new URL('../src/components/panel/empty-panel-state.tsx', import.meta.url);
@@ -263,13 +345,15 @@ function emptyPanelSource() {
   return fs.readFileSync(emptyPanelPath, 'utf8');
 }
 
-test('empty panel task creation renders and submits a base ref selector', () => {
+test('empty panel task creation submits either source and keeps server refusals inline', () => {
   const source = emptyPanelSource();
 
   assert.match(source, /useWorktreeBaseRefs/);
   assert.match(source, /WorktreeStartFromControl/);
   assert.match(source, /empty-panel-base-ref/);
-  assert.match(source, /selectedBaseRefForCreate/);
-  assert.match(source, /baseRef: selectedBaseRefForCreate/);
-  assert.doesNotMatch(source, /isLoadingBaseRefs \|\| !selectedBaseRef/);
+  assert.match(source, /worktreeSource: worktreeSourceForCreate/);
+  assert.match(source, /worktreeCreationMode === 'branch-off'/);
+  assert.match(source, /worktreeSourceForCreate\.mode === 'branch-off'[\s\S]*isManagedWorktreeSlugInputAllowed/);
+  assert.match(source, /result\.error \?\? t\('errors\.unknownError'\)/);
+  assert.match(source, /role="alert"/);
 });

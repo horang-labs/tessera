@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, PanelLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GitBranch, LoaderCircle, Plus, PanelLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useTabStore } from '@/stores/tab-store';
@@ -11,15 +11,91 @@ import { useI18n } from '@/lib/i18n';
 import { TAB_MIN_WIDTH, TAB_MAX_WIDTH } from '@/types/tab';
 import { PANEL_NODE_DRAG_MIME, PANEL_SESSION_DRAG_MIME } from '@/types/panel';
 import { useGitStore } from '@/stores/git-store';
+import { usePhoneViewport } from '@/hooks/use-phone-viewport';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { TabItem } from './tab-item';
 import { TabContextMenu } from './tab-context-menu';
+import { TabListControl } from './tab-list-control';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { parsePanelNodeDragData, parsePanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { focusPanelControl } from '@/lib/session/focus-session-panel';
+import {
+  TAB_SCROLL_EDGE_EPSILON,
+  TAB_SCROLL_GUTTER,
+  resolveTabScrollReveal,
+} from '@/lib/tab/tab-scroll-reveal';
+import { GitDesktopDeliveryControl } from '@/components/git/git-desktop-commit-control';
+import { useSharedGitPanelController } from '@/components/git/git-panel-controller-context';
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
+import { moveTerminalPanelToNewTab } from '@/lib/tab/terminal-panel-to-new-tab';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 const TAB_SCROLL_MIN_STEP = 180;
-const TAB_SCROLL_EDGE_EPSILON = 1;
+
+function GitPhonePanelToggle({
+  open,
+  onToggle,
+}: {
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useI18n();
+  const controller = useSharedGitPanelController();
+  const changedFileCount = controller.data?.changedFilesTotal
+    ?? controller.changedFileCount;
+  const pending = controller.pendingVerb !== null;
+  const baseLabel = open ? t('chat.closeGitPanel') : t('chat.openGitPanel');
+  const accessibleLabel = [
+    baseLabel,
+    changedFileCount > 0 ? `${changedFileCount} ${t('gitPanel.commit.changedFiles')}` : null,
+    pending ? t('task.status.inProgress') : null,
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        'electron-no-drag relative flex h-9 w-10 shrink-0 items-center justify-center border-l border-l-(--divider) transition-colors',
+        PHONE_TOUCH_TARGET,
+        'text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent)',
+        open
+          ? 'bg-(--accent)/14 text-(--accent) shadow-[inset_0_-2px_0_var(--accent)]'
+          : 'bg-[color-mix(in_srgb,var(--chat-header-bg)_78%,var(--sidebar-hover))]',
+      )}
+      onClick={onToggle}
+      {...telemetryClickAttributes('right_panel.toggle', 'tab_bar')}
+      aria-label={accessibleLabel}
+      aria-pressed={open}
+      aria-busy={pending}
+      title={accessibleLabel}
+      data-testid="tab-bar-git-toggle"
+    >
+      <GitBranch size={18} data-testid="git-phone-stable-icon" />
+      {changedFileCount > 0 ? (
+        <span
+          aria-hidden="true"
+          data-testid="git-phone-changed-badge"
+          className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-(--accent) px-1 text-center text-[9px] font-semibold leading-4 text-white tabular-nums"
+        >
+          {changedFileCount > 99 ? '99+' : changedFileCount}
+        </span>
+      ) : null}
+      {pending ? (
+        <span
+          aria-hidden="true"
+          data-testid="git-phone-pending-indicator"
+          className="absolute bottom-0.5 left-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-(--chat-header-bg) text-(--accent)"
+        >
+          <LoaderCircle className="h-3 w-3 animate-spin" />
+        </span>
+      ) : null}
+    </button>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -42,10 +118,22 @@ export const TabBar = memo(function TabBar() {
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
+  const openGitPanelTab = useGitStore((state) => state.openTab);
+  const isPhoneViewport = usePhoneViewport();
+  const handlePhoneGitToggle = useCallback(() => {
+    if (gitPanelOpen) {
+      toggleGitPanel();
+      return;
+    }
+    openGitPanelTab('git');
+  }, [gitPanelOpen, openGitPanelTab, toggleGitPanel]);
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);
-  const [scrollState, setScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+  const [scrollState, setScrollState] = useState({
+    canScrollLeft: false,
+    canScrollRight: false,
+  });
 
   // DnD state (BR-UI-020)
   const dragTabIdRef = useRef<string | null>(null);
@@ -59,8 +147,11 @@ export const TabBar = memo(function TabBar() {
     position: { x: number; y: number };
   } | null>(null);
 
-  // Track previous tab count for scroll-to-new-tab effect
+  // Track previous tab count / active tab for the scroll-into-view effect.
+  // The null sentinel makes the first run treat the active tab as "changed",
+  // so a restored session opens with its active tab in view.
   const prevTabCountRef = useRef(tabs.length);
+  const prevActiveTabIdRef = useRef<string | null>(null);
 
   const updateScrollState = useCallback(function updateScrollState() {
     const container = containerRef.current;
@@ -80,10 +171,42 @@ export const TabBar = memo(function TabBar() {
     };
 
     setScrollState((prev) =>
-      prev.canScrollLeft === next.canScrollLeft && prev.canScrollRight === next.canScrollRight
+      prev.canScrollLeft === next.canScrollLeft &&
+      prev.canScrollRight === next.canScrollRight
         ? prev
         : next,
     );
+  }, []);
+
+  /** Scrolls the given tab clear of the overlaid scroll arrows. */
+  const revealTab = useCallback(function revealTab(
+    tabId: string,
+    behavior: ScrollBehavior,
+  ): void {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const tabElement = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-tab-id]'),
+    ).find((element) => element.dataset.tabId === tabId);
+    if (!tabElement) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const tabRect = tabElement.getBoundingClientRect();
+    const tabStart = tabRect.left - containerRect.left + container.scrollLeft;
+
+    const { scrollLeft } = resolveTabScrollReveal({
+      tabStart,
+      tabEnd: tabStart + tabRect.width,
+      scrollLeft: container.scrollLeft,
+      viewportWidth: container.clientWidth,
+      maxScrollLeft: Math.max(0, container.scrollWidth - container.clientWidth),
+      gutter: TAB_SCROLL_GUTTER,
+    });
+
+    if (Math.abs(scrollLeft - container.scrollLeft) > TAB_SCROLL_EDGE_EPSILON) {
+      container.scrollTo({ left: scrollLeft, behavior });
+    }
   }, []);
 
   useEffect(
@@ -123,27 +246,24 @@ export const TabBar = memo(function TabBar() {
     [tabs, updateScrollState],
   );
 
-  // Scroll to newly added tab (BR-UI-019 / UX improvement)
+  // Keep the active tab (including its close button) in view — on creation
+  // (BR-UI-019) and on activation, which also covers keyboard tab switching.
   useEffect(
-    function scrollToNewTab() {
-      if (tabs.length > prevTabCountRef.current) {
-        const container = containerRef.current;
-        const tabElements = container
-          ? Array.from(container.querySelectorAll<HTMLElement>('[data-tab-id]'))
-          : [];
-        const activeTabElement = tabElements.find((element) => element.dataset.tabId === activeTabId);
-
-        activeTabElement?.scrollIntoView({
-          block: 'nearest',
-          inline: 'nearest',
-          behavior: 'smooth',
-        });
-      }
+    function scrollActiveTabIntoView() {
+      const isInitialSync = prevActiveTabIdRef.current === null;
+      const tabAdded = tabs.length > prevTabCountRef.current;
+      const activeTabChanged = activeTabId !== prevActiveTabIdRef.current;
       prevTabCountRef.current = tabs.length;
+      prevActiveTabIdRef.current = activeTabId;
+
+      if (tabAdded || activeTabChanged) {
+        const behavior: ScrollBehavior = isInitialSync ? 'instant' : 'smooth';
+        revealTab(activeTabId, behavior);
+      }
       const frameId = requestAnimationFrame(updateScrollState);
       return () => cancelAnimationFrame(frameId);
     },
-    [activeTabId, tabs.length, updateScrollState],
+    [activeTabId, revealTab, tabs.length, updateScrollState],
   );
 
   // ---------------------------------------------------------------------------
@@ -151,7 +271,7 @@ export const TabBar = memo(function TabBar() {
   // ---------------------------------------------------------------------------
 
   const handleAddTab = useCallback(function handleAddTab() {
-    useTabStore.getState().createTab();
+    openSingletonNewTab();
   }, []);
 
   const clearTabDragState = useCallback(function clearTabDragState() {
@@ -196,31 +316,7 @@ export const TabBar = memo(function TabBar() {
     const payload = parsePanelNodeDragData(e.dataTransfer);
     if (!payload) return false;
 
-    const panelStore = usePanelStore.getState();
-    const tabStore = useTabStore.getState();
-    const previousActiveTabId = tabStore.activeTabId;
-    const sourceTabData = panelStore.tabPanels[payload.tabId];
-    const sourcePanel = sourceTabData?.panels[payload.panelId];
-    const terminalId = sourcePanel?.terminalId ?? null;
-    const terminalSessionId = sourcePanel?.terminalSessionId ?? null;
-    if (!sourceTabData || !terminalId || payload.tabId !== previousActiveTabId) return false;
-
-    if (Object.keys(sourceTabData.panels).length > 1) {
-      panelStore.closePanel(payload.panelId);
-    } else {
-      panelStore.assignTerminal(payload.panelId, null);
-    }
-
-    const newTabId = tabStore.createTab(null, { insertAfterTabId: payload.tabId });
-    const newTabData = usePanelStore.getState().tabPanels[newTabId];
-    const newPanelId = newTabData?.activePanelId;
-    if (!newPanelId) return false;
-    usePanelStore.getState().assignTerminal(newPanelId, terminalId, terminalSessionId);
-
-    if (previousActiveTabId && previousActiveTabId !== newTabId) {
-      useTabStore.getState().setActiveTab(previousActiveTabId);
-    }
-    return true;
+    return moveTerminalPanelToNewTab(payload);
   }, []);
 
   const handleCreateTabDragOver = useCallback(function handleCreateTabDragOver(e: React.DragEvent) {
@@ -255,6 +351,7 @@ export const TabBar = memo(function TabBar() {
   }, []);
 
   const handleTabActivate = useCallback(function handleTabActivate(tabId: string) {
+    useWorkspacePeekStore.getState().close();
     const tabStore = useTabStore.getState();
     const panelStore = usePanelStore.getState();
     const targetPanelId = panelStore.tabPanels[tabId]?.activePanelId;
@@ -334,6 +431,11 @@ export const TabBar = memo(function TabBar() {
     const dragTabId = dragTabIdRef.current;
     if (dragTabId && dragTabId !== dropTabId) {
       useTabStore.getState().reorderTab(dragTabId, dropTabId);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
     }
     dragTabIdRef.current = null;
     setDraggingTabId(null);
@@ -374,6 +476,9 @@ export const TabBar = memo(function TabBar() {
 
     const dragTabId = dragTabIdRef.current;
     if (!dragTabId) return;
+    const tabState = useTabStore.getState();
+    const dragIndex = tabState.tabs.findIndex((tab) => tab.id === dragTabId);
+    const didMove = dragIndex !== -1 && dragIndex !== tabState.tabs.length - 1;
     clearTabDragState();
 
     // Move dragged tab to end (direct splice, not reorderTab which inserts "before")
@@ -385,6 +490,13 @@ export const TabBar = memo(function TabBar() {
       newTabs.push(draggedTab);
       return { tabs: newTabs };
     });
+    if (didMove) {
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
+    }
   }, [clearTabDragState, handlePanelNodeDropToNewTab, handlePanelTitleDropToNewTab]);
 
   // ---------------------------------------------------------------------------
@@ -396,7 +508,11 @@ export const TabBar = memo(function TabBar() {
       role="tablist"
       aria-label={t('chat.tabList')}
       className={cn(
-        'flex items-stretch h-9 border-b border-b-(--divider) bg-(--chat-header-bg) shrink-0',
+        // `max-sm:h-auto` because `h-9` is the row this bar's controls are cut
+        // to: a 44px target inside a 29px row overflows it instead of being
+        // hittable, so below the Phone step the targets decide the height
+        // (#270, and the same note in `touch-target.ts`).
+        'flex items-stretch h-9 max-sm:h-auto border-b border-b-(--divider) bg-(--chat-header-bg) shrink-0',
         isWindowsElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
         isWindowsElectron && !gitPanelOpen && 'pr-[152px]',
         isLinuxElectron && 'electron-drag h-[40px] bg-(--electron-titlebar-bg) border-b-(--electron-titlebar-border) select-none',
@@ -410,11 +526,13 @@ export const TabBar = memo(function TabBar() {
         <button
           className={cn(
             'shrink-0 flex items-center justify-center w-9 h-9 text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors border-r border-r-(--divider)',
+            PHONE_TOUCH_TARGET,
             isWindowsElectron && 'electron-no-drag w-[40px] h-[39px]',
             isLinuxElectron && 'electron-no-drag w-[40px] h-[39px]',
             isMacElectron && 'electron-no-drag w-10 h-10'
           )}
           onClick={toggleSidebar}
+          {...telemetryClickAttributes('sidebar.toggle', 'tab_bar')}
           aria-label={t('sidebar.expand')}
           data-testid="tab-bar-sidebar-toggle"
         >
@@ -422,100 +540,116 @@ export const TabBar = memo(function TabBar() {
         </button>
       )}
 
-      {/* Scrollable tab items container */}
-      <div className="relative flex min-w-0 items-stretch">
-        <div
-          ref={containerRef}
-          className="flex min-w-0 items-stretch overflow-x-auto scrollbar-none"
-          data-testid="tab-bar-items"
-        >
-          {tabs.map((tab) => (
-            <TabItem
-              key={tab.id}
-              tab={tab}
-              isActive={tab.id === activeTabId}
-              isPreview={tab.isPreview}
-              isDragOver={tab.id === dragOverTabId}
-              isDragging={tab.id === draggingTabId}
-              style={{ minWidth: TAB_MIN_WIDTH, maxWidth: TAB_MAX_WIDTH }}
-              onActivate={handleTabActivate}
-              onClose={handleTabClose}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onClearDragOver={handleClearDragOver}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
-              onContextMenu={handleContextMenu}
-            />
-          ))}
-          {/* End drop zone — allows moving a tab to the last position */}
+      {/* Scrollable tab items container.
+          Below the Phone viewport step it is replaced — not hidden — by the tab
+          list control: at 360px the strip has room for about one tab, so the
+          other tabs are reachable only by scrubbing it blind (#247). Conditional
+          render, so a desktop tree never contains the phone control and vice
+          versa. */}
+      {isPhoneViewport ? (
+        <TabListControl
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onActivate={handleTabActivate}
+          onClose={handleTabClose}
+        />
+      ) : (
+        <div className="relative flex min-w-0 items-stretch">
+          {/*
+            The scroll arrows are absolutely positioned over the strip (left-1/right-1,
+            w-6), so a tab parked flush against an edge has its close button covered
+            (BR-UI-024). revealTab keeps the active tab clear of both gutters;
+            scroll-px-8 makes browser-initiated scrolls (focusing the rename input,
+            say) respect the same margin.
+          */}
           <div
+            ref={containerRef}
+            // Keep the native no-drag rectangle on the clipped viewport, not on
+            // each tab. Chromium does not clip child app-region rectangles to a
+            // horizontal scroller, so scrolled-off tabs otherwise subtract the
+            // adjacent AppHeader drag region.
+            className="electron-no-drag flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
+            data-testid="tab-bar-items"
+          >
+            {tabs.map((tab) => (
+              <TabItem
+                key={tab.id}
+                tab={tab}
+                isActive={tab.id === activeTabId}
+                isPreview={tab.isPreview}
+                isDragOver={tab.id === dragOverTabId}
+                isDragging={tab.id === draggingTabId}
+                style={{ minWidth: TAB_MIN_WIDTH, maxWidth: TAB_MAX_WIDTH }}
+                onActivate={handleTabActivate}
+                onClose={handleTabClose}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onClearDragOver={handleClearDragOver}
+                onDrop={handleDrop}
+                onDragEnd={handleDragEnd}
+                onContextMenu={handleContextMenu}
+              />
+            ))}
+          </div>
+
+          <div
+            aria-hidden
             className={cn(
-              'electron-no-drag shrink-0 w-6 transition-colors',
-              isWindowsElectron && 'h-[39px]',
-              isLinuxElectron && 'h-[39px]',
-              isEndZoneDragOver && 'border-l-2 border-l-(--accent)',
+              'pointer-events-none absolute inset-y-0 left-0 z-10 w-8 transition-opacity duration-150',
+              scrollState.canScrollLeft ? 'opacity-100' : 'opacity-0',
             )}
-            onDragOver={handleEndZoneDragOver}
-            onDragLeave={handleEndZoneDragLeave}
-            onDrop={handleEndZoneDrop}
-            data-testid="tab-bar-end-zone"
+            style={{ background: 'linear-gradient(to right, var(--chat-header-bg), transparent)' }}
           />
+          <div
+            aria-hidden
+            className={cn(
+              'pointer-events-none absolute inset-y-0 right-0 z-10 w-8 transition-opacity duration-150',
+              scrollState.canScrollRight ? 'opacity-100' : 'opacity-0',
+            )}
+            style={{ background: 'linear-gradient(to left, var(--chat-header-bg), transparent)' }}
+          />
+
+          {scrollState.canScrollLeft && (
+            <button
+              {...telemetryClickAttributes('tab.scroll.previous', 'tab_bar')}
+              type="button"
+              className="electron-no-drag absolute left-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              onClick={() => handleScrollTabs('left')}
+              aria-label="Scroll tabs left"
+              data-testid="tab-bar-scroll-left"
+            >
+              <ChevronLeft size={14} strokeWidth={1.75} />
+            </button>
+          )}
+
+          {scrollState.canScrollRight && (
+            <button
+              {...telemetryClickAttributes('tab.scroll.next', 'tab_bar')}
+              type="button"
+              className="electron-no-drag absolute right-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              onClick={() => handleScrollTabs('right')}
+              aria-label="Scroll tabs right"
+              data-testid="tab-bar-scroll-right"
+            >
+              <ChevronRight size={14} strokeWidth={1.75} />
+            </button>
+          )}
         </div>
-
-        <div
-          aria-hidden
-          className={cn(
-            'pointer-events-none absolute inset-y-0 left-0 z-10 w-8 transition-opacity duration-150',
-            scrollState.canScrollLeft ? 'opacity-100' : 'opacity-0',
-          )}
-          style={{ background: 'linear-gradient(to right, var(--chat-header-bg), transparent)' }}
-        />
-        <div
-          aria-hidden
-          className={cn(
-            'pointer-events-none absolute inset-y-0 right-0 z-10 w-8 transition-opacity duration-150',
-            scrollState.canScrollRight ? 'opacity-100' : 'opacity-0',
-          )}
-          style={{ background: 'linear-gradient(to left, var(--chat-header-bg), transparent)' }}
-        />
-
-        {scrollState.canScrollLeft && (
-          <button
-            type="button"
-            className="electron-no-drag absolute left-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-            onClick={() => handleScrollTabs('left')}
-            aria-label="Scroll tabs left"
-            data-testid="tab-bar-scroll-left"
-          >
-            <ChevronLeft size={14} strokeWidth={1.75} />
-          </button>
-        )}
-
-        {scrollState.canScrollRight && (
-          <button
-            type="button"
-            className="electron-no-drag absolute right-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
-            onClick={() => handleScrollTabs('right')}
-            aria-label="Scroll tabs right"
-            data-testid="tab-bar-scroll-right"
-          >
-            <ChevronRight size={14} strokeWidth={1.75} />
-          </button>
-        )}
-      </div>
+      )}
 
       {/* "+" button — always visible */}
       <ShortcutTooltip id="new-tab" label={t('shortcut.newTab')}>
         <button
           className={cn(
             'shrink-0 flex items-center justify-center w-9 h-9 text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors',
+            PHONE_TOUCH_TARGET,
             isWindowsElectron && 'electron-no-drag w-[40px] h-[39px]',
             isLinuxElectron && 'electron-no-drag w-[40px] h-[39px]',
             isMacElectron && 'electron-no-drag w-10 h-10',
             isCreateTabDragOver && 'bg-(--accent)/14 text-(--accent) shadow-[inset_0_-2px_0_var(--accent)]'
           )}
           onClick={handleAddTab}
+          {...telemetryClickAttributes('tab.new', 'tab_bar')}
           onDragOver={handleCreateTabDragOver}
           onDragLeave={handleCreateTabDragLeave}
           onDrop={handleCreateTabDrop}
@@ -526,22 +660,42 @@ export const TabBar = memo(function TabBar() {
         </button>
       </ShortcutTooltip>
 
-      {/* Spacer — keep this area draggable for frameless Electron windows. */}
+      {/* Spacer — keep this area draggable for frameless Electron windows.
+          It is also the end-drop target, letting the scroll content stay tight
+          so the "+" button sits directly beside the last tab.
+          It claims no width on a phone: it and the tab list control are both
+          flex-1, so leaving it there would split the ~204px the control was
+          given in two and cut the tab name to about six characters — against a
+          spacer a browser on a phone can neither drag a window by nor drop onto.
+          An Electron window keeps it at every width, narrow ones included, since
+          a frameless titlebar with no drag region is a window that cannot be
+          moved. */}
       <div
         className={cn(
-          'electron-drag flex-1 transition-colors',
-          isCreateTabDragOver && 'bg-(--accent)/10',
+          'electron-drag transition-colors',
+          isPhoneViewport && !electronPlatform ? 'w-0 shrink-0' : 'flex-1',
+          // A flex-1 item has a zero flex basis, so a crowded intrinsic-width tab
+          // strip can otherwise consume every remaining pixel. Keep a stable
+          // native hit target even when the tab list overflows.
+          electronPlatform && 'min-w-12',
+          (isCreateTabDragOver || isEndZoneDragOver) && 'bg-(--accent)/10',
         )}
-        onDragOver={handleCreateTabDragOver}
-        onDragLeave={handleCreateTabDragLeave}
-        onDrop={handleCreateTabDrop}
+        onDragOver={handleEndZoneDragOver}
+        onDragLeave={handleEndZoneDragLeave}
+        onDrop={handleEndZoneDrop}
         data-testid="tab-bar-new-tab-drop-zone"
       />
 
-      {/* Right panel toggle — anchored to the right with a clear panel affordance */}
-      <button
+      {!isPhoneViewport ? <GitDesktopDeliveryControl /> : null}
+
+      {/* One stable Git entry point on phone; desktop keeps the panel affordance. */}
+      {isPhoneViewport ? (
+        <GitPhonePanelToggle open={gitPanelOpen} onToggle={handlePhoneGitToggle} />
+      ) : (
+        <button
         className={cn(
           'electron-no-drag shrink-0 flex items-center justify-center w-10 h-9 transition-colors border-l border-l-(--divider)',
+          PHONE_TOUCH_TARGET,
           'text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover)',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-(--accent)',
           isWindowsElectron && 'w-[40px] h-[39px]',
@@ -552,13 +706,15 @@ export const TabBar = memo(function TabBar() {
             : 'bg-[color-mix(in_srgb,var(--chat-header-bg)_78%,var(--sidebar-hover))]'
         )}
         onClick={toggleGitPanel}
+        {...telemetryClickAttributes('right_panel.toggle', 'tab_bar')}
         aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
         aria-pressed={gitPanelOpen}
         title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
         data-testid="tab-bar-git-toggle"
       >
         {gitPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-      </button>
+        </button>
+      )}
 
       {isLinuxElectron && !gitPanelOpen ? <ElectronWindowControls /> : null}
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { controlUsage, isControlInvocation, runControlCli } from './control-cli.mjs';
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 32123;
-const PORT_SCAN_LIMIT = 100;
 
 function usage() {
   console.log(`Usage: tessera [--port PORT] [--host HOST]
@@ -14,10 +13,12 @@ function usage() {
 Starts the local Tessera web UI server.
 
 Options:
-  -p, --port PORT  Preferred port. Defaults to ${DEFAULT_PORT}, then scans upward.
+  -p, --port PORT  Server port. Defaults to ${DEFAULT_PORT}.
   --host HOST      Host interface to bind. Defaults to ${DEFAULT_HOST}.
   -h, --help       Show this help message.
   -v, --version    Show Tessera version.
+
+${controlUsage()}
 `);
 }
 
@@ -88,46 +89,29 @@ function packageRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 }
 
-function isPortAvailable(port, host) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-
-    server.once('error', () => {
-      resolve(false);
-    });
-
-    server.listen(port, host, () => {
-      server.close(() => resolve(true));
-    });
-  });
-}
-
-async function findPort(preferredPort, host) {
-  for (let offset = 0; offset < PORT_SCAN_LIMIT; offset += 1) {
-    const candidate = preferredPort + offset;
-    if (candidate > 65535) break;
-    if (await isPortAvailable(candidate, host)) {
-      return candidate;
-    }
+async function main() {
+  const root = packageRoot();
+  const argv = process.argv.slice(2);
+  if (isControlInvocation(argv)) {
+    process.exitCode = await runControlCli({ argv, packageRoot: root });
+    return;
   }
 
-  fail(`no available port found from ${preferredPort} to ${preferredPort + PORT_SCAN_LIMIT - 1}`);
+  const options = parseArgs(argv);
+  const serverEntry = path.join(root, 'dist-server', 'server.js');
+
+  if (!fs.existsSync(serverEntry)) {
+    fail('production server build is missing. Reinstall @horang-labs/tessera or publish with npm run npm:prepack first.');
+  }
+
+  process.env.NODE_ENV = 'production';
+  process.env.PORT = String(options.port);
+  process.env.TESSERA_HOST = options.host;
+  process.env.TESSERA_CLI = '1';
+  process.env.TESSERA_APP_ROOT = root;
+  process.env.TESSERA_CHANNEL = process.env.TESSERA_CHANNEL || 'npm';
+
+  await import(pathToFileURL(serverEntry).href);
 }
 
-const root = packageRoot();
-const options = parseArgs(process.argv.slice(2));
-const port = await findPort(options.port, options.host);
-const serverEntry = path.join(root, 'dist-server', 'server.js');
-
-if (!fs.existsSync(serverEntry)) {
-  fail('production server build is missing. Reinstall @horang-labs/tessera or publish with npm run npm:prepack first.');
-}
-
-process.env.NODE_ENV = 'production';
-process.env.PORT = String(port);
-process.env.TESSERA_HOST = options.host;
-process.env.TESSERA_CLI = '1';
-process.env.TESSERA_APP_ROOT = root;
-process.env.TESSERA_CHANNEL = process.env.TESSERA_CHANNEL || 'npm';
-
-await import(pathToFileURL(serverEntry).href);
+await main();

@@ -1,7 +1,6 @@
 "use client";
 
 import { useSessionStore } from "@/stores/session-store";
-import { useNotificationStore } from "@/stores/notification-store";
 import {
   BOARD_SIDEBAR_DEFAULT_WIDTH,
   BOARD_SIDEBAR_MIN_WIDTH,
@@ -12,6 +11,10 @@ import {
 import { useBoardStore } from "@/stores/board-store";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useCrossWindowUiSync } from "@/hooks/use-cross-window-ui-sync";
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from "@/hooks/use-project-view-workspace-state";
 import { useResize } from "@/hooks/use-resize";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -33,6 +36,7 @@ const UpdateNotifier = dynamic(
 import { SelectionActionBar } from "./selection-action-bar";
 import { usePanelStore, selectActiveTab } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
+import { useTaskStore } from "@/stores/task-store";
 import { TabBar } from "@/components/tab/tab-bar";
 import { TabPanelHost } from "@/components/tab/tab-panel-host";
 import { ElectronTitlebarThemeSync } from "@/components/layout/electron-titlebar";
@@ -46,11 +50,24 @@ import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { ALL_PROJECTS_SENTINEL } from "@/lib/constants/project-strip";
 import {
+  resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
+  shouldBridgeActiveSessionToPanel,
 } from "@/lib/session/active-workspace-session";
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
+import { reconcileActiveSessionSurface } from "@/lib/session/reconcile-active-session-surface";
 import { resolveSessionTabOpenMode } from "@/lib/terminal/terminal-preview-policy";
+import { useEffectiveViewMode } from "@/hooks/use-effective-view-mode";
+import { GitPanelControllerProvider } from "@/components/git/git-panel-controller-context";
+import { findCompositeWorktreeId } from "@/lib/worktrees/linked-worktree-presentation";
+import { WorktreePeek } from "@/components/worktree/worktree-peek";
+import { useWorkspacePeekStore } from "@/stores/workspace-peek-store";
+import { ChatAreaSkeleton } from "./chat-area-skeleton";
+import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
+import { PHONE_VIEWPORT_BREAKPOINT } from "@/lib/viewport/phone-viewport";
+import { readUiStorageItem } from "@/lib/persistence/ui-storage";
+import { TAB_STORE_KEY } from "@/types/tab";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -61,6 +78,7 @@ const FALLBACK_VIEWPORT_WIDTH = 1440;
 const KANBAN_SCROLL_AREA_SELECTOR = '[data-kanban-scroll-area="true"]';
 const KANBAN_SCROLL_END_SNAP_THRESHOLD = 16;
 const PROJECT_STRIP_WIDTH = 44;
+const PHONE_PROJECT_STRIP_WIDTH = 32;
 
 function getViewportWidth(): number {
   return typeof window === "undefined"
@@ -97,29 +115,76 @@ function getKanbanScrollArea(): HTMLDivElement | null {
 export function ChatLayout() {
   const { t } = useI18n();
   const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const activeTabId = useTabStore((state) => state.activeTabId);
+  // The stored view mode, which is what the persisted sidebar width is keyed by.
+  // What is on screen is `renderedViewMode` below — a phone shows the list
+  // whatever this says, and must not write that back.
   const viewMode = useBoardStore((state) => state.viewMode);
+  const renderedViewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
+  const peekFileSourceSessionId = useBoardStore(
+    (state) => state.peekFileRef?.sourceSessionId ?? null,
+  );
   const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
+  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const selectedBoardSession = useProjectViewSession(
+    selectedBoardSessionId,
+    selectedProjectDir,
+  );
+  const selectedBoardWorktreeId = selectedBoardSession?.worktreeId ?? null;
   const kanbanSessionOpenMode = useSettingsStore(
     (state) => state.settings.kanbanSessionOpenMode,
   );
   const activePanelSessionId = usePanelStore((state) => {
-    const activeTabData = selectActiveTab(state);
+    const activeTabData = state.tabPanels[activeTabId];
     return activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
   });
-  const isKanbanPeekMode = viewMode === 'board' && kanbanSessionOpenMode === 'peek';
-  const activeGitSessionId = isKanbanPeekMode && selectedBoardSessionId
-    ? selectedBoardSessionId
+  const activePanelId = usePanelStore((state) =>
+    state.tabPanels[activeTabId]?.activePanelId ?? null
+  );
+  const activePanelWorktreeId = usePanelStore((state) => {
+    const activeTabData = state.tabPanels[activeTabId];
+    return activeTabData?.panels[activeTabData.activePanelId]?.worktreeId ?? null;
+  });
+  const peekWorktreeId = useWorkspacePeekStore(
+    (state) => state.target?.worktreeId ?? null,
+  );
+  const peekProjectDir = useWorkspacePeekStore(
+    (state) => state.target?.projectDir ?? null,
+  );
+  const activeTabProjectDir = useTabStore((state) =>
+    state.tabs.find((tab) => tab.id === activeTabId)?.projectDir ?? null
+  );
+  const compositeWorktreeId = useTaskStore((state) =>
+    findCompositeWorktreeId(
+      activeTabProjectDir
+        ? state.tasksByProject[activeTabProjectDir] ?? []
+        : state.tasks,
+      activePanelSessionId,
+    )
+  );
+  const isKanbanPeekMode = renderedViewMode === 'board' && kanbanSessionOpenMode === 'peek';
+  const openBoardGitSessionId = peekSessionId ?? peekFileSourceSessionId;
+  const activeGitSessionId = isKanbanPeekMode
+    ? openBoardGitSessionId
     : resolveActiveWorkspaceSessionId({
         activePanelSessionId,
         activeSessionId,
       });
+  const activePanelWorkspaceSessionId = resolveActiveWorkspaceSessionId({
+    activePanelSessionId,
+    activeSessionId: null,
+  });
+  const activeGitWorktreeId = peekWorktreeId
+    ?? (isKanbanPeekMode
+      ? openBoardGitSessionId ? selectedBoardWorktreeId : null
+      : activePanelWorktreeId ?? compositeWorktreeId);
+  const activeGitTargetSessionId = resolveCanonicalGitTargetSessionId({
+    activeSessionId: activeGitSessionId,
+    peekWorktreeId,
+  });
 
-  const markSessionAsRead = useNotificationStore(
-    (state) => state.markSessionAsRead,
-  );
   const sidebarCollapsed = useSettingsStore((state) => state.sidebarCollapsed);
-  const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const sidebarWidth = useSettingsStore(
     (state) => state.getSidebarWidth(viewMode, selectedProjectDir),
   );
@@ -128,7 +193,7 @@ export function ChatLayout() {
     (state) => state.setSidebarCollapsed,
   );
   const setSidebarWidth = useSettingsStore((state) => state.setSidebarWidth);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const gitPanelWidth = useGitStore((state) => state.panelWidth);
   const setGitPanelWidth = useGitStore((state) => state.setPanelWidth);
@@ -139,11 +204,14 @@ export function ChatLayout() {
   // BR-PERSIST-001: persist tab/panel state with a short debounce.
   const persistDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const kanbanScrollAnchorRef = useRef<{ rightEdge: number; atEnd: boolean } | null>(null);
+  const activeWorkspaceIdentity = `${activeTabId}:${activePanelId ?? ''}:${activePanelSessionId ?? ''}`;
+  const peekWorkspaceIdentityRef = useRef(activeWorkspaceIdentity);
   const [viewportWidth, setViewportWidth] = useState(getViewportWidth);
   const initiallyHasProjects = projects.length > 0;
   const projectsLoadedRef = useRef(initiallyHasProjects);
   const [projectsLoaded, setProjectsLoaded] = useState(initiallyHasProjects);
   const isCompactViewport = viewportWidth < COMPACT_VIEWPORT_BREAKPOINT;
+  const isPhoneViewport = viewportWidth < PHONE_VIEWPORT_BREAKPOINT;
   const isKanbanPeekLayout = isKanbanPeekMode && !sidebarCollapsed;
   const visibleWorkspaceSessionId = resolveVisibleWorkspaceSessionId({
     activeSessionId,
@@ -186,6 +254,23 @@ export function ChatLayout() {
     const timeoutId = globalThis.setTimeout(preload, 1000);
     return () => globalThis.clearTimeout(timeoutId);
   }, []);
+
+  useEffect(function closeWorktreePeekOutsideItsProject() {
+    if (!peekProjectDir) return;
+    const projectStillVisible = selectedProjectDir === peekProjectDir
+      || selectedProjectDir === ALL_PROJECTS_SENTINEL;
+    if (renderedViewMode !== 'list' || !projectStillVisible) {
+      useWorkspacePeekStore.getState().close();
+    }
+  }, [peekProjectDir, renderedViewMode, selectedProjectDir]);
+
+  useEffect(function closeWorktreePeekWhenWorkspaceChanges() {
+    const previousIdentity = peekWorkspaceIdentityRef.current;
+    peekWorkspaceIdentityRef.current = activeWorkspaceIdentity;
+    if (peekProjectDir && previousIdentity !== activeWorkspaceIdentity) {
+      useWorkspacePeekStore.getState().close();
+    }
+  }, [activeWorkspaceIdentity, peekProjectDir]);
 
   const captureKanbanScrollAnchor = useCallback(() => {
     const scrollArea = getKanbanScrollArea();
@@ -282,11 +367,31 @@ export function ChatLayout() {
     }
   }, []);
 
+  // The visible tab/panel is the focus source of truth. In particular, opening
+  // an empty tab must clear the previously selected Session before shutdown;
+  // otherwise a background PTY resume steals focus on the next cold start.
+  useEffect(function syncActivePanelToSessionSelection() {
+    if (useSessionStore.getState().activeSessionId === activePanelWorkspaceSessionId) return;
+    useSessionStore.getState().setActiveSession(activePanelWorkspaceSessionId);
+  }, [activePanelWorkspaceSessionId, activeSessionId, activeWorkspaceIdentity]);
+
   // Load projects on mount (viewMode-agnostic — ensures board view has data too)
   useEffect(function loadProjects() {
     let cancelled = false;
 
-    void Promise.resolve(useSessionStore.getState().loadProjects()).finally(() => {
+    const activeTabData = selectActiveTab(usePanelStore.getState());
+    const restoredActiveSessionId = activeTabData
+      ?.panels[activeTabData.activePanelId]?.sessionId ?? null;
+    const hasPersistedWorkspace = readUiStorageItem(TAB_STORE_KEY) !== null;
+
+    void Promise.resolve(useSessionStore.getState().loadProjects(
+      hasPersistedWorkspace
+        ? {
+            restoredActiveSessionId,
+            restoredActiveTabId: useTabStore.getState().activeTabId,
+          }
+        : undefined,
+    )).finally(() => {
       if (!cancelled && !projectsLoadedRef.current) {
         projectsLoadedRef.current = true;
         setProjectsLoaded(true);
@@ -394,40 +499,33 @@ export function ChatLayout() {
 
   useEffect(() => {
     if (visibleWorkspaceSessionId) {
-      markSessionAsRead(visibleWorkspaceSessionId);
+      projectViewWorkspaceState.markSessionRead(visibleWorkspaceSessionId);
     }
-  }, [markSessionAsRead, visibleWorkspaceSessionId]);
+  }, [visibleWorkspaceSessionId]);
 
   // Bridge Effect: sync activeSessionId from session-store → panel-store.
   useEffect(
     function bridgeActiveSessionToPanel() {
       if (!activeSessionId) return;
-
-      const panelState = usePanelStore.getState();
-      const activeTabData = selectActiveTab(panelState);
-
-      const currentPanelSessionId =
-        activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
-      if (activeSessionId === currentPanelSessionId) {
-        useTabStore.getState().syncTabProjectFromSession(panelState.activeTabId, activeSessionId);
-        return;
-      }
-
-      let location: { tabId: string; panelId: string } | null = null;
-      try {
-        location = useTabStore.getState().findSessionLocation(activeSessionId);
-      } catch {
-        return;
-      }
-      if (location !== null) {
-        activateSessionPanel(activeSessionId, { location });
-        return;
-      }
-
-      panelState.assignSession(activeTabData?.activePanelId ?? '', activeSessionId);
-      useTabStore.getState().syncTabProjectFromSession(panelState.activeTabId, activeSessionId);
+      // Once the restored workspace is visible, an intentionally empty active
+      // panel outranks background runtime bookkeeping. User navigation opens or
+      // assigns its target panel before selecting the Session.
+      if (!shouldBridgeActiveSessionToPanel({
+        activePanelSessionId,
+        activePanelWorkspaceSessionId,
+        renderedActiveSessionId: activeSessionId,
+        currentActiveSessionId: useSessionStore.getState().activeSessionId,
+        projectsLoaded,
+      })) return;
+      reconcileActiveSessionSurface(activeSessionId);
     },
-    [activeSessionId],
+    [
+      activePanelSessionId,
+      activePanelWorkspaceSessionId,
+      activeSessionId,
+      projectsLoaded,
+      selectedProjectDir,
+    ],
   );
 
   // When the last popout board window closes, refresh tasks/collections in the
@@ -479,7 +577,7 @@ export function ChatLayout() {
       }
       const tabStore = useTabStore.getState();
       const location = tabStore.findSessionLocation(sessionId);
-      const session = useSessionStore.getState().getSession(sessionId);
+      const session = projectViewWorkspaceState.resolveSession(sessionId);
       const shouldPin = action === 'pin'
         || (session ? resolveSessionTabOpenMode(session) === 'pinned' : false);
       if (shouldPin) {
@@ -522,12 +620,18 @@ export function ChatLayout() {
   return (
     <KeyboardShortcutProvider>
       <ElectronTitlebarThemeSync />
-      <div className="flex h-screen flex-col overflow-hidden" data-testid="chat-layout">
+      <GitPanelControllerProvider
+        sessionId={activeGitTargetSessionId}
+        worktreeId={activeGitWorktreeId}
+      >
+      <div className="flex h-dvh flex-col overflow-hidden" data-testid="chat-layout">
         <div className="flex flex-1 overflow-hidden">
           {/* Left panel — project strip + header + content (list/kanban) */}
           <LeftPanel
             width={sidebarCollapsed
-              ? PROJECT_STRIP_WIDTH
+              ? isPhoneViewport
+                ? PHONE_PROJECT_STRIP_WIDTH
+                : PROJECT_STRIP_WIDTH
               : isCompactViewport
                 ? "100vw"
                 : effectiveSidebarWidth}
@@ -561,7 +665,18 @@ export function ChatLayout() {
           {!isKanbanPeekLayout && (
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <TabBar />
-              <TabPanelHost />
+              <div className="relative flex min-h-0 flex-1 overflow-hidden">
+                <div
+                  className="flex min-h-0 flex-1"
+                  aria-hidden={peekWorktreeId ? true : undefined}
+                  inert={peekWorktreeId ? true : undefined}
+                >
+                  {projectsLoaded
+                    ? <TabPanelHost />
+                    : <ChatAreaSkeleton isSinglePanel />}
+                </div>
+                <WorktreePeek />
+              </div>
             </div>
           )}
 
@@ -589,7 +704,8 @@ export function ChatLayout() {
                 </div>
               )}
               <GitPanel
-                sessionId={activeGitSessionId}
+                sessionId={activeGitTargetSessionId}
+                worktreeId={activeGitWorktreeId}
                 width={isCompactViewport ? "100vw" : gitPanelWidth}
                 className={cn(
                   isCompactViewport
@@ -602,6 +718,7 @@ export function ChatLayout() {
           )}
         </div>
       </div>
+      </GitPanelControllerProvider>
       <SettingsPanel />
       <ToastContainer />
       <UpdateNotifier />

@@ -56,6 +56,8 @@ interface BoardState {
   setPeekFileSidecarWidth: (width: number) => void;
   closeSessionPeek: () => boolean;
   clearSessionPeek: () => boolean;
+  /** Lifecycle retirement bypasses dirty-file confirmation for a removed Session. */
+  retireSessionPeek: (sessionId: string) => void;
 
   // Kanban drag-and-drop state
   draggingTaskId: string | null;
@@ -85,6 +87,10 @@ interface BoardState {
   // List view session filter (false = all, true = running)
   isListRunningFilterActive: boolean;
   setListRunningFilterActive: (active: boolean) => void;
+
+  // Kanban card filter (false = all, true = runtime-live cards only)
+  isKanbanRunningFilterActive: boolean;
+  setKanbanRunningFilterActive: (active: boolean) => void;
 
   // Kanban quick create sheet — tracks which column's sheet is open (null = closed)
   kanbanAddMenuColumn: string | null;
@@ -122,6 +128,16 @@ interface BoardState {
   setDragOverCollection: (colId: string | null) => void;
   setCollectionDropIndicator: (indicator: { targetId: string; position: 'before' | 'after' } | null) => void;
 
+  // Sub-session reorder DnD (sessions listed under a task, sidebar + kanban).
+  // dragover cannot read dataTransfer payloads, so the dragged row's identity
+  // lives here — that is how the drop target knows it belongs to the same task.
+  draggingSubSession: { taskId: string; sessionId: string } | null;
+  subSessionDropIndicator: { targetSessionId: string; position: 'before' | 'after' } | null;
+  setDraggingSubSession: (item: { taskId: string; sessionId: string } | null) => void;
+  setSubSessionDropIndicator: (
+    indicator: { targetSessionId: string; position: 'before' | 'after' } | null,
+  ) => void;
+
   // Collection group reorder DnD state
   draggingCollectionGroupId: string | null;
   collectionGroupDragOverIndex: number | null;
@@ -136,6 +152,7 @@ const COLLAPSED_COLLECTIONS_KEY = 'ccw:collapsedCollections';
 const SELECTED_PROJECT_DIR_KEY = 'ccw:selectedProjectDir';
 const ALL_PROJECTS_EXPANDED_SECTIONS_KEY = 'ccw:allProjectsExpandedSections';
 const LIST_RUNNING_FILTER_KEY = 'ccw:listRunningFilterActive';
+const KANBAN_RUNNING_FILTER_KEY = 'ccw:kanbanRunningFilterActive';
 const ACTIVE_COLLECTION_FILTER_KEY = 'ccw:activeCollectionFilter';
 const PEEK_FILE_SIDECAR_WIDTH_KEY = 'ccw:peekFileSidecarWidth';
 
@@ -387,6 +404,29 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
     return true;
   },
+  retireSessionPeek: (sessionId) => set((state) => {
+    if (
+      state.peekSessionId !== sessionId
+      && state.peekFileRef?.sourceSessionId !== sessionId
+    ) {
+      return state;
+    }
+    if (state.peekSessionId === sessionId) {
+      return {
+        peekSessionId: null,
+        selectedBoardSessionId: null,
+        peekFileRef: null,
+        peekFileDirty: false,
+      };
+    }
+    return {
+      peekFileRef: null,
+      peekFileDirty: false,
+      selectedBoardSessionId: state.selectedBoardSessionId === sessionId
+        ? null
+        : state.selectedBoardSessionId,
+    };
+  }),
 
   draggingTaskId: null,
   dragOverStatus: null,
@@ -466,6 +506,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set({ isListRunningFilterActive: active });
   },
 
+  isKanbanRunningFilterActive: loadBooleanFlag(KANBAN_RUNNING_FILTER_KEY),
+  setKanbanRunningFilterActive: (active) => {
+    saveBooleanFlag(KANBAN_RUNNING_FILTER_KEY, active);
+    set({ isKanbanRunningFilterActive: active });
+  },
+
   kanbanAddMenuColumn: null,
   setKanbanAddMenuColumn: (column) => set({ kanbanAddMenuColumn: column }),
 
@@ -522,6 +568,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     }),
   setDragOverCollection: (colId) => set({ dragOverCollectionId: colId }),
   setCollectionDropIndicator: (indicator) => set({ collectionDropIndicator: indicator }),
+
+  // Sub-session reorder DnD
+  draggingSubSession: null,
+  subSessionDropIndicator: null,
+  setDraggingSubSession: (item) =>
+    set({
+      draggingSubSession: item,
+      ...(item === null && { subSessionDropIndicator: null }),
+    }),
+  setSubSessionDropIndicator: (indicator) => set({ subSessionDropIndicator: indicator }),
 
   // Collection group reorder DnD
   draggingCollectionGroupId: null,

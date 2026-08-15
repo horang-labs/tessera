@@ -37,3 +37,11 @@ test('the project strip remains mounted when the sidebar content is collapsed', 
   assert.match(chatLayoutSource, /<LeftPanel[\s\S]*collapsed=\{sidebarCollapsed\}/);
   assert.doesNotMatch(chatLayoutSource, /\{!sidebarCollapsed && \(\s*<>\s*<LeftPanel/);
 });
+
+test('the narrow project rail scrolls without reserving visible scrollbar space', () => {
+  const scrollArea = projectStripSource.match(
+    /<ScrollArea[\s\S]*?data-testid="project-strip-scroll-area"[\s\S]*?>/,
+  )?.[0] ?? '';
+  assert.match(scrollArea, /scrollbar-none/);
+  assert.match(scrollArea, /overflow-x-hidden/);
+});

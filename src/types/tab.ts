@@ -95,6 +95,12 @@ export interface TabStoreState {
   currentProjectDir: string | null;
 }
 
+export interface SessionSurfaceLocation {
+  tabId: string;
+  panelId: string;
+  projectDir: string | null;
+}
+
 /**
  * tab-store의 액션 인터페이스
  */
@@ -106,6 +112,13 @@ export interface TabStoreActions {
    * @returns 새 탭의 ID
    */
   createTab(initialSessionId?: string | null, options?: { insertAfterTabId?: string | null }): string;
+
+  /**
+   * 사용자 New Tab 명령을 처리.
+   * 작업이 전혀 없는 빈 단일 패널 탭이 있으면 하나만 남겨 재사용하고, 없으면 새 탭을 생성.
+   * @returns 활성화된 빈 탭의 ID
+   */
+  openNewTab(): string;
 
   /**
    * 지정한 탭을 닫음.
@@ -146,8 +159,8 @@ export interface TabStoreActions {
   reorderTab(dragTabId: string, dropTabId: string): void;
 
   /**
-   * 특정 세션을 새 탭에서 열기 (Ctrl+클릭 시나리오용 시맨틱 래퍼).
-   * 내부적으로 createTab(sessionId)을 호출.
+   * 특정 세션을 고정 탭에서 열기.
+   * 선택된 탭이 빈 단일 패널이면 그 New Tab을 재사용하고, 아니면 새 탭을 생성.
    */
   createTabWithSession(sessionId: string): void;
 
@@ -180,11 +193,35 @@ export interface TabStoreActions {
   syncTabProjectFromSession(tabId: string, sessionId: string | null): void;
 
   /**
+   * 세션이 없는 프로젝트 셸처럼 프로젝트 소유권을 직접 지정해야 하는 탭에 사용.
+   */
+  setTabProject(tabId: string, projectDir: string): void;
+
+  /**
    * 주어진 세션이 열려 있는 탭과 패널을 찾음 (BR-007).
    * 활성 탭의 live 상태를 먼저 검색 후, 비활성 탭의 스냅샷을 순서대로 검색.
    * @returns 탭+패널 위치 또는 null (찾지 못한 경우)
    */
   findSessionLocation(sessionId: string): { tabId: string; panelId: string } | null;
+
+  /**
+   * 현재 표시 범위와 숨겨진 프로젝트 스냅샷을 함께 검색한다.
+   * 표시 중인 탭은 panel-store의 live 데이터를 항상 우선한다.
+   */
+  findSessionSurface(sessionId: string): SessionSurfaceLocation | null;
+
+  /** Materialized panels and inactive Project/global snapshots that own Sessions. */
+  getSessionSurfaceIds(): string[];
+
+  /**
+   * 실행 중인 PTY의 소유권을 이전 세션에서 새 세션으로 옮긴다.
+   * `/clear` 중 현재 범위가 바뀌어도 원래 탭과 패널 ID를 보존한다.
+   */
+  rebindSessionSurface(
+    previousSessionIds: readonly string[],
+    sessionId: string,
+    options?: { worktreeId?: string | null },
+  ): boolean;
 
   /**
    * 세션의 화면을 정리한다. 단일 패널 탭은 닫고, 분할 탭은 해당 패널만 제거한다.
@@ -272,9 +309,9 @@ export interface PersistedTabStoreV3 {
   /** 마지막 활성 탭. 현재 스코프에서 보이지 않으면 복원 시 대체됨. */
   activeTabId: string | null;
   /** 프로젝트별 탭 상태. 키 = projectDir (encodedDir) */
-  projects: Record<string, { tabs: PersistedTab[]; activeTabId: string }>;
+  projects: Record<string, { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] }>;
   /** 전역 탭 상태. 전역 탭이 없으면 null. */
-  global: { tabs: PersistedTab[]; activeTabId: string } | null;
+  global: { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] } | null;
 }
 
 /** localStorage에 저장되는 탭 스토어 DTO (v1 | v2 | v3) */

@@ -17,18 +17,24 @@ import {
   useChatStore,
 } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useWebSocket } from '@/hooks/use-websocket';
 import { useSessionResume } from '@/hooks/use-session-resume';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useSkillPicker, type SkillInfo } from '@/hooks/use-skill-picker';
 import { SkillPicker } from '@/components/chat/skill-picker';
-import { useFilePicker } from '@/hooks/use-file-picker';
+import { useReferencePicker } from '@/hooks/use-file-picker';
 import { FilePicker } from '@/components/chat/file-picker';
 import { Separator } from '@/components/ui/separator';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useTaskStore } from '@/stores/task-store';
 import { shouldRouteToTerminalFallback } from '@/lib/terminal/tui-only-commands';
+import { isHiddenSlashCommandInput } from '@/lib/chat/hidden-slash-commands';
 import {
   setPendingTerminalLaunch,
   takePendingTerminalLaunch,
@@ -50,6 +56,7 @@ import {
   registerTerminalLaunchDraft,
   shouldClearTerminalLaunchDraft,
 } from '@/lib/terminal/terminal-launch-draft-state';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import {
   getSessionTerminalId,
   sendInputToTerminal,
@@ -64,9 +71,14 @@ import {
   getProviderSessionRuntimeConfig,
 } from '@/lib/settings/provider-defaults';
 import { hasConversationHistory, shouldResumeBeforeSend } from '@/lib/chat/session-send-routing';
+import {
+  resolveComposerArrowScroll,
+  scrollSessionMessages,
+} from '@/lib/chat/composer-arrow-scroll';
 import { toast } from '@/stores/notification-store';
 import { useVoiceInput } from '@/hooks/use-voice-input';
 import { useMessageInputAttachments } from '@/hooks/use-message-input-attachments';
+import { dropAttachmentPlaceholders } from '@/lib/chat/attachment-content';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { VoiceRecordingOverlay } from './voice-recording-overlay';
 import { tinykeys } from 'tinykeys';
@@ -86,6 +98,7 @@ import { PanelSplitPicker } from './panel-split-picker';
 import { ComposerSessionControls } from './composer-session-controls';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { exportSessionReference, formatContinueConversationPrompt } from '@/lib/session/session-reference';
@@ -112,6 +125,9 @@ import {
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
 import { dispatchCodexNativeUiAction } from '@/lib/chat/codex-native-command-events';
+import { MESSAGE_INPUT_MAX_CHARS } from '@/lib/chat/message-input-limits';
+import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import {
   MessageInputAttachmentStrip,
   MessageInputSessionRefStrip,
@@ -122,6 +138,7 @@ import type { SessionSpawnConfig } from '@/lib/ws/message-types';
 
 interface MessageInputProps {
   sessionId: string;
+  projectViewDir?: string | null;
   isDisabled: boolean;
   isReadOnly?: boolean;
   isStopped?: boolean;
@@ -133,6 +150,7 @@ const EMPTY_COLLECTIONS: Collection[] = [];
 
 export function MessageInput({
   sessionId,
+  projectViewDir,
   isDisabled,
   isReadOnly,
   isStopped,
@@ -141,8 +159,15 @@ export function MessageInput({
 }: MessageInputProps) {
   const { t } = useI18n();
   const setDraftInput = useChatStore((state) => state.setDraftInput);
+  const preparedAgentRequest = useChatStore((state) =>
+    state.preparedAgentRequests.get(sessionId),
+  );
+  const consumePreparedAgentRequest = useChatStore(
+    (state) => state.consumePreparedAgentRequest,
+  );
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
   const [deleteRequested, setDeleteRequested] = useState(false);
+  const usedVoiceInputRef = useRef(false);
   // Attachment/reference/voice completion can update the local composer after a
   // terminal launch but before its prefill ACK. Record that intent synchronously
   // (before React commits the state update) so an older ACK cannot clear it.
@@ -153,6 +178,7 @@ export function MessageInput({
   const clearInput = useCallback(() => {
     setInputValue('');
     setDraftInput(sessionId, '');
+    usedVoiceInputRef.current = false;
   }, [sessionId, setDraftInput]);
 
   useEffect(() => {
@@ -199,7 +225,15 @@ export function MessageInput({
   const prevSessionIdRef = useRef(sessionId);
   useEffect(() => {
     if (prevSessionIdRef.current !== sessionId) {
-      setDraftInput(prevSessionIdRef.current, inputValue);
+      // One composer serves whichever session is open, but attachments are held
+      // by the composer rather than by a session. Carrying them across would
+      // send one session's image from another (#254), so they are dropped here —
+      // and their markers go out of the draft being left behind with them.
+      setDraftInput(
+        prevSessionIdRef.current,
+        dropAttachmentPlaceholders(inputValue, attachments),
+      );
+      clearAttachments();
       const draft = useChatStore.getState().getDraftInput(sessionId);
       setInputValue(draft);
       prevSessionIdRef.current = sessionId;
@@ -219,9 +253,9 @@ export function MessageInput({
     hasConversationHistory(state.messages.get(sessionId))
   );
   const addMessage = useChatStore((state) => state.addMessage);
-  const session = useSessionStore((state) => state.getSession(sessionId));
+  const session = useProjectViewSession(sessionId, projectViewDir);
   const updateSessionRuntimeConfig = useSessionStore((state) => state.updateSessionRuntimeConfig);
-  const projects = useSessionStore((state) => state.projects);
+  const projects = useLoadedProjectViews();
   const sessionStatus = session && 'status' in session ? session.status : 'running';
   const sessionProviderId = session?.provider?.trim() ?? '';
   const sessionCollectionId = session?.collectionId ?? null;
@@ -272,7 +306,7 @@ export function MessageInput({
     serverPlatform,
     agentEnvironment,
   );
-  const filePicker = useFilePicker(sessionId);
+  const filePicker = useReferencePicker(sessionId, session?.projectDir ?? projectViewDir);
   const getInputValue = useCallback(() => inputValue, [inputValue]);
   const sessionRefs = useSessionRefs({
     textareaRef,
@@ -305,14 +339,25 @@ export function MessageInput({
     handleFileSelect,
     handlePaste,
     handleRemoveAttachment,
-    syncAttachmentsWithText,
   } = useMessageInputAttachments({
     textareaRef,
     setInputValue: setInputValueFromProgrammaticEdit,
     t,
   });
-  const MAX_CHARS = 10000;
   const MAX_ROWS = 5;
+
+  useEffect(() => {
+    if (!preparedAgentRequest) return;
+
+    setInputValue(preparedAgentRequest.text);
+    consumePreparedAgentRequest(sessionId, preparedAgentRequest.revision);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.setSelectionRange(preparedAgentRequest.text.length, preparedAgentRequest.text.length);
+      textarea.focus();
+    });
+  }, [consumePreparedAgentRequest, preparedAgentRequest, sessionId]);
 
   const isInputUnavailable = isReadOnly || isDisabled || isResuming;
   const isGenerating = sessionStatus === 'running' && (
@@ -355,6 +400,7 @@ export function MessageInput({
 
   // Voice input: insert transcribed text at cursor position
   const handleVoiceTranscribed = useCallback((text: string) => {
+    usedVoiceInputRef.current = true;
     const textarea = textareaRef.current;
     if (textarea) {
       const cursorPos = textarea.selectionStart;
@@ -424,6 +470,7 @@ export function MessageInput({
     if (voiceCommittedText.length > oldCommitted.length) {
       const newPortion = voiceCommittedText.slice(oldCommitted.length).trimStart();
       if (newPortion) {
+        usedVoiceInputRef.current = true;
         const sep = base && !base.endsWith(' ') ? ' ' : '';
         base += sep + newPortion;
       }
@@ -538,6 +585,7 @@ export function MessageInput({
           if (sessionId !== panelActiveSessionId) return;
         }
         toggleVoiceRecording();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'voice-input' });
       },
     });
     return unsubscribe;
@@ -550,10 +598,13 @@ export function MessageInput({
       skillPicker.onInputChange(value);
       const cursor = textareaRef.current?.selectionStart ?? value.length;
       filePicker.onInputChange(value, cursor);
-      syncAttachmentsWithText(value);
+      // Editing the text deliberately does not drop attachments. The marker is
+      // ordinary editable text, and losing an image because the message around
+      // it was rewritten is what #254 was; the strip's remove control is how an
+      // attachment is taken back.
       syncSessionRefsWithText(value);
     },
-    [sessionId, setDraftInput, skillPicker, filePicker, syncAttachmentsWithText, syncSessionRefsWithText],
+    [sessionId, setDraftInput, skillPicker, filePicker, syncSessionRefsWithText],
   );
 
   // --- File drop handlers (OS file explorer → textarea) ---
@@ -998,11 +1049,7 @@ export function MessageInput({
       }
       clearInput();
     } else if (match.nativeCommand === 'archive') {
-      if (session?.taskId) {
-        void useTaskStore.getState().toggleTaskArchive(session.taskId, true);
-      } else {
-        useSessionStore.getState().toggleArchive(sessionId, true);
-      }
+      requestSessionArchive(sessionId);
       clearInput();
     } else if (match.nativeCommand === 'new' || match.nativeCommand === 'clear') {
       void createSession({
@@ -1114,6 +1161,13 @@ export function MessageInput({
       toast.info(t('chat.codexTerminalHandoffActive'));
       return;
     }
+
+    // 피커에서 감춘 명령(claude-code `/clear`)을 직접 타이핑한 경우. 서버도 같은 판정으로
+    // 막지만, 사용자에게 이유를 알려주는 건 여기서만 할 수 있다.
+    if (!hasSelectedSkill && isHiddenSlashCommandInput(trimmed, sessionProviderId)) {
+      toast.info(t('chat.slashCommandUnsupportedInChat'));
+      return;
+    }
     // Use chip-selected skill or fallback to manual /skillname parsing
     const parsed = skillPicker.parseForSend(trimmed);
 
@@ -1166,11 +1220,18 @@ export function MessageInput({
     if (shouldResumeSession && session && 'projectDir' in session) {
       void resumeAndSend(
         sessionId,
-        session.projectDir,
         sendContent,
         skillName,
         displayContent,
-        { forceTranslateInput },
+        {
+          forceTranslateInput,
+          telemetry: {
+            hasAttachment: hasAttachments,
+            attachmentCount: attachments.length,
+            hasSessionReference: hasSessionRefs,
+            usedVoiceInput: usedVoiceInputRef.current,
+          },
+        },
       ).then((didSend) => {
         if (!didSend) return;
         clearInput();
@@ -1191,7 +1252,15 @@ export function MessageInput({
         return;
       }
       const spawnConfig = buildSpawnConfigForCurrentSession();
-      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig, { forceTranslateInput });
+      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig, {
+        forceTranslateInput,
+        telemetry: {
+          hasAttachment: hasAttachments,
+          attachmentCount: attachments.length,
+          hasSessionReference: hasSessionRefs,
+          usedVoiceInput: usedVoiceInputRef.current,
+        },
+      });
     }
 
     clearInput();
@@ -1201,14 +1270,14 @@ export function MessageInput({
   };
 
   const handleInjectCurrentSession = useCallback(async (targetSessionId: string) => {
-    const sourceSession = useSessionStore.getState().getSession(sessionId);
+    const sourceSession = projectViewWorkspaceState.resolveSession(sessionId);
     if (!sourceSession) return;
 
     setIsInjectingCurrentSession(true);
     try {
       const exportPath = await exportSessionReference(sessionId);
 
-      const targetSession = useSessionStore.getState().getSession(targetSessionId);
+      const targetSession = projectViewWorkspaceState.resolveSession(targetSessionId);
       const { settings } = useSettingsStore.getState();
       const providerId = targetSession?.provider?.trim();
       if (!providerId) {
@@ -1426,22 +1495,16 @@ export function MessageInput({
     }
 
     // ArrowUp/Down: scroll message list when cursor is at edge line, else let default handle
-    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      const ta = textareaRef.current;
-      const selStart = ta?.selectionStart ?? 0;
-      const firstNewline = inputValue.indexOf('\n');
-      const lastNewline = inputValue.lastIndexOf('\n');
-      const onEdgeLine =
-        firstNewline === -1 ||
-        (e.key === 'ArrowUp' ? selStart <= firstNewline : selStart > lastNewline);
-      if (onEdgeLine) {
-        const container = document.querySelector(`[data-session-messages="${sessionId}"]`);
-        if (container) {
-          e.preventDefault();
-          container.scrollBy({ top: e.key === 'ArrowUp' ? -100 : 100 });
-        }
-        return;
+    const arrowScroll = resolveComposerArrowScroll(
+      e,
+      inputValue,
+      textareaRef.current?.selectionStart ?? 0,
+    );
+    if (arrowScroll !== 'ignore') {
+      if (scrollSessionMessages(sessionId, arrowScroll)) {
+        e.preventDefault();
       }
+      return;
     }
 
     // Backspace on empty textarea with a selected skill → remove skill
@@ -1482,7 +1545,7 @@ export function MessageInput({
     }
   };
 
-  const remainingChars = MAX_CHARS - inputValue.length;
+  const remainingChars = MESSAGE_INPUT_MAX_CHARS - inputValue.length;
   const isOverLimit = remainingChars < 0;
   const hasContent = inputValue.trim().length > 0 || attachments.length > 0 || hasSessionRefs;
   const canSubmit = hasContent || !!skillPicker.selectedSkill;
@@ -1514,6 +1577,7 @@ export function MessageInput({
                     <button
                       type="button"
                       onClick={() => setIsQuickCreateOpen((open) => !open)}
+                      {...telemetryClickAttributes('composer.quick_create', 'composer')}
                       disabled={!canCreateFromCurrentSession}
                       className={cn(
                         'inline-flex h-7 w-7 items-center justify-center rounded-md border text-[11px] transition-colors',
@@ -1627,26 +1691,53 @@ export function MessageInput({
           />
         )}
 
-        {/* Hidden file input */}
+        {/* Hidden file input.
+
+            `accept` declares the image types the composer inlines. The wildcard
+            entry is what keeps every other file attachable: this one control
+            also uploads arbitrary files, and an image-only list would take that
+            away — the affordance is not worth removing half the control.
+
+            Be aware of what that costs: a list containing a wildcard accepts
+            everything, so a picker that would surface the gallery and camera for
+            an image-only input most likely will not here. Giving a phone that
+            affordance without narrowing this control needs a second, image-typed
+            entry point, which #254 did not open. No `capture` either — forcing
+            the camera would cost the gallery. */}
         <input
+          {...telemetryIgnoreAttributes('hidden_file_input')}
           ref={fileInputRef}
           type="file"
           multiple
+          accept="image/png,image/jpeg,image/gif,image/webp,*/*"
           className="hidden"
           onChange={handleFileSelect}
           tabIndex={-1}
         />
 
         {/* Textarea row with controls */}
-        <div className="flex items-center gap-2">
+        {/* Tighter gaps below the Phone step: send grew 12px to reach the touch
+            floor and the textarea had only 4px of slack over #251's 120px, so
+            the spacing gives the width back rather than the composer (#270). */}
+        <div className="flex items-center gap-2 max-sm:gap-1" data-testid="message-input-row">
         {/* Attachment button */}
         {!isVoiceActive && (
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
+            {...telemetryClickAttributes('composer.attach', 'composer')}
             disabled={isInputUnavailable || !!activePrompt}
             className={cn(
               'shrink-0 rounded-md p-2 transition-all duration-150',
+              // Height only, and the row's width is the reason. At 360px this
+              // row is 280px wide; the textarea has to keep the 120px #251 set
+              // as the point where it stops being usable, which leaves 160px
+              // for the icons and the spacing between them. Send takes 44 of
+              // that (below), the counter and the gaps take the rest, and a
+              // third and fourth 44px *width* do not exist. The row would have
+              // to stack on a phone to carry them, and this ticket's boundary
+              // reserves where a control sits. The height is free.
+              PHONE_TOUCH_TARGET_HEIGHT,
               isInputUnavailable || activePrompt
                 ? 'text-(--text-muted) cursor-not-allowed opacity-50'
                 : 'text-(--text-muted) hover:text-(--accent) hover:bg-(--accent)/10',
@@ -1667,7 +1758,11 @@ export function MessageInput({
             onStop={stopVoiceRecording}
           />
         ) : (
-          <div className="flex-1 flex items-center min-h-[2.75rem]">
+          // `min-w-0` because a flex item's default minimum width is its content's
+          // intrinsic width, and a textarea's is its default 20 columns — which the
+          // wrapper would otherwise refuse to shrink below, pushing the controls to
+          // the right of it off screen. It has nothing to do where width is ample.
+          <div className="flex-1 flex items-center min-h-[2.75rem] min-w-0">
             {/* Skill chip */}
             {skillPicker.selectedSkill && (
               <MessageInputSkillChip
@@ -1681,6 +1776,7 @@ export function MessageInput({
             )}
 
             <textarea
+              {...telemetryClickAttributes('composer.input', 'composer')}
               ref={textareaRef}
               data-session-input={sessionId}
               value={inputValue}
@@ -1717,7 +1813,9 @@ export function MessageInput({
               disabled={isInputUnavailable || !!activePrompt}
               readOnly={isWebSpeechActive && voicePendingInterim !== ''}
               className={cn(
-                'flex-1 px-3 py-3 bg-transparent text-sm text-(--input-text) resize-none overflow-y-auto',
+                // `min-w-0` for the same reason as the wrapper: the textarea is itself
+                // a flex item, and its own intrinsic width would hold the wrapper open.
+                'flex-1 min-w-0 px-3 py-3 bg-transparent text-sm text-(--input-text) resize-none overflow-y-auto',
                 'placeholder:text-(--input-placeholder) placeholder:whitespace-nowrap placeholder:overflow-hidden placeholder:text-ellipsis',
                 'focus:outline-none',
                 'disabled:cursor-not-allowed',
@@ -1729,11 +1827,14 @@ export function MessageInput({
           </div>
         )}
 
-        {/* Right side controls */}
-        <div className="flex items-center gap-1 pr-2">
+        {/* Right side controls — `shrink-0` so the width the textarea gives up is not
+            taken out of the send button instead. */}
+        <div className="flex items-center gap-1 pr-2 max-sm:pr-1 shrink-0">
           {!isVoiceActive && remainingChars < 1000 && (
-            <span className={cn(
-              'text-xs px-1',
+            <span
+              data-testid="message-input-char-count"
+              className={cn(
+              'text-xs px-1 max-sm:px-0',
               isOverLimit ? 'text-(--error)' : 'text-(--text-muted)'
             )}>
               {remainingChars}
@@ -1745,9 +1846,12 @@ export function MessageInput({
             <ShortcutTooltip id="voice-input" label={t('shortcut.voiceInput')}>
               <button
                 onClick={toggleVoiceRecording}
+                {...telemetryClickAttributes('composer.voice', 'composer')}
                 disabled={!canUseVoice}
                 className={cn(
                   'p-2 rounded-md transition-all duration-150',
+                  // Height only, for the width reason on the attach button.
+                  PHONE_TOUCH_TARGET_HEIGHT,
                   canUseVoice
                     ? 'text-(--text-muted) hover:text-(--accent) hover:bg-(--accent)/10'
                     : 'text-(--text-muted) cursor-not-allowed opacity-50',
@@ -1764,8 +1868,12 @@ export function MessageInput({
               <button
                 type="button"
                 onClick={handleCancel}
+                {...telemetryClickAttributes('composer.stop', 'composer')}
                 data-testid="cancel-generation-btn"
-                className="p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100"
+                className={cn(
+                  'p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover) scale-100',
+                  PHONE_TOUCH_TARGET,
+                )}
                 title={t('chat.cancelButton')}
               >
                 <Square className="w-4 h-4 fill-current" />
@@ -1774,7 +1882,11 @@ export function MessageInput({
                 <button
                   type="button"
                   onClick={() => handleSend()}
-                  className="p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100"
+                  {...telemetryClickAttributes('composer.send_while_running', 'composer')}
+                  className={cn(
+                    'p-2 rounded-md bg-(--accent) text-white transition-all duration-150 hover:bg-(--accent-hover) scale-100',
+                    PHONE_TOUCH_TARGET,
+                  )}
                   title={t('chat.send')}
                   data-testid="send-during-generation-btn"
                 >
@@ -1785,10 +1897,15 @@ export function MessageInput({
           ) : !isVoiceActive ? (
             <button
               onClick={() => handleSend()}
+              {...telemetryClickAttributes('composer.send', 'composer')}
+              data-testid="message-send-btn"
               disabled={isInputUnavailable || !!activePrompt || !canSubmit || isOverLimit}
               title={`${t('chat.send')}\n${t('chat.translateAndSend')} (${formatShortcut(translateSendShortcut)})`}
               className={cn(
                 'p-2 rounded-md transition-all duration-150',
+                // The PTY composer's send is 44x44 (#259) and this one was 26x26
+                // — same job, two bars, one of them measured (#270).
+                PHONE_TOUCH_TARGET,
                 canSubmit && !isInputUnavailable && !activePrompt && !isOverLimit
                   ? 'bg-(--accent) text-white hover:bg-(--accent-hover) scale-100'
                   : 'text-(--text-muted) cursor-not-allowed scale-95'

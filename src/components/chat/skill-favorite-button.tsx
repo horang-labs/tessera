@@ -1,11 +1,15 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Star, X, Search, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useCommandStore } from '@/stores/command-store';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
+import { isHiddenSlashCommandName } from '@/lib/chat/hidden-slash-commands';
 import type { SkillInfo } from '@/hooks/use-skill-picker';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { useI18n } from '@/lib/i18n';
@@ -43,7 +47,13 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
   const favoriteSkills = useSettingsStore((s) => s.settings.favoriteSkills ?? EMPTY_FAVORITE_SKILLS);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
 
-  const allSkills = useCommandStore((s) => sessionId ? s.commands[sessionId] : undefined) ?? EMPTY_COMMANDS;
+  const storeSkills = useCommandStore((s) => sessionId ? s.commands[sessionId] : undefined) ?? EMPTY_COMMANDS;
+  const providerId = useProjectViewSession(sessionId)?.provider?.trim() ?? null;
+  // 피커에서 숨긴 명령은 즐겨찾기 추가 목록에서도 빼야 한다 — 여기로 들어오면 숨김이 무의미해진다.
+  const allSkills = useMemo(
+    () => storeSkills.filter((skill) => !isHiddenSlashCommandName(skill.name, providerId)),
+    [providerId, storeSkills],
+  );
 
   const [isOpen, setIsOpen] = useState(false);
   const [isAddMode, setIsAddMode] = useState(false);
@@ -121,6 +131,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
   return (
     <div ref={containerRef} className="relative shrink-0">
       <button
+        {...telemetryClickAttributes('composer.skill_favorites.open', 'composer')}
         ref={triggerRef}
         type="button"
         onClick={handleToggleOpen}
@@ -169,6 +180,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                     )}
                   >
                     <button
+                      {...telemetryClickAttributes('composer.skill_favorites.run', 'composer')}
                       type="button"
                       onClick={() => handleExecuteSkill(skillName)}
                       className="flex-1 text-left text-sm font-mono text-(--accent) truncate"
@@ -176,11 +188,14 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                       /{skillName}
                     </button>
                     <button
+                      {...telemetryClickAttributes('composer.skill_favorites.remove', 'composer')}
                       type="button"
                       onClick={() => handleRemoveFavorite(skillName)}
                       className={cn(
                         'shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full',
-                        'text-(--text-muted) opacity-0 group-hover:opacity-100',
+                        // Visible below the Phone viewport step, hover-revealed from `sm`
+                        // up: a phone has no hover for the reveal to run on (#250).
+                        'text-(--text-muted) opacity-100 sm:opacity-0 sm:group-hover:opacity-100',
                         'hover:bg-(--error)/15 hover:text-(--error)',
                         'transition-all duration-150',
                       )}
@@ -198,6 +213,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
           {/* Add button / Search section (bottom, closest to button) */}
           {!isAddMode ? (
             <button
+              {...telemetryClickAttributes('composer.skill_favorites.add_open', 'composer')}
               type="button"
               onClick={() => setIsAddMode(true)}
               className={cn(
@@ -217,6 +233,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-(--text-muted)" />
                   <input
+                    {...telemetryClickAttributes('composer.skill_favorites.search', 'composer')}
                     ref={searchInputRef}
                     type="text"
                     value={searchQuery}
@@ -252,6 +269,7 @@ export function SkillFavoriteButton({ sessionId, onSelectSkill }: SkillFavoriteB
                 ) : (
                   filteredSkills.map((skill) => (
                     <button
+                      {...telemetryClickAttributes('composer.skill_favorites.add', 'composer')}
                       key={skill.name}
                       type="button"
                       onClick={() => handleAddFavorite(skill)}

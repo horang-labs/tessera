@@ -10,16 +10,25 @@ import type {
   ProviderModelOption,
   ProviderReasoningEffortOption,
 } from '@/lib/cli/provider-session-option-types';
+import {
+  normalizeTelemetryFormFactor,
+  normalizeTelemetryPromptSource,
+  normalizeTelemetryProvider,
+  type TelemetryFormFactor,
+  type TelemetryPromptSource,
+  type TelemetryProvider,
+} from '@/lib/telemetry/usage-dimensions';
 
-// Fetches the Claude model list from the remote Worker, caches it on disk, and exposes
-// it to buildClaudeSessionOptions(). The Worker config is the SINGLE source of truth —
-// there is no hardcoded model list; getClaudeModelOptions() returns the loaded list (or
-// [] until one arrives).
+// Fetches Tessera's curated Claude model list from the remote Worker, caches it on disk,
+// and exposes it to buildClaudeSessionOptions(). There is no hardcoded base list;
+// runtime-discovered aliases and user-added model IDs are merged later by the provider
+// session-options loader.
 //
-// There is no periodic poll. The config is fetched on exactly two triggers — app launch
-// and each Claude session creation — and every fetch doubles as a usage beacon (the
+// There is no periodic poll. The config is fetched on app launch, each Claude session
+// creation, and each accepted prompt — every fetch doubles as a usage beacon (the
 // Worker counts arrivals): X-Tessera-Event says which trigger it was, and a random
-// install_id + host info ride along unconditionally — no gating, no PII.
+// install_id + host info ride along in production — no PII. Local development,
+// explicit Electron test instances, and debug builds do not contact the Worker.
 
 const CACHE_FILE = 'model-config.json';
 const FETCH_TIMEOUT_MS = 10_000;
@@ -39,7 +48,7 @@ export interface CachedModelConfig {
 }
 
 /** What triggered a config fetch — the Worker records it as the usage-count dimension. */
-export type ModelConfigFetchReason = 'launch' | 'session';
+export type ModelConfigFetchReason = 'launch' | 'session' | 'prompt';
 
 let activeConfig: CachedModelConfig | null = null;
 let diskLoadPromise: Promise<void> | null = null;
@@ -234,6 +243,11 @@ export async function ensureModelConfigReady(): Promise<void> {
 async function buildRequestHeaders(
   hostInfo: ServerHostInfo,
   reason: ModelConfigFetchReason,
+  dimensions: {
+    provider?: TelemetryProvider;
+    source?: TelemetryPromptSource;
+    formFactor?: TelemetryFormFactor;
+  },
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -244,8 +258,13 @@ async function buildRequestHeaders(
     'X-Tessera-Arch': String(hostInfo.arch),
     'X-Tessera-Channel': hostInfo.channel,
   };
-  // install_id is a random UUID (never PII); it's what lets the Worker de-dupe launches
-  // into unique installs. Sent unconditionally — the config fetch IS the launch count.
+  if (reason === 'prompt') {
+    headers['X-Tessera-Provider'] = normalizeTelemetryProvider(dimensions.provider);
+    headers['X-Tessera-Source'] = normalizeTelemetryPromptSource(dimensions.source);
+    headers['X-Tessera-Form-Factor'] = normalizeTelemetryFormFactor(dimensions.formFactor);
+  }
+  // install_id is a random UUID (never PII); it's what lets the Worker de-dupe production
+  // launches into unique installs. Runtime-disabled local/test builds return before here.
   try {
     const bootstrap = await getTelemetryBootstrapInfo(hostInfo);
     if (bootstrap.installId) {
@@ -266,8 +285,13 @@ async function buildRequestHeaders(
 export function refreshRemoteModelConfig(
   reason: ModelConfigFetchReason,
   deps: { fetchImpl?: typeof fetch; hostInfo?: ServerHostInfo } = {},
+  dimensions: {
+    provider?: TelemetryProvider;
+    source?: TelemetryPromptSource;
+    formFactor?: TelemetryFormFactor;
+  } = {},
 ): Promise<{ changed: boolean }> {
-  const promise = doRefresh(reason, deps);
+  const promise = doRefresh(reason, deps, dimensions);
   inFlightRefresh = promise;
   void promise.finally(() => {
     if (inFlightRefresh === promise) inFlightRefresh = null;
@@ -278,12 +302,18 @@ export function refreshRemoteModelConfig(
 async function doRefresh(
   reason: ModelConfigFetchReason,
   deps: { fetchImpl?: typeof fetch; hostInfo?: ServerHostInfo },
+  dimensions: {
+    provider?: TelemetryProvider;
+    source?: TelemetryPromptSource;
+    formFactor?: TelemetryFormFactor;
+  },
 ): Promise<{ changed: boolean }> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const hostInfo = deps.hostInfo ?? getServerHostInfo();
   await ensureRemoteModelConfigLoaded();
+  if (hostInfo.telemetryDisabledByEnv) return { changed: false };
 
-  const headers = await buildRequestHeaders(hostInfo, reason);
+  const headers = await buildRequestHeaders(hostInfo, reason, dimensions);
   if (activeConfig?.etag) headers['If-None-Match'] = activeConfig.etag;
 
   const controller = new AbortController();

@@ -4,14 +4,36 @@ export interface I18nMessages {
     sections: {
       general: string;
       generalDesc: string;
+      project: string;
+      projectDesc: string;
       appearance: string;
       appearanceDesc: string;
+      models: string;
+      modelsDesc: string;
+      remoteAccess: string;
+      remoteAccessDesc: string;
       development: string;
       developmentDesc: string;
       git: string;
       gitDesc: string;
     };
+    /** Names the control the Phone viewport navigates the sections with (#264). */
+    sectionPicker: string;
     language: string;
+    terminalView: {
+      title: string;
+      description: string;
+      perSessionNote: string;
+      terminal: { label: string; description: string };
+      chat: { label: string; description: string };
+    };
+    newSessionKind: {
+      title: string;
+      description: string;
+      note: string;
+      chat: { label: string; description: string };
+      task: { label: string; description: string };
+    };
     executionMode: {
       title: string;
       description: string;
@@ -34,6 +56,94 @@ export interface I18nMessages {
       avatarUnsupported: string;
       avatarTooLarge: string;
       avatarReadFailed: string;
+    };
+    remoteAccess: {
+      title: string;
+      description: string;
+      systemFirewallTitle: string;
+      systemFirewallDescription: string;
+      firewallTitle: string;
+      firewallDescription: string;
+      firewallConfigure: string;
+      firewallConfiguring: string;
+      firewallConfigured: string;
+      firewallFailed: string;
+      firewallTailscaleNotFound: string;
+      firewallCancelled: string;
+      addressLabel: string;
+      addressPlaceholder: string;
+      addressHelp: string;
+      detectedAddressTitle: string;
+      detectedAddressDescription: string;
+      tailscaleAddress: string;
+      invalidAddress: string;
+      loadFailed: string;
+      saveFailed: string;
+      saving: string;
+      saveAddress: string;
+      addDeviceTitle: string;
+      addDeviceDescription: string;
+      addDevice: string;
+      qrAlt: string;
+      pairingReady: string;
+      scanOrOpen: string;
+      openLink: string;
+      copyLink: string;
+      linkCopied: string;
+      expiresIn: string;
+      expired: string;
+      rotate: string;
+      capacityReached: string;
+      pairingFailed: string;
+      approvalTitle: string;
+      approvalDescription: string;
+      pairingRequestsFailed: string;
+      waitingForPairingRequest: string;
+      newPairingRequest: string;
+      requestStatusPending: string;
+      requestStatusApproved: string;
+      requestStatusDenied: string;
+      requestStatusExpired: string;
+      requestStatusRedeemed: string;
+      comparisonCode: string;
+      remoteAddress: string;
+      requestedAt: string;
+      approveRequest: string;
+      approveRequestLabel: string;
+      denyRequest: string;
+      denyRequestLabel: string;
+      requestApproved: string;
+      requestDenied: string;
+      pairingDecisionFailed: string;
+      deviceListTitle: string;
+      deviceListDescription: string;
+      refreshDevices: string;
+      loadingDevices: string;
+      deviceListFailed: string;
+      deviceCount: string;
+      capacityReachedDescription: string;
+      connectedNow: string;
+      registeredAt: string;
+      lastSeenAt: string;
+      neverConnected: string;
+      disconnect: string;
+      disconnectTitle: string;
+      disconnectDescription: string;
+      disconnectWarning: string;
+      disconnectConfirm: string;
+      disconnecting: string;
+      disconnectFailed: string;
+      deviceDisconnected: string;
+      disableAll: string;
+      disableAllTitle: string;
+      disableAllDescription: string;
+      disableAllConfirmDescription: string;
+      disableAllWarning: string;
+      disableAllConfirm: string;
+      disablingAll: string;
+      allDevicesDisconnected: string;
+      noDevicesTitle: string;
+      noDevicesDescription: string;
     };
     notifications: string;
     sound: string;
@@ -64,6 +174,12 @@ export interface I18nMessages {
       description: string;
       enabled: string;
       disabledByEnv: string;
+    };
+    tesseraCli: {
+      title: string;
+      description: string;
+      enabled: string;
+      existingSessions: string;
     };
     shortcuts: string;
     appearance: string;
@@ -134,6 +250,7 @@ export interface I18nMessages {
       loadingProviders: string;
       empty: string;
       disconnected: string;
+      checkFailed: string;
       active: string;
       refresh: string;
       refreshProviders: string;
@@ -207,6 +324,8 @@ export interface I18nMessages {
       customPlaceholder: string;
       customApply: string;
       customHint: string;
+      customEmpty: string;
+      customRemove: string;
     };
     effort: {
       readOnlyTooltip: string;
@@ -249,6 +368,55 @@ export interface I18nMessages {
       retentionConfirmAction: string;
       retentionConfirming: string;
     };
+    preparation: {
+      title: string;
+      description: string;
+      projectLabel: string;
+      stage: {
+        before: {
+          label: string;
+          desc: string;
+          placeholder: string;
+        };
+        after: {
+          label: string;
+          desc: string;
+          placeholder: string;
+        };
+      };
+      noProject: string;
+      loading: string;
+      saving: string;
+      saved: string;
+      saveFailed: string;
+      loadFailed: string;
+      variablesLabel: string;
+      variables: {
+        projectDir: string;
+        worktreeDir: string;
+        branchName: string;
+      };
+      checklist: {
+        open: string;
+        close: string;
+        description: string;
+        scanning: string;
+        scanFailed: string;
+        empty: string;
+        truncated: string;
+        selected: string;
+        inScriptOnly: string;
+        kind: {
+          configuration: string;
+          instructions: string;
+          dependencies: string;
+          buildOutput: string;
+          logs: string;
+          images: string;
+          unrecognised: string;
+        };
+      };
+    };
     category: {
       session: string;
       navigation: string;
@@ -280,22 +448,12 @@ export interface I18nMessages {
       branchPrefix: string;
       branchPrefixPlaceholder: string;
       branchPrefixDesc: string;
-      globalGuidelines: string;
-      globalGuidelinesDesc: string;
-      globalGuidelinesPlaceholder: string;
-      actionPromptsHeading: string;
-      actionPromptsDesc: string;
-      actionBadgeDefault: string;
-      actionBadgeCustomized: string;
-      actionResetTitle: string;
-      availableVariables: string;
-      acceptsHintNote: string;
-      actionLabelCommit: string;
-      actionLabelPush: string;
-      actionLabelPull: string;
-      actionLabelMerge: string;
-      actionLabelCreatePr: string;
-      actionLabelMergePr: string;
+      sourceControlAi: string;
+      sourceControlAiDesc: string;
+      provider: string;
+      model: string;
+      modelDefault: string;
+      opencodeModelNote: string;
     };
   };
   electronClose: {
@@ -357,6 +515,8 @@ export interface I18nMessages {
     executionModeTitle: string;
     executionModeDescription: string;
     executionModeNote: string;
+    tesseraCliTitle: string;
+    tesseraCliDescription: string;
     telemetryTitle: string;
     telemetryDescription: string;
     aiCli: string;
@@ -425,6 +585,7 @@ export interface I18nMessages {
     codexSlashPlatformUnavailable: string;
     codexSlashTerminalBusy: string;
     codexTerminalHandoffActive: string;
+    slashCommandUnsupportedInChat: string;
     codexSlashTerminalOpenFailed: string;
     codexSlashCopied: string;
     codexSlashCopyFailed: string;
@@ -436,6 +597,7 @@ export interface I18nMessages {
     codexFastEnabled: string;
     codexFastDisabled: string;
     codexCompactDuringTurn: string;
+    compactingConversation: string;
     cancelHint: string;
     cancelButton: string;
     attachFile: string;
@@ -448,6 +610,8 @@ export interface I18nMessages {
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
+    promptDensityDecrease: string;
+    promptDensityIncrease: string;
     otherInputPlaceholder: string;
     otherInputPlaceholderWithHint: string;
     submissionFailed: string;
@@ -459,6 +623,7 @@ export interface I18nMessages {
     notePrefix: string;
     submitHint: string;
     working: string;
+    awaitingPreparation: string;
     loadingMore: string;
     loadMore: string;
     scrollToBottom: string;
@@ -471,6 +636,34 @@ export interface I18nMessages {
     removePanelHint: string;
     releaseSessionHint: string;
     readOnlyPlaceholder: string;
+    terminalReadOnlyNotice: string;
+    terminalWorkingNotice: string;
+    terminalWaitingNotice: string;
+    terminalComposerHint: string;
+    terminalComposerLabel: string;
+    terminalComposerPlaceholder: string;
+    terminalComposerBlocked: string;
+    terminalComposerBlockedLabel: string;
+    terminalSendFailed: string;
+    terminalInputBar: {
+      label: string;
+      placeholder: string;
+      send: string;
+      attachImage: string;
+      attachingImage: string;
+      imageAttachFailed: string;
+      keyEscape: string;
+      keyShiftTab: string;
+      keyLeft: string;
+      keyRight: string;
+      keyBackspace: string;
+      keyUp: string;
+      keyDown: string;
+      keyEnter: string;
+      keyCtrlC: string;
+    };
+    viewAsChat: string;
+    viewAsTerminal: string;
     imageOriginalView: string;
     generateTitle: string;
     generatingTitle: string;
@@ -604,6 +797,7 @@ export interface I18nMessages {
     closeTab: string;
     toggleSidebar: string;
     toggleView: string;
+    toggleTerminalView: string;
     splitRight: string;
     splitDown: string;
     toggleTerminal: string;
@@ -681,6 +875,7 @@ export interface I18nMessages {
     deleteTaskTitle: string;
     deleteTaskConfirm: string;
     deleteTaskChildSessions: string;
+    deleteTaskWarning: string;
     deleteWarning: string;
     deleteWorktreeWarning: string;
     deleteSession: string;
@@ -730,6 +925,7 @@ export interface I18nMessages {
     tooSmallToSplit: string;
     cannotCloseLastPanel: string;
     dropToInsertPath: string;
+    dropToInsertSessionReference: string;
   };
   sidebar: {
     noProjects: string;
@@ -749,6 +945,9 @@ export interface I18nMessages {
     showMore: string;
     noSessions: string;
     dragSessionToReference: string;
+    branchRenameWarningTitle: string;
+    branchRenameWarningDescription: string;
+    dismissBranchRenameWarning: string;
   };
   status: {
     starting: string;
@@ -758,6 +957,7 @@ export interface I18nMessages {
     stopped: string;
     stopProcess: string;
     processing: string;
+    inputRequired: string;
     unreadNotification: string;
     sessionRunning: string;
     runningProcesses: string;
@@ -873,6 +1073,9 @@ export interface I18nMessages {
     allProjects: string;
     allProjectsDisabledPopout: string;
     addProject: string;
+    githubStar: string;
+    githubStarFallback: string;
+    githubStarSuccess: string;
   };
   gitPanel: {
     tabs: {
@@ -880,6 +1083,7 @@ export interface I18nMessages {
       git: string;
       diff: string;
       files: string;
+      scripts: string;
       context: string;
     };
     empty: {
@@ -890,6 +1094,153 @@ export interface I18nMessages {
       diffUnavailableTitle: string;
       selectFileTitle: string;
       selectFileBody: string;
+    };
+    commit: {
+      messageLabel: string;
+      messagePlaceholder: string;
+      composerTitle: string;
+      composerLabel: string;
+      openComposer: string;
+      closeComposer: string;
+      reviewFiles: string;
+      changedFiles: string;
+      diffStatLabel: string;
+      menuLabel: string;
+      worktreeFallback: string;
+      selectionSummary: string;
+      includeFile: string;
+      selectAll: string;
+      deselectAll: string;
+      button: string;
+      buttonPending: string;
+      menuButtonCount: string;
+      nothingToCommit: string;
+      draftRequired: string;
+      generateLabel: string;
+      generateFailed: string;
+      generateFailedPrefix: string;
+      successToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+    };
+    commitPush: {
+      button: string;
+      buttonCount: string;
+      buttonPending: string;
+    };
+    push: {
+      button: string;
+      buttonCount: string;
+      buttonPending: string;
+      publishButton: string;
+      publishButtonPending: string;
+      nothingToPush: string;
+      pullFirst: string;
+      successToast: string;
+      successNoUpstreamToast: string;
+      publishedToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+      defaultBranchConfirm: {
+        title: string;
+        body: string;
+        publishTitle: string;
+        publishBody: string;
+        confirm: string;
+        publishConfirm: string;
+        commitPushTitle: string;
+        commitPushBody: string;
+        commitPushConfirm: string;
+      };
+    };
+    pull: {
+      button: string;
+      menuButton: string;
+      nothingToPull: string;
+      noUpstream: string;
+      buttonPending: string;
+      successToast: string;
+      failureToast: string;
+      hookRejectedToast: string;
+      hookRejectedNoDetailToast: string;
+    };
+    pr: {
+      createdToast: string;
+      createdNoDetailToast: string;
+      existingToast: string;
+      existingNoDetailToast: string;
+      previousLabel: string;
+      failureToast: string;
+      createButton: string;
+      createButtonPending: string;
+      viewButton: string;
+      defaultBranch: string;
+      statusUnknown: string;
+      unavailable: string;
+      noUpstream: string;
+      pullFirst: string;
+      pushFirst: string;
+      alreadyOpen: string;
+    };
+    conflict: {
+      resolve: string;
+      recoveryTitle: string;
+      mergeOperation: string;
+      rebaseOperation: string;
+      cherryPickOperation: string;
+      operationInProgress: string;
+      unresolvedFiles: string;
+      unresolvedFilesTruncated: string;
+      noUnresolvedFiles: string;
+      openDiff: string;
+      resolveWithAi: string;
+      aiPreparing: string;
+      aiReviewBoundary: string;
+      aiPreparedToast: string;
+      aiStaleToast: string;
+      aiUnavailableToast: string;
+      aiFailureToast: string;
+      mergeInProgress: string;
+      rebaseInProgress: string;
+      cherryPickInProgress: string;
+      abortMerge: string;
+      abortRebase: string;
+      abortCherryPick: string;
+      abortPending: string;
+      mergeAbortedToast: string;
+      rebaseAbortedToast: string;
+      cherryPickAbortedToast: string;
+      abortFailureToast: string;
+    };
+    primary: {
+      loading: string;
+      stateUnknown: string;
+      detachedHead: string;
+      noRemote: string;
+      upToDate: string;
+    };
+    menu: {
+      label: string;
+      pending: string;
+      openSourceControl: string;
+    };
+    failure: {
+      commitTitle: string;
+      pushTitle: string;
+      pullTitle: string;
+      createPrTitle: string;
+      abortTitle: string;
+      showDetails: string;
+      hideDetails: string;
+      dismiss: string;
+      copyOutput: string;
+      exitCode: string;
+      exitCodeUnknown: string;
+      stderrLabel: string;
+      stdoutLabel: string;
+      noOutput: string;
     };
   };
   memoryPanel: {
@@ -1002,7 +1353,46 @@ export interface I18nMessages {
       loadTimedOut: string;
     };
   };
+  scripts: {
+    noWorktree: string;
+    readingLog: string;
+    script: string;
+    stage: {
+      before: string;
+      after: string;
+    };
+    scriptLines: string;
+    editScript: string;
+    preparation: {
+      name: string;
+      status: {
+        never_run: string;
+        running: string;
+        succeeded: string;
+        failed: string;
+      };
+    };
+  };
   task: {
+    preparation: {
+      preparing: string;
+      failed: string;
+      failedTooltip: string;
+      title: string;
+      runningDescription: string;
+      failedDescription: string;
+      succeededDescription: string;
+      exitCode: string;
+      noOutput: string;
+      interrupted: string;
+      rerun: string;
+      rerunning: string;
+      rerunFailed: string;
+      runNow: string;
+      confirmTitle: string;
+      confirmDescription: string;
+      confirmNote: string;
+    };
     selector: {
       addProject: string;
       noProjects: string;
@@ -1061,6 +1451,10 @@ export interface I18nMessages {
       taskCreationFailed: string;
       launcherTitle: string;
       launcherSubtitle: string;
+      projectLabel: string;
+      projectPlaceholder: string;
+      projectSelectionHint: string;
+      selectProjectHint: string;
       startAsLabel: string;
       agentUiLabel: string;
       shellLabel: string;
@@ -1074,15 +1468,24 @@ export interface I18nMessages {
       continueTaskHint: string;
       continueSubmit: string;
       chatInstantHint: string;
+      chatCreatesHere: string;
+      sessionLocationLabel: string;
+      chatLocationDescription: string;
       taskWorktreeHint: string;
       taskWorktreeDescription: string;
+      worktreeSourceLabel: string;
+      worktreeSourceBranchOff: string;
+      worktreeSourceCheckout: string;
       baseRefLabel: string;
+      checkoutBranchLabel: string;
       baseRefLoading: string;
       baseRefUnavailable: string;
+      checkoutBranchUnavailable: string;
       baseRefCurrentSuffix: string;
       baseRefCurrentHead: string;
       baseRefLocalGroup: string;
       baseRefRemoteGroup: string;
+      errorCheckoutBranchRequired: string;
     };
     contextMenu: {
       setStatus: string;
@@ -1093,17 +1496,7 @@ export interface I18nMessages {
       rename: string;
       delete: string;
       openInNewTab: string;
-      moveToProject: string;
-      cannotMoveRunning: string;
       generateTitle: string;
-    };
-    moveDialog: {
-      title: string;
-      subtitle: string;
-      currentProject: string;
-      noOtherProjects: string;
-      move: string;
-      movedFrom: string;
     };
     prMismatch: {
       reviewMissing: string;
@@ -1115,6 +1508,7 @@ export interface I18nMessages {
       open: string;
       merged: string;
       closed: string;
+      previous: string;
       mergedAt: string;
       lastSynced: string;
       remoteBranch: string;
@@ -1124,6 +1518,53 @@ export interface I18nMessages {
       title: string;
     };
     showMore: string;
+    showLess: string;
+  };
+  pairing: {
+    deviceLink: string;
+    requestingEyebrow: string;
+    requestingTitle: string;
+    requestingDetail: string;
+    waitingEyebrow: string;
+    waitingTitle: string;
+    waitingDetail: string;
+    approvedEyebrow: string;
+    approvedTitle: string;
+    approvedDetail: string;
+    missingEyebrow: string;
+    missingTitle: string;
+    missingDetail: string;
+    expiredEyebrow: string;
+    expiredTitle: string;
+    expiredDetail: string;
+    deniedEyebrow: string;
+    deniedTitle: string;
+    deniedDetail: string;
+    usedEyebrow: string;
+    usedTitle: string;
+    usedDetail: string;
+    invalidEyebrow: string;
+    invalidTitle: string;
+    invalidDetail: string;
+    rateLimitedEyebrow: string;
+    rateLimitedTitle: string;
+    rateLimitedDetail: string;
+    capacityEyebrow: string;
+    capacityTitle: string;
+    capacityDetail: string;
+    networkEyebrow: string;
+    networkTitle: string;
+    networkDetail: string;
+    unexpectedEyebrow: string;
+    unexpectedTitle: string;
+    unexpectedDetail: string;
+    comparisonCode: string;
+    approveInApp: string;
+    expiresIn: string;
+    tokenRemoved: string;
+    tryAgain: string;
+    footerApproval: string;
+    footerNoToken: string;
   };
   archive: {
     title: string;

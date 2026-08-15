@@ -3,6 +3,7 @@ import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import { applySessionReplayEventsToStores } from '@/lib/chat/apply-session-replay-events';
 import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
+import { scheduleTerminalChatRefresh } from '@/lib/chat/terminal-chat-live-refresh';
 import {
   finalizeInFlightTurn,
   startTurnInFlight,
@@ -11,11 +12,11 @@ import {
 import { serverMessageToReplayEvents } from '@/lib/chat/server-message-to-replay-events';
 import { useChatStore } from '@/stores/chat-store';
 import { useBoardStore } from '@/stores/board-store';
+import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
 import { useNotificationStore } from '@/stores/notification-store';
-import { usePanelStore } from '@/stores/panel-store';
 import { useRateLimitStore } from '@/stores/rate-limit-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -29,22 +30,52 @@ import { i18n } from '@/lib/i18n';
 import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { captureTelemetryPromptTurnFinished } from '@/lib/telemetry/client';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
+import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
+import { retireProjectViewSessionSurfaces } from '@/lib/projects/project-view-open-surfaces';
+import {
+  projectViewWorkspaceState,
+  refreshProjectViewWorkspaceMutation,
+} from '@/lib/projects/project-view-workspace-state-client';
+import {
+  completePendingTerminalRebound,
+  getPendingTerminalRebound,
+  isPendingTerminalReboundSource,
+  listPendingTerminalReboundDestinations,
+  recordPendingTerminalRebound,
+  removePendingTerminalReboundSource,
+  retainPendingTerminalRebounds,
+  takePendingTerminalReboundsForDestination,
+} from '@/lib/terminal/terminal-session-rebound-reservations';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
-  providersListCallbacks: Map<string, (providers: ProviderMeta[]) => void>;
-  cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null) => void>;
+  providersListCallbacks: Map<string, (providers: ProviderMeta[] | null) => void>;
+  cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null | undefined) => void>;
+  terminalPromptCallbacks?: Map<string, (result: TerminalPromptSubmitResult) => void>;
   wasReconnect: boolean;
 }
 
-interface PendingTerminalRebound {
-  destinationSessionId: string;
-  sourceSessionIds: Set<string>;
-}
+export type TerminalPromptSubmitResult =
+  | { accepted: true }
+  | {
+      accepted: false;
+      reason: 'server' | 'connection' | 'timeout';
+      message?: string;
+    };
 
-const pendingTerminalRebounds = new Map<string, PendingTerminalRebound>();
+/**
+ * Server rejections of a manual /compact. Each one means no compaction started,
+ * so an optimistically opened compacting bar has to be closed.
+ * @see compactSessionFromWebSocket
+ */
+const COMPACT_REQUEST_ERROR_CODES = new Set([
+  'session_compact_in_progress',
+  'session_compact_unavailable',
+  'session_compact_failed',
+]);
 
 function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | null {
   const boardState = useBoardStore.getState();
@@ -52,8 +83,10 @@ function getVisibleWorkspaceSessionId(activeSessionId: string | null): string | 
   return resolveVisibleWorkspaceSessionId({
     activeSessionId,
     peekSessionId: boardState.peekSessionId,
+    // The rendered mode, so this agrees with what chat-layout passes for the
+    // same screen — a phone renders the list and has no peek layout.
     isKanbanPeekLayout:
-      boardState.viewMode === 'board'
+      getRenderedViewMode() === 'board'
       && settingsState.settings.kanbanSessionOpenMode === 'peek'
       && !settingsState.sidebarCollapsed,
   });
@@ -63,6 +96,7 @@ export function handleIncomingServerMessage({
   msg,
   providersListCallbacks,
   cliStatusCallbacks,
+  terminalPromptCallbacks = new Map(),
   wasReconnect,
 }: HandleIncomingServerMessageOptions): { wasReconnect: boolean } {
   const chatStore = useChatStore.getState();
@@ -82,6 +116,7 @@ export function handleIncomingServerMessage({
         sessionMode: msg.sessionMode,
         accessMode: msg.accessMode,
       });
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, true);
       return { wasReconnect };
 
     case 'session_closed':
@@ -93,17 +128,32 @@ export function handleIncomingServerMessage({
       useSessionPrStore.getState().clearSession(msg.sessionId);
       return { wasReconnect };
 
-    case 'session_stopped':
+    case 'session_stopped': {
+      const stoppedSession = projectViewWorkspaceState.resolveSession(msg.sessionId);
+      const stoppedKind = stoppedSession?.kind
+        ?? useTaskStore.getState().getTaskBySessionId(msg.sessionId)?.sessions
+          .find((session) => session.id === msg.sessionId)?.kind;
       sessionStore.markSessionStopped(msg.sessionId);
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, false);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      void captureTelemetryPromptTurnFinished(msg.sessionId, 'stopped');
       // The session was stopped, so any workflow still flagged running can no
       // longer emit its terminal task_notification — settle it instead of
       // leaving the card spinning forever.
       chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
       chatStore.setTodoSnapshot(msg.sessionId, []);
+      // A stopped or dead CLI never closes a compaction it had opened.
+      chatStore.setCompacting(msg.sessionId, null);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       useCommandStore.getState().clearSession(msg.sessionId);
+      // PTY surfaces retire on terminal_session_runtime so a provider session
+      // rebound can transfer the existing panel first. GUI sessions have no
+      // later runtime event, so stopping one must retire its surface here.
+      if (stoppedKind && stoppedKind !== 'terminal') {
+        retireProjectViewSessionSurfaces(msg.sessionId);
+      }
       return { wasReconnect };
+    }
 
     case 'replay_events':
       sessionStore.touchSessionActivity(msg.sessionId, getLatestReplayEventTimestamp(msg.events));
@@ -114,14 +164,26 @@ export function handleIncomingServerMessage({
       applySessionReplayEventsToStores(msg.sessionId, msg.events);
       return { wasReconnect };
 
+    case 'tool_progress':
+      // Live-only liveness tick for an in-flight tool card; not persisted,
+      // not a replay event — just patch the running card's progress.
+      chatStore.updateToolCallProgress(msg.sessionId, msg.toolUseId, {
+        elapsedTimeSeconds: msg.elapsedTimeSeconds,
+        ...(msg.heartbeat !== undefined ? { heartbeat: msg.heartbeat } : {}),
+        ...(msg.taskId !== undefined ? { taskId: msg.taskId } : {}),
+      });
+      return { wasReconnect };
+
     case 'notification':
       sessionStore.touchSessionActivity(msg.sessionId);
       handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'success');
         sessionStore.updateSessionStatus(msg.sessionId, 'completed');
       } else if (msg.event === 'input_required') {
         stopTurnInFlight(msg.sessionId);
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'input_required');
         sessionStore.updateSessionStatus(msg.sessionId, 'running');
       }
       applySessionReplayEventsToStores(
@@ -136,11 +198,18 @@ export function handleIncomingServerMessage({
       // 도착한 진짜 running이 영구 유실된다 — session_state는 hook 이벤트
       // 시점에만 push되고 재전송이 없다.
       const changed = useTerminalSessionStore.getState().applySessionState(msg);
+      // 이 세션을 읽기 전용 채팅으로 보고 있으면 transcript를 다시 읽는다. 상태가
+      // 안 바뀐 훅(도구 연타 중의 running)도 대화는 늘어나므로 changed와 무관하게
+      // 건다 — 내부에서 debounce되고, 채팅 뷰가 아니면 즉시 반환한다.
+      scheduleTerminalChatRefresh(msg.sessionId);
       if (changed && msg.status === 'running') {
         const location = useTabStore.getState().findSessionLocation(msg.sessionId);
         if (location) useTabStore.getState().pinTab(location.tabId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
+        const result = msg.status === 'completed' ? 'success' : 'input_required';
+        void captureTelemetryPromptTurnFinished(msg.sessionId, result);
+        void captureTelemetryPromptTurnFinished(msg.terminalId, result);
         handleTerminalSessionStateMessage(
           msg,
           getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
@@ -151,6 +220,7 @@ export function handleIncomingServerMessage({
 
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, msg.running);
       if (msg.running) {
         removePendingTerminalReboundSource(msg.terminalId, msg.sessionId);
         useTerminalSessionStore.getState().markRuntimeStarted(msg.sessionId);
@@ -169,23 +239,22 @@ export function handleIncomingServerMessage({
       const authoritativeReboundTerminalIds = new Set(
         (msg.reboundSessions ?? []).map((rebound) => rebound.terminalId),
       );
-      for (const terminalId of pendingTerminalRebounds.keys()) {
-        if (!authoritativeReboundTerminalIds.has(terminalId)) {
-          pendingTerminalRebounds.delete(terminalId);
-        }
-      }
+      retainPendingTerminalRebounds(authoritativeReboundTerminalIds);
       for (const rebound of msg.reboundSessions ?? []) {
-        applyTerminalSessionRebound(
+        recordTerminalSessionRebound(
           rebound.terminalId,
           rebound.previousSessionId,
           rebound.sessionId,
         );
       }
+      for (const terminalId of authoritativeReboundTerminalIds) {
+        applyOrLoadPendingTerminalRebound(terminalId);
+      }
       sessionStore.applyTerminalRuntimeSnapshot(msg.activeSessionIds);
       const activeTerminalIds = new Set(msg.activeSessionIds);
-      for (const pending of [...pendingTerminalRebounds.values()]) {
-        if (!activeTerminalIds.has(pending.destinationSessionId)) {
-          cancelPendingTerminalReboundsForDestination(pending.destinationSessionId);
+      for (const destinationSessionId of listPendingTerminalReboundDestinations()) {
+        if (!activeTerminalIds.has(destinationSessionId)) {
+          cancelPendingTerminalReboundsForDestination(destinationSessionId);
         }
       }
       for (const sessionId of msg.activeSessionIds) {
@@ -199,17 +268,20 @@ export function handleIncomingServerMessage({
           useTerminalSessionStore.getState().markRuntimeStopped(sessionId);
         }
       }
-      for (const project of sessionStore.projects) {
-        for (const session of project.sessions) {
-          // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
-          // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
-          if (session.id.startsWith('temp-')) continue;
-          if (session.kind === 'terminal' && !activeTerminalIds.has(session.id)) {
-            useTerminalSessionStore.getState().markRuntimeStopped(session.id);
-            if (isPendingTerminalReboundSource(session.id)) continue;
-            retireStoppedTerminalSessionSurface(session.id);
-          }
-        }
+      for (const session of projectViewWorkspaceState.getCanonicalSessions()) {
+        // 생성 중인 낙관적 세션(temp-)은 서버 스냅샷에 있을 수 없다 — 여기서
+        // retire하면 POST 왕복 중 WS 재연결이 생성 중인 탭을 닫아버린다.
+        if (session.id.startsWith('temp-')) continue;
+        if (session.kind !== 'terminal') continue;
+        const isActive = activeTerminalIds.has(session.id);
+        useTaskStore.getState().setLinkedSessionRunning(session.id, isActive);
+        if (isActive) continue;
+        useTerminalSessionStore.getState().markRuntimeStopped(session.id);
+        if (isPendingTerminalReboundSource(session.id)) continue;
+        // This is also the first snapshot after an Electron/server cold start.
+        // Keep persisted PTY surfaces so their retained TerminalPanel can
+        // recreate and resume the runtime. A live exit still retires through
+        // terminal_session_runtime.
       }
       return { wasReconnect };
     }
@@ -222,14 +294,37 @@ export function handleIncomingServerMessage({
       );
       return { wasReconnect };
 
+    // The message was accepted, but its CLI is held until the worktree's
+    // blocking preparation finishes. Only sent when a message actually waits.
+    case 'session_awaiting_preparation':
+      chatStore.setAwaitingPreparation(msg.sessionId, true);
+      return { wasReconnect };
+
+    case 'session_preparation_settled':
+      chatStore.setAwaitingPreparation(msg.sessionId, false);
+      return { wasReconnect };
+
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
+      if (errRequestId && terminalPromptCallbacks.has(errRequestId)) {
+        const callback = terminalPromptCallbacks.get(errRequestId);
+        terminalPromptCallbacks.delete(errRequestId);
+        callback?.({
+          accepted: false,
+          reason: 'server',
+          message: msg.message,
+        });
+        return { wasReconnect };
+      }
       if (errRequestId && providersListCallbacks.has(errRequestId)) {
-        providersListCallbacks.get(errRequestId)?.([]);
+        providersListCallbacks.get(errRequestId)?.(null);
         providersListCallbacks.delete(errRequestId);
       }
       if (errRequestId && cliStatusCallbacks.has(errRequestId)) {
-        cliStatusCallbacks.get(errRequestId)?.(null);
+        // `null` is reserved for an actual WebSocket disconnect. A request
+        // failure is `undefined` so the UI can keep its last good observation
+        // and report a probe error instead of claiming the socket disconnected.
+        cliStatusCallbacks.get(errRequestId)?.(undefined);
         cliStatusCallbacks.delete(errRequestId);
       }
       console.error('WebSocket error:', msg);
@@ -239,6 +334,14 @@ export function handleIncomingServerMessage({
       );
       if (msg.sessionId) {
         stopTurnInFlight(msg.sessionId);
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'failed');
+        // The compacting bar is opened optimistically for providers that only
+        // report a finished compaction (Codex). If the server refused the
+        // request there is no completion event coming, so close it here rather
+        // than leave the bar up until the staleness cutoff.
+        if (COMPACT_REQUEST_ERROR_CODES.has(msg.code)) {
+          chatStore.setCompacting(msg.sessionId, null);
+        }
       }
       return { wasReconnect };
     }
@@ -246,6 +349,7 @@ export function handleIncomingServerMessage({
     case 'cli_down':
       applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      void captureTelemetryPromptTurnFinished(msg.sessionId, 'failed');
       // The CLI parser now synthesizes a failed workflow_event on exit
       // (protocol-parser.handleProcessExit), which is the durable fix. This
       // in-memory settle is a belt-and-suspenders backup covering the rare case
@@ -253,6 +357,8 @@ export function handleIncomingServerMessage({
       // card spinning past the session's death.
       chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
       chatStore.setTodoSnapshot(msg.sessionId, []);
+      // A stopped or dead CLI never closes a compaction it had opened.
+      chatStore.setCompacting(msg.sessionId, null);
       sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
       sessionStore.updateSessionStatus(msg.sessionId, 'error');
       chatStore.addMessage(msg.sessionId, {
@@ -304,6 +410,10 @@ export function handleIncomingServerMessage({
       useCommandStore.getState().setCommands(msg.sessionId, msg.commands);
       return { wasReconnect };
 
+    case 'skills_changed':
+      useCommandStore.getState().invalidateSession(msg.sessionId);
+      return { wasReconnect };
+
     case 'providers_list':
       providersListCallbacks.get(msg.requestId)?.(msg.providers);
       providersListCallbacks.delete(msg.requestId);
@@ -313,6 +423,14 @@ export function handleIncomingServerMessage({
       cliStatusCallbacks.get(msg.requestId)?.(msg.results);
       cliStatusCallbacks.delete(msg.requestId);
       return { wasReconnect };
+
+    case 'terminal_prompt_accepted': {
+      const callback = terminalPromptCallbacks.get(msg.requestId);
+      if (!callback) return { wasReconnect };
+      terminalPromptCallbacks.delete(msg.requestId);
+      callback({ accepted: true });
+      return { wasReconnect };
+    }
 
     case 'skill_analysis_progress':
       useSkillAnalysisStore.getState().handleProgress(msg);
@@ -327,11 +445,10 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'worktree_diff_stats':
-      sessionStore.applyDiffStatsUpdate(msg.sessionIds, msg.stats ?? null);
+      sessionStore.applyDiffStatsUpdate(msg.sessionIds, msg.stats ?? null, msg.workDir);
       useTaskStore.getState().applyDiffStatsUpdate(msg.taskIds, msg.stats ?? null);
       if (msg.autoPromotedTaskIds?.length) {
         useTaskStore.getState().applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);
-        sessionStore.applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);
       }
       return { wasReconnect };
 
@@ -339,6 +456,7 @@ export function handleIncomingServerMessage({
       useTaskStore.getState().applyPrStatusUpdate(
         msg.taskId,
         msg.prStatus,
+        msg.prStatusKnown,
         msg.prUnsupported,
         msg.remoteBranchExists,
       );
@@ -348,6 +466,7 @@ export function handleIncomingServerMessage({
       useSessionPrStore.getState().applyPrStatusUpdate(
         msg.sessionId,
         msg.prStatus,
+        msg.prStatusKnown,
         msg.prUnsupported,
         msg.remoteBranchExists,
       );
@@ -357,17 +476,34 @@ export function handleIncomingServerMessage({
       if (msg.originClientId && msg.originClientId === getClientId()) {
         return { wasReconnect };
       }
-      void useSessionStore.getState().loadProjects();
-      if (msg.projectId) {
-        void useTaskStore.getState().loadTasks(msg.projectId, { setCurrent: false });
+      if (msg.sessionId && msg.archived !== undefined) {
+        projectViewWorkspaceState.applySessionArchiveMutation(msg.sessionId, msg.archived);
       }
+      void refreshProjectViewWorkspaceMutation(msg);
       return { wasReconnect };
 
     case 'task_mutated':
       if (msg.originClientId && msg.originClientId === getClientId()) {
         return { wasReconnect };
       }
-      void useTaskStore.getState().loadTasks(msg.projectId, { setCurrent: false });
+      if (msg.taskId && (
+        msg.title !== undefined
+        || msg.workflowStatus !== undefined
+        || msg.preparationStatus !== undefined
+        || msg.archived !== undefined
+      )) {
+        projectViewWorkspaceState.applyTaskMutation({
+          taskId: msg.taskId,
+          sessionId: msg.sessionId,
+          ...(msg.title !== undefined && { title: msg.title }),
+          ...(msg.workflowStatus !== undefined && { workflowStatus: msg.workflowStatus }),
+          ...(msg.preparationStatus !== undefined && {
+            preparationStatus: msg.preparationStatus,
+          }),
+          ...(msg.archived !== undefined && { archived: msg.archived }),
+        });
+      }
+      void refreshProjectViewWorkspaceMutation(msg);
       return { wasReconnect };
 
     case 'collection_mutated':
@@ -400,18 +536,22 @@ function applyTerminalSessionRebound(
   previousSessionId: string,
   sessionId: string,
 ): void {
-  const terminalStore = useTerminalSessionStore.getState();
-  terminalStore.markRuntimeStopped(previousSessionId);
-  terminalStore.markRuntimeStarted(sessionId);
-  useSessionStore.getState().setSessionRunning(previousSessionId, false);
+  recordTerminalSessionRebound(terminalId, previousSessionId, sessionId);
+  applyOrLoadPendingTerminalRebound(terminalId);
+}
 
-  const pending = pendingTerminalRebounds.get(terminalId) ?? {
-    destinationSessionId: sessionId,
-    sourceSessionIds: new Set<string>(),
-  };
-  pending.sourceSessionIds.add(previousSessionId);
-  pending.destinationSessionId = sessionId;
-  pendingTerminalRebounds.set(terminalId, pending);
+function recordTerminalSessionRebound(
+  terminalId: string,
+  previousSessionId: string,
+  sessionId: string,
+): void {
+  recordPendingTerminalRebound(terminalId, previousSessionId, sessionId);
+  const terminalStore = useTerminalSessionStore.getState();
+  terminalStore.rebindSessionState(previousSessionId, sessionId, terminalId);
+  useSessionStore.getState().setSessionRunning(previousSessionId, false);
+}
+
+function applyOrLoadPendingTerminalRebound(terminalId: string): void {
   if (tryApplyPendingTerminalRebound(terminalId)) {
     return;
   }
@@ -422,7 +562,7 @@ function applyTerminalSessionRebound(
 }
 
 function tryApplyPendingTerminalRebound(terminalId: string): boolean {
-  const pending = pendingTerminalRebounds.get(terminalId);
+  const pending = getPendingTerminalRebound(terminalId);
   if (!pending) return true;
   const terminalState = useTerminalSessionStore.getState()
     .bySessionId[pending.destinationSessionId];
@@ -431,42 +571,32 @@ function tryApplyPendingTerminalRebound(terminalId: string): boolean {
     return true;
   }
   const sessionStore = useSessionStore.getState();
-  if (!sessionStore.getSession(pending.destinationSessionId)) return false;
+  if (!projectViewWorkspaceState.resolveSession(pending.destinationSessionId)) return false;
 
-  for (const sourceSessionId of pending.sourceSessionIds) {
-    usePanelStore.getState().rebindSession(sourceSessionId, pending.destinationSessionId);
-  }
+  useTabStore.getState().rebindSessionSurface(
+    [...pending.sourceSessionIds],
+    pending.destinationSessionId,
+  );
   sessionStore.setSessionRunning(pending.destinationSessionId, true);
-  pendingTerminalRebounds.delete(terminalId);
+  completePendingTerminalRebound(terminalId);
+  if (useSessionStore.getState().activeSessionId === pending.destinationSessionId) {
+    reconcileActiveSessionSurface(pending.destinationSessionId);
+  }
   return true;
 }
 
 function cancelPendingTerminalReboundsForDestination(sessionId: string): void {
-  for (const [terminalId, pending] of pendingTerminalRebounds) {
-    if (pending.destinationSessionId !== sessionId) continue;
-    pendingTerminalRebounds.delete(terminalId);
+  for (const { pending } of takePendingTerminalReboundsForDestination(sessionId)) {
     for (const sourceSessionId of pending.sourceSessionIds) {
       retireStoppedTerminalSessionSurface(sourceSessionId);
     }
   }
 }
 
-function isPendingTerminalReboundSource(sessionId: string): boolean {
-  return [...pendingTerminalRebounds.values()]
-    .some((pending) => pending.sourceSessionIds.has(sessionId));
-}
-
-function removePendingTerminalReboundSource(terminalId: string, sessionId: string): void {
-  const pending = pendingTerminalRebounds.get(terminalId);
-  if (!pending) return;
-  pending.sourceSessionIds.delete(sessionId);
-  if (pending.sourceSessionIds.size === 0) pendingTerminalRebounds.delete(terminalId);
-}
-
 function retireStoppedTerminalSessionSurface(sessionId: string): void {
-  const session = useSessionStore.getState().getSession(sessionId);
+  const session = projectViewWorkspaceState.resolveSession(sessionId);
   if (session?.kind !== 'terminal' || session.archived) return;
-  useTabStore.getState().retireSessionSurface(sessionId);
+  retireProjectViewSessionSurfaces(sessionId);
 }
 
 function replayEventsIndicateActiveTurn(
@@ -517,8 +647,7 @@ function shouldStartTurnFromReplayEvents(
   // A completed background session may receive a late replay chunk after the
   // completion notification. Keep the unread notification as the visible state
   // until the user opens or marks the session as read.
-  const session = sessionStore.getSession(sessionId);
-  if ((session?.unreadCount ?? 0) > 0) {
+  if (projectViewWorkspaceState.isSessionUnread(sessionId)) {
     return false;
   }
 
@@ -529,16 +658,17 @@ function addCreatedSession(
   msg: Extract<ServerTransportMessage, { type: 'session_created' }>,
   sessionStore: ReturnType<typeof useSessionStore.getState>,
 ): void {
-  const totalSessions = sessionStore.projects.reduce(
-    (sum, project) => sum + project.sessions.length,
-    0,
+  const totalSessions = projectViewWorkspaceState.getCanonicalSessions().length;
+  const isRestoringExistingSurface = Boolean(
+    useTabStore.getState().findSessionSurface(msg.sessionId),
   );
   // Session exists in DB but has no backing runtime yet. GUI sessions start on
   // first input; PTY sessions start when their terminal view is first opened.
   sessionStore.addSession({
     id: msg.sessionId,
     title: i18n.t('chat.sessionDefaultTitle', { count: totalSessions + 1 }),
-    projectDir: msg.workDir,
+    projectDir: msg.projectId,
+    originProjectId: msg.projectId,
     workDir: msg.workDir,
     isRunning: false,
     hasStarted: false,
@@ -555,7 +685,7 @@ function addCreatedSession(
     sessionMode: msg.sessionMode,
     accessMode: msg.accessMode,
     sortOrder: 0,
-  });
+  }, { activate: !isRestoringExistingSurface });
 }
 
 function handleNotificationMessage(

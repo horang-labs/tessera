@@ -2,13 +2,18 @@ import assert from 'node:assert/strict';
 import test, { beforeEach } from 'node:test';
 import { handleIncomingServerMessage } from '@/lib/ws/client-message-handlers';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
+import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
+import { resetPendingTerminalReboundsForTests } from '@/lib/terminal/terminal-session-rebound-reservations';
 import { isTurnInFlight, useChatStore } from '@/stores/chat-store';
+import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
+import type { TaskEntity } from '@/types/task-entity';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const SESSION_ID = 'terminal-session-a';
 
@@ -52,6 +57,30 @@ function project(...sessions: UnifiedSession[]): ProjectGroup {
   };
 }
 
+function taskProjectionSession(isRunning: boolean): TaskEntity {
+  return {
+    id: 'task-a',
+    worktreeId: 'wt-a',
+    projectId: '/workspace',
+    projectViewId: '/workspace',
+    title: 'Linked Worktree',
+    workflowStatus: 'in_progress',
+    sortOrder: 0,
+    sessions: [{
+      id: SESSION_ID,
+      originProjectId: '/workspace',
+      title: 'PTY session',
+      provider: 'claude-code',
+      lastModified: '2026-07-14T00:00:00.000Z',
+      isRunning,
+      kind: 'terminal',
+      sortOrder: 0,
+    }],
+    createdAt: '2026-07-14T00:00:00.000Z',
+    updatedAt: '2026-07-14T00:00:00.000Z',
+  };
+}
+
 function receive(msg: ServerTransportMessage): void {
   handleIncomingServerMessage({
     msg,
@@ -61,8 +90,34 @@ function receive(msg: ServerTransportMessage): void {
   });
 }
 
+function countSessionSurfaces(sessionId: string): number {
+  const tabState = useTabStore.getState();
+  const panelState = usePanelStore.getState();
+  let count = 0;
+  for (const tab of tabState.tabs) {
+    for (const panel of Object.values(panelState.tabPanels[tab.id]?.panels ?? {})) {
+      if (panel.sessionId === sessionId) count += 1;
+    }
+  }
+
+  const materializedTabIds = new Set(tabState.tabs.map((tab) => tab.id));
+  const scopedStates = [tabState.globalTabState, ...Object.values(tabState.projectTabStates)];
+  for (const scopedState of scopedStates) {
+    if (!scopedState) continue;
+    for (const tab of scopedState.tabs) {
+      if (materializedTabIds.has(tab.id)) continue;
+      for (const panel of Object.values(scopedState.tabPanelSnapshots?.[tab.id]?.panels ?? {})) {
+        if (panel.sessionId === sessionId) count += 1;
+      }
+    }
+  }
+  return count;
+}
+
 beforeEach(() => {
+  resetPendingTerminalReboundsForTests();
   useChatStore.setState({ turnInFlightBySession: {} });
+  useBoardStore.setState({ selectedProjectDir: null, peekFileDirty: false });
   useTerminalSessionStore.setState({ bySessionId: {} });
   useSessionStore.setState({
     ...useSessionStore.getInitialState(),
@@ -75,7 +130,14 @@ beforeEach(() => {
     tasksByProject: {},
     currentProjectId: null,
   });
-  useTabStore.setState({ tabs: [], activeTabId: null, lruTabIds: [] });
+  useTabStore.setState({
+    tabs: [],
+    activeTabId: null,
+    lruTabIds: [],
+    projectTabStates: {},
+    globalTabState: null,
+    currentProjectDir: null,
+  });
   usePanelStore.setState({ activeTabId: null, tabPanels: {} });
 });
 
@@ -92,14 +154,19 @@ test('PTY UserPromptSubmit marks only the terminal state as processing', () => {
     terminalId: `session-${SESSION_ID}`,
     status: 'running',
     hookEvent: 'UserPromptSubmit',
+    interruptInputPolicy: 'single-escape',
   });
 
   assert.equal(
     useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
     'running',
   );
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.interruptInputPolicy,
+    'single-escape',
+  );
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 });
 
 test('PTY interrupt fallback clears the menu processing indicator', () => {
@@ -143,7 +210,6 @@ test('PTY turn start pins an open preview tab', () => {
       },
     },
   });
-
   receive({
     type: 'terminal_session_runtime',
     sessionId: SESSION_ID,
@@ -201,7 +267,7 @@ test('PTY runtime liveness remains active across completed turns', () => {
     sessionId: SESSION_ID,
     running: true,
   } as ServerTransportMessage);
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 
   receive({
     type: 'session_state',
@@ -228,16 +294,69 @@ test('PTY runtime liveness remains active across completed turns', () => {
     'completed',
   );
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 
   receive({
     type: 'terminal_session_runtime',
     sessionId: SESSION_ID,
     running: false,
   } as ServerTransportMessage);
-  const stopped = useSessionStore.getState().getSession(SESSION_ID);
+  const stopped = projectViewWorkspaceState.resolveSession(SESSION_ID);
   assert.equal(stopped?.isRunning, false);
   assert.equal(stopped?.status, 'stopped');
+
+  // Runtime exit retires only the surface. The durable menu entry remains and
+  // the existing resume boundary can announce the same Session as live again.
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    running: true,
+  } as ServerTransportMessage);
+  const reopened = projectViewWorkspaceState.resolveSession(SESSION_ID);
+  assert.equal(reopened?.id, SESSION_ID);
+  assert.equal(reopened?.isRunning, true);
+  assert.equal(reopened?.status, 'running');
+});
+
+test('session stop updates a linked Session that only exists in the Task projection', () => {
+  const task = taskProjectionSession(true);
+  const tabId = 'task-only-gui-tab';
+  const panelId = 'task-only-gui-panel';
+  task.sessions[0] = { ...task.sessions[0], kind: 'chat' };
+  useSessionStore.setState({ projects: [project()] });
+  useTaskStore.setState({
+    tasks: [task],
+    tasksByProject: { '/workspace': [task] },
+    currentProjectId: '/workspace',
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({ type: 'session_stopped', sessionId: SESSION_ID });
+
+  const stopped = projectViewWorkspaceState.resolveSession(SESSION_ID);
+  assert.equal(stopped?.isRunning, false);
+  assert.equal(stopped?.status, 'completed');
+  assert.equal(useTaskStore.getState().getTaskBySessionId(SESSION_ID)?.sessions[0]?.isRunning, false);
+  assert.equal(
+    useTaskStore.getState().tasksByProject['/workspace']?.[0]?.sessions[0]?.isRunning,
+    false,
+  );
+  assert.equal(useTabStore.getState().findSessionSurface(SESSION_ID), null);
 });
 
 test('PTY runtime exit closes a retained single-panel session tab', () => {
@@ -258,7 +377,6 @@ test('PTY runtime exit closes a retained single-panel session tab', () => {
       },
     },
   });
-
   receive({
     type: 'terminal_session_runtime',
     sessionId: SESSION_ID,
@@ -272,6 +390,75 @@ test('PTY runtime exit closes a retained single-panel session tab', () => {
 
   assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+});
+
+test('restoring a retained PTY runtime does not steal focus from the active tab', () => {
+  const restoredTabId = 'restored-terminal-tab';
+  const activeTabId = 'restored-empty-tab';
+  const panelId = 'restored-terminal-panel';
+  useTabStore.setState({
+    tabs: [
+      { id: restoredTabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: activeTabId, projectDir: null, title: null, isPreview: false },
+    ],
+    activeTabId,
+    lruTabIds: [activeTabId, restoredTabId],
+  });
+  usePanelStore.setState({
+    activeTabId,
+    tabPanels: {
+      [restoredTabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+  useSessionStore.setState({ activeSessionId: null });
+
+  receive({
+    type: 'session_created',
+    sessionId: SESSION_ID,
+    projectId: '/workspace',
+    workDir: '/workspace',
+    provider: 'codex',
+    kind: 'terminal',
+  } as ServerTransportMessage);
+
+  assert.equal(useSessionStore.getState().activeSessionId, null);
+  assert.equal(useTabStore.getState().activeTabId, activeTabId);
+});
+
+test('stopping a GUI session closes its retained single-panel tab', () => {
+  const guiSessionId = 'gui-session-a';
+  const tabId = 'retained-gui-tab';
+  const panelId = 'retained-gui-panel';
+  useSessionStore.setState({
+    projects: [project(guiSession(guiSessionId, true))],
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: guiSessionId } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'session_stopped',
+    sessionId: guiSessionId,
+  });
+
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
+  assert.equal(useTabStore.getState().findSessionLocation(guiSessionId), null);
 });
 
 test('PTY runtime exit removes its panel without discarding unrelated panels', () => {
@@ -355,8 +542,35 @@ test('PTY session rebound keeps the panel and transfers its session ownership at
     useTabStore.getState().findSessionLocation(childSessionId),
     { tabId, panelId },
   );
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, false);
-  assert.equal(useSessionStore.getState().getSession(childSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, false);
+  assert.equal(projectViewWorkspaceState.resolveSession(childSessionId)?.isRunning, true);
+});
+
+test('PTY session rebound transfers an in-flight turn to the destination menu row', () => {
+  const childSessionId = 'terminal-session-processing-child';
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true), terminalSession(childSessionId))],
+  });
+
+  receive({
+    type: 'session_state',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    status: 'running',
+    hookEvent: 'UserPromptSubmit',
+  });
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  } as ServerTransportMessage);
+
+  assert.equal(
+    useTerminalSessionStore.getState().bySessionId[childSessionId]?.status,
+    'running',
+    'the spinner must follow the live PTY when provider discovery replaces the menu row',
+  );
 });
 
 test('PTY session rebound waits for the child menu row before switching the visible panel', async (t) => {
@@ -407,6 +621,334 @@ test('PTY session rebound waits for the child menu row before switching the visi
   assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
 });
 
+test('pending PTY rebound reserves the child from active-session bridge assignment', async (t) => {
+  const childSessionId = 'terminal-session-reserved-child';
+  const sourceTabId = 'reserved-source-tab';
+  const sourcePanelId = 'reserved-source-panel';
+  const emptyTabId = 'reserved-empty-tab';
+  const emptyPanelId = 'reserved-empty-panel';
+  let releaseLoad!: () => void;
+  const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
+  const originalLoadProjects = useSessionStore.getState().loadProjects;
+  t.after(() => useSessionStore.setState({ loadProjects: originalLoadProjects }));
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID, true))],
+    loadProjects: async () => {
+      await loadGate;
+      useSessionStore.setState({
+        projects: [project(terminalSession(SESSION_ID), terminalSession(childSessionId, true))],
+      });
+    },
+  });
+  useTabStore.setState({
+    tabs: [
+      { id: sourceTabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: emptyTabId, projectDir: '/workspace', title: null, isPreview: false },
+    ],
+    activeTabId: emptyTabId,
+    lruTabIds: [emptyTabId, sourceTabId],
+    currentProjectDir: '/workspace',
+  });
+  usePanelStore.setState({
+    activeTabId: emptyTabId,
+    tabPanels: {
+      [sourceTabId]: {
+        layout: { type: 'leaf', panelId: sourcePanelId },
+        panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: SESSION_ID } },
+        activePanelId: sourcePanelId,
+      },
+      [emptyTabId]: {
+        layout: { type: 'leaf', panelId: emptyPanelId },
+        panels: { [emptyPanelId]: { id: emptyPanelId, sessionId: null } },
+        activePanelId: emptyPanelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+  useSessionStore.getState().setActiveSession(childSessionId);
+
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'reserved');
+  assert.equal(
+    usePanelStore.getState().tabPanels[emptyTabId].panels[emptyPanelId].sessionId,
+    null,
+  );
+
+  releaseLoad();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    useTabStore.getState().findSessionLocation(childSessionId),
+    { tabId: sourceTabId, panelId: sourcePanelId },
+  );
+  assert.equal(
+    usePanelStore.getState().tabPanels[emptyTabId].panels[emptyPanelId].sessionId,
+    null,
+  );
+  assert.equal(countSessionSurfaces(childSessionId), 1);
+});
+
+test('PTY rebound transfers a child from a raced empty tab back to its hidden source tab', () => {
+  const childSessionId = 'terminal-session-hidden-source-child';
+  const sourceTabId = 'hidden-source-tab';
+  const sourcePanelId = 'hidden-source-panel';
+  const racedTabId = 'raced-destination-tab';
+  const racedPanelId = 'raced-destination-panel';
+  useSessionStore.setState({
+    projects: [project(terminalSession(SESSION_ID), terminalSession(childSessionId, true))],
+    activeSessionId: childSessionId,
+  });
+  useTabStore.setState({
+    tabs: [{ id: racedTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: racedTabId,
+    lruTabIds: [racedTabId],
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: SESSION_ID } },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+    globalTabState: null,
+    currentProjectDir: '/project-b',
+  });
+  usePanelStore.setState({
+    activeTabId: racedTabId,
+    tabPanels: {
+      [racedTabId]: {
+        layout: { type: 'leaf', panelId: racedPanelId },
+        panels: {
+          [racedPanelId]: {
+            id: racedPanelId,
+            sessionId: childSessionId,
+            terminalId: null,
+            terminalSessionId: null,
+            terminalCwd: null,
+          },
+        },
+        activePanelId: racedPanelId,
+      },
+    },
+  });
+  useBoardStore.setState({ selectedProjectDir: '/project-b' });
+
+  receive({
+    type: 'terminal_session_rebound',
+    previousSessionId: SESSION_ID,
+    sessionId: childSessionId,
+    terminalId: `session-${SESSION_ID}`,
+  });
+
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-a');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-a');
+  assert.equal(useTabStore.getState().activeTabId, sourceTabId);
+  assert.deepEqual(
+    useTabStore.getState().findSessionLocation(childSessionId),
+    { tabId: sourceTabId, panelId: sourcePanelId },
+  );
+  assert.equal(countSessionSurfaces(childSessionId), 1);
+  assert.equal(
+    useTabStore.getState().projectTabStates['/project-b']
+      ?.tabPanelSnapshots?.[racedTabId]?.panels[racedPanelId]?.sessionId,
+    null,
+  );
+});
+
+test('late optimistic session completion updates its hidden origin without stealing the current Project', () => {
+  const tempSessionId = 'temp-session-from-project-a';
+  const realSessionId = 'real-session-from-project-a';
+  const currentSessionId = 'session-in-project-b';
+  const sourceTabId = 'creation-source-tab';
+  const sourcePanelId = 'creation-source-panel';
+  const currentTabId = 'current-tab';
+  const currentPanelId = 'current-panel';
+
+  useSessionStore.setState({ activeSessionId: currentSessionId });
+  useTabStore.setState({
+    tabs: [{ id: currentTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: currentTabId,
+    lruTabIds: [currentTabId],
+    currentProjectDir: '/project-b',
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: {
+              [sourcePanelId]: {
+                id: sourcePanelId,
+                sessionId: tempSessionId,
+                worktreeId: null,
+              },
+            },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+  });
+  usePanelStore.setState({
+    activeTabId: currentTabId,
+    tabPanels: {
+      [currentTabId]: {
+        layout: { type: 'leaf', panelId: currentPanelId },
+        panels: { [currentPanelId]: { id: currentPanelId, sessionId: currentSessionId } },
+        activePanelId: currentPanelId,
+      },
+    },
+  });
+  useBoardStore.setState({ selectedProjectDir: '/project-b' });
+
+  assert.equal(useTabStore.getState().rebindSessionSurface(
+    [tempSessionId],
+    realSessionId,
+    { worktreeId: 'wt-real' },
+  ), true);
+
+  assert.equal(useSessionStore.getState().activeSessionId, currentSessionId);
+  assert.equal(useTabStore.getState().activeTabId, currentTabId);
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-b');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-b');
+  assert.deepEqual(
+    useTabStore.getState().projectTabStates['/project-a']
+      ?.tabPanelSnapshots?.[sourceTabId]?.panels[sourcePanelId],
+    {
+      id: sourcePanelId,
+      sessionId: realSessionId,
+      worktreeId: 'wt-real',
+    },
+  );
+});
+
+test('hidden session reconciliation defers when unsaved peek changes refuse the project switch', (t) => {
+  const childSessionId = 'terminal-session-dirty-peek-child';
+  const sourceTabId = 'dirty-peek-source-tab';
+  const sourcePanelId = 'dirty-peek-source-panel';
+  const currentTabId = 'dirty-peek-current-tab';
+  const currentPanelId = 'dirty-peek-current-panel';
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { confirm: () => false },
+  });
+  t.after(() => {
+    if (originalWindow) {
+      Object.defineProperty(globalThis, 'window', originalWindow);
+    } else {
+      delete (globalThis as { window?: Window }).window;
+    }
+  });
+  useTabStore.setState({
+    tabs: [{ id: currentTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: currentTabId,
+    lruTabIds: [currentTabId],
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: childSessionId } },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+    currentProjectDir: '/project-b',
+  });
+  usePanelStore.setState({
+    activeTabId: currentTabId,
+    tabPanels: {
+      [currentTabId]: {
+        layout: { type: 'leaf', panelId: currentPanelId },
+        panels: { [currentPanelId]: { id: currentPanelId, sessionId: null } },
+        activePanelId: currentPanelId,
+      },
+    },
+  });
+  useBoardStore.setState({ selectedProjectDir: '/project-b', peekFileDirty: true });
+
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'deferred');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-b');
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-b');
+  assert.equal(
+    usePanelStore.getState().tabPanels[currentTabId].panels[currentPanelId].sessionId,
+    null,
+  );
+  assert.deepEqual(useTabStore.getState().findSessionSurface(childSessionId), {
+    tabId: sourceTabId,
+    panelId: sourcePanelId,
+    projectDir: '/project-a',
+  });
+});
+
+test('hidden session reconciliation can retry after project selection initializes', () => {
+  const childSessionId = 'terminal-session-project-init-child';
+  const sourceTabId = 'project-init-source-tab';
+  const sourcePanelId = 'project-init-source-panel';
+  const currentTabId = 'project-init-current-tab';
+  const currentPanelId = 'project-init-current-panel';
+  useTabStore.setState({
+    tabs: [{ id: currentTabId, projectDir: '/project-b', title: null, isPreview: false }],
+    activeTabId: currentTabId,
+    lruTabIds: [currentTabId],
+    projectTabStates: {
+      '/project-a': {
+        tabs: [{ id: sourceTabId, projectDir: '/project-a', title: null, isPreview: false }],
+        activeTabId: sourceTabId,
+        lruTabIds: [sourceTabId],
+        tabPanelSnapshots: {
+          [sourceTabId]: {
+            layout: { type: 'leaf', panelId: sourcePanelId },
+            panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: childSessionId } },
+            activePanelId: sourcePanelId,
+          },
+        },
+      },
+    },
+    currentProjectDir: '/project-b',
+  });
+  usePanelStore.setState({
+    activeTabId: currentTabId,
+    tabPanels: {
+      [currentTabId]: {
+        layout: { type: 'leaf', panelId: currentPanelId },
+        panels: { [currentPanelId]: { id: currentPanelId, sessionId: null } },
+        activePanelId: currentPanelId,
+      },
+    },
+  });
+
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'deferred');
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-b');
+
+  useBoardStore.setState({ selectedProjectDir: '/project-b' });
+  assert.equal(reconcileActiveSessionSurface(childSessionId), 'activated');
+  assert.equal(useBoardStore.getState().selectedProjectDir, '/project-a');
+  assert.equal(useTabStore.getState().currentProjectDir, '/project-a');
+  assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), {
+    tabId: sourceTabId,
+    panelId: sourcePanelId,
+  });
+});
+
 test('PTY runtime snapshot repairs a rebound missed while the client was disconnected', () => {
   const childSessionId = 'terminal-session-reconnected-child';
   const tabId = 'reconnected-rebound-tab';
@@ -442,6 +984,65 @@ test('PTY runtime snapshot repairs a rebound missed while the client was disconn
 
   assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), true);
   assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
+});
+
+test('reconnect snapshot coalesces chained rebound sources before transferring the panel', () => {
+  const middleSessionId = 'snapshot-chain-middle';
+  const finalSessionId = 'snapshot-chain-final';
+  const sourceTabId = 'snapshot-chain-source-tab';
+  const sourcePanelId = 'snapshot-chain-source-panel';
+  const racedTabId = 'snapshot-chain-raced-tab';
+  const racedPanelId = 'snapshot-chain-raced-panel';
+  const terminalId = `session-${SESSION_ID}`;
+  useSessionStore.setState({
+    projects: [project(
+      terminalSession(SESSION_ID),
+      terminalSession(middleSessionId),
+      terminalSession(finalSessionId, true),
+    )],
+  });
+  useTabStore.setState({
+    tabs: [
+      { id: racedTabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: sourceTabId, projectDir: '/workspace', title: null, isPreview: false },
+    ],
+    activeTabId: sourceTabId,
+    lruTabIds: [sourceTabId, racedTabId],
+  });
+  usePanelStore.setState({
+    activeTabId: sourceTabId,
+    tabPanels: {
+      [racedTabId]: {
+        layout: { type: 'leaf', panelId: racedPanelId },
+        panels: { [racedPanelId]: { id: racedPanelId, sessionId: middleSessionId } },
+        activePanelId: racedPanelId,
+      },
+      [sourceTabId]: {
+        layout: { type: 'leaf', panelId: sourcePanelId },
+        panels: { [sourcePanelId]: { id: sourcePanelId, sessionId: SESSION_ID } },
+        activePanelId: sourcePanelId,
+      },
+    },
+  });
+
+  receive({
+    type: 'terminal_session_runtime_snapshot',
+    activeSessionIds: [finalSessionId],
+    reboundSessions: [
+      { previousSessionId: SESSION_ID, sessionId: finalSessionId, terminalId },
+      { previousSessionId: middleSessionId, sessionId: finalSessionId, terminalId },
+    ],
+  });
+
+  assert.deepEqual(useTabStore.getState().findSessionLocation(finalSessionId), {
+    tabId: sourceTabId,
+    panelId: sourcePanelId,
+  });
+  assert.equal(
+    usePanelStore.getState().tabPanels[racedTabId].panels[racedPanelId].sessionId,
+    null,
+  );
+  assert.equal(countSessionSurfaces(finalSessionId), 1);
 });
 
 test('delayed reconnect rebound keeps the source panel until the child row loads', async (t) => {
@@ -545,6 +1146,8 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
   const finalSessionId = 'rebound-final';
   const tabId = 'rebound-chain-tab';
   const panelId = 'rebound-chain-panel';
+  const racedTabId = 'rebound-chain-raced-tab';
+  const racedPanelId = 'rebound-chain-raced-panel';
   let releaseFirst!: () => void;
   let releaseSecond!: () => void;
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -567,9 +1170,12 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
     },
   });
   useTabStore.setState({
-    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    tabs: [
+      { id: tabId, projectDir: '/workspace', title: null, isPreview: false },
+      { id: racedTabId, projectDir: '/workspace', title: null, isPreview: false },
+    ],
     activeTabId: tabId,
-    lruTabIds: [tabId],
+    lruTabIds: [tabId, racedTabId],
   });
   usePanelStore.setState({
     activeTabId: tabId,
@@ -578,6 +1184,11 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
         layout: { type: 'leaf', panelId },
         panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
         activePanelId: panelId,
+      },
+      [racedTabId]: {
+        layout: { type: 'leaf', panelId: racedPanelId },
+        panels: { [racedPanelId]: { id: racedPanelId, sessionId: middleSessionId } },
+        activePanelId: racedPanelId,
       },
     },
   });
@@ -603,6 +1214,10 @@ test('rapid chained rebounds apply only the latest child when loads resolve in r
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(useTabStore.getState().findSessionLocation(finalSessionId), { tabId, panelId });
   assert.equal(useTabStore.getState().findSessionLocation(middleSessionId), null);
+  assert.equal(
+    usePanelStore.getState().tabPanels[racedTabId].panels[racedPanelId].sessionId,
+    null,
+  );
 });
 
 test('starting the fork parent in another terminal does not cancel the original terminal rebound', async (t) => {
@@ -658,8 +1273,8 @@ test('starting the fork parent in another terminal does not cancel the original 
 
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
   assert.deepEqual(useTabStore.getState().findSessionLocation(childSessionId), { tabId, panelId });
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
-  assert.equal(useSessionStore.getState().getSession(childSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(childSessionId)?.isRunning, true);
 });
 
 test('reconnect snapshot cancels a stale pending rebound omitted by the server', async (t) => {
@@ -749,6 +1364,45 @@ test('archiving a stopped PTY session retires its open surface after the request
 
   assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+});
+
+test('archiving a GUI session retires its open surface after the request succeeds', async (t) => {
+  const guiSessionId = 'archived-gui-session';
+  const tabId = 'archived-gui-tab';
+  const panelId = 'archived-gui-panel';
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  useSessionStore.setState({
+    projects: [project(guiSession(guiSessionId))],
+  });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: guiSessionId } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  useSessionStore.getState().toggleArchive(guiSessionId, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
+  assert.equal(useTabStore.getState().findSessionLocation(guiSessionId), null);
 });
 
 test('PTY runtime exit defers surface retirement while archive rollback is still possible', () => {
@@ -908,7 +1562,7 @@ test('a running hook state is kept even while the session list still reads stale
   // 세션 목록(HTTP)이 낡아 isRunning=false인 동안 hook의 running이 먼저 도착하는
   // 실측 시나리오 — runtime 종료 신호를 받은 적이 없으므로 버려선 안 된다.
   // (버리면 session_state는 재전송이 없어 다음 hook 이벤트까지 스피너가 영영 없다.)
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, false);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, false);
 
   receive({
     type: 'session_state',
@@ -1136,12 +1790,15 @@ test('new PTY sessions are stopped until their terminal is opened', () => {
     type: 'session_created',
     sessionId: 'new-terminal-session',
     status: 'ready',
+    projectId: '/workspace-project',
     workDir: '/workspace',
     kind: 'terminal',
     provider: 'claude-code',
   });
 
-  const created = useSessionStore.getState().getSession('new-terminal-session');
+  const created = projectViewWorkspaceState.resolveSession('new-terminal-session');
+  assert.equal(created?.projectDir, '/workspace-project');
+  assert.equal(created?.originProjectId, '/workspace-project');
   assert.equal(created?.isRunning, false);
   assert.equal(created?.status, 'stopped');
 });
@@ -1179,13 +1836,13 @@ test('PTY runtime snapshot reconciles sessions after a WebSocket reconnect', () 
     activeSessionIds: [SESSION_ID],
   } as ServerTransportMessage);
 
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
   assert.equal(isTurnInFlight(useChatStore.getState(), SESSION_ID), false);
   assert.equal(
     useTerminalSessionStore.getState().bySessionId[SESSION_ID]?.status,
     'running',
   );
-  const inactive = useSessionStore.getState().getSession(inactiveSessionId);
+  const inactive = projectViewWorkspaceState.resolveSession(inactiveSessionId);
   assert.equal(inactive?.isRunning, false);
   assert.equal(inactive?.status, 'stopped');
   assert.notEqual(
@@ -1218,7 +1875,7 @@ test('PTY runtime snapshot received before project loading keeps the menu runnin
   }));
   await loading;
 
-  assert.equal(useSessionStore.getState().getSession(SESSION_ID)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(SESSION_ID)?.isRunning, true);
 });
 
 test('GUI runtime start received during project loading keeps the menu running state', async (t) => {
@@ -1247,7 +1904,7 @@ test('GUI runtime start received during project loading keeps the menu running s
   }));
   await loading;
 
-  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(guiSessionId)?.isRunning, true);
 });
 
 test('GUI runtime snapshot clears stale menu running state after reconnect', () => {
@@ -1262,7 +1919,7 @@ test('GUI runtime snapshot clears stale menu running state after reconnect', () 
     titleGeneratingSessionIds: [],
   });
 
-  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, false);
+  assert.equal(projectViewWorkspaceState.resolveSession(guiSessionId)?.isRunning, false);
 });
 
 test('GUI runtime event received during reconnect outranks the initial snapshot', () => {
@@ -1281,5 +1938,5 @@ test('GUI runtime event received during reconnect outranks the initial snapshot'
     titleGeneratingSessionIds: [],
   });
 
-  assert.equal(useSessionStore.getState().getSession(guiSessionId)?.isRunning, true);
+  assert.equal(projectViewWorkspaceState.resolveSession(guiSessionId)?.isRunning, true);
 });

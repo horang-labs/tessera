@@ -1,17 +1,18 @@
 'use client';
 
 import { useState, useCallback, useContext, useEffect, useMemo, useRef, type DragEvent, type MouseEvent } from 'react';
-import { X as XIcon, KeyboardIcon, FolderGit2, ListTodo, MessageSquare, AlertCircle, GripVertical, Plus, Terminal } from 'lucide-react';
+import { X as XIcon, KeyboardIcon, FolderGit2, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, ChevronDown, GitBranch } from 'lucide-react';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
+import { useTabStore } from '@/stores/tab-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useWorktreeBaseRefs } from '@/hooks/use-worktree-base-refs';
 import { useWorktreeSession } from '@/hooks/use-worktree-session';
 import { WorktreeStartFromControl } from '@/components/task/worktree-start-from-control';
 import { useI18n } from '@/lib/i18n';
-import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import {
   buildManagedWorktreeBranchName,
@@ -31,6 +32,12 @@ import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 import { v4 as uuidv4 } from 'uuid';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
+import { resolveLastActiveProjectDir } from '@/lib/session/last-active-project';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
+import {
+  useLoadedProjectViews,
+  useProjectViewSession,
+} from '@/hooks/use-project-view-workspace-state';
 
 interface EmptyPanelStateProps {
   panelId: string;
@@ -55,13 +62,79 @@ function getEmptyPanelShortcutTargetKind(target: EventTarget | null): EmptyPanel
   ) {
     return 'execution-mode-radio';
   }
-  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+  if (
+    target.tagName === 'INPUT'
+    || target.tagName === 'TEXTAREA'
+    || target.tagName === 'SELECT'
+    || target.isContentEditable
+  ) {
     return 'text-entry';
   }
   return 'other';
 }
 
+export function resolveEmptyPanelProjectId(
+  selectedProjectDir: string | null,
+  allProjectsProjectId: string | null,
+): string | null {
+  return selectedProjectDir === ALL_PROJECTS_SENTINEL
+    ? allProjectsProjectId
+    : selectedProjectDir;
+}
+
+export function resolveAllProjectsDefaultProjectId(
+  projects: ReadonlyArray<{ encodedDir: string }>,
+  tabProjectDir: string | null,
+  lastActiveProjectDir: string | null,
+): string | null {
+  if (
+    tabProjectDir
+    && tabProjectDir !== ALL_PROJECTS_SENTINEL
+    && projects.some((project) => project.encodedDir === tabProjectDir)
+  ) {
+    return tabProjectDir;
+  }
+  return resolveLastActiveProjectDir(projects, lastActiveProjectDir);
+}
+
 const EMPTY_COLLECTIONS: Collection[] = [];
+
+interface SessionLocationIdentityProps {
+  projectName: string;
+  branch: string | null;
+  path: string;
+}
+
+export function DetailedSessionLocationIdentity({
+  projectName,
+  branch,
+  path,
+}: SessionLocationIdentityProps) {
+  return (
+    <div
+      className="rounded-xl border border-[color-mix(in_srgb,var(--accent)_18%,var(--divider))] bg-[color-mix(in_srgb,var(--accent)_4%,var(--input-bg))] px-3 py-2.5"
+      data-testid="empty-panel-session-location"
+    >
+      <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center">
+        <span className="flex min-w-0 max-w-full items-center gap-2">
+          <FolderGit2 className="h-4 w-4 shrink-0 text-(--accent-hover)" aria-hidden="true" />
+          <span className="min-w-0 truncate text-xs font-semibold text-(--text-primary)">
+            {projectName}
+          </span>
+        </span>
+        {branch ? (
+          <span className="flex max-w-full shrink-0 items-center gap-1 rounded-full border border-(--divider) bg-(--sidebar-bg) px-2 py-0.5 font-mono text-[10px] text-(--text-secondary) sm:ml-auto sm:max-w-[45%]">
+            <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">{branch}</span>
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 break-all font-mono text-[11px] leading-4 text-(--text-muted) sm:mt-1.5 sm:truncate sm:pl-6" title={path}>
+        {path}
+      </p>
+    </div>
+  );
+}
 
 export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const { t } = useI18n();
@@ -72,26 +145,54 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const isActivePanel = usePanelStore((state) => state.tabPanels[tabId]?.activePanelId === panelId);
   const panelCount = usePanelStore((state) => Object.keys(state.tabPanels[tabId]?.panels ?? EMPTY_PANELS).length);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
+  const tabProjectDir = useTabStore((state) =>
+    state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null
+  );
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
+  const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
+  const requestedCreationMode = usePanelStore(
+    (state) => state.tabPanels[tabId]?.panels[panelId]?.creationMode ?? null,
+  );
   const providers = useProvidersStore((state) => state.providers);
   const { createSession, isCreating } = useSessionCrud();
   const { createWorktreeSession } = useWorktreeSession();
   const openFolderBrowser = useFolderBrowserStore((state) => state.open);
+  const projects = useLoadedProjectViews();
+  const activeSessionId = useSessionStore((state) => state.activeSessionId);
+  const lastActiveProjectDir = useSessionStore((state) => state.lastActiveProjectDir);
+  const [allProjectsProjectOverride, setAllProjectsProjectOverride] = useState<
+    string | null | undefined
+  >(undefined);
+  const requiresProjectSelection = selectedProjectDir === ALL_PROJECTS_SENTINEL;
+  const defaultAllProjectsProjectId = resolveAllProjectsDefaultProjectId(
+    projects,
+    tabProjectDir,
+    lastActiveProjectDir,
+  );
+  const allProjectsProjectId = allProjectsProjectOverride === undefined
+    ? defaultAllProjectsProjectId
+    : allProjectsProjectOverride;
+  const resolvedProjectId = resolveEmptyPanelProjectId(
+    selectedProjectDir,
+    allProjectsProjectId,
+  );
+  const selectionSession = useProjectViewSession(getSessionSelectionId(activeSessionId));
 
-  const activeProject = useSessionStore((state) => {
-    if (selectedProjectDir && selectedProjectDir !== ALL_PROJECTS_SENTINEL) {
-      return state.projects.find((project) => project.encodedDir === selectedProjectDir) ?? null;
+  const activeProject = useMemo(() => {
+    if (resolvedProjectId) {
+      return projects.find((project) => project.encodedDir === resolvedProjectId) ?? null;
     }
-    const selectionSessionId = getSessionSelectionId(state.activeSessionId);
-    if (selectionSessionId) {
-      return state.projects.find((project) =>
-        project.sessions.some((session) => session.id === selectionSessionId)
+    if (requiresProjectSelection) return null;
+
+    if (selectionSession) {
+      return projects.find((candidate) =>
+        candidate.encodedDir === selectionSession.projectDir
       ) ?? null;
     }
-    return state.projects[0] ?? null;
-  });
+    return projects[0] ?? null;
+  }, [projects, requiresProjectSelection, resolvedProjectId, selectionSession]);
   const activeProjectId = activeProject?.encodedDir ?? null;
   const collections = useCollectionStore((state) =>
     activeProjectId ? state.collectionsByProject?.[activeProjectId] ?? EMPTY_COLLECTIONS : EMPTY_COLLECTIONS
@@ -100,7 +201,10 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const [selectedProvider, setSelectedProvider] = useState('');
   const [executionMode, setExecutionModeState] = useState(defaultExecutionMode);
   const executionModeTouchedRef = useRef(false);
-  const [mode, setMode] = useState<'chat' | 'task' | 'shell'>('chat');
+  const [mode, setMode] = useState<'chat' | 'task' | 'shell'>(
+    requestedCreationMode ?? defaultNewSessionKind,
+  );
+  const modeTouchedRef = useRef(false);
   const [rawSelectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState('');
   const [branchSlug, setBranchSlug] = useState(() => buildManagedWorktreeSlug());
@@ -123,9 +227,24 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     if (!executionModeTouchedRef.current) setExecutionModeState(defaultExecutionMode);
   }, [defaultExecutionMode]);
 
+  useEffect(() => {
+    if (!modeTouchedRef.current) setMode(defaultNewSessionKind);
+  }, [defaultNewSessionKind]);
+
+  const selectMode = useCallback((nextMode: 'chat' | 'task' | 'shell') => {
+    modeTouchedRef.current = true;
+    setMode(nextMode);
+  }, []);
+
   const setExecutionMode = useCallback((nextMode: typeof executionMode) => {
     executionModeTouchedRef.current = true;
     setExecutionModeState(nextMode);
+  }, []);
+
+  const handleProjectChange = useCallback((projectId: string) => {
+    setAllProjectsProjectOverride(projectId || null);
+    setSelectedCollectionId(null);
+    setError(null);
   }, []);
 
   useEffect(() => {
@@ -141,18 +260,19 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const {
     refs: baseRefs,
     selectedBaseRef,
-    selectedBaseRefForCreate,
-    selectedRef,
     setSelectedBaseRef,
+    creationMode: worktreeCreationMode,
+    setCreationMode: setWorktreeCreationMode,
+    worktreeSourceForCreate,
     isLoading: isLoadingBaseRefs,
     error: baseRefError,
   } = useWorktreeBaseRefs(mode === 'task' ? activeProject?.decodedPath : null);
 
   const handleSetModeTask = useCallback((_e: MouseEvent) => {
-    setMode('task');
+    selectMode('task');
     // Focus the title input after React commits the DOM update
     requestAnimationFrame(() => titleInputRef.current?.focus());
-  }, []);
+  }, [selectMode]);
 
   const handleClose = useCallback(() => {
     closePanel(panelId);
@@ -183,13 +303,15 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     setActivePanelId(panelId);
 
     if (mode === 'shell') {
-      assignTerminal(panelId, uuidv4());
+      assignTerminal(panelId, uuidv4(), null, activeProject.decodedPath);
+      useTabStore.getState().setTabProject(tabId, activeProject.encodedDir);
       return;
     }
 
     if (mode === 'chat') {
       await createSession({
         workDir: activeProject.decodedPath,
+        parentProjectId: activeProject.encodedDir,
         providerId: selectedProvider,
         collectionId: selectedCollectionId ?? undefined,
         executionMode,
@@ -200,15 +322,23 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     setIsSubmittingTask(true);
     try {
       const trimmedTaskTitle = taskTitle.trim();
-      const rawBranchSlug = branchSlug.trim();
-      if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
-        setError(t('task.creation.errorInvalidBranchSlug'));
+      if (!worktreeSourceForCreate) {
+        setError(t('task.creation.errorCheckoutBranchRequired'));
         return;
       }
-      const normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
-      if (!normalizedBranchSlug) {
-        setError(t('task.creation.errorEmptyBranchSlug'));
-        return;
+
+      let normalizedBranchSlug: string | undefined;
+      if (worktreeSourceForCreate.mode === 'branch-off') {
+        const rawBranchSlug = branchSlug.trim();
+        if (!isManagedWorktreeSlugInputAllowed(rawBranchSlug)) {
+          setError(t('task.creation.errorInvalidBranchSlug'));
+          return;
+        }
+        normalizedBranchSlug = normalizeManagedWorktreeSlug(rawBranchSlug);
+        if (!normalizedBranchSlug) {
+          setError(t('task.creation.errorEmptyBranchSlug'));
+          return;
+        }
       }
       const result = await createWorktreeSession({
         projectDir: activeProject.decodedPath,
@@ -217,9 +347,11 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
         executionMode,
         taskTitle: trimmedTaskTitle || t('task.creation.title'),
         hasCustomTitle: trimmedTaskTitle.length > 0,
-        branchSlug: normalizedBranchSlug,
-        baseRef: selectedBaseRefForCreate,
-        allowBranchSlugSuffix: !branchSlugEdited,
+        worktreeSource: worktreeSourceForCreate,
+        ...(worktreeSourceForCreate.mode === 'branch-off' && {
+          branchSlug: normalizedBranchSlug,
+          allowBranchSlugSuffix: !branchSlugEdited,
+        }),
         suppressErrorToast: true,
         collectionId: selectedCollectionId ?? undefined,
         source: 'new_session',
@@ -247,14 +379,15 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     isSelectedExecutionModeSupported,
     mode,
     panelId,
+    tabId,
     selectedCollectionId,
-    selectedBaseRefForCreate,
     selectedProvider,
     setActivePanelId,
     t,
     branchSlug,
     branchSlugEdited,
     taskTitle,
+    worktreeSourceForCreate,
   ]);
 
   useEffect(() => {
@@ -277,6 +410,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const isSubmitting = isCreating || isSubmittingTask;
   const isLaunchDisabled = isSubmitting
     || !activeProject
+    || (mode === 'task' && !worktreeSourceForCreate)
     || (mode !== 'shell' && (!isSelectedProviderReady || !isSelectedExecutionModeSupported));
   const branchPreview = activeProject
     ? buildManagedWorktreeBranchName(branchSlug, branchPrefix)
@@ -285,9 +419,16 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     ? buildManagedWorktreePreviewPath(activeProject.decodedPath, branchPrefix, branchSlug, pathTemplate)
     : '';
   const normalizedBranchPrefix = normalizeManagedWorktreeBranchPrefix(branchPrefix);
+  const sessionLocationPath = activeProject
+    ? activeProject.projectWorktree?.displayPath
+      ?? activeProject.displayPath
+      ?? activeProject.decodedPath
+    : '';
+  const sessionLocationBranch = activeProject?.projectWorktree?.currentBranch ?? null;
   const panelControls = panelCount >= 2 ? (
     <>
       <button
+        {...telemetryIgnoreAttributes('drag_only')}
         type="button"
         draggable
         onDragStart={handlePanelDragStart}
@@ -301,6 +442,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
       <button
         type="button"
         onClick={handleClose}
+        {...telemetryClickAttributes('panel.close', 'new_session')}
         title={t('panel.closePanel')}
         aria-label={t('panel.closePanel')}
         data-testid="empty-panel-close-button"
@@ -311,7 +453,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     </>
   ) : null;
 
-  if (!activeProject) {
+  if (projects.length === 0) {
     return (
       <div
         className="relative flex h-full min-h-0 flex-1 items-center justify-center overflow-hidden bg-(--chat-bg) px-6 py-10 text-(--text-muted)"
@@ -331,6 +473,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             {t('sidebar.runFromProject')}
           </p>
           <button
+            {...telemetryClickAttributes('creation.project.add', 'new_session')}
             type="button"
             onClick={openFolderBrowser}
             className="mt-5 inline-flex items-center gap-2 rounded-full border border-(--divider) bg-(--sidebar-bg) px-3 py-1.5 text-xs font-medium text-(--text-secondary) transition-colors hover:border-(--accent) hover:text-(--accent-hover) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)"
@@ -354,11 +497,68 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
 
       <div className="mx-auto w-full max-w-3xl">
         <div className="border-y border-(--divider)">
-          <section className="pb-2 pt-5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+          {requiresProjectSelection ? (
+            <section className="py-4">
+              <label
+                htmlFor={`empty-panel-project-${panelId}`}
+                className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)"
+              >
+                {t('task.creation.projectLabel')}
+              </label>
+              <div className="relative mt-2 max-w-xl">
+                <span
+                  className="pointer-events-none absolute inset-y-0 left-3 flex items-center"
+                  aria-hidden="true"
+                >
+                  {activeProject ? (
+                    <span
+                      className="flex h-5 w-5 items-center justify-center rounded-md text-[10px] font-bold text-white"
+                      style={{ backgroundColor: getProjectColor(activeProject.displayName) }}
+                    >
+                      {activeProject.displayName.charAt(0).toUpperCase()}
+                    </span>
+                  ) : (
+                    <FolderGit2 className="h-4 w-4 text-(--text-muted)" />
+                  )}
+                </span>
+                <select
+                  {...telemetryClickAttributes('creation.project.select', 'new_session')}
+                  id={`empty-panel-project-${panelId}`}
+                  value={activeProjectId ?? ''}
+                  onChange={(event) => handleProjectChange(event.target.value)}
+                  className="h-10 w-full appearance-none rounded-xl border border-(--divider) bg-(--input-bg) py-2 pl-11 pr-10 text-sm font-medium text-(--sidebar-text-active) outline-none transition-colors hover:border-(--text-muted)/50 focus:border-(--accent) focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_16%,transparent)]"
+                  data-testid="empty-panel-project-select"
+                  aria-describedby={`empty-panel-project-help-${panelId}`}
+                >
+                  <option value="">{t('task.creation.projectPlaceholder')}</option>
+                  {projects.map((project) => (
+                    <option key={project.encodedDir} value={project.encodedDir}>
+                      {project.displayName}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--text-muted)"
+                  aria-hidden="true"
+                />
+              </div>
+              <p
+                id={`empty-panel-project-help-${panelId}`}
+                className="mt-1.5 max-w-xl truncate px-1 text-[11px] text-(--text-muted)"
+                title={activeProject?.displayPath ?? activeProject?.decodedPath}
+              >
+                {activeProject
+                  ? activeProject.displayPath ?? activeProject.decodedPath
+                  : t('task.creation.projectSelectionHint')}
+              </p>
+            </section>
+          ) : null}
+
+          <section className={cn('py-4', requiresProjectSelection && 'border-t border-(--divider)')}>
+            <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
               {t('settings.provider.label')}
             </span>
-            <div className="mt-3">
+            <div className="mt-2">
               <CliProviderChipSelector
                 value={selectedProvider}
                 onChange={setSelectedProvider}
@@ -369,32 +569,36 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             </div>
           </section>
 
-          <section className="border-t border-(--divider) py-2">
-            <div className="flex items-center gap-3">
-              <span className="w-16 shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+          <section className="border-t border-(--divider) py-4">
+            <div className="flex flex-col items-stretch gap-2">
+              <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
                 {t('task.creation.agentUiLabel')}
               </span>
-              <div className="w-fit min-w-0 max-w-full" data-empty-panel-execution-mode>
+              <div className="w-full min-w-0" data-empty-panel-execution-mode>
                 <ExecutionModeSelector
                   value={executionMode}
                   onChange={setExecutionMode}
                   providerId={selectedProvider}
                   density="regular"
+                  className="w-full"
                   name={`empty-panel-execution-mode-${panelId}`}
                 />
               </div>
             </div>
           </section>
 
-          <section className="border-t border-(--divider) pb-5 pt-1">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+          <section className="border-t border-(--divider) py-4">
+            <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
               {t('task.creation.startAsLabel')}
             </span>
 
-            <div className="mt-2 grid max-w-xl grid-cols-3 gap-1 rounded-xl border border-(--divider) bg-(--sidebar-bg) p-1">
+            {/* Three columns inside `px-6` leave ~98px per cell at 360px, which
+                wraps the hints one word per line. Stacked below `sm`. */}
+            <div className="mt-2 grid max-w-xl grid-cols-1 gap-1 rounded-xl border border-(--divider) bg-(--sidebar-bg) p-1 sm:grid-cols-3">
               <button
                 type="button"
-                onClick={() => setMode('chat')}
+                onClick={() => selectMode('chat')}
+                {...telemetryClickAttributes('creation.mode.chat', 'new_session')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'chat'
@@ -408,13 +612,16 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                   {t('chat.newSession')}
                 </span>
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
-                  {t('task.creation.chatInstantHint')}
+                  {!activeProject && requiresProjectSelection
+                    ? t('task.creation.selectProjectHint')
+                    : t('task.creation.chatCreatesHere')}
                 </span>
               </button>
 
               <button
                 type="button"
                 onClick={handleSetModeTask}
+                {...telemetryClickAttributes('creation.mode.task', 'new_session')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'task'
@@ -423,7 +630,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 )}
                 data-testid="empty-panel-mode-task"
               >
-                <ListTodo className="h-3.5 w-3.5 text-(--accent-hover)" />
+                <FolderGit2 className="h-3.5 w-3.5 text-(--accent-hover)" />
                 <span className="mt-1.5 block text-xs font-semibold text-(--text-primary)">
                   {t('task.newChat.newTask')}
                 </span>
@@ -434,7 +641,8 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
 
               <button
                 type="button"
-                onClick={() => setMode('shell')}
+                onClick={() => selectMode('shell')}
+                {...telemetryClickAttributes('creation.mode.shell', 'new_session')}
                 className={cn(
                   'rounded-lg border px-3 py-2 text-left transition-colors',
                   mode === 'shell'
@@ -453,7 +661,20 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               </button>
             </div>
 
-            <div className="mt-5 space-y-4 border-l-2 border-[color-mix(in_srgb,var(--accent)_16%,transparent)] pl-4">
+            <div className="mt-4 max-w-xl space-y-4 border-l-2 border-[color-mix(in_srgb,var(--accent)_16%,transparent)] pl-4">
+              {mode === 'chat' && activeProject ? (
+                <div className="space-y-1.5">
+                  <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
+                    {t('task.creation.sessionLocationLabel')}
+                  </span>
+                  <DetailedSessionLocationIdentity
+                    projectName={activeProject.displayName}
+                    branch={sessionLocationBranch}
+                    path={sessionLocationPath}
+                  />
+                </div>
+              ) : null}
+
               {mode === 'task' && (
                 <>
                   <div className="space-y-1.5">
@@ -464,6 +685,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                       {t('task.creation.titleLabel')}
                     </label>
                     <input
+                      {...telemetryClickAttributes('creation.task.title_input', 'new_session')}
                       ref={titleInputRef}
                       id={`empty-panel-task-title-${panelId}`}
                       type="text"
@@ -481,7 +703,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                     />
                   </div>
 
-                  {activeProject && (
+                  {activeProject && worktreeCreationMode === 'branch-off' && (
                     <div className="space-y-1.5">
                       <label
                         htmlFor={`empty-panel-branch-slug-${panelId}`}
@@ -497,6 +719,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                           </span>
                         ) : null}
                         <input
+                          {...telemetryClickAttributes('creation.task.branch_input', 'new_session')}
                           id={`empty-panel-branch-slug-${panelId}`}
                           type="text"
                           value={branchSlug}
@@ -534,11 +757,12 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                       id={`empty-panel-base-ref-${panelId}`}
                       testId="empty-panel-base-ref"
                       refs={baseRefs}
+                      creationMode={worktreeCreationMode}
                       selectedBaseRef={selectedBaseRef}
-                      selectedRef={selectedRef}
                       isLoading={isLoadingBaseRefs}
                       error={baseRefError}
                       disabled={isSubmitting}
+                      onCreationModeChange={setWorktreeCreationMode}
                       onSelectedBaseRefChange={setSelectedBaseRef}
                     />
                   )}
@@ -546,13 +770,14 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               )}
 
               <div className="space-y-1.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+                <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
                   {t('task.creation.collectionLabel')}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
                     onClick={() => setSelectedCollectionId(null)}
+                    {...telemetryClickAttributes('creation.collection.select', 'new_session')}
                     className={cn(
                       'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
                       selectedCollectionId === null
@@ -567,6 +792,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                       key={collection.id}
                       type="button"
                       onClick={() => setSelectedCollectionId(collection.id)}
+                      {...telemetryClickAttributes('creation.collection.select', 'new_session')}
                       className={cn(
                         'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
                         selectedCollectionId === collection.id
@@ -582,14 +808,23 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             </div>
           </section>
 
-          <section className="border-t border-(--divider) py-5">
+          <section className="border-t border-(--divider) py-4">
               <div className="flex flex-col gap-4">
                 <div className="max-w-xl text-sm leading-6 text-(--text-secondary)">
-                  {mode === 'task'
-                    ? t('task.creation.taskWorktreeDescription')
+                  {!activeProject && requiresProjectSelection
+                    ? t('task.creation.selectProjectHint')
+                    : mode === 'task'
+                      ? t('task.creation.taskWorktreeDescription')
                     : mode === 'shell'
-                      ? t('task.creation.shellDescription')
-                      : t('task.creation.chatInstantHint')}
+                        ? t('task.creation.shellDescription')
+                        : (
+                          <span>
+                            {t('task.creation.chatLocationDescription')}{' '}
+                            <span className="font-mono text-[12px] text-(--text-primary)" title={sessionLocationPath}>
+                              {sessionLocationPath}
+                            </span>
+                          </span>
+                        )}
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -610,6 +845,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={() => void handleLaunch()}
+                      {...telemetryClickAttributes('creation.submit', 'new_session')}
                       disabled={isLaunchDisabled}
                       className="whitespace-nowrap rounded-full bg-(--text-primary) px-5 py-2 text-sm font-medium text-(--chat-bg) transition-colors hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-50"
                       data-testid="empty-panel-create-session"
@@ -645,6 +881,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 </p>
               </div>
               <button
+                {...telemetryClickAttributes('creation.error.dismiss', 'new_session')}
                 onClick={() => setError(null)}
                 aria-label={t('common.close') || 'Close'}
                 className="text-[color:var(--error)]/50 hover:text-[color:var(--error)] shrink-0 transition-colors"

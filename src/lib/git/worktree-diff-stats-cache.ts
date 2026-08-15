@@ -1,9 +1,11 @@
 import * as path from 'path';
-import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import { computeWorktreeDiffStats } from './worktree-diff-stats';
+import { isDiffStatsEntryStale } from './worktree-diff-stats-staleness';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
 const DEBOUNCE_MS = 300;
+const MAX_CONCURRENT_COMPUTES = 2;
 
 type Listener = (
   workDir: string,
@@ -23,6 +25,8 @@ interface CacheState {
   pendingUserIds: Map<string, Set<string>>;
   rerunUserIds: Map<string, Set<string>>;
   inFlight: Map<string, Promise<WorktreeDiffStats | null>>;
+  activeComputeCount: number;
+  queuedComputes: Array<() => Promise<void>>;
   listeners: Set<Listener>;
 }
 
@@ -37,13 +41,45 @@ function getState(): CacheState {
       pendingUserIds: new Map(),
       rerunUserIds: new Map(),
       inFlight: new Map(),
+      activeComputeCount: 0,
+      queuedComputes: [],
       listeners: new Set(),
     };
   }
   const state = g[GLOBAL_KEY]!;
   // Keep Next.js hot-reload state created by an older module shape usable.
   state.rerunUserIds ??= new Map();
+  state.activeComputeCount ??= 0;
+  state.queuedComputes ??= [];
   return state;
+}
+
+function drainComputeQueue(): void {
+  const state = getState();
+  while (
+    state.activeComputeCount < MAX_CONCURRENT_COMPUTES
+    && state.queuedComputes.length > 0
+  ) {
+    const compute = state.queuedComputes.shift()!;
+    state.activeComputeCount += 1;
+    void compute().finally(() => {
+      state.activeComputeCount -= 1;
+      drainComputeQueue();
+    });
+  }
+}
+
+function runWithComputeLimit<T>(compute: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    getState().queuedComputes.push(async () => {
+      try {
+        resolve(await compute());
+      } catch (error) {
+        reject(error);
+      }
+    });
+    drainComputeQueue();
+  });
 }
 
 function normalize(workDir: string): string {
@@ -54,6 +90,33 @@ export function getCachedDiffStats(workDir: string): WorktreeDiffStats | null | 
   const key = normalize(workDir);
   const entry = getState().entries.get(key);
   return entry ? entry.stats : undefined;
+}
+
+/**
+ * True when a cache entry exists but is older than the TTL. A cache miss is
+ * NOT stale — callers distinguish the two because a miss needs a blocking-free
+ * first compute while a stale hit still has a usable value to return meanwhile.
+ */
+export function isDiffStatsStale(workDir: string, now: number = Date.now()): boolean {
+  const entry = getState().entries.get(normalize(workDir));
+  if (!entry) return false;
+  return isDiffStatsEntryStale(entry.computedAt, now);
+}
+
+/**
+ * Cached value for a read path, refreshing it in the background when the entry
+ * has gone stale. The returned value is whatever is cached right now (possibly
+ * stale); the refresh reaches the client via the diff-stats broadcast.
+ */
+export function getCachedDiffStatsRevalidating(
+  workDir: string,
+  userId: string,
+): WorktreeDiffStats | null | undefined {
+  const cached = getCachedDiffStats(workDir);
+  if (cached !== undefined && isDiffStatsStale(workDir)) {
+    scheduleRecompute(workDir, userId);
+  }
+  return cached;
 }
 
 export function subscribeDiffStats(listener: Listener): () => void {
@@ -101,10 +164,16 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
       // queried. Keep one shared promise, but repeat the query until no newer
       // request remains so the final broadcast cannot expose stale counts.
       while (true) {
-        const agentEnvironment = nextUserIds[0]
-          ? await getAgentEnvironment(nextUserIds[0])
-          : undefined;
-        stats = await computeWorktreeDiffStats(workDir, agentEnvironment);
+        stats = await runWithComputeLimit(async () => {
+          // A recompute can be triggered by a filesystem event with no user
+          // attached, so the fallback to the worktree path is named here.
+          const agentEnvironment = await resolveGitEnvironment(
+            nextUserIds[0]
+              ? { userId: nextUserIds[0] }
+              : { inferFromPaths: [workDir] },
+          );
+          return computeWorktreeDiffStats(workDir, agentEnvironment);
+        });
         const previousStats = state.entries.get(workDir)?.stats;
         state.entries.set(workDir, { stats, computedAt: Date.now() });
         notifyListeners(workDir, stats, nextUserIds, previousStats);

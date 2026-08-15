@@ -1,14 +1,26 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
-import { Pencil, Check, Hash, X as XIcon, MoreHorizontal, GitBranch, Search } from 'lucide-react';
+import {
+  Pencil,
+  Check,
+  Hash,
+  MessageSquare,
+  X as XIcon,
+  MoreHorizontal,
+  GitBranch,
+  Search,
+  SquareTerminal,
+} from 'lucide-react';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { useSessionStore } from '@/stores/session-store';
 import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
 import { TaskContextMenu } from './task-context-menu';
 import { wsClient } from '@/lib/ws/client';
@@ -22,10 +34,17 @@ import {
 } from '@/lib/chat/codex-native-command-events';
 import { useIsSessionProcessing } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
+import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-presentation';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface HeaderProps {
   sessionId: string;
   panelId: string;
+  projectViewDir?: string | null;
   isSinglePanel?: boolean;
   search?: {
     isOpen: boolean;
@@ -41,12 +60,10 @@ interface HeaderProps {
   };
 }
 
-export function Header({ sessionId, panelId, isSinglePanel = false, search }: HeaderProps) {
+export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
-  const session = useSessionStore((state) =>
-    state.getSession(sessionId)
-  );
+  const session = useProjectViewSession(sessionId, projectViewDir);
   const dragSessionId = session?.id ?? null;
   const taskId = session?.taskId;
   const linkedTask = useTaskStore((state) =>
@@ -57,14 +74,20 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const isProcessing = useIsSessionProcessing(sessionId);
   const isAwaitingUser = useIsSessionAwaitingUser(sessionId, session?.kind);
 
+  // PTY 세션을 읽기 전용 채팅으로 덮어 보는 토글. transcript를 되읽을 수 있는
+  // provider에서만 노출한다 — 그 외에는 보여줄 대화가 없다.
+  const terminalViewMode = useTerminalViewMode(sessionId);
+  const toggleTerminalViewMode = useTerminalViewModeStore((state) => state.toggleMode);
+  const canToggleTerminalView = session?.kind === 'terminal'
+    && supportsTerminalChatView(session?.provider);
+  const isTerminalChatView = canToggleTerminalView && terminalViewMode === 'chat';
+
   // Multi-panel unread indicator — active panel's unread is auto-cleared by
   // panel-wrapper, so this only appears on inactive panel headers.
   const hasUnread = !isSinglePanel && ((session?.unreadCount ?? 0) > 0);
 
   // session-store에서 상태 변경 액션 가져오기
   const updateLinkedTaskWorkflowStatus = useSessionStore((state) => state.updateLinkedTaskWorkflowStatus);
-  const toggleArchive = useSessionStore((state) => state.toggleArchive);
-
   // Unit 4: 패널 닫기 버튼 (REQ-13, BR-CLOSE-004)
   const panels = usePanelStore((state) => selectActiveTab(state)?.panels ?? EMPTY_PANELS);
   const closePanel = usePanelStore((state) => state.closePanel);
@@ -100,9 +123,16 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   };
 
   const handleMoreClick = useCallback((e: React.MouseEvent) => {
+    // stopPropagation keeps the surrounding row from picking the tap up, but it
+    // also means the menu's own outside-click watcher never sees a click on the
+    // trigger. Without a toggle branch here, re-tapping the button while the
+    // menu is open does nothing and the user is stuck reaching for empty space.
     e.stopPropagation();
-    const rect = moreButtonRef.current?.getBoundingClientRect();
-    if (rect) setMenuAnchorRect(rect);
+    setMenuAnchorRect((prev) => {
+      if (prev) return null;
+      const rect = moreButtonRef.current?.getBoundingClientRect();
+      return rect ?? null;
+    });
   }, []);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -124,20 +154,12 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const currentTaskStatus = linkedTask?.workflowStatus ?? session?.workflowStatus;
 
   const handleArchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, true);
-      return;
-    }
-    toggleArchive(sessionId, true);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId);
+  }, [sessionId]);
 
   const handleUnarchive = useCallback(() => {
-    if (taskId) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, false);
-      return;
-    }
-    toggleArchive(sessionId, false);
-  }, [sessionId, taskId, toggleArchive]);
+    requestSessionArchive(sessionId, false);
+  }, [sessionId]);
 
   const handleDelete = useCallback(() => {
     deleteSession(sessionId);
@@ -195,9 +217,13 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
     wsClient.stopSession(sessionId);
   }, [sessionId]);
 
-  const branchTitle = session?.worktreeBranch
-    ? `${t('chat.branchLabel')}: ${session.worktreeBranch}${
-        session.worktreeDeletedAt ? ` · ${t('chat.worktreeDeleted')}` : ''
+  const branchPresentation = resolveSessionBranchPresentation({
+    worktreeBranch: session?.worktreeBranch,
+    scopeBranch: session?.scopeBranch,
+  });
+  const branchTitle = branchPresentation
+    ? `${t('chat.branchLabel')}: ${branchPresentation.branch}${
+        session?.worktreeDeletedAt ? ` · ${t('chat.worktreeDeleted')}` : ''
       }`
     : undefined;
 
@@ -218,21 +244,31 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
   const runtimePresentation = resolveSessionRuntimePresentation(session);
   return (
     <div
-      className="h-9 border-b border-(--chat-header-border) bg-(--chat-header-bg)"
+      className={cn(
+        'h-9 border-b border-(--chat-header-border) bg-(--chat-header-bg)',
+        // At Phone viewport the row's four controls are 44px tall, which a
+        // 36px row would clip. The height follows the targets instead of
+        // being restated, so it stays right if the floor ever moves (#259).
+        'max-sm:h-auto',
+      )}
       onContextMenu={handleContextMenu}
     >
       <div
         className={cn(
           'group/header flex h-full w-full items-center justify-between gap-2.5',
-          isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5'
+          isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5',
+          // 44px targets take 176px of the 283px this row has at 360px. The
+          // slack is taken back from the padding and the gap rather than from
+          // the four controls, because the title is what is left to lose (#259).
+          'max-sm:gap-1 max-sm:px-2',
         )}
       >
         {/* Left: Channel-style title */}
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden max-sm:gap-1">
         {isProcessing ? (
           <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-(--success)/30 border-t-(--success) animate-spin" />
         ) : (
-          <Hash className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <Hash className="h-3.5 w-3.5 shrink-0 text-(--text-muted) max-sm:hidden" />
         )}
 
         {isAwaitingUser ? (
@@ -261,6 +297,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
         {isEditingTitle ? (
           <div className="flex items-center gap-1.5">
             <input
+              {...telemetryClickAttributes('chat_header.title_input', 'chat_header')}
               type="text"
               value={titleInput}
               onChange={(e) => setTitleInput(e.target.value)}
@@ -270,31 +307,37 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
               className="h-6 rounded border border-(--input-border) bg-(--input-bg) px-2 py-0 text-[15px] font-semibold leading-none text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
               autoFocus
             />
-            <button onClick={handleTitleSave} className="rounded p-0.5 text-(--success) hover:bg-(--sidebar-hover)">
+            <button {...telemetryClickAttributes('chat_header.title_save', 'chat_header')} onClick={handleTitleSave} className="rounded p-0.5 text-(--success) hover:bg-(--sidebar-hover)">
               <Check className="h-3.5 w-3.5" />
             </button>
-            <button onClick={() => { setTitleInput(session.title); setIsEditingTitle(false); }} className="rounded p-0.5 text-(--text-muted) hover:bg-(--sidebar-hover)">
+            <button {...telemetryClickAttributes('chat_header.title_cancel', 'chat_header')} onClick={() => { setTitleInput(session.title); setIsEditingTitle(false); }} className="rounded p-0.5 text-(--text-muted) hover:bg-(--sidebar-hover)">
               <XIcon className="h-3.5 w-3.5" />
             </button>
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:gap-1">
             <button
+              {...telemetryClickAttributes('chat_header.title_action', 'chat_header')}
               type="button"
               draggable
               onClick={handleTitleButtonClick}
               onDragStart={handleTitleDragStart}
               onDragEnd={handleTitleDragEnd}
-              className="group flex h-full min-w-0 flex-1 cursor-grab items-center gap-1.5 text-left active:cursor-grabbing"
+              className="group flex h-full min-w-0 flex-1 cursor-grab items-center gap-1.5 text-left active:cursor-grabbing max-sm:gap-1"
               data-testid="panel-title-drag-handle"
             >
               <ProviderBadge
                 providerId={session.provider}
-                className="h-5 rounded-md px-2 text-[10px] leading-none"
+                className="h-5 rounded-md px-2 text-[10px] leading-none max-sm:px-1"
+                // "Claude Code" is 71px of a row that has 107px left once the
+                // four 44px targets are placed. The mark alone still says
+                // which provider this is, and what it gives back is the only
+                // room the session title has (#259).
+                labelClassName="max-sm:hidden"
                 fullLabel={!session.provider || session.provider === 'claude-code'}
               />
 
-              <span className="flex min-w-0 shrink items-center gap-1">
+              <span className="flex min-w-0 shrink items-center gap-1 max-sm:flex-1">
                 <h2
                   ref={titleRef}
                   className={cn(
@@ -308,18 +351,22 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                 <Pencil
                   className={cn(
                     'h-3 w-3 shrink-0 text-(--text-muted) opacity-0 transition-opacity',
-                    !isGeneratingTitle && 'group-hover:opacity-100'
+                    // Below the Phone viewport step the hint is simply shown: `hover:`
+                    // compiles to `@media (hover: hover)`, so on a phone no rule exists
+                    // to reveal it. The reveal is kept from `sm` up (#250).
+                    !isGeneratingTitle && 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100'
                   )}
                 />
               </span>
 
-              {session.worktreeBranch && (
+              {branchPresentation && (
                 <>
-                  <span className="h-3 w-px shrink-0 bg-(--divider) opacity-70" aria-hidden="true" />
+                  <span className="h-3 w-px shrink-0 bg-(--divider) opacity-70 max-sm:hidden" aria-hidden="true" />
                   <span
                     className={cn(
                       'inline-flex min-w-0 max-w-[min(18rem,35vw)] shrink items-center gap-1',
                       'text-[11px] font-normal leading-none text-(--text-secondary)',
+                      'max-sm:hidden',
                       session.worktreeDeletedAt && 'text-(--status-error-text)'
                     )}
                     title={branchTitle}
@@ -327,12 +374,16 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                     data-testid="header-branch-chip"
                   >
                     <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="min-w-0 truncate">{session.worktreeBranch}</span>
+                    <span className="min-w-0 truncate">{branchPresentation.branch}</span>
                   </span>
                 </>
               )}
 
-              <span className="min-w-4 flex-1" aria-hidden="true" />
+              {/* Inert grab area, so the title button is draggable past the end
+                  of its text. At Phone viewport there is no free space for it
+                  to absorb and no panel to drag a session onto, and its 16px
+                  minimum comes straight out of the title (#259). */}
+              <span className="min-w-4 flex-1 max-sm:hidden" aria-hidden="true" />
             </button>
           </div>
         )}
@@ -340,7 +391,16 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
         </div>
 
         {/* Right: actions */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div
+          className={cn(
+            'ml-auto flex shrink-0 items-center gap-2',
+            // Dropping the gap at Phone viewport does not bring the glyphs
+            // closer together: each sits centred in 44px, so two neighbours
+            // are ~26px apart where the 18px boxes used to be 8px apart. The
+            // 24px it returns goes to the title.
+            'max-sm:gap-0',
+          )}
+        >
           {search?.isOpen ? (
             <MessageSearchBar
               query={search.query}
@@ -353,31 +413,59 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
               onClose={search.onClose}
             />
           ) : (
+            <>
+            {canToggleTerminalView && (
+              <button
+                type="button"
+                onClick={() => toggleTerminalViewMode(sessionId)}
+                {...telemetryClickAttributes('chat_header.terminal_toggle', 'chat_header')}
+                title={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                aria-label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                aria-pressed={isTerminalChatView}
+                className={cn(
+                  'rounded p-0.5 transition-all duration-150',
+                  'text-(--text-muted) hover:text-(--sidebar-text-active)',
+                  'hover:bg-(--sidebar-hover)',
+                  PHONE_TOUCH_TARGET,
+                  isTerminalChatView && 'text-(--sidebar-text-active)',
+                )}
+                data-testid="terminal-view-toggle"
+              >
+                {isTerminalChatView
+                  ? <SquareTerminal className="h-3.5 w-3.5" />
+                  : <MessageSquare className="h-3.5 w-3.5" />}
+              </button>
+            )}
             <button
               type="button"
               onClick={search?.onOpen}
+              {...telemetryClickAttributes('chat_header.search', 'chat_header')}
               title={t('chat.search.open')}
               aria-label={t('chat.search.open')}
               className={cn(
                 'rounded p-0.5 transition-all duration-150',
                 'text-(--text-muted) hover:text-(--sidebar-text-active)',
                 'hover:bg-(--sidebar-hover)',
+                PHONE_TOUCH_TARGET,
                 !search && 'pointer-events-none opacity-40',
               )}
               data-testid="message-search-open-button"
             >
               <Search className="h-3.5 w-3.5" />
             </button>
+            </>
           )}
 
           {/* More actions button — hover only */}
           <button
             ref={moreButtonRef}
             onClick={handleMoreClick}
+            {...telemetryClickAttributes('chat_header.more', 'chat_header')}
             className={cn(
               'rounded p-0.5 transition-all duration-150',
               'text-(--text-muted) hover:text-(--sidebar-text-active)',
               'hover:bg-(--sidebar-hover)',
+              PHONE_TOUCH_TARGET,
               'opacity-100'
             )}
             data-testid="header-more-button"
@@ -399,10 +487,14 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
                   closePanel(panelId);
                 }
               }}
+              {...telemetryClickAttributes('chat_header.close_panel', 'chat_header')}
               title={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               aria-label={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               data-testid="panel-close-button"
-              className="rounded p-0.5 transition-colors hover:bg-(--sidebar-hover)"
+              className={cn(
+                'rounded p-0.5 transition-colors hover:bg-(--sidebar-hover)',
+                PHONE_TOUCH_TARGET,
+              )}
             >
               <XIcon className="h-3.5 w-3.5 text-(--text-muted)" />
             </button>
@@ -418,7 +510,7 @@ export function Header({ sessionId, panelId, isSinglePanel = false, search }: He
           isArchived={session.archived ?? false}
           isRunning={runtimePresentation.showRunning}
           onStatusChange={isSingleSessionTask ? handleStatusChange : undefined}
-          onArchive={session.taskId ? undefined : handleArchive}
+          onArchive={handleArchive}
           onUnarchive={session.taskId ? undefined : handleUnarchive}
           onRename={handleRenameFromMenu}
           onDelete={handleDelete}

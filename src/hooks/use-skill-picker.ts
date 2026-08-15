@@ -21,6 +21,8 @@ import {
   getCodexSlashCommandsForPicker,
   isReservedCodexSlashCommandName,
 } from '@/lib/chat/codex-slash-command-registry';
+import { loadCodexSkills } from '@/lib/chat/codex-skill-loader';
+import { isHiddenSlashCommandName } from '@/lib/chat/hidden-slash-commands';
 
 export type SkillInfo = CommandInfo & {
   builtinCommand?:
@@ -76,6 +78,17 @@ export function useSkillPicker(
   const commands = useCommandStore(
     (s) => (sessionId ? s.commands[sessionId] : undefined),
   );
+  // 피커에 내보내지 않을 명령(예: claude-code /clear)은 store 원본에서 한 번에 걷어낸다.
+  // 목록을 소비하는 지점이 여러 곳이라 각자 거르면 빠뜨리기 쉽다. 로딩 여부 판정은
+  // 원본(commands)을 그대로 쓴다 — 숨긴 명령만 남은 세션을 "아직 안 왔다"로 오인하지 않도록.
+  const visibleCommands = useMemo(
+    () => commands?.filter((command) => !isHiddenSlashCommandName(command.name, providerId)),
+    [commands, providerId],
+  );
+  const skillRevision = useCommandStore(
+    (s) => (sessionId ? (s.revisions[sessionId] ?? 0) : 0),
+  );
+  const catalogRevision = useCommandStore((s) => s.catalogRevision);
   const builtInCommands = useMemo<SkillInfo[]>(
     () => {
       if (providerId === 'codex') {
@@ -102,7 +115,7 @@ export function useSkillPicker(
   );
   const availableCommands = useMemo<SkillInfo[]>(() => {
     const merged = [...builtInCommands];
-    for (const command of commands ?? []) {
+    for (const command of visibleCommands ?? []) {
       if (providerId === 'codex' && isReservedCodexSlashCommandName(command.name)) {
         continue;
       }
@@ -144,7 +157,7 @@ export function useSkillPicker(
       }
     }
     return merged;
-  }, [agentEnvironment, builtInCommands, codexPlatform, commands, providerId]);
+  }, [agentEnvironment, builtInCommands, codexPlatform, providerId, visibleCommands]);
   // 세션이 실제 보고한 명령(store commands)의 이름 집합(소문자). 터미널 라우팅에서
   // "headless 지원이면 제외" 판정의 1순위 기준으로 message-input에 노출한다.
   const sessionCommandNames = useMemo<ReadonlySet<string>>(
@@ -153,9 +166,13 @@ export function useSkillPicker(
   );
   const hasLoadedCommands = commands !== undefined;
   const hasBuiltInCommands = builtInCommands.length > 0;
+  const canDiscoverBeforeSession = providerId === 'claude-code'
+    || providerId === 'codex'
+    || providerId === 'opencode';
   const isInactive = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
-    && isSessionRunning === false;
+    && isSessionRunning === false
+    && !canDiscoverBeforeSession;
   const isLoading = isOpen && !hasLoadedCommands
     && (skillsOnlyMode || !hasBuiltInCommands)
     && !isInactive;
@@ -163,22 +180,56 @@ export function useSkillPicker(
 
   // Track the last input value so we can re-filter when commands arrive
   const lastInputRef = useRef('');
-  const loadPromiseRef = useRef<Promise<void> | null>(null);
+  const loadPromiseRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const loadTokenRef = useRef<object | null>(null);
+  const skillLoadKey = sessionId && providerId
+    ? `${providerId}:${sessionId}:${skillRevision}:${catalogRevision}`
+    : null;
+
+  useEffect(
+    function invalidateDifferentSkillLoad() {
+      if (loadPromiseRef.current?.key !== skillLoadKey) {
+        loadTokenRef.current = null;
+      }
+    },
+    [skillLoadKey],
+  );
 
   const loadProviderSkills = useCallback(async () => {
-    if (!sessionId || !providerId || loadPromiseRef.current) {
-      return loadPromiseRef.current ?? Promise.resolve();
+    if (!sessionId || !providerId || !skillLoadKey) {
+      return;
     }
 
+    const loadKey = skillLoadKey;
+    if (loadPromiseRef.current?.key === loadKey) {
+      return loadPromiseRef.current.promise;
+    }
+
+    const loadToken = {};
+    loadTokenRef.current = loadToken;
+    const isCurrentLoad = () =>
+      loadTokenRef.current === loadToken
+      && useCommandStore.getState().catalogRevision === catalogRevision
+      && (useCommandStore.getState().revisions[sessionId] ?? 0) === skillRevision;
+    const canApplyLoad = () =>
+      isCurrentLoad()
+      && useCommandStore.getState().commands[sessionId] === undefined;
+
     const task = (async () => {
-      if (providerId === 'claude-code' || providerId === 'opencode') {
+      if (providerId === 'opencode') {
         if (isSessionRunning !== false) {
           wsClient.getCommands(sessionId);
+          return;
         }
-        return;
       }
 
-      if (isSessionRunning === false) {
+      if (providerId === 'codex') {
+        const skills = await loadCodexSkills(sessionId, {
+          shouldContinue: isCurrentLoad,
+        });
+        if (skills !== null && canApplyLoad()) {
+          setCommands(sessionId, skills);
+        }
         return;
       }
 
@@ -198,25 +249,35 @@ export function useSkillPicker(
               }))
           : [];
 
-        setCommands(sessionId, skills);
+        if (canApplyLoad()) {
+          setCommands(sessionId, skills);
+        }
       } catch {
-        setCommands(sessionId, []);
+        // A failed request is not proof that the provider has no skills. In
+        // particular, preparation may have failed before copying the files the
+        // provider scans. Keep the catalog unresolved so a later user action or
+        // provider invalidation can retry instead of caching a false empty list.
       }
     })();
 
-    loadPromiseRef.current = task;
+    const loadEntry = { key: loadKey, promise: task };
+    loadPromiseRef.current = loadEntry;
     try {
       await task;
     } finally {
-      loadPromiseRef.current = null;
+      if (loadPromiseRef.current === loadEntry) {
+        loadPromiseRef.current = null;
+      }
     }
-  }, [isSessionRunning, providerId, sessionId, setCommands]);
+  }, [catalogRevision, isSessionRunning, providerId, sessionId, setCommands, skillLoadKey, skillRevision]);
 
-  useEffect(() => {
-    if (!sessionId || !providerId || hasLoadedCommands) return;
-    if (isSessionRunning === false) return;
-    void loadProviderSkills();
-  }, [hasLoadedCommands, isSessionRunning, loadProviderSkills, providerId, sessionId]);
+  useEffect(
+    function loadProviderSkillsWhenReady() {
+      if (!sessionId || !providerId || hasLoadedCommands) return;
+      void loadProviderSkills();
+    },
+    [hasLoadedCommands, isSessionRunning, loadProviderSkills, providerId, sessionId],
+  );
 
   const filterAndShow = useCallback(
     (value: string, list: SkillInfo[]) => {
@@ -261,14 +322,14 @@ export function useSkillPicker(
     // Only trigger on transition from empty → populated
     if (!wasEmpty) return;
     const list = skillsOnlyMode
-      ? (commands ?? []).filter((command) => !isReservedCodexSlashCommandName(command.name))
+      ? (visibleCommands ?? []).filter((command) => !isReservedCodexSlashCommandName(command.name))
       : availableCommands;
     if (list.length === 0) return;
     const input = lastInputRef.current;
     if (!input.startsWith('/') || input.indexOf(' ') !== -1) return;
     if (selectedSkill) return;
     filterAndShow(input, list);
-  }, [availableCommands, commands, filterAndShow, selectedSkill, skillsOnlyMode]);
+  }, [availableCommands, commands, filterAndShow, selectedSkill, skillsOnlyMode, visibleCommands]);
 
   const selectSkill = useCallback((skill: SkillInfo) => {
     setSelectedSkill(skill);
@@ -306,7 +367,7 @@ export function useSkillPicker(
         }
         filterAndShow(
           value,
-          commands.filter((command) => !isReservedCodexSlashCommandName(command.name)),
+          (visibleCommands ?? []).filter((command) => !isReservedCodexSlashCommandName(command.name)),
         );
         return;
       }
@@ -342,6 +403,7 @@ export function useSkillPicker(
       loadProviderSkills,
       selectedSkill,
       skillsOnlyMode,
+      visibleCommands,
     ],
   );
 
@@ -350,14 +412,14 @@ export function useSkillPicker(
     setSelectedSkill(null);
     setSkillsOnlyMode(true);
     if (commands !== undefined) {
-      filterAndShow('/', commands.filter((command) => !isReservedCodexSlashCommandName(command.name)));
+      filterAndShow('/', (visibleCommands ?? []).filter((command) => !isReservedCodexSlashCommandName(command.name)));
       return;
     }
     setFilteredSkills([]);
     setSelectedIndex(0);
     setIsOpen(true);
     void loadProviderSkills();
-  }, [commands, filterAndShow, loadProviderSkills]);
+  }, [commands, filterAndShow, loadProviderSkills, visibleCommands]);
 
   const confirm = useCallback((): SkillInfo | null => {
     if (!isOpen || filteredSkills.length === 0) return null;

@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { ChevronRight, Plus, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { collectionGroupContainsSession } from '@/lib/chat/build-collection-groups';
 import {
   getCollectionSessionSnapshots,
@@ -12,8 +13,11 @@ import {
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import { useBoardStore } from '@/stores/board-store';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
+import { useProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
 import { useChatStore } from '@/stores/chat-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
@@ -37,8 +41,25 @@ import { DeleteTaskDialog } from './delete-task-dialog';
 import { ItemStatusIndicator } from './work-item-primitives';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import {
+  canPrepareTask,
+  useProjectHasPreparationScript,
+  useWorktreePreparation,
+} from '@/hooks/use-worktree-preparation';
+import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import { buildTaskChildSession } from '@/lib/session/task-child-session';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import {
+  SIDEBAR_TREE_CHILD_INDENT,
+  SIDEBAR_TREE_LEADING_SLOT,
+  SIDEBAR_TREE_ROW_GUTTER,
+} from './sidebar-tree-layout';
 
-async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) {
+async function createSessionInTask(
+  task: TaskEntity,
+  requestedProviderId?: string,
+  requestedExecutionMode?: AgentExecutionMode,
+) {
   try {
     const panelState = usePanelStore.getState();
     const tabData = selectActiveTab(panelState);
@@ -66,34 +87,14 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
         worktreeBranch: task.worktreeBranch || undefined,
         ...runtimeConfig,
         providerId,
+        ...(requestedExecutionMode && { executionMode: requestedExecutionMode }),
       }),
     });
     if (!sessionResponse.ok) throw new Error('Failed to create session');
 
     const sessionData = await sessionResponse.json();
-    const newSessionId = sessionData.sessionId || sessionData.id;
-    if (!newSessionId) throw new Error('No session ID returned');
-
-    const newSession: UnifiedSession = {
-      id: newSessionId,
-      title: sessionData.title || 'New Session',
-      projectDir: task.projectId || '',
-      isRunning: false,
-      hasStarted: false,
-      status: sessionData.status || 'starting',
-      createdAt: new Date().toISOString(),
-      lastModified: new Date().toISOString(),
-      archived: false,
-      sortOrder: 0,
-      worktreeBranch: task.worktreeBranch,
-      taskId: task.id,
-      collectionId: task.collectionId,
-      provider: sessionData.provider,
-      kind: sessionData.kind,
-      model: sessionData.model,
-      reasoningEffort: sessionData.reasoningEffort,
-      serviceTier: sessionData.serviceTier,
-    };
+    const newSession = buildTaskChildSession(task, sessionData);
+    const newSessionId = newSession.id;
 
     useSessionStore.getState().addSession(newSession);
     useChatStore.getState().loadHistory(newSessionId, []);
@@ -105,7 +106,7 @@ async function addSessionToTask(task: TaskEntity, requestedProviderId?: string) 
     );
     useTabStore.getState().syncTabProjectFromSession(latestPanelState.activeTabId, newSessionId);
 
-    await useTaskStore.getState().loadTasks(task.projectId);
+    await useTaskStore.getState().loadTasks(task.projectViewId);
     await useSessionStore.getState().loadProjects();
 
     void captureTelemetryEvent('session_created', {
@@ -174,10 +175,9 @@ export interface CollectionGroupProps {
   onTaskDelete?: (taskId: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
   onSessionDelete?: (sessionId: string) => void;
-  onSessionArchive?: (sessionId: string) => void;
+  onSessionArchive?: (sessionId: string, task?: TaskEntity) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
-  onSessionMoveToProject?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
   onTaskStatusChange?: (taskId: string, status: string) => void;
   onChatStatusChange?: (sessionId: string, status: string) => void;
@@ -226,7 +226,6 @@ export const CollectionGroup = memo(function CollectionGroup({
   onSessionArchive,
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
-  onSessionMoveToProject,
   onSessionStopProcess,
   onTaskStatusChange,
   onChatStatusChange,
@@ -257,31 +256,22 @@ export const CollectionGroup = memo(function CollectionGroup({
     () => collectionSessionSnapshots.map((session) => session.id),
     [collectionSessionSnapshots],
   );
-  const hasVisibleRuntimeSession = useSessionStore((state) =>
-    collectionSessionSnapshots.some((snapshot) => {
-      for (const project of state.projects) {
-        const liveSession = project.sessions.find((session) => session.id === snapshot.id);
-        if (liveSession) return resolveSessionRuntimePresentation(liveSession).showRunning;
-      }
-
-      return resolveSessionRuntimePresentation(snapshot).showRunning;
-    }),
+  const resolvedCollectionSessions = useProjectViewSessions(collectionSessionIds, projectId);
+  const resolvedCollectionSessionsById = new Map(
+    resolvedCollectionSessions.map((session) => [session.id, session]),
   );
+  const hasVisibleRuntimeSession = collectionSessionSnapshots.some((snapshot) => (
+    resolveSessionRuntimePresentation(
+      resolvedCollectionSessionsById.get(snapshot.id) ?? snapshot,
+    ).showRunning
+  ));
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
   } = useSessionProcessingSummary(collectionSessionSnapshots);
-  const hasUnreadSession = useSessionStore((state) =>
-    collectionSessionSnapshots.some((snapshot) => {
-      if (snapshot.id === activeSessionId) return false;
-
-      for (const project of state.projects) {
-        const liveSession = project.sessions.find((session) => session.id === snapshot.id);
-        if (liveSession) return (liveSession.unreadCount ?? 0) > 0;
-      }
-
-      return (snapshot.unreadCount ?? 0) > 0;
-    }),
+  const hasUnreadSession = useAnyProjectViewSessionUnread(
+    collectionSessionIds,
+    activeSessionId,
   );
   const hasAwaitingUserSession = useAnySessionAwaitingUser(collectionSessionSnapshots);
   const collectionIndicatorStatus = getPrioritizedCollectionIndicatorStatus({
@@ -312,6 +302,11 @@ export const CollectionGroup = memo(function CollectionGroup({
   const quickCreateTriggerRef = useRef<HTMLButtonElement>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const chatById = useMemo(() => new Map(chats.map((session) => [session.id, session])), [chats]);
+  const contextMenuTask = contextMenu?.type === 'task' && !contextMenu.isSubSession
+    ? taskById.get(contextMenu.targetId)
+    : undefined;
+  const projectHasPreparationScript = useProjectHasPreparationScript(contextMenuTask?.projectId);
+  const { requestPreparation, preparationConfirmDialog } = useWorktreePreparation();
 
   const openItemContextMenu = useCallback(
     (
@@ -327,15 +322,20 @@ export const CollectionGroup = memo(function CollectionGroup({
       const isRunning =
         type === 'chat'
           ? resolveSessionRuntimePresentation(
-              useSessionStore.getState().getSession(id) ?? chatById.get(id) ?? { isRunning: false },
+              projectViewWorkspaceState.resolveSession(id, projectId)
+                ?? chatById.get(id)
+                ?? { isRunning: false },
             ).canStop
           : task?.sessions.some((session) => {
-              const liveSession = useSessionStore.getState().getSession(session.id);
+              const liveSession = projectViewWorkspaceState.resolveSession(
+                session.id,
+                projectId,
+              );
               return resolveSessionRuntimePresentation(liveSession ?? session).canStop;
             }) ?? false;
 
       const session = type === 'chat'
-        ? useSessionStore.getState().getSession(id) ?? chatById.get(id)
+        ? projectViewWorkspaceState.resolveSession(id, projectId) ?? chatById.get(id)
         : undefined;
       const currentStatus =
         type === 'task'
@@ -355,7 +355,7 @@ export const CollectionGroup = memo(function CollectionGroup({
         currentStatus,
       });
     },
-    [chatById, taskById],
+    [chatById, projectId, taskById],
   );
 
   const startEditingCollection = useCallback(() => {
@@ -402,9 +402,10 @@ export const CollectionGroup = memo(function CollectionGroup({
   }, [contextMenu, onSessionDelete]);
 
   const handleContextMenuArchive = useCallback(() => {
-    if (!contextMenu || contextMenu.isSubSession) return;
+    if (!contextMenu) return;
 
-    if (contextMenu.type === 'task') {
+    // A sub-session row targets the session itself, never its task.
+    if (contextMenu.type === 'task' && !contextMenu.isSubSession) {
       void useTaskStore.getState().toggleTaskArchive(contextMenu.targetId, true);
       return;
     }
@@ -438,7 +439,10 @@ export const CollectionGroup = memo(function CollectionGroup({
 
     const task = useTaskStore.getState().getTask(contextMenu.targetId) ?? taskById.get(contextMenu.targetId);
     for (const session of task?.sessions ?? []) {
-      const liveSession = useSessionStore.getState().getSession(session.id);
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        task?.projectViewId,
+      );
       if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
         onSessionStopProcess(session.id);
       }
@@ -462,10 +466,11 @@ export const CollectionGroup = memo(function CollectionGroup({
       onDragOverItem={(event) => onItemDragOverItem(task.id, collectionScopeId, 'task', projectId, event)}
       onRename={onTaskRename}
       onSessionRename={onSessionRename}
+      onSessionArchive={onSessionArchive}
       renamingSessionId={renamingItem?.type === 'chat' ? renamingItem.id : null}
       isRenameRequested={renamingItem?.type === 'task' && renamingItem.id === task.id}
       onRenameComplete={finishItemRename}
-      onAddSession={(providerId) => addSessionToTask(task, providerId)}
+      onAddSession={(providerId, executionMode) => createSessionInTask(task, providerId, executionMode)}
       onStopProcess={onSessionStopProcess}
       disableDnd={disableDnd}
       allowPanelSessionDnd={allowPanelSessionDnd}
@@ -525,6 +530,7 @@ export const CollectionGroup = memo(function CollectionGroup({
     >
       {!hideHeader && (
         <div
+          {...telemetryClickAttributes('collection.section.toggle', 'workspace_list')}
           draggable={!disableDnd && !isUncategorized}
           onDragStart={
             !disableDnd && !isUncategorized
@@ -533,7 +539,8 @@ export const CollectionGroup = memo(function CollectionGroup({
           }
           onDragEnd={!disableDnd && !isUncategorized ? onGroupDragEnd : undefined}
           className={cn(
-            'group/collection relative mx-1 flex select-none items-center gap-2 rounded-lg px-3 py-1.5 transition-colors duration-150',
+            'group/collection relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-colors duration-150',
+            SIDEBAR_TREE_ROW_GUTTER,
             !isEmpty && 'cursor-pointer',
             !disableDnd && !isUncategorized && 'cursor-grab active:cursor-grabbing',
             'hover:bg-(--sidebar-hover)/60',
@@ -544,15 +551,15 @@ export const CollectionGroup = memo(function CollectionGroup({
           onClick={isEmpty ? undefined : onToggleCollapse}
           data-testid={`collection-header-${collectionId}`}
         >
-          <div className="relative h-3 w-3 shrink-0">
+          <div className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
             {isEmpty ? (
-              <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted)" />
+              <Tag className="absolute inset-0 h-3.5 w-3.5 text-(--text-muted)" />
             ) : (
               <>
-                <Tag className="absolute inset-0 h-3 w-3 text-(--text-muted) transition-opacity duration-150 group-hover/collection:opacity-0" />
+                <Tag className="absolute inset-0 h-3.5 w-3.5 text-(--text-muted) transition-opacity duration-150 group-hover/collection:opacity-0" />
                 <ChevronRight
                   className={cn(
-                    'absolute inset-0 h-3 w-3 text-(--text-muted) opacity-0 transition-all duration-150 group-hover/collection:opacity-100',
+                    'absolute inset-0 h-3.5 w-3.5 text-(--text-muted) opacity-0 transition-all duration-150 group-hover/collection:opacity-100',
                     !isCollapsed && 'rotate-90',
                   )}
                 />
@@ -574,6 +581,7 @@ export const CollectionGroup = memo(function CollectionGroup({
 
           {isEditingCollection ? (
             <input
+              {...telemetryClickAttributes('collection.rename_input', 'workspace_list')}
               ref={editInputRef}
               value={editingLabel}
               onChange={(event) => setEditingLabel(event.target.value)}
@@ -600,18 +608,30 @@ export const CollectionGroup = memo(function CollectionGroup({
 
           {!hideHeaderActions && (
             <div
+              {...telemetryIgnoreAttributes('event_boundary')}
               className={cn(
                 'flex items-center gap-0.5 transition-opacity duration-150',
-                isQuickCreateOpen ? 'opacity-100' : 'opacity-0 group-hover/collection:opacity-100',
+                // Below the Phone viewport step these stay visible: a phone has
+                // no hover, so a hover-revealed control is one it can never
+                // find. The reveal is kept from `sm` up, where a pointer is
+                // what actually drives the UI.
+                isQuickCreateOpen
+                  ? 'opacity-100'
+                  : 'opacity-100 sm:opacity-0 sm:group-hover/collection:opacity-100',
               )}
               onClick={(event) => event.stopPropagation()}
             >
               <button
+                {...telemetryClickAttributes('collection.quick_create.open', 'workspace_list')}
                 ref={quickCreateTriggerRef}
                 type="button"
                 onClick={() => setIsQuickCreateOpen((prev) => !prev)}
                 className={cn(
                   'rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
+                  // #244 made this visible on a phone; being visible and being
+                  // hittable are different properties, and 15px was the second
+                  // one missing (#259).
+                  PHONE_TOUCH_TARGET,
                   isQuickCreateOpen && 'bg-(--sidebar-hover) text-(--sidebar-text-active)',
                 )}
                 aria-label="Create in collection"
@@ -639,7 +659,7 @@ export const CollectionGroup = memo(function CollectionGroup({
 
       {!isCollapsed && (
         <div
-          className={cn(hideHeader ? 'space-y-0.5' : 'ml-4 space-y-0.5')}
+          className={cn('space-y-0.5', !hideHeader && SIDEBAR_TREE_CHILD_INDENT)}
         >
           {orderedItems ? (
             orderedItems.map((item) => {
@@ -684,15 +704,20 @@ export const CollectionGroup = memo(function CollectionGroup({
       {contextMenu && (
         <CollectionContextMenu
           menu={contextMenu}
+          projectViewId={projectId}
           collections={contextMenuCollections}
           onClose={closeContextMenu}
           onRename={handleContextMenuRename}
           onDelete={handleContextMenuDelete}
-          onArchive={!contextMenu.isSubSession ? handleContextMenuArchive : undefined}
+          onArchive={handleContextMenuArchive}
           onOpenInNewTab={contextMenu.type === 'chat' ? () => onSessionOpenInNewTab?.(contextMenu.targetId) : undefined}
           onGenerateTitle={onSessionGenerateTitle ? handleContextMenuGenerateTitle : undefined}
-          onMoveToProject={contextMenu.type === 'chat' && !contextMenu.isSubSession ? () => onSessionMoveToProject?.(contextMenu.targetId) : undefined}
           onStopProcess={contextMenu.isRunning ? handleContextMenuStopProcess : undefined}
+          onRunPreparation={
+            contextMenuTask && canPrepareTask(contextMenuTask, projectHasPreparationScript)
+              ? () => requestPreparation(contextMenuTask.id)
+              : undefined
+          }
           onStatusChange={
             contextMenu.type === 'task' && !contextMenu.isSubSession && onTaskStatusChange
               ? (status) => onTaskStatusChange(contextMenu.targetId, status)
@@ -702,6 +727,8 @@ export const CollectionGroup = memo(function CollectionGroup({
           }
         />
       )}
+
+      {preparationConfirmDialog}
 
       {taskIdToDelete && (
         <DeleteTaskDialog

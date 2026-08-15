@@ -5,6 +5,10 @@ import test from 'node:test';
 const packageJson = JSON.parse(
   fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 );
+const npmCliSource = fs.readFileSync(
+  new URL('../bin/tessera.mjs', import.meta.url),
+  'utf8',
+);
 
 test('npm CLI package keeps Linux-friendly runtime dependencies and executable bin', () => {
   const binPath = new URL('../bin/tessera.mjs', import.meta.url);
@@ -25,4 +29,12 @@ test('npm package excludes Next development build artifacts', () => {
   assert.ok(files.includes('!.next/diagnostics/**'));
   assert.ok(files.includes('!.next/cache/'));
   assert.ok(files.includes('!.next/cache/**'));
+});
+
+test('npm CLI uses the requested port without scanning for a fallback', () => {
+  assert.match(npmCliSource, /const DEFAULT_PORT = 32123;/);
+  assert.match(npmCliSource, /process\.env\.PORT = String\(options\.port\);/);
+  assert.doesNotMatch(npmCliSource, /PORT_SCAN_LIMIT/);
+  assert.doesNotMatch(npmCliSource, /findPort/);
+  assert.doesNotMatch(npmCliSource, /isPortAvailable/);
 });

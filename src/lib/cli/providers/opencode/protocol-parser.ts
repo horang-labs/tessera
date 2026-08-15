@@ -830,7 +830,7 @@ function inferOpenCodeToolKind(toolName: string, acpKind: unknown): ToolCallKind
   }
 }
 
-function normalizeToolName(value: unknown): string {
+export function normalizeToolName(value: unknown): string {
   const raw = typeof value === 'string' && value.trim() ? value.trim() : 'Tool';
   switch (raw.toLowerCase()) {
     case 'bash':

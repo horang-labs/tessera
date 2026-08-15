@@ -17,6 +17,8 @@ import { McpProgress } from './progress/mcp-progress';
 import { ToolCallGrid } from './tool-call-grid';
 import { AssistantTextBody, extractAssistantText, type ForkFromMessageHandler } from './message-bubble-content';
 import { MessageRowShell } from './message-row-shell';
+import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 function formatMessageTime(timestamp: string) {
   const date = new Date(timestamp);
@@ -56,14 +58,23 @@ interface AgentSubGroupViewProps {
   onForkFromMessage?: ForkFromMessageHandler;
 }
 
+// Below the Phone viewport step these actions are simply present: `hover:` compiles to
+// `@media (hover: hover)`, so on a phone no rule exists to reveal them. The reveal is kept
+// from `sm` up, where a pointer is what drives the UI (#250).
+// The `flex-wrap` and the missing `shrink-0` are #261; the reasoning lives with
+// the twin of this constant in `message-bubble-content.tsx`. This is the variant
+// the ticket was reported against.
 const MESSAGE_ACTIONS_CLASS =
-  'ml-auto inline-flex shrink-0 items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
+  'ml-auto inline-flex flex-wrap justify-end items-center gap-1 opacity-100 pointer-events-auto sm:opacity-0 sm:pointer-events-none transition-opacity sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
 
 const MESSAGE_ACTION_BUTTON_CLASS =
-  'inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)';
+  `inline-flex h-5 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent) ${PHONE_TOUCH_TARGET_HEIGHT}`;
 
-const MESSAGE_COPY_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[4.75rem]`;
-const MESSAGE_FORK_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} w-[6.25rem]`;
+// Phones collapse to icon-only (see `.max-sm:sr-only` on the labels below);
+// a fixed width would leave the icon stranded in a 76/100px pill. Desktop
+// keeps the pill so the hover reveal does not reflow the header.
+const MESSAGE_COPY_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} sm:w-[4.75rem] max-sm:aspect-square max-sm:px-0`;
+const MESSAGE_FORK_BUTTON_CLASS = `${MESSAGE_ACTION_BUTTON_CLASS} sm:w-[6.25rem] max-sm:aspect-square max-sm:px-0`;
 
 /**
  * Translate button for the subgroup header action row. Operates on EVERY assistant
@@ -117,6 +128,7 @@ function SubgroupTranslateButton({
 
   return (
     <button
+      {...telemetryClickAttributes('message.translate', 'message')}
       type="button"
       onClick={handleClick}
       disabled={isAnyPending}
@@ -125,7 +137,7 @@ function SubgroupTranslateButton({
       title={t('chat.translate')}
     >
       <Languages className="w-3 h-3" />
-      <span>{label}</span>
+      <span className="max-sm:sr-only">{label}</span>
     </button>
   );
 }
@@ -171,18 +183,20 @@ function AgentSubGroupView({
   return (
     <MessageRowShell
       data-testid="agent-message-group"
-      className={`flex gap-3 px-2 py-1 group${disableAnimation ? '' : ' message-enter'}`}
+      className={`flex gap-3 max-sm:gap-1.5 px-2 max-sm:px-1 py-1 group${disableAnimation ? '' : ' message-enter'}`}
     >
       <div className="shrink-0 pt-0.5">
         <ProviderLogoMark
           providerId={providerId}
-          className="h-8 w-8 rounded-lg"
-          iconClassName="h-4 w-4"
+          className="h-8 w-8 rounded-lg max-sm:h-4 max-sm:w-4 max-sm:rounded-md"
+          iconClassName="h-4 w-4 max-sm:h-2.5 max-sm:w-2.5"
         />
       </div>
 
       <div className="flex-1 min-w-0">
-        <div data-testid="agent-message-header" className="flex items-baseline gap-2 mb-0.5 max-w-2xl">
+        {/* `flex-wrap` so the actions row can take a line of its own — see
+            MESSAGE_ACTIONS_CLASS above (#261). */}
+        <div data-testid="agent-message-header" className="flex flex-wrap items-baseline gap-2 mb-0.5 max-w-2xl">
           <span
             className="text-sm font-medium"
             style={{ color: providerBrand.tone.icon }}
@@ -190,13 +204,14 @@ function AgentSubGroupView({
             {providerBrand.label}
           </span>
           <Tooltip content={formatMessageFullTime(timestamp)}>
-            <span className="text-[10px] text-(--text-muted) opacity-0 group-hover:opacity-100 transition-opacity cursor-default">
+            <span className="text-[10px] text-(--text-muted) opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity cursor-default">
               {formatMessageTime(timestamp)}
             </span>
           </Tooltip>
           {combinedText && (
-            <div className={MESSAGE_ACTIONS_CLASS}>
+            <div data-testid="message-actions" className={MESSAGE_ACTIONS_CLASS}>
               <button
+                {...telemetryClickAttributes('message.copy', 'message')}
                 type="button"
                 onClick={handleCopy}
                 className={MESSAGE_COPY_BUTTON_CLASS}
@@ -204,25 +219,26 @@ function AgentSubGroupView({
                 {copied ? (
                   <>
                     <Check className="w-3 h-3" />
-                    <span>{t('chat.copied')}</span>
+                    <span className="max-sm:sr-only">{t('chat.copied')}</span>
                   </>
                 ) : (
                   <>
                     <Copy className="w-3 h-3" />
-                    <span>{t('chat.copy')}</span>
+                    <span className="max-sm:sr-only">{t('chat.copy')}</span>
                   </>
                 )}
               </button>
               <SubgroupTranslateButton messages={textMessages} />
               {onForkFromMessage && forkTargetMessage && (
                 <button
+                  {...telemetryClickAttributes('message.fork', 'message')}
                   type="button"
                   onClick={(event) => onForkFromMessage(forkTargetMessage, event.currentTarget)}
                   className={MESSAGE_FORK_BUTTON_CLASS}
                   title={t('chat.forkFromHereTooltip')}
                 >
                   <MessageSquarePlus className="w-3 h-3" />
-                  <span>{t('chat.forkFromHere')}</span>
+                  <span className="max-sm:sr-only">{t('chat.forkFromHere')}</span>
                 </button>
               )}
             </div>

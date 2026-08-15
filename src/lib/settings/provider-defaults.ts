@@ -1,4 +1,3 @@
-import type { GitActionId } from '@/lib/git/action-templates';
 import type { PermissionMode } from '@/lib/ws/message-types';
 import type {
   CodexApprovalPolicy,
@@ -69,8 +68,6 @@ export function normalizeFontScale(raw: unknown): number {
   return best;
 }
 
-export const DEFAULT_GLOBAL_GIT_GUIDELINES = '';
-
 export function normalizeClaudeModel(model?: string): string | undefined {
   if (!model) {
     return model;
@@ -137,9 +134,9 @@ export function getProviderSessionDefaultsWithOptions(
 }
 
 /**
- * Build a synthetic model option for a Claude model the user typed that isn't in
- * the curated list. No reasoning-effort tiers are claimed (we can't know what an
- * arbitrary model supports), so the CLI uses its own --effort default.
+ * Build a synthetic option for a stored Claude model that is no longer present in
+ * the current list. No reasoning-effort tiers are claimed because its capabilities
+ * are unknown.
  */
 function buildCustomClaudeModelOption(model: string): ProviderModelOption {
   return {
@@ -225,8 +222,8 @@ export function resolveProviderReasoningEffort(
 
   const reasoningOptions = modelOption?.supportedReasoningEfforts ?? [];
   if (reasoningOptions.length === 0) {
-    // Claude Code model lists are static, so an empty tier list means the model
-    // genuinely supports no effort selection (e.g. Haiku, or a custom model). Drop
+    // For Claude Code, an empty tier list means no effort selection was advertised
+    // (e.g. Haiku, or a custom model). Drop
     // any stale request — otherwise a leftover "ultracode" would follow the user
     // onto a model that can't use it and emit --settings ultracode pointlessly.
     // Codex/OpenCode lists are probed lazily, so an empty list there may just mean
@@ -504,6 +501,41 @@ export function buildProviderSessionDefaultsUpdate(
   };
 }
 
+export function normalizeProviderCustomModelList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    const model = value.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+
+  return models;
+}
+
+export function normalizeProviderCustomModels(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+
+  const normalized: Record<string, string[]> = {};
+  for (const [rawProviderId, rawModels] of Object.entries(raw)) {
+    const providerId = rawProviderId.trim();
+    const models = normalizeProviderCustomModelList(rawModels);
+    if (providerId && models.length > 0) {
+      normalized[providerId] = models;
+    }
+  }
+
+  return normalized;
+}
+
 export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefined): UserSettings {
   const retentionDays =
     typeof raw?.archivedWorktreeRetentionDays === 'number'
@@ -513,6 +545,8 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
   const defaults = {
     language: 'en',
     agentExecutionMode: 'pty',
+    terminalSessionDefaultView: 'terminal',
+    defaultNewSessionKind: 'task',
     profile: {
       displayName: DEFAULT_PROFILE_DISPLAY_NAME,
       avatarDataUrl: DEFAULT_PROFILE_AVATAR_DATA_URL,
@@ -530,7 +564,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       output: { provider: 'claude-code', model: '', promptTemplate: '' },
       sendShortcut: 'meta+enter',
     },
-    theme: 'auto',
+    theme: 'dark',
     terminalThemeLightPreset: 'lifted-neutral',
     terminalThemeDarkPreset: 'neutral-charcoal',
     fontSize: DEFAULT_FONT_SCALE,
@@ -556,6 +590,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
         accessMode: 'opencodeDefault',
       },
     },
+    providerCustomModels: {},
     inactivePanelDimming: 30,
     showProviderIcons: true,
     showRecentWork: true,
@@ -564,6 +599,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     geminiApiKey: '',
     favoriteSkills: [],
     agentEnvironment: 'native',
+    tesseraCliEnabled: false,
     cliCommandOverrides: {},
     windowsCloseBehavior: 'ask',
     setup: {
@@ -579,8 +615,10 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     shortcutOverrides: {},
     gitConfig: {
       branchPrefix: '',
-      globalGuidelines: DEFAULT_GLOBAL_GIT_GUIDELINES,
-      actionTemplates: {},
+      sourceControlAi: {
+        provider: 'claude-code',
+        model: '',
+      },
     },
     version: '1.0.0',
     lastModified: new Date().toISOString(),
@@ -618,21 +656,13 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
         ?? defaults.providerDefaults.opencode.sessionMode,
     },
   };
-  const rawGitConfig = raw?.gitConfig as
-    | (Partial<UserSettings['gitConfig']> & {
-        commitGuidelines?: unknown;
-        prGuidelines?: unknown;
-        prMergeMethod?: unknown;
-        showSidebarPrIcon?: unknown;
-        alwaysForceWithLease?: unknown;
-        createDraftPr?: unknown;
-      })
-    | undefined;
 
   return {
     ...defaults,
     ...raw,
     agentExecutionMode: raw?.agentExecutionMode === 'gui' ? 'gui' : 'pty',
+    terminalSessionDefaultView: raw?.terminalSessionDefaultView === 'chat' ? 'chat' : 'terminal',
+    defaultNewSessionKind: raw?.defaultNewSessionKind === 'chat' ? 'chat' : 'task',
     defaultModel: normalizedClaudeModel,
     terminalThemeLightPreset: normalizeTerminalThemePresetId(
       'light',
@@ -646,6 +676,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,
     kanbanSessionOpenMode: normalizeKanbanSessionOpenMode(raw?.kanbanSessionOpenMode),
+    tesseraCliEnabled: raw?.tesseraCliEnabled === true,
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
     managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),
@@ -670,6 +701,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       },
     },
     providerDefaults,
+    providerCustomModels: normalizeProviderCustomModels(raw?.providerCustomModels),
     setup: {
       ...defaults.setup,
       ...(raw?.setup ?? {}),
@@ -680,7 +712,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
       enabled: raw?.telemetry?.enabled !== false,
     },
     shortcutOverrides: raw?.shortcutOverrides ?? {},
-    gitConfig: normalizeGitConfig(rawGitConfig, defaults.gitConfig),
+    gitConfig: normalizeGitConfig(raw?.gitConfig, defaults.gitConfig),
     lastModified: raw?.lastModified || defaults.lastModified,
   };
 }
@@ -713,102 +745,30 @@ function normalizeProfileSettings(
   };
 }
 
+/**
+ * Git settings are built field by field rather than spread, so the prompt
+ * templates and guidelines that older records still carry are dropped instead
+ * of leaking into the typed result. Nothing reads them any more.
+ */
 function normalizeGitConfig(
-  rawGitConfig:
-    | (Partial<UserSettings['gitConfig']> & {
-        commitGuidelines?: unknown;
-        prGuidelines?: unknown;
-        prMergeMethod?: unknown;
-        showSidebarPrIcon?: unknown;
-        alwaysForceWithLease?: unknown;
-        createDraftPr?: unknown;
-      })
-    | undefined,
+  rawGitConfig: Partial<UserSettings['gitConfig']> | undefined,
   defaults: UserSettings['gitConfig'],
 ): UserSettings['gitConfig'] {
-  // Strip legacy fields that are no longer part of GitConfig before spreading,
-  // otherwise old settings.json values leak into the typed result at runtime.
-  const cleaned: Partial<UserSettings['gitConfig']> = {};
-  if (rawGitConfig) {
-    for (const [key, value] of Object.entries(rawGitConfig)) {
-      if (
-        key === 'commitGuidelines'
-        || key === 'prGuidelines'
-        || key === 'prMergeMethod'
-        || key === 'showSidebarPrIcon'
-        || key === 'alwaysForceWithLease'
-        || key === 'createDraftPr'
-      ) {
-        continue;
-      }
-      (cleaned as Record<string, unknown>)[key] = value;
-    }
-  }
-
-  const merged: UserSettings['gitConfig'] = {
-    ...defaults,
-    ...cleaned,
-    globalGuidelines:
-      typeof rawGitConfig?.globalGuidelines === 'string'
-        ? rawGitConfig.globalGuidelines
-        : defaults.globalGuidelines,
-    actionTemplates: {
-      ...defaults.actionTemplates,
-      ...(rawGitConfig?.actionTemplates ?? {}),
-    },
-  };
-
-  // Migrate legacy commitGuidelines / prGuidelines fields. Only legacy values
-  // that diverge from the prior default are kept — old defaults are dropped so
-  // the user picks up the new templates automatically.
-  const legacyCommit =
-    typeof rawGitConfig?.commitGuidelines === 'string'
-      ? rawGitConfig.commitGuidelines.trim()
-      : '';
-  const legacyPr =
-    typeof rawGitConfig?.prGuidelines === 'string'
-      ? rawGitConfig.prGuidelines.trim()
-      : '';
-  const LEGACY_DEFAULT_COMMIT =
-    'Review the current git diff and create an appropriate commit message, then commit all changes. Run `git add -A` first if needed.';
-  const LEGACY_DEFAULT_PR = [
-    'Create a GitHub Pull Request for the current branch targeting the selected base branch.',
-    'If there are uncommitted changes, commit them first with an appropriate message.',
-    'If the branch has not been pushed yet, push it with `git push -u origin HEAD`.',
-    'Generate a good title and description based on the commits.',
-  ].join(' ');
-
-  const actionTemplates: Partial<Record<GitActionId, string>> = {
-    ...merged.actionTemplates,
-  };
-
-  if (
-    legacyCommit
-    && legacyCommit !== LEGACY_DEFAULT_COMMIT
-    && actionTemplates.commit === undefined
-  ) {
-    actionTemplates.commit = legacyCommit;
-  }
-  if (
-    legacyPr
-    && legacyPr !== LEGACY_DEFAULT_PR
-    && actionTemplates.createPr === undefined
-  ) {
-    actionTemplates.createPr = legacyPr;
-  }
-  if (typeof actionTemplates.createPr === 'string') {
-    const normalizedCreatePrTemplate = actionTemplates.createPr
-      .replace(/[ \t]*\{\{draftFlag\}\}/g, '')
-      .replace(/[ \t]+$/gm, '');
-    if (normalizedCreatePrTemplate.trim()) {
-      actionTemplates.createPr = normalizedCreatePrTemplate;
-    } else {
-      delete actionTemplates.createPr;
-    }
-  }
-
   return {
-    ...merged,
-    actionTemplates,
+    branchPrefix:
+      typeof rawGitConfig?.branchPrefix === 'string'
+        ? rawGitConfig.branchPrefix
+        : defaults.branchPrefix,
+    sourceControlAi: {
+      provider:
+        typeof rawGitConfig?.sourceControlAi?.provider === 'string'
+          && rawGitConfig.sourceControlAi.provider.trim()
+          ? rawGitConfig.sourceControlAi.provider.trim()
+          : defaults.sourceControlAi.provider,
+      model:
+        typeof rawGitConfig?.sourceControlAi?.model === 'string'
+          ? rawGitConfig.sourceControlAi.model.trim()
+          : defaults.sourceControlAi.model,
+    },
   };
 }

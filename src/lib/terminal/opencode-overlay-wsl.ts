@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process';
 import logger from '@/lib/logger';
+import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
 import { buildOpenCodeHookPluginSource } from './opencode-hook-plugin';
+import { buildPosixTesseraControlSkillMaterialization } from './tessera-control-skill';
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/=]*$/;
 const CREATE_TIMEOUT_MS = 20_000;
 const OVERLAY_REPORT_LABEL = 'TESSERA_OPENCODE_OVERLAY';
 
-let sharedOverlayPromise: Promise<string> | undefined;
+const sharedOverlayPromises = new Map<boolean, Promise<string>>();
 
 function assertBase64(value: string): void {
   if (!BASE64_PATTERN.test(value)) {
@@ -21,12 +23,17 @@ function assertBase64(value: string): void {
  * 세션별로 새로 만들면 매 실행마다 설치가 반복되므로, 플러그인 파일만 원자적으로
  * 갱신하고 OpenCode가 만든 package.json/bun.lock/node_modules는 그대로 보존한다.
  */
-export function buildWslOpenCodeOverlayCreateScript(pluginSourceB64: string): string {
+export function buildWslOpenCodeOverlayCreateScript(
+  pluginSourceB64: string,
+  env: NodeJS.ProcessEnv = process.env,
+  includeControlSkill = true,
+): string {
   assertBase64(pluginSourceB64);
+  const stateRoot = getWslGuestTesseraStateRoot(env);
   return [
     'set -eu',
     'umask 077',
-    'overlay="$HOME/.tessera/opencode-overlay/shared"',
+    `overlay="${stateRoot}/opencode-overlay/${includeControlSkill ? 'shared' : 'shared-lifecycle'}"`,
     'plugins="$overlay/plugins"',
     'mkdir -p "$plugins"',
     'tmp="$plugins/.tessera-lifecycle.js.$$"',
@@ -34,6 +41,13 @@ export function buildWslOpenCodeOverlayCreateScript(pluginSourceB64: string): st
     `printf '%s' '${pluginSourceB64}' | base64 -d > "$tmp"`,
     'chmod 600 "$tmp"',
     'mv -f "$tmp" "$plugins/tessera-lifecycle.js"',
+    ...(includeControlSkill
+      ? [
+          'skills="$overlay/skills"',
+          'mkdir -p "$skills"',
+          ...buildPosixTesseraControlSkillMaterialization('skills', env),
+        ]
+      : ['rm -rf "$overlay/skills/tessera-cli"']),
     `printf '${OVERLAY_REPORT_LABEL}:%s\\n' "$overlay"`,
   ].join('\n');
 }
@@ -84,9 +98,11 @@ function runWslScript(script: string): Promise<string> {
   });
 }
 
-async function materializeSharedOverlay(): Promise<string> {
+async function materializeSharedOverlay(includeControlSkill: boolean): Promise<string> {
   const pluginSourceB64 = Buffer.from(buildOpenCodeHookPluginSource(), 'utf8').toString('base64');
-  const stdout = await runWslScript(buildWslOpenCodeOverlayCreateScript(pluginSourceB64));
+  const stdout = await runWslScript(
+    buildWslOpenCodeOverlayCreateScript(pluginSourceB64, process.env, includeControlSkill),
+  );
   const overlayDir = readWslOpenCodeOverlayReport(stdout);
   if (!overlayDir?.startsWith('/')) {
     throw new Error('OpenCode WSL overlay script did not report a guest path');
@@ -100,13 +116,16 @@ async function materializeSharedOverlay(): Promise<string> {
  * 않아 다음 터미널 생성에서 재시도할 수 있다. 앱 업데이트/재시작 시 플러그인 파일은
  * 다시 기록되지만 OpenCode가 설치한 의존성 폴더는 유지된다.
  */
-export function createOpenCodeOverlayInWsl(): Promise<string> {
-  if (sharedOverlayPromise) return sharedOverlayPromise;
+export function createOpenCodeOverlayInWsl(includeControlSkill = true): Promise<string> {
+  const cached = sharedOverlayPromises.get(includeControlSkill);
+  if (cached) return cached;
 
-  const pending = materializeSharedOverlay().catch((error) => {
-    if (sharedOverlayPromise === pending) sharedOverlayPromise = undefined;
+  const pending = materializeSharedOverlay(includeControlSkill).catch((error) => {
+    if (sharedOverlayPromises.get(includeControlSkill) === pending) {
+      sharedOverlayPromises.delete(includeControlSkill);
+    }
     throw error;
   });
-  sharedOverlayPromise = pending;
+  sharedOverlayPromises.set(includeControlSkill, pending);
   return pending;
 }

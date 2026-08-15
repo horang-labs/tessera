@@ -340,6 +340,7 @@ function normalizeWslPosixPath(filesystemPath: string): string {
 }
 
 function getCurrentWslDistroName(): string | null {
+  if (getRuntimePlatform() !== 'linux') return null;
   return process.env.WSL_DISTRO_NAME?.trim().toLowerCase() || null;
 }
 

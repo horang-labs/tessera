@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, memo } from 'react';
 import type { FileReadToolResult } from '@/types/tool-result';
 import { ImageLightbox } from '../image-lightbox';
@@ -27,6 +29,7 @@ export const ReadResult = memo(function ReadResult({ result, filePath }: ReadRes
           <div className="text-[10px] text-(--text-muted) font-mono">{filePath}</div>
         )}
         <button
+          {...telemetryClickAttributes('message.image.open', 'message')}
           type="button"
           onClick={(e) => { e.stopPropagation(); setLightboxSrc(src); }}
           className="block cursor-zoom-in rounded overflow-hidden border border-(--divider) hover:border-(--accent) transition-colors"
@@ -93,6 +96,7 @@ export const ReadResult = memo(function ReadResult({ result, filePath }: ReadRes
 
       {isLong && (
         <button
+          {...telemetryClickAttributes('message.result.open', 'message')}
           onClick={(e) => { e.stopPropagation(); setIsExpanded(v => !v); }}
           className="text-[11px] text-(--accent) hover:text-(--accent-light) transition-colors"
         >

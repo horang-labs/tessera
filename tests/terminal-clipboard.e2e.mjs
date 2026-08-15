@@ -11,6 +11,7 @@ const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-clipboard-e2e-'
 const serverOutput = [];
 let uploadedImagePath = null;
 let electronApp = null;
+let appSecret = null;
 
 const server = spawn('npm', ['run', 'dev'], {
   cwd: process.cwd(),
@@ -20,7 +21,7 @@ const server = spawn('npm', ['run', 'dev'], {
     NODE_ENV: 'development',
     PORT: String(port),
     TESSERA_DATA_DIR: dataDir,
-    TESSERA_ELECTRON_AUTH_BYPASS: '1',
+    TESSERA_ELECTRON_RUNTIME: '1',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -39,7 +40,10 @@ async function waitForServer() {
       throw new Error(`Tessera server exited early:\n${serverOutput.join('')}`);
     }
     try {
-      const response = await fetch(`${appOrigin}/dev-terminal-scroll-repro`);
+      appSecret = (await fs.readFile(path.join(dataDir, 'auth', 'app-secret'), 'utf8')).trim();
+      const response = await fetch(`${appOrigin}/dev-terminal-scroll-repro`, {
+        headers: { 'x-tessera-app-secret': appSecret },
+      });
       if (response.ok) return;
     } catch {
       // The dev server is still starting.
@@ -52,7 +56,10 @@ async function waitForServer() {
 async function registerTestProject() {
   const settingsResponse = await fetch(`${appOrigin}/api/settings`, {
     method: 'PUT',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-tessera-app-secret': appSecret,
+    },
     body: JSON.stringify({ agentEnvironment: 'wsl' }),
   });
   assert.equal(
@@ -62,7 +69,10 @@ async function registerTestProject() {
   );
   const response = await fetch(`${appOrigin}/api/projects`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-tessera-app-secret': appSecret,
+    },
     body: JSON.stringify({ folderPath: process.cwd() }),
   });
   assert.equal(
@@ -112,7 +122,6 @@ try {
       NODE_ENV: 'development',
       TESSERA_DATA_DIR: dataDir,
       TESSERA_DEV_PORT: String(port),
-      TESSERA_ELECTRON_AUTH_BYPASS: '1',
     },
   });
 

@@ -18,6 +18,7 @@ import type { ParsedMessage } from '../types';
 import type { CliCommandInfo, CliMessage } from '../../types';
 import { KNOWN_IGNORED_MESSAGE_TYPES } from '../../protocol-message-types';
 import { buildModelUsageEntries, pickPrimaryModelName } from '../../protocol-adapter-events';
+import { compactStatusFallbackText, parseCompactStatusMetadata } from '../../compact-status';
 import { parseContentBlocks, extractToolResultOutput, extractOutputString } from '../../message-parser';
 import { hookHandler } from '../../hook-handler';
 import { truncateToolResult } from '../../truncate-tool-result';
@@ -256,6 +257,9 @@ export class ClaudeCodeProtocolParser {
         break;
       case 'stream_event':
         results = this.handleStreamEvent(sessionId, msg);
+        break;
+      case 'tool_progress':
+        results = this.handleToolProgress(sessionId, msg);
         break;
       default: {
         if (KNOWN_IGNORED_MESSAGE_TYPES.has(msg.type)) {
@@ -727,7 +731,15 @@ export class ClaudeCodeProtocolParser {
       metadata.compactMetadata = raw.compact_metadata || raw.compactMetadata;
     }
 
-    const messageText = raw.content || raw.message?.text || raw.message?.content;
+    // Compaction start/end arrives as a `status` frame, not as text; the client
+    // turns it into the docked compacting bar.
+    const compactStatus = parseCompactStatusMetadata(raw);
+    if (compactStatus) {
+      Object.assign(metadata, compactStatus);
+    }
+
+    const messageText = raw.content || raw.message?.text || raw.message?.content
+      || compactStatusFallbackText(compactStatus);
 
     if (!messageText && !subtype) {
       logger.warn('System message without text or subtype', { sessionId });
@@ -1224,6 +1236,55 @@ export class ClaudeCodeProtocolParser {
     }
 
     return results;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Handler: tool_progress
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Handle top-level `tool_progress` messages (CLI >= 2.1.x).
+   *
+   * The CLI emits these while a tool call is in flight: `bash_progress` /
+   * `powershell_progress` output ticks, 30s `tool_heartbeat`s for any long
+   * tool, and REPL/subagent-retry variants. They carry no result content —
+   * only liveness (`elapsed_time_seconds`, optional `task_id` / `heartbeat`)
+   * — so they are forwarded as a lightweight live-only `tool_progress` server
+   * message that updates the running tool card without touching history.
+   */
+  private handleToolProgress(sessionId: string, msg: CliMessage): ParsedMessage[] {
+    const raw = msg as any;
+    const toolUseId = raw.tool_use_id;
+
+    if (typeof toolUseId !== 'string' || !toolUseId) {
+      logger.debug('tool_progress without tool_use_id', { sessionId });
+      return [];
+    }
+
+    const elapsedTimeSeconds = typeof raw.elapsed_time_seconds === 'number'
+      ? raw.elapsed_time_seconds
+      : 0;
+
+    logger.debug('Tool progress received', {
+      sessionId,
+      toolUseId,
+      toolName: raw.tool_name,
+      elapsedTimeSeconds,
+      heartbeat: raw.heartbeat === true,
+    });
+
+    return [{
+      serverMessage: {
+        type: 'tool_progress',
+        sessionId,
+        toolUseId,
+        ...(typeof raw.tool_name === 'string' ? { toolName: raw.tool_name } : {}),
+        elapsedTimeSeconds,
+        ...(raw.heartbeat === true ? { heartbeat: true } : {}),
+        ...(typeof raw.task_id === 'string' ? { taskId: raw.task_id } : {}),
+        timestamp: new Date().toISOString(),
+      },
+    }];
   }
 
   // ---------------------------------------------------------------------------

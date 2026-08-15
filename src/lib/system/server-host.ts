@@ -37,7 +37,11 @@ function resolveInstallChannel(env: NodeJS.ProcessEnv): string {
 }
 
 function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv, channel: string): boolean {
-  if (env.TESSERA_TELEMETRY_DISABLED === '1' || env.DO_NOT_TRACK === '1') {
+  if (
+    env.TESSERA_TELEMETRY_DISABLED === '1'
+    || env.DO_NOT_TRACK === '1'
+    || Boolean(env.TESSERA_ELECTRON_TEST_INSTANCE?.trim())
+  ) {
     return true;
   }
 

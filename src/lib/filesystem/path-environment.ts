@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { access, constants, readdir } from 'fs/promises';
+import { access, constants } from 'fs/promises';
 import { homedir } from 'os';
 import path from 'path';
 import { promisify } from 'util';
@@ -98,6 +98,70 @@ export function formatPathForAgentDisplay(
   }
 
   return filesystemPath;
+}
+
+/**
+ * Rewrite a path the CLI reported — hook payloads, provider transcript
+ * locations — into the form this server can open. Inverse of
+ * `formatPathForAgentDisplay`: the CLI names files in its own environment's
+ * style, so across a bridge the server must translate before touching disk.
+ *
+ * Non-bridged setups already share one path style, so this is a no-op.
+ */
+export async function resolveAgentReportedPath(
+  agentPath: string,
+  environment: FilesystemBrowseEnvironment,
+): Promise<string> {
+  const trimmed = agentPath.trim();
+  if (!trimmed) return agentPath;
+  if (!isBridgedAgentEnvironment(environment)) return trimmed;
+
+  if (environment === 'wsl') {
+    // Callers at a routing seam may already hold the Windows server's path
+    // spelling. Treat host-openable paths idempotently instead of prepending
+    // the WSL share a second time.
+    if (wslUncPathToDisplayPath(trimmed) || isWindowsDrivePath(trimmed)) {
+      return path.win32.normalize(trimmed);
+    }
+    const wslPathInfo = await getWslPathInfo();
+    return wslPathInfo
+      ? wslDisplayPathToWindowsFilesystemPath(trimmed, wslPathInfo)
+      : trimmed;
+  }
+
+  return windowsDrivePathToWslMountPath(trimmed) ?? trimmed;
+}
+
+/**
+ * Whether the agent's files live on a different filesystem than the server's.
+ *
+ * Only bridged setups need translation: Windows host with a WSL agent, and WSL
+ * host with a native (Windows) agent. Windows host + native agent and Linux
+ * host + WSL agent already share one filesystem and one path style.
+ */
+export function isBridgedAgentEnvironment(
+  environment: FilesystemBrowseEnvironment,
+): boolean {
+  return environment === 'wsl'
+    ? getRuntimePlatform() === 'win32'
+    : getRuntimePlatform() === 'linux' && isRunningInWsl();
+}
+
+/**
+ * The home directory the agent's CLI writes under, as a path this server can
+ * open. Across a bridge the server's own `homedir()` belongs to the wrong side:
+ * a Windows host resolving `~/.claude` for a WSL agent lands in `C:\Users\...`,
+ * which holds another account's transcripts or none at all.
+ *
+ * Callers pairing this with an env var (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+ * `XDG_DATA_HOME`) must drop the var when `isBridgedAgentEnvironment` is true:
+ * those describe the server's own environment, not the CLI's.
+ */
+export async function resolveAgentHomeFilesystemPath(
+  environment: FilesystemBrowseEnvironment,
+): Promise<string> {
+  if (!isBridgedAgentEnvironment(environment)) return homedir();
+  return (await resolveBrowsePath(null, environment)).filesystemPath;
 }
 
 function formatWslHostedNativeDisplayPath(filesystemPath: string): string {
@@ -296,7 +360,7 @@ function normalizeWslDisplayPath(value: string): string {
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
 
-function wslDisplayPathToWindowsFilesystemPath(
+export function wslDisplayPathToWindowsFilesystemPath(
   displayPath: string,
   wslPathInfo: WslPathInfo,
 ): string {
@@ -370,9 +434,15 @@ function isWindowsDriveMountPath(value: string): boolean {
 
 async function getWslPathInfo(): Promise<WslPathInfo | null> {
   if (!wslPathInfoPromise) {
-    wslPathInfoPromise = loadWslPathInfo();
+    wslPathInfoPromise = loadWslPathInfo().catch(() => null);
   }
-  return wslPathInfoPromise;
+
+  const wslPathInfo = await wslPathInfoPromise;
+  // Only a successful probe is cached. A failure is usually a race with a
+  // distro that was still starting, and caching it would strand every later
+  // WSL path lookup — file browsing, git, inline images — until restart.
+  if (!wslPathInfo) wslPathInfoPromise = null;
+  return wslPathInfo;
 }
 
 export async function getWslHostedWindowsHomeMountPath(): Promise<string> {
@@ -404,34 +474,38 @@ async function loadWslPathInfo(): Promise<WslPathInfo | null> {
   if (getRuntimePlatform() !== 'win32') return null;
 
   const wslCandidates = getWslExecutableCandidates();
+  for (const wslExecutable of wslCandidates) {
+    const parsed = await probeWslPathInfo(wslExecutable);
+    if (parsed) return parsed;
+  }
+
+  const discoveredFromDistroList = await discoverWslPathInfoFromDistroList(wslCandidates);
+  if (discoveredFromDistroList) return discoveredFromDistroList;
+  return null;
+}
+
+async function probeWslPathInfo(
+  wslExecutable: string,
+  distroName?: string,
+): Promise<WslPathInfo | null> {
   const script = [
     'printf "%s\\n" "${WSL_DISTRO_NAME:-}"',
     'printf "%s\\n" "$HOME"',
     'wslpath -w "$HOME" 2>/dev/null || true',
   ].join('; ');
-
-  for (const wslExecutable of wslCandidates) {
-    try {
-      const { stdout } = await execFileAsync(
-        wslExecutable,
-        ['-e', 'sh', '-c', script],
-        {
-          encoding: 'utf8',
-          timeout: 5000,
-          windowsHide: true,
-        },
-      );
-      const parsed = parseWslPathInfo(stdout);
-      if (parsed) return parsed;
-    } catch {
-      // Try the next executable candidate.
-    }
+  const args = distroName
+    ? ['-d', distroName, '-e', 'sh', '-c', script]
+    : ['-e', 'sh', '-c', script];
+  try {
+    const { stdout } = await execFileAsync(wslExecutable, args, {
+      encoding: 'utf8',
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return parseWslPathInfo(stdout);
+  } catch {
+    return null;
   }
-
-  const discoveredFromDistroList = await discoverWslPathInfoFromDistroList(wslCandidates);
-  if (discoveredFromDistroList) return discoveredFromDistroList;
-
-  return discoverWslPathInfoFromUnc();
 }
 
 function parseWslPathInfo(stdout: string): WslPathInfo | null {
@@ -440,7 +514,9 @@ function parseWslPathInfo(stdout: string): WslPathInfo | null {
       .split(/\r?\n/)
       .map((line) => line.trim());
     const distroName = lines[0];
-    const homeDisplayPath = normalizeWslDisplayPath(lines[1] || '/');
+    const reportedHome = lines[1];
+    if (!distroName || !reportedHome) return null;
+    const homeDisplayPath = normalizeWslDisplayPath(reportedHome);
     const homeFilesystemPath = path.win32.normalize(
       lines[2] || buildWslUncPath(distroName, homeDisplayPath) || '',
     );
@@ -475,40 +551,6 @@ function getWslExecutableCandidates(): string[] {
   return [...new Set(candidates)];
 }
 
-async function discoverWslPathInfoFromUnc(): Promise<WslPathInfo | null> {
-  const namespaceRoots = ['\\\\wsl.localhost', '\\\\wsl$'];
-  for (const namespaceRoot of namespaceRoots) {
-    let distroNames: string[];
-    try {
-      distroNames = await readdir(namespaceRoot);
-    } catch {
-      continue;
-    }
-
-    for (const distroName of distroNames.filter((name) => name.trim().length > 0)) {
-      const rootFilesystemPath = path.win32.join(namespaceRoot, distroName);
-      const homeCandidate = await resolveBestWslHomeCandidate(rootFilesystemPath);
-      if (homeCandidate) {
-        return {
-          homeDisplayPath: homeCandidate.displayPath,
-          homeFilesystemPath: homeCandidate.filesystemPath,
-          rootFilesystemPath,
-        };
-      }
-
-      if (await directoryExists(rootFilesystemPath)) {
-        return {
-          homeDisplayPath: '/',
-          homeFilesystemPath: rootFilesystemPath,
-          rootFilesystemPath,
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
 async function discoverWslPathInfoFromDistroList(
   wslExecutables: string[],
 ): Promise<WslPathInfo | null> {
@@ -525,35 +567,12 @@ async function discoverWslPathInfoFromDistroList(
       continue;
     }
 
+    if (distroNames.length !== 1) continue;
+
     for (const distroName of distroNames) {
-      const discovered = await discoverWslPathInfoFromDistroName(distroName);
-      if (discovered) return discovered;
+      const probed = await probeWslPathInfo(wslExecutable, distroName);
+      if (probed) return probed;
     }
-  }
-
-  return null;
-}
-
-async function discoverWslPathInfoFromDistroName(distroName: string): Promise<WslPathInfo | null> {
-  const namespaceRoots = ['\\\\wsl.localhost', '\\\\wsl$'];
-  for (const namespaceRoot of namespaceRoots) {
-    const rootFilesystemPath = path.win32.join(namespaceRoot, distroName);
-    if (!(await directoryExists(rootFilesystemPath))) continue;
-
-    const homeCandidate = await resolveBestWslHomeCandidate(rootFilesystemPath);
-    if (homeCandidate) {
-      return {
-        homeDisplayPath: homeCandidate.displayPath,
-        homeFilesystemPath: homeCandidate.filesystemPath,
-        rootFilesystemPath,
-      };
-    }
-
-    return {
-      homeDisplayPath: '/',
-      homeFilesystemPath: rootFilesystemPath,
-      rootFilesystemPath,
-    };
   }
 
   return null;
@@ -568,60 +587,6 @@ function parseWslDistroNames(stdout: string): string[] {
       .map((line) => line.replace(/\s+\(Default\)$/i, '').trim())
       .filter((line) => line.length > 0 && !line.toLowerCase().startsWith('windows subsystem')),
   )];
-}
-
-async function resolveBestWslHomeCandidate(
-  rootFilesystemPath: string,
-): Promise<{ displayPath: string; filesystemPath: string } | null> {
-  const homeRoot = path.win32.join(rootFilesystemPath, 'home');
-  const usernameCandidates = getWindowsUsernameCandidates();
-
-  for (const username of usernameCandidates) {
-    const filesystemPath = path.win32.join(homeRoot, username);
-    if (await directoryExists(filesystemPath)) {
-      return {
-        displayPath: `/home/${username}`,
-        filesystemPath,
-      };
-    }
-  }
-
-  try {
-    const homeEntries = await readdir(homeRoot, { withFileTypes: true });
-    const homeDirectories = homeEntries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .filter((name) => name.trim().length > 0);
-
-    if (homeDirectories.length === 1) {
-      const username = homeDirectories[0];
-      return {
-        displayPath: `/home/${username}`,
-        filesystemPath: path.win32.join(homeRoot, username),
-      };
-    }
-  } catch {
-    // Fall back to /home or /.
-  }
-
-  if (await directoryExists(homeRoot)) {
-    return {
-      displayPath: '/home',
-      filesystemPath: homeRoot,
-    };
-  }
-
-  return null;
-}
-
-function getWindowsUsernameCandidates(): string[] {
-  const candidates = [
-    process.env.USERNAME,
-    process.env.USERPROFILE ? path.win32.basename(process.env.USERPROFILE) : null,
-    isWindowsDrivePath(homedir()) ? path.win32.basename(homedir()) : null,
-  ];
-
-  return [...new Set(candidates.filter((value): value is string => Boolean(value)))];
 }
 
 async function directoryExists(candidate: string): Promise<boolean> {

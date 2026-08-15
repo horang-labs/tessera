@@ -46,24 +46,33 @@ next-env.d.ts
 !assets/*.png
 !docs/**/*.png
 
-# docs: README 홍보물만 추적, 나머지는 로컬 전용
+# docs: README 홍보물, 에이전트 지침만 추적, 나머지는 로컬 전용 (ADR 포함)
 docs/*
 !docs/assets/
 docs/assets/*
 !docs/assets/readme/
+!docs/agents/
 
 # IDE / Tools
 .claude/
+.codex/
+.opencode/
 agent/
 .playwright-cli/
+graphify-out/
 AGENTS.md
 CLAUDE.md
+CONTEXT.md
+.mcp.json
 skills-lock.json
 _bmad-output/
 aidlc-docs/
 prd-doc/
 prd-docs/
 /.superpowers/
+
+# Agent scratch workspace (specs, tickets)
+.scratch/
 
 # Worktrees
 .worktrees/

@@ -20,9 +20,15 @@ import { getEffectiveShortcut } from '@/lib/keyboard/effective';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
+import { useSessionStore } from '@/stores/session-store';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { toast } from '@/stores/notification-store';
 import { i18n } from '@/lib/i18n';
+import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { v4 as uuidv4 } from 'uuid';
+import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export interface UseKeyboardShortcutsOptions {
   /** Reserved for future use (help toggle). Currently unused. */
@@ -121,10 +127,10 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   const createTerminalPanel = usePanelStore((state) => state.createTerminalPanel);
   const setActivePanelId = usePanelStore((state) => state.setActivePanelId);
 
-  // Use the same code path as the UI "+" button (tab-bar.tsx) — creates an empty tab,
-  // not a full session. Session is materialized lazily when the user sends a message.
+  // Use the same code path as the UI "+" button (tab-bar.tsx) — reuses a pristine
+  // empty tab when available. A session is materialized lazily on first send.
   const handleNewTab = useCallback(() => {
-    useTabStore.getState().createTab();
+    openSingletonNewTab();
   }, []);
 
   // Same code path as the tab × button (tab-item.tsx) — closes the currently-active tab.
@@ -150,6 +156,24 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     const { viewMode, setViewMode } = useBoardStore.getState();
     setViewMode(viewMode === 'list' ? 'board' : 'list');
   }, []);
+
+  const handleToggleTerminalView = useCallback(() => {
+    const { peekSessionId, peekFileRef } = useBoardStore.getState();
+    // A file-only Peek is the topmost surface but has no visible session to toggle.
+    if (!peekSessionId && peekFileRef) return;
+
+    const sessionId = peekSessionId ?? panels[activePanelId]?.sessionId;
+    if (!sessionId) return;
+
+    const session = projectViewWorkspaceState.resolveSession(sessionId);
+    if (session?.kind !== 'terminal' || !supportsTerminalChatView(session.provider)) return;
+
+    const viewModeStore = useTerminalViewModeStore.getState();
+    const currentMode = viewModeStore.modeBySession[sessionId]
+      ?? useSettingsStore.getState().settings.terminalSessionDefaultView
+      ?? 'terminal';
+    viewModeStore.setMode(sessionId, currentMode === 'chat' ? 'terminal' : 'chat');
+  }, [activePanelId, panels]);
 
   const handleSplitRight = useCallback(() => {
     if (!panels[activePanelId]) return;
@@ -206,6 +230,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     'close-tab':      handleCloseTab,
     'toggle-sidebar': handleToggleSidebar,
     'toggle-view':    handleToggleView,
+    'toggle-terminal-view': handleToggleTerminalView,
     'split-right':    handleSplitRight,
     'split-down':     handleSplitDown,
     'toggle-terminal': handleToggleTerminal,
@@ -224,7 +249,10 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
       if (!handler) continue;
       const key = getEffectiveShortcut(id, overrides);
       if (!key) continue;
-      manager.register(key, () => { void handler(); }, { ignoreInputFields: false });
+      manager.register(key, () => {
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: id });
+        void handler();
+      }, { ignoreInputFields: false });
       activeKeys.push(key);
     }
     setGlobalShortcutKeys(activeKeys);
@@ -236,7 +264,8 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   }, [
     overrides,
     handleNewTab, handleCloseTab,
-    handleToggleSidebar, handleToggleView, handleSplitRight, handleSplitDown,
+    handleToggleSidebar, handleToggleView, handleToggleTerminalView,
+    handleSplitRight, handleSplitDown,
     handleToggleTerminal, handleFocusPanel,
   ]);
 }

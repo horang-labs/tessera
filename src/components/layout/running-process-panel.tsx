@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Terminal, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useSessionStore } from '@/stores/session-store';
 import { selectIsTurnInFlight, useChatStore } from '@/stores/chat-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useTabStore } from '@/stores/tab-store';
@@ -12,6 +11,9 @@ import { wsClient } from '@/lib/ws/client';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { useCanonicalRunningProjectViewSessions } from '@/hooks/use-project-view-workspace-state';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface RunningProcessPanelProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -29,23 +31,7 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Get all running sessions across all projects
-  const projects = useSessionStore((state) => state.projects);
-  const runningSessions = useMemo(() => {
-    const sessions: Array<{ id: string; title: string; projectDir: string }> = [];
-    for (const project of projects) {
-      for (const session of project.sessions) {
-        if (session.isRunning) {
-          sessions.push({
-            id: session.id,
-            title: session.title,
-            projectDir: project.encodedDir,
-          });
-        }
-      }
-    }
-    return sessions;
-  }, [projects]);
+  const runningSessions = useCanonicalRunningProjectViewSessions();
 
   const runningCount = runningSessions.length;
 
@@ -89,11 +75,9 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
   }, []);
 
   const handleStopAll = useCallback(() => {
-    for (const session of runningSessions) {
-      wsClient.stopSession(session.id);
-    }
+    projectViewWorkspaceState.stopAllRunningSessions();
     setIsOpen(false);
-  }, [runningSessions]);
+  }, []);
 
   const handleNavigateToSession = useCallback((sessionId: string, projectDir: string) => {
     // Switch to the session's project
@@ -118,6 +102,7 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
   return (
     <div className="relative">
       <Button
+        {...telemetryClickAttributes('running_processes.toggle', 'running_processes')}
         ref={buttonRef}
         variant="ghost"
         size={direction === 'right' ? 'icon-lg' : 'icon'}
@@ -182,6 +167,7 @@ export function RunningProcessPanel({ direction = 'down' }: RunningProcessPanelP
           {runningSessions.length > 1 && (
             <div className="border-t border-(--divider) px-3 py-2">
               <button
+                {...telemetryClickAttributes('running_processes.stop_all', 'running_processes')}
                 onClick={handleStopAll}
                 className={cn(
                   'w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md',
@@ -221,6 +207,7 @@ function SessionRow({
 
   return (
     <div
+      {...telemetryClickAttributes('running_processes.navigate', 'running_processes')}
       role="button"
       tabIndex={0}
       className={cn(
@@ -244,6 +231,7 @@ function SessionRow({
 
       {/* Stop button */}
       <button
+        {...telemetryClickAttributes('running_processes.stop', 'running_processes')}
         type="button"
         onClick={(e) => onStop(session.id, e)}
         className={cn(

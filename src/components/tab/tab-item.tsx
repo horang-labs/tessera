@@ -7,14 +7,26 @@ import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
+import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
+import {
+  useProjectViewSession,
+  useProjectViewSessions,
+} from '@/hooks/use-project-view-workspace-state';
 import { useI18n } from '@/lib/i18n';
 import { useTabStore } from '@/stores/tab-store';
 import type { Tab } from '@/types/tab';
 import type { Panel, TabPanelData } from '@/types/panel';
 import { SESSION_DRAG_MIME, TAB_DRAG_MIME, TAB_PANEL_TREE_DND_MIME } from '@/types/panel';
-import { getSpecialSessionTitle, getSpecialSessionTitleKey, isSpecialSession } from '@/lib/constants/special-sessions';
+import { isSpecialSession } from '@/lib/constants/special-sessions';
+import { resolveTabDisplayTitle } from '@/lib/tab/tab-display-title';
+import { requestSessionRename } from '@/lib/session/rename-session-request';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
-import { useAnySessionProcessing } from '@/hooks/use-session-processing';
+import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
+import { ItemStatusIndicator } from '@/components/chat/work-item-primitives';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { transitionTabClickSuppression } from '@/lib/tab/tab-drag-click-guard';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -74,6 +86,40 @@ export function getTabDragSessionId(
   return sessionIds.length === 1 ? sessionIds[0] : null;
 }
 
+export type TabTitleCommit =
+  | { kind: 'session'; sessionId: string; title: string }
+  | { kind: 'tab'; title: string | null }
+  | { kind: 'noop' };
+
+/**
+ * 탭 제목 편집을 어디에 반영할지 결정한다.
+ *
+ * 탭에 보이는 제목은 활성 패널 세션의 제목이므로, rename 가능한 세션이 있으면
+ * 세션을 rename해야 사이드바·태스크·DB가 함께 따라온다. 탭 전용 제목은 rename할
+ * 세션이 없는 탭(빈 탭, 세션 없는 터미널 패널, 특수 세션)에서만 쓴다.
+ */
+export function resolveTabTitleCommit({
+  nextTitle,
+  displayTitle,
+  tabTitle,
+  renameTargetSessionId,
+}: {
+  nextTitle: string;
+  displayTitle: string;
+  tabTitle: string | null;
+  renameTargetSessionId: string | null;
+}): TabTitleCommit {
+  if (renameTargetSessionId) {
+    if (!nextTitle || nextTitle === displayTitle) return { kind: 'noop' };
+    return { kind: 'session', sessionId: renameTargetSessionId, title: nextTitle };
+  }
+  if (!nextTitle) {
+    return tabTitle !== null ? { kind: 'tab', title: null } : { kind: 'noop' };
+  }
+  if (nextTitle === displayTitle) return { kind: 'noop' };
+  return { kind: 'tab', title: nextTitle };
+}
+
 export function shouldDragTabPanelTree(tabData: TabPanelData | null | undefined): boolean {
   const panels = tabData?.panels ?? {};
   return Object.keys(panels).length > 1 || Object.values(panels).some((panel) => panel.terminalId);
@@ -85,7 +131,7 @@ export function shouldDragTabPanelTree(tabData: TabPanelData | null | undefined)
 
 const tabItemVariants = cva(
   // base: always applied
-  'electron-no-drag relative flex h-[calc(100%+1px)] items-center select-none cursor-pointer' +
+  'relative flex h-[calc(100%+1px)] items-center select-none cursor-pointer' +
     ' px-3 py-1.5 text-sm font-medium border-b-2 transition-colors duration-100' +
     ' border-r border-r-(--divider)',
   {
@@ -190,35 +236,27 @@ export const TabItem = memo(function TabItem({
   const activePanelSessionId = isActive ? liveSessionId : snapshotSessionId;
   const activePanelTerminalId = isActive ? liveTerminalId : snapshotTerminalId;
 
-  // Special session handling (e.g., Skills Dashboard)
-  const specialTitleKey = activePanelSessionId ? getSpecialSessionTitleKey(activePanelSessionId) : null;
-
-  // Targeted session-store subscription — re-renders only when the specific
-  // session's title changes, not on unrelated session updates.
-  const session = useSessionStore(
-    useCallback(
-      (state) =>
-        activePanelSessionId && !isSpecialSession(activePanelSessionId)
-          ? state.getSession(activePanelSessionId)
-          : undefined,
-      [activePanelSessionId],
-    ),
+  const session = useProjectViewSession(
+    activePanelSessionId && !isSpecialSession(activePanelSessionId)
+      ? activePanelSessionId
+      : null,
   );
 
   // Derive display values
   // Active tab: use live panel-store data; inactive tab: use snapshot
-  let displayTitle = t('chat.newTabDefault');
-  if (tab.title !== null) {
-    displayTitle = tab.title;
-  } else if (specialTitleKey) {
-    displayTitle = t(specialTitleKey);
-  } else if (activePanelSessionId && isSpecialSession(activePanelSessionId)) {
-    displayTitle = getSpecialSessionTitle(activePanelSessionId, t) ?? displayTitle;
-  } else if (activePanelTerminalId) {
-    displayTitle = 'Terminal';
-  } else if (activePanelSessionId && session) {
-    displayTitle = session.title ?? session.id;
-  }
+  const displayTitle = resolveTabDisplayTitle({
+    tabTitle: tab.title,
+    activePanelSessionId,
+    activePanelTerminalId,
+    session,
+    t,
+  });
+
+  // 특수 세션(Skills Dashboard 등)은 rename 대상이 아니다 — 탭 로컬 제목으로 남긴다.
+  const renameTargetSessionId =
+    activePanelSessionId && !isSpecialSession(activePanelSessionId) && session
+      ? activePanelSessionId
+      : null;
 
   const sessionCount = isActive ? liveSessionCount : deriveSessionCount(inactiveTabData?.panels ?? {});
   const label = formatTabLabel(displayTitle, sessionCount);
@@ -249,29 +287,50 @@ export const TabItem = memo(function TabItem({
         .sort()
         .join(',');
 
-  const isGenerating = useAnySessionProcessing(
-    panelSessionIds ? panelSessionIds.split(',') : [],
-  );
+  const { hasProcessingSession: isGenerating, hasTerminalProcessingSession } =
+    useSessionProcessingSummary(panelSessionIds ? panelSessionIds.split(',') : []);
 
   const isAwaitingUser = useAnySessionAwaitingUser(
     panelSessionIds ? panelSessionIds.split(',') : [],
   );
 
+  // Runtime liveness — the green "session is up but idle" dot the sidebar shows.
+  const resolvedPanelSessions = useProjectViewSessions(
+    panelSessionIds ? panelSessionIds.split(',') : [],
+  );
+  const isRunning = resolvedPanelSessions.some(
+    (resolvedSession) => resolveSessionRuntimePresentation(resolvedSession).showRunning,
+  );
+
   // Unread indicator — any session in this tab has unreadCount > 0.
   // Active panel's unread is auto-cleared by panel-wrapper; this surfaces
   // unread in inactive panels (same tab) and any panel of inactive tabs.
-  const hasUnread = useSessionStore(
-    useCallback(
-      (state) => {
-        if (!panelSessionIds) return false;
-        return panelSessionIds.split(',').some((id) => {
-          const s = state.getSession(id);
-          return s ? (s.unreadCount ?? 0) > 0 : false;
-        });
-      },
-      [panelSessionIds],
-    ),
+  const hasUnread = useAnyProjectViewSessionUnread(
+    panelSessionIds ? panelSessionIds.split(',') : [],
   );
+
+  // Mirror ItemStatusIndicator's own priority so the label/testid describe the
+  // dot that actually renders.
+  const statusKind = isAwaitingUser
+    ? 'awaiting'
+    : isGenerating && (hasTerminalProcessingSession || !hasUnread)
+      ? 'processing'
+      : hasUnread
+        ? 'unread'
+        : isRunning
+          ? 'running'
+          : null;
+
+  const statusLabel =
+    statusKind === 'awaiting'
+      ? t('status.inputRequired')
+      : statusKind === 'processing'
+        ? t('status.processing')
+        : statusKind === 'unread'
+          ? t('status.unreadNotification')
+          : statusKind === 'running'
+            ? t('status.sessionRunning')
+            : undefined;
 
   // Session drag hover state + timer
   const hoverActivateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -284,11 +343,24 @@ export const TabItem = memo(function TabItem({
 
   const handleClick = useCallback(
     function handleClick() {
-      if (suppressClickAfterDragRef.current || isEditingTitle) return;
+      const transition = transitionTabClickSuppression(
+        suppressClickAfterDragRef.current,
+        'click',
+      );
+      suppressClickAfterDragRef.current = transition.suppressed;
+      if (!transition.shouldActivate || isEditingTitle) return;
+      void captureTelemetryUiControl('tab.select', 'tab_bar');
       onActivate(tab.id);
     },
     [isEditingTitle, onActivate, tab.id],
   );
+
+  const handlePointerDown = useCallback(function handlePointerDown() {
+    suppressClickAfterDragRef.current = transitionTabClickSuppression(
+      suppressClickAfterDragRef.current,
+      'pointer-down',
+    ).suppressed;
+  }, []);
 
   const handleDoubleClick = useCallback(
     function handleDoubleClick(e: React.MouseEvent) {
@@ -300,14 +372,25 @@ export const TabItem = memo(function TabItem({
   );
 
   const commitTitleEdit = useCallback(() => {
-    const nextTitle = titleInput.trim();
-    if (!nextTitle && tab.title !== null) {
-      useTabStore.getState().renameTab(tab.id, null);
-    } else if (nextTitle && nextTitle !== displayTitle) {
-      useTabStore.getState().renameTab(tab.id, nextTitle);
-    }
+    const commit = resolveTabTitleCommit({
+      nextTitle: titleInput.trim(),
+      displayTitle,
+      tabTitle: tab.title,
+      renameTargetSessionId,
+    });
     setIsEditingTitle(false);
-  }, [displayTitle, tab.id, tab.title, titleInput]);
+
+    if (commit.kind === 'session') {
+      // 예전에 붙여둔 탭 로컬 제목이 남아 있으면 새 세션 제목을 계속 가린다.
+      if (tab.title !== null) {
+        useTabStore.getState().renameTab(tab.id, null);
+      }
+      useTabStore.getState().pinTab(tab.id);
+      void requestSessionRename(commit.sessionId, commit.title, t);
+    } else if (commit.kind === 'tab') {
+      useTabStore.getState().renameTab(tab.id, commit.title);
+    }
+  }, [displayTitle, renameTargetSessionId, t, tab.id, tab.title, titleInput]);
 
   const cancelTitleEdit = useCallback(() => {
     setTitleInput(displayTitle);
@@ -330,6 +413,7 @@ export const TabItem = memo(function TabItem({
   const handleCloseMouseDown = useCallback(
     function handleCloseMouseDown(e: React.MouseEvent) {
       e.stopPropagation();
+      void captureTelemetryUiControl('tab.close', 'tab_bar');
       onClose(tab.id);
     },
     [onClose, tab.id],
@@ -345,7 +429,10 @@ export const TabItem = memo(function TabItem({
 
   const handleDragStart = useCallback(
     function handleDragStart(e: React.DragEvent) {
-      suppressClickAfterDragRef.current = true;
+      suppressClickAfterDragRef.current = transitionTabClickSuppression(
+        suppressClickAfterDragRef.current,
+        'drag-start',
+      ).suppressed;
       e.dataTransfer.effectAllowed = 'move';
       onDragStart(tab.id, e);
 
@@ -440,7 +527,10 @@ export const TabItem = memo(function TabItem({
       clearHoverTimer();
       onDragEnd();
       window.setTimeout(() => {
-        suppressClickAfterDragRef.current = false;
+        suppressClickAfterDragRef.current = transitionTabClickSuppression(
+          suppressClickAfterDragRef.current,
+          'reset',
+        ).suppressed;
       }, 150);
     },
     [onDragEnd, clearHoverTimer],
@@ -456,6 +546,7 @@ export const TabItem = memo(function TabItem({
 
   return (
     <div
+      data-telemetry-ignore="manual_capture"
       draggable={!isEditingTitle}
       role="tab"
       aria-selected={isActive}
@@ -477,6 +568,7 @@ export const TabItem = memo(function TabItem({
         isSessionDragHover && !isDragOver && 'border-b-(--accent) bg-(--accent)/10',
       )}
       onClick={handleClick}
+      onPointerDown={handlePointerDown}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
@@ -491,26 +583,32 @@ export const TabItem = memo(function TabItem({
       data-dragging={String(isDragging)}
       aria-grabbed={isDragging || undefined}
     >
-      {/* Leading indicator — generating spinner takes precedence over user attention/unread dots */}
-      {isGenerating ? (
-        <div className="w-3 h-3 shrink-0 mr-1.5 rounded-full border-2 border-(--success)/30 border-t-(--success) animate-spin" />
-      ) : isAwaitingUser ? (
-        <div
-          className="h-[7px] w-[7px] shrink-0 mr-1.5 rounded-full bg-[#facc15] attention-dot-blink"
-          data-testid="tab-item-attention"
-          aria-label={t('status.inputRequired')}
-        />
-      ) : hasUnread ? (
-        <div
-          className="h-[6px] w-[6px] shrink-0 mr-1.5 rounded-full bg-[#facc15]"
-          data-testid="tab-item-unread"
-          aria-label="Unread messages"
-        />
-      ) : null}
+      {/* Leading indicator — same dots, colors and priority as the sidebar/board */}
+      {statusKind && (
+        <span
+          className="mr-1.5 flex shrink-0 items-center"
+          data-testid="tab-item-status"
+          data-status={statusKind}
+          aria-label={statusLabel}
+          title={statusLabel}
+        >
+          <ItemStatusIndicator
+            isProcessing={isGenerating}
+            isAwaitingUser={isAwaitingUser}
+            hasUnread={hasUnread}
+            isRunning={isRunning}
+            sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
+            placement="inline"
+            size="lg"
+            surface="sidebar"
+          />
+        </span>
+      )}
 
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
       {isEditingTitle ? (
         <input
+          {...telemetryClickAttributes('tab.rename', 'tab_bar')}
           type="text"
           value={titleInput}
           onChange={(e) => setTitleInput(e.target.value)}
@@ -535,6 +633,7 @@ export const TabItem = memo(function TabItem({
       {/* Close button — always visible (BR-UI-024) */}
       <ShortcutTooltip id="close-tab" label={t('shortcut.closeTab')}>
         <button
+          data-telemetry-ignore="manual_capture"
           className="ml-1.5 shrink-0 rounded hover:bg-(--sidebar-hover) p-0.5"
           onMouseDown={handleCloseMouseDown}
           aria-label={t('chat.closeTab', { title: displayTitle })}

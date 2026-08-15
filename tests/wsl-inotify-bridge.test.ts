@@ -1,11 +1,33 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildWslInotifyArguments,
   buildInotifyExcludeRegex,
   parseInotifyLine,
   parseWslRunningDistros,
   parseWslUncRoot,
 } from '@/lib/workspace-files/wsl-inotify-bridge';
+
+test('inotify arguments only apply workspace exclusions when the caller supplies them', () => {
+  const root = { distro: 'Ubuntu-24.04', posixPath: '/home/work/.codex/sessions' };
+  const providerArgs = buildWslInotifyArguments({ root });
+  assert.equal(providerArgs.includes('--exclude'), false);
+
+  const providerCreateArgs = buildWslInotifyArguments({
+    root,
+    eventMask: 'create,move,close_write',
+  });
+  assert.equal(
+    providerCreateArgs[providerCreateArgs.indexOf('-e') + 1],
+    'create,move,close_write',
+  );
+
+  const excludeRegex = '^/home/work/project/(node_modules|.git)(/|$)';
+  const workspaceArgs = buildWslInotifyArguments({ root, excludeRegex });
+  const excludeIndex = workspaceArgs.indexOf('--exclude');
+  assert.notEqual(excludeIndex, -1);
+  assert.equal(workspaceArgs[excludeIndex + 1], excludeRegex);
+});
 
 test('parseWslUncRoot extracts distro and posix path from wsl UNC roots', () => {
   assert.deepEqual(

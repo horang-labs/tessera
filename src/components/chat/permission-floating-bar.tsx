@@ -6,6 +6,7 @@ import { useWebSocket } from '@/hooks/use-websocket';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { getToolIcon, shortenToolName } from './tool-call-block';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface PermissionFloatingBarProps {
   toolName: string;
@@ -141,6 +142,7 @@ export function PermissionFloatingBar({
         {Object.keys(toolInput).length > 0 && (
           <>
             <button
+              {...telemetryClickAttributes('agent_prompt.permission.expand', 'agent_prompt')}
               onClick={() => setExpanded(!expanded)}
               className="flex items-center gap-1 text-xs text-(--text-muted) hover:text-(--text-secondary) transition-colors"
               tabIndex={-1}
@@ -160,6 +162,7 @@ export function PermissionFloatingBar({
       {/* Action bar */}
       <div className="px-4 py-2.5 border-t border-(--accent)/10 flex items-center justify-end gap-2">
         <button
+          {...telemetryClickAttributes('agent_prompt.permission.deny', 'agent_prompt')}
           onClick={() => handleDecision('deny')}
           tabIndex={-1}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-(--error) text-white hover:opacity-90 transition-opacity"
@@ -169,6 +172,7 @@ export function PermissionFloatingBar({
           <kbd className="ml-1 text-[10px] opacity-70 font-mono">Esc</kbd>
         </button>
         <button
+          {...telemetryClickAttributes('agent_prompt.permission.allow', 'agent_prompt')}
           onClick={() => handleDecision('allow')}
           tabIndex={-1}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-(--success) text-white hover:opacity-90 transition-opacity"

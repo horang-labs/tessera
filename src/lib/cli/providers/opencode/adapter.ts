@@ -3,6 +3,7 @@ import type {
   CheckStatusOptions,
   CliProvider,
   CliStatusResult,
+  GeneratedText,
   GeneratedTitle,
   ParsedMessage,
   SpawnOptions,
@@ -11,6 +12,7 @@ import type {
   TranslatedText,
 } from '../types';
 import type { ContentBlock } from '@/lib/ws/message-types';
+import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import { isBinaryAvailable } from '../registry';
 import { execCli, parseVersion, probeBinaryAvailable } from '../../cli-exec';
@@ -27,6 +29,8 @@ import { updateProviderStateWithRetry } from '../../process-manager-side-effects
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { opencodeProtocolParser } from './protocol-parser';
+import { decodeOpenCodeSession } from './transcript-decoder';
+import { exportOpenCodeSession, fingerprintOpenCodeStore } from './transcript-source';
 import { openCodeScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 import {
   buildOpenCodePermissionEnv,
@@ -34,6 +38,7 @@ import {
   normalizeOpenCodeSessionMode,
   splitOpenCodeModelId,
 } from './session-config';
+import { mirrorOpenCodeConfigIntoOverlay } from './config-overlay';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -125,6 +130,35 @@ export class OpenCodeAdapter implements CliProvider {
 
   detectTerminalConversationReset = openCodeScreenShowsConversationReset;
 
+  /**
+   * Identity of the OpenCode store backing this session (see CliProvider).
+   * Stats the database rather than a transcript file — OpenCode has none.
+   */
+  async readTerminalTranscriptFingerprint(options: {
+    providerSessionId: string;
+    userId?: string;
+  }): Promise<string | null> {
+    return fingerprintOpenCodeStore(options.providerSessionId, options.userId);
+  }
+
+  /**
+   * Replays a PTY session's OpenCode conversation as Tessera history events.
+   * Goes through `opencode export` because the conversation lives in a WAL-mode
+   * SQLite database this process cannot read directly (see transcript-source).
+   */
+  async readTerminalTranscriptEvents(options: {
+    sessionId: string;
+    providerSessionId: string;
+    userId?: string;
+  }): Promise<SessionHistoryEvent[] | null> {
+    const exported = await exportOpenCodeSession({
+      providerSessionId: options.providerSessionId,
+      ...(options.userId ? { userId: options.userId } : {}),
+    });
+    if (!exported) return null;
+    return decodeOpenCodeSession(exported);
+  }
+
   async isAvailable(environment?: 'native' | 'wsl'): Promise<boolean> {
     if (environment) {
       return probeBinaryAvailable('opencode', environment);
@@ -182,6 +216,25 @@ export class OpenCodeAdapter implements CliProvider {
     } else {
       delete spawnEnv.OPENCODE_PERMISSION;
     }
+    Object.assign(spawnEnv, options.managedLaunch?.environment ?? {});
+    const managedOverlayRoot = options.managedLaunch?.skillOverlay?.rootDir;
+    if (managedOverlayRoot) {
+      const bridgedWsl = getRuntimePlatform() === 'win32' && agentEnv === 'wsl';
+      if (!bridgedWsl) {
+        mirrorOpenCodeConfigIntoOverlay(spawnEnv.OPENCODE_CONFIG_DIR, managedOverlayRoot);
+      }
+      spawnEnv.OPENCODE_CONFIG_DIR = managedOverlayRoot;
+      spawnEnv.TESSERA_OPENCODE_CONFIG_DIR = managedOverlayRoot;
+    }
+    const guestEnvironment = {
+      ...(options.managedLaunch?.guestEnvironment ?? {}),
+      ...(managedOverlayRoot
+        ? {
+            OPENCODE_CONFIG_DIR: managedOverlayRoot,
+            TESSERA_OPENCODE_CONFIG_DIR: managedOverlayRoot,
+          }
+        : {}),
+    };
 
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
@@ -189,7 +242,9 @@ export class OpenCodeAdapter implements CliProvider {
       env: spawnEnv as NodeJS.ProcessEnv,
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
-    }, agentEnv);
+    }, agentEnv, {
+      guestEnvironment,
+    });
     this._attachRawLog(cliProcess, options.rawLog, {
       providerId: PROVIDER_ID,
       command,
@@ -413,6 +468,31 @@ export class OpenCodeAdapter implements CliProvider {
       return await this._generateTitleViaRun(prompt, userId);
     } catch (err) {
       logger.warn('OpenCodeAdapter: generateTitle failed', {
+        error: (err as Error).message,
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Runs a caller-built prompt one-shot and returns the raw reply text, with no
+   * title parsing and no length clamp — see the contract note on `generateText`.
+   *
+   * Returns null on any error/timeout/empty (fail-open).
+   */
+  async generateText(
+    prompt: string,
+    userId?: string,
+    // OpenCode's one-shot run cannot inject a model. The settings UI keeps
+    // this empty and the CLI's own default remains authoritative.
+    _model?: string,
+  ): Promise<GeneratedText | null> {
+    try {
+      const text = await this._runOneShot(prompt, userId);
+      const t = text.trim();
+      return t ? { text: t } : null;
+    } catch (err) {
+      logger.warn('OpenCodeAdapter: generateText failed', {
         error: (err as Error).message,
       });
       return null;
