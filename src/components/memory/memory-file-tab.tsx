@@ -24,6 +24,7 @@ import { wsClient } from "@/lib/ws/client";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { toast } from "@/stores/notification-store";
 import {
   buildMemoryFileSessionId,
@@ -347,7 +348,10 @@ export function MemoryFileTab({
     if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
     if (viewMode !== "edit") return;
     event.preventDefault();
-    if (dirtyRef.current) void saveFile();
+    if (dirtyRef.current) {
+      void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'save-memory-file' });
+      void saveFile();
+    }
   }, [saveFile, viewMode]);
 
   const handleClose = useCallback(() => {

@@ -98,6 +98,7 @@ import { PanelSplitPicker } from './panel-split-picker';
 import { ComposerSessionControls } from './composer-session-controls';
 import { DeleteSessionDialog } from './delete-session-dialog';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { exportSessionReference, formatContinueConversationPrompt } from '@/lib/session/session-reference';
@@ -166,6 +167,7 @@ export function MessageInput({
   );
   const [inputValue, setInputValue] = useState(() => useChatStore.getState().getDraftInput(sessionId));
   const [deleteRequested, setDeleteRequested] = useState(false);
+  const usedVoiceInputRef = useRef(false);
   // Attachment/reference/voice completion can update the local composer after a
   // terminal launch but before its prefill ACK. Record that intent synchronously
   // (before React commits the state update) so an older ACK cannot clear it.
@@ -176,6 +178,7 @@ export function MessageInput({
   const clearInput = useCallback(() => {
     setInputValue('');
     setDraftInput(sessionId, '');
+    usedVoiceInputRef.current = false;
   }, [sessionId, setDraftInput]);
 
   useEffect(() => {
@@ -397,6 +400,7 @@ export function MessageInput({
 
   // Voice input: insert transcribed text at cursor position
   const handleVoiceTranscribed = useCallback((text: string) => {
+    usedVoiceInputRef.current = true;
     const textarea = textareaRef.current;
     if (textarea) {
       const cursorPos = textarea.selectionStart;
@@ -466,6 +470,7 @@ export function MessageInput({
     if (voiceCommittedText.length > oldCommitted.length) {
       const newPortion = voiceCommittedText.slice(oldCommitted.length).trimStart();
       if (newPortion) {
+        usedVoiceInputRef.current = true;
         const sep = base && !base.endsWith(' ') ? ' ' : '';
         base += sep + newPortion;
       }
@@ -580,6 +585,7 @@ export function MessageInput({
           if (sessionId !== panelActiveSessionId) return;
         }
         toggleVoiceRecording();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'voice-input' });
       },
     });
     return unsubscribe;
@@ -1217,7 +1223,15 @@ export function MessageInput({
         sendContent,
         skillName,
         displayContent,
-        { forceTranslateInput },
+        {
+          forceTranslateInput,
+          telemetry: {
+            hasAttachment: hasAttachments,
+            attachmentCount: attachments.length,
+            hasSessionReference: hasSessionRefs,
+            usedVoiceInput: usedVoiceInputRef.current,
+          },
+        },
       ).then((didSend) => {
         if (!didSend) return;
         clearInput();
@@ -1238,7 +1252,15 @@ export function MessageInput({
         return;
       }
       const spawnConfig = buildSpawnConfigForCurrentSession();
-      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig, { forceTranslateInput });
+      sendMessage(sessionId, sendContent, skillName, displayContent, spawnConfig, {
+        forceTranslateInput,
+        telemetry: {
+          hasAttachment: hasAttachments,
+          attachmentCount: attachments.length,
+          hasSessionReference: hasSessionRefs,
+          usedVoiceInput: usedVoiceInputRef.current,
+        },
+      });
     }
 
     clearInput();

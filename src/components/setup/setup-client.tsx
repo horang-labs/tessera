@@ -275,6 +275,12 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
         return;
       }
 
+      await captureTelemetryEvent('setup_completed', {
+        readiness: status?.isFullyReady ? 'ready' : 'limited',
+        environment: status?.activeEnvironment ?? settings.agentEnvironment,
+        execution_mode: selectedExecutionMode,
+      });
+
       router.push('/chat');
     } finally {
       setIsProceeding(false);
@@ -284,7 +290,9 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
     pendingSaveCount,
     router,
     selectedExecutionMode,
+    settings.agentEnvironment,
     settings.setup,
+    status?.activeEnvironment,
     status?.isFullyReady,
     t,
     updateSettings,

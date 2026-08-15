@@ -718,6 +718,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
       if (movedCount > 0) {
         useBoardStore.getState().flashDrop(sessionId || multiSessionIds[0]);
         useSelectionStore.getState().clearSelection();
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'chat',
+          move_kind: 'workflow_status',
+          item_count: movedCount,
+        });
       }
 
       useBoardStore.getState().setDragging(null);
@@ -733,6 +738,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
         focusedProjectId ?? undefined,
       );
       useBoardStore.getState().flashDrop(sessionId);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'chat',
+        move_kind: 'workflow_status',
+        item_count: 1,
+      });
     } else if (sessionId && session) {
       const ids = filteredChats
         .filter((item) => item.projectDir === session.projectDir)
@@ -754,6 +764,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
         filtered,
       );
       useBoardStore.getState().flashDrop(sessionId);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'chat',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
     }
 
     useBoardStore.getState().setDragging(null);
@@ -933,6 +948,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
         has_task: true,
         has_worktree: Boolean(task.worktreeBranch),
         has_collection: Boolean(task.collectionId),
+        session_kind: data.kind ?? 'chat',
       });
     } catch (err) {
       console.error('Failed to add session to task:', err);

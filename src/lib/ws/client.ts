@@ -25,11 +25,24 @@ import {
 } from './client-message-handlers';
 import { applyOptimisticUserMessage, buildClientRequest } from './client-transport';
 import { getClientId } from './client-id';
-import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import {
+  captureTelemetryPromptSubmitted,
+  captureTelemetryPromptTurnFinished,
+} from '@/lib/telemetry/client';
 
 type ServerMessageListener = (msg: ServerTransportMessage) => void;
 
 const TERMINAL_PROMPT_RESPONSE_TIMEOUT_MS = 10_000;
+
+export interface SendMessageOptions {
+  forceTranslateInput?: boolean;
+  telemetry?: {
+    hasAttachment?: boolean;
+    attachmentCount?: number;
+    hasSessionReference?: boolean;
+    usedVoiceInput?: boolean;
+  };
+}
 
 export class WebSocketClient {
   readonly clientId: string = getClientId();
@@ -167,7 +180,7 @@ export class WebSocketClient {
     skillName?: string,
     displayContent?: string | ContentBlock[],
     spawnConfig?: SessionSpawnConfig,
-    options?: { forceTranslateInput?: boolean },
+    options?: SendMessageOptions,
   ) {
     // Stable id shared by the optimistic message and the server record, so the
     // input-translation result (message_translation) can attach to this exact message.
@@ -178,6 +191,9 @@ export class WebSocketClient {
       (translate.enabled || options?.forceTranslateInput === true) &&
       !!translate.sourceLanguage &&
       translate.sourceLanguage !== translate.targetLanguage;
+    const inferredAttachmentCount = Array.isArray(content)
+      ? content.filter((block) => block.type === 'image').length
+      : 0;
 
     if (!this.sendRequest('send_message', {
       sessionId,
@@ -194,7 +210,16 @@ export class WebSocketClient {
 
     // Count the accepted submission, never the message body. Capturing here
     // covers button, Enter, resume-and-send, and other composer entry points.
-    void captureTelemetryEvent('prompt_submitted', { source: 'gui' });
+    void captureTelemetryPromptSubmitted(sessionId, {
+      source: 'gui',
+      has_skill: Boolean(skillName),
+      has_attachment: options?.telemetry?.hasAttachment
+        ?? (inferredAttachmentCount > 0),
+      attachment_count: options?.telemetry?.attachmentCount ?? inferredAttachmentCount,
+      has_session_reference: options?.telemetry?.hasSessionReference ?? false,
+      translation_requested: willTranslateInput,
+      used_voice_input: options?.telemetry?.usedVoiceInput ?? false,
+    });
 
     applyOptimisticUserMessage(sessionId, content, skillName, displayContent, {
       messageId,
@@ -277,6 +302,15 @@ export class WebSocketClient {
       response,
     });
     if (sent) {
+      void captureTelemetryPromptSubmitted(sessionId, {
+        source: 'gui',
+        has_skill: false,
+        has_attachment: false,
+        attachment_count: 0,
+        has_session_reference: false,
+        translation_requested: false,
+        used_voice_input: false,
+      });
       applyLocalInteractiveResponseStart(sessionId, toolUseId, response);
       return true;
     }
@@ -291,6 +325,7 @@ export class WebSocketClient {
 
   cancelGeneration(sessionId: string) {
     finalizeInFlightTurn(sessionId);
+    void captureTelemetryPromptTurnFinished(sessionId, 'cancelled');
     this.sendRequest('cancel_generation', { sessionId });
   }
 
@@ -431,7 +466,7 @@ export class WebSocketClient {
     // A carriage return is the terminal's submit boundary. Do not inspect or
     // retain any buffered text that preceded it.
     if (sent && data === '\r') {
-      void captureTelemetryEvent('prompt_submitted', { source: 'pty_direct' });
+      void captureTelemetryPromptSubmitted(terminalId, { source: 'pty_direct' });
     }
     return sent;
   }
@@ -449,7 +484,7 @@ export class WebSocketClient {
         if (timer !== null) clearTimeout(timer);
         this.terminalPromptCallbacks.delete(request.requestId);
         if (result.accepted) {
-          void captureTelemetryEvent('prompt_submitted', { source: 'pty_chat_view' });
+          void captureTelemetryPromptSubmitted(sessionId, { source: 'pty_chat_view' });
         }
         resolve(result);
       };

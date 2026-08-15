@@ -70,6 +70,7 @@ import {
 } from "@/lib/workspace-tabs/workspace-tab-sync";
 import { cn } from "@/lib/utils";
 import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import {
   buildWorkspacePathContextMenuState,
   type WorkspacePathContextMenuState,
@@ -349,65 +350,121 @@ export function WorkspaceFilePanel({
 
   async function createFolder(path: string) {
     if (!target) return;
-    const created = await createWorkspaceDirectoryRequest(target, path);
-    expandParentOf(created.path);
-    await loadFiles({
-      silent: true,
-      mutation: { kind: "directory", path: created.path, type: "create" },
-    });
+    try {
+      const created = await createWorkspaceDirectoryRequest(target, path);
+      expandParentOf(created.path);
+      await loadFiles({
+        silent: true,
+        mutation: { kind: "directory", path: created.path, type: "create" },
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'directory',
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'directory',
+        result: 'failed',
+      });
+      throw error;
+    }
   }
 
   async function createFile(path: string) {
     if (!target) return;
-    const created = await createWorkspaceFileRequest(target, path);
-    expandParentOf(created.path);
-    // Creation immediately navigates away to the new file tab. Finish the
-    // list reload first so a Worktree panel without a Session watcher does not
-    // show a stale tree when the user comes back.
-    await loadFiles({
-      silent: true,
-      mutation: { kind: "file", path: created.path, type: "create" },
-    });
-    setSelectedPath(created.path);
-    openWorkspaceTargetFileTab(target, "file", created.path, {
-      projectDir: sessionProjectDir,
-    });
+    try {
+      const created = await createWorkspaceFileRequest(target, path);
+      expandParentOf(created.path);
+      // Creation immediately navigates away to the new file tab. Finish the
+      // list reload first so a Worktree panel without a Session watcher does not
+      // show a stale tree when the user comes back.
+      await loadFiles({
+        silent: true,
+        mutation: { kind: "file", path: created.path, type: "create" },
+      });
+      setSelectedPath(created.path);
+      openWorkspaceTargetFileTab(target, "file", created.path, {
+        projectDir: sessionProjectDir,
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'file',
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'file',
+        result: 'failed',
+      });
+      throw error;
+    }
   }
 
   async function renameEntry(path: string, newName: string) {
     if (!target) return;
     const kind = directories.includes(path) ? "directory" : "file";
-    const renamed = await renameWorkspaceEntryRequest(target, path, newName);
-    repointWorkspaceFileTabs(target, renamed.previousPath, renamed.path);
-    if (selectedPath && isPathUnderMutation(selectedPath, renamed.previousPath)) {
-      setSelectedPath(renamed.path + selectedPath.slice(renamed.previousPath.length));
+    try {
+      const renamed = await renameWorkspaceEntryRequest(target, path, newName);
+      repointWorkspaceFileTabs(target, renamed.previousPath, renamed.path);
+      if (selectedPath && isPathUnderMutation(selectedPath, renamed.previousPath)) {
+        setSelectedPath(renamed.path + selectedPath.slice(renamed.previousPath.length));
+      }
+      await loadFiles({
+        silent: true,
+        mutation: {
+          kind,
+          path: renamed.path,
+          previousPath: renamed.previousPath,
+          type: "rename",
+        },
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'rename',
+        entry_kind: kind,
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'rename',
+        entry_kind: kind,
+        result: 'failed',
+      });
+      throw error;
     }
-    await loadFiles({
-      silent: true,
-      mutation: {
-        kind,
-        path: renamed.path,
-        previousPath: renamed.previousPath,
-        type: "rename",
-      },
-    });
   }
 
   async function deleteEntry(request: WorkspaceDeleteRequest) {
     if (!target) return;
-    await deleteWorkspaceEntryRequest(target, request.path, {
-      recursive: request.kind === "directory",
-    });
-    // The tab has to go with the file: leaving it open shows an editable buffer
-    // for a path that no longer exists.
-    closeWorkspaceFileTabsFor(target, request.path);
-    if (selectedPath && isPathUnderMutation(selectedPath, request.path)) {
-      setSelectedPath(null);
+    try {
+      await deleteWorkspaceEntryRequest(target, request.path, {
+        recursive: request.kind === "directory",
+      });
+      // The tab has to go with the file: leaving it open shows an editable buffer
+      // for a path that no longer exists.
+      closeWorkspaceFileTabsFor(target, request.path);
+      if (selectedPath && isPathUnderMutation(selectedPath, request.path)) {
+        setSelectedPath(null);
+      }
+      await loadFiles({
+        silent: true,
+        mutation: { kind: request.kind, path: request.path, type: "delete" },
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'delete',
+        entry_kind: request.kind,
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'delete',
+        entry_kind: request.kind,
+        result: 'failed',
+      });
+      throw error;
     }
-    await loadFiles({
-      silent: true,
-      mutation: { kind: request.kind, path: request.path, type: "delete" },
-    });
   }
 
   function toggleDirectory(path: string) {

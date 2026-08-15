@@ -31,6 +31,7 @@ import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
 import { moveTerminalPanelToNewTab } from '@/lib/tab/terminal-panel-to-new-tab';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 const TAB_SCROLL_MIN_STEP = 180;
 
@@ -430,6 +431,11 @@ export const TabBar = memo(function TabBar() {
     const dragTabId = dragTabIdRef.current;
     if (dragTabId && dragTabId !== dropTabId) {
       useTabStore.getState().reorderTab(dragTabId, dropTabId);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
     }
     dragTabIdRef.current = null;
     setDraggingTabId(null);
@@ -470,6 +476,9 @@ export const TabBar = memo(function TabBar() {
 
     const dragTabId = dragTabIdRef.current;
     if (!dragTabId) return;
+    const tabState = useTabStore.getState();
+    const dragIndex = tabState.tabs.findIndex((tab) => tab.id === dragTabId);
+    const didMove = dragIndex !== -1 && dragIndex !== tabState.tabs.length - 1;
     clearTabDragState();
 
     // Move dragged tab to end (direct splice, not reorderTab which inserts "before")
@@ -481,6 +490,13 @@ export const TabBar = memo(function TabBar() {
       newTabs.push(draggedTab);
       return { tabs: newTabs };
     });
+    if (didMove) {
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
+    }
   }, [clearTabDragState, handlePanelNodeDropToNewTab, handlePanelTitleDropToNewTab]);
 
   // ---------------------------------------------------------------------------

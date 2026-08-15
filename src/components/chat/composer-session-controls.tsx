@@ -43,6 +43,7 @@ import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { UnifiedSession } from '@/types/chat';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import {
   CODEX_NATIVE_COMMAND_EVENT,
   type CodexNativeCommandEventDetail,
@@ -831,6 +832,7 @@ function ComposerSessionControlsInner({
       bindings[planShortcut] = (event) => {
         if (!isActivePanelSession()) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'toggle-plan-mode' });
         handlePlanToggle();
       };
     }
@@ -838,6 +840,7 @@ function ComposerSessionControlsInner({
       bindings[fastModeShortcut] = (event) => {
         if (!isActivePanelSession() || !canToggleFastMode) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'toggle-fast-mode' });
         handleFastModeToggle();
       };
     }
@@ -845,6 +848,7 @@ function ComposerSessionControlsInner({
       bindings[modelShortcut] = (event) => {
         if (!isActivePanelSession()) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'open-model-selector' });
         setModelOpenRequest((value) => value + 1);
       };
     }
@@ -852,6 +856,7 @@ function ComposerSessionControlsInner({
       bindings[reasoningShortcut] = (event) => {
         if (!isActivePanelSession() || !canOpenReasoningSelector) return;
         event.preventDefault();
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: 'open-reasoning-selector' });
         setReasoningOpenRequest((value) => value + 1);
       };
     }

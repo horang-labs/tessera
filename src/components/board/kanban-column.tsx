@@ -25,6 +25,7 @@ import { CollectionQuickCreateSheet } from '@/components/chat/collection-quick-c
 import { KanbanChatCard, KanbanTaskCard } from './kanban-card';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 type KanbanQuickCreateColumn = 'chat' | WorkflowStatus;
 export type KanbanColumnInteractionMode = 'editable' | 'filtered';
@@ -660,6 +661,20 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         }
         boardStore.flashDrop(taskId || chatSessionId || movingTaskIds[0] || movingChatIds[0]);
         useSelectionStore.getState().clearSelection();
+        if (movingTaskIds.length > 0) {
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'task',
+            move_kind: 'workflow_status',
+            item_count: movingTaskIds.length,
+          });
+        }
+        if (movingChatIds.length > 0) {
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'chat',
+            move_kind: 'workflow_status',
+            item_count: movingChatIds.length,
+          });
+        }
         finishDrop();
         return;
       }
@@ -686,6 +701,11 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
             filtered,
           );
           boardStore.flashDrop(chatSessionId);
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'chat',
+            move_kind: 'reorder',
+            item_count: 1,
+          });
         }
       } else if (session && !session.taskId && session.workflowStatus !== status) {
         sessionStore.updateChatWorkflowStatus(
@@ -694,6 +714,11 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           projectViewId ?? undefined,
         );
         boardStore.flashDrop(chatSessionId);
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'chat',
+          move_kind: 'workflow_status',
+          item_count: 1,
+        });
       }
 
       finishDrop();
@@ -719,6 +744,11 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           filtered.splice(insertIdx, 0, taskId);
           taskStore.reorderTasks(filtered, projectViewId ?? task.projectViewId);
           boardStore.flashDrop(taskId);
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'task',
+            move_kind: 'reorder',
+            item_count: 1,
+          });
         }
       } else if (task && task.workflowStatus !== status) {
         taskStore.updateTask(
@@ -727,6 +757,11 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           projectViewId ?? undefined,
         );
         boardStore.flashDrop(taskId);
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'task',
+          move_kind: 'workflow_status',
+          item_count: 1,
+        });
       }
     }
 

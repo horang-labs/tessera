@@ -262,6 +262,7 @@ export function useSessionCrud() {
           has_task: Boolean(options.taskId),
           has_worktree: Boolean(worktreeBranch),
           has_collection: Boolean(options.collectionId),
+          session_kind: result.kind,
         });
 
         return result.sessionId;
