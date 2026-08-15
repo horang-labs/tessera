@@ -27,8 +27,13 @@ on:
         required: true
         type: boolean
         default: true
+      artifact_run_id:
+        description: Existing workflow run ID whose desktop artifacts should be published without rebuilding
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: write
 
 env:
@@ -42,7 +47,12 @@ jobs:
     steps:
       - name: Require at least one desktop target
         run: |
-          if [[ "${{ inputs.build_windows }}" != "true" && "${{ inputs.build_macos }}" != "true" && "${{ inputs.build_linux }}" != "true" ]]; then
+          if [[ -n "${{ inputs.artifact_run_id }}" ]]; then
+            if [[ "${{ inputs.build_windows }}" == "true" || "${{ inputs.build_macos }}" == "true" || "${{ inputs.build_linux }}" == "true" ]]; then
+              echo "Desktop build targets must be disabled when artifact_run_id is provided."
+              exit 1
+            fi
+          elif [[ "${{ inputs.build_windows }}" != "true" && "${{ inputs.build_macos }}" != "true" && "${{ inputs.build_linux }}" != "true" ]]; then
             echo "At least one desktop target must be enabled."
             exit 1
           fi
@@ -50,7 +60,7 @@ jobs:
   build-windows:
     name: Build Windows x64
     needs: validate
-    if: ${{ inputs.build_windows }}
+    if: ${{ inputs.artifact_run_id == '' && inputs.build_windows }}
     runs-on: windows-latest
 
     steps:
@@ -100,7 +110,7 @@ jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     needs: validate
-    if: ${{ inputs.build_macos }}
+    if: ${{ inputs.artifact_run_id == '' && inputs.build_macos }}
     runs-on: ${{ matrix.runner }}
 
     strategy:
@@ -194,7 +204,7 @@ jobs:
   build-linux:
     name: Build Linux x64
     needs: validate
-    if: ${{ inputs.build_linux }}
+    if: ${{ inputs.artifact_run_id == '' && inputs.build_linux }}
     runs-on: ubuntu-latest
 
     steps:
@@ -272,6 +282,7 @@ jobs:
         needs.build-linux.result != 'failure' &&
         needs.build-linux.result != 'cancelled' &&
         (
+          inputs.artifact_run_id != '' ||
           needs.build-windows.result == 'success' ||
           needs.build-macos.result == 'success' ||
           needs.build-linux.result == 'success'
@@ -290,9 +301,19 @@ jobs:
           ref: ${{ inputs.tag }}
 
       - name: Download desktop artifacts
+        if: ${{ inputs.artifact_run_id == '' }}
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: ${{ runner.temp }}/release-artifacts
+          merge-multiple: true
+
+      - name: Download desktop artifacts from prior run
+        if: ${{ inputs.artifact_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release-artifacts
           merge-multiple: true
 
       - name: Upload and publish GitHub Release
@@ -300,7 +321,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
-          assets=(artifacts/*)
+          assets=("$RUNNER_TEMP"/release-artifacts/*)
           if [[ ${#assets[@]} -eq 0 ]]; then
             echo "No desktop assets found."
             exit 1
