@@ -37,12 +37,14 @@ Tessera turns a pile of terminals into a visible workflow. Give each task its ow
 - **Keep every session within reach** — move between list, board, tabs, split panes, and your phone without losing the conversation.
 - **Finish where the work happened** — inspect files and diffs, commit, sync, publish branches, and open pull requests from Tessera.
 
+**OpenCode is first-class:** run it in PTY or rich GUI mode, use its discovered commands and model or mode controls, follow permissions, tool calls, and todos, and switch a live PTY into Chat View.
+
 > [!NOTE]
 > Tessera runs locally and uses the provider CLIs already installed and authenticated on your machine.
 
 ## Let the lead agent run the workspace
 
-Invoke `/tessera-cli` inside a managed Codex or Claude Code session. A lead agent can create isolated worktrees, launch parallel sessions, wait for results, inspect their output, and send follow-up prompts—while every worker stays visible in Tessera.
+Invoke `/tessera-cli` inside a managed Claude Code, Codex, or OpenCode session. A lead agent can create isolated worktrees, launch parallel sessions, wait for results, inspect their output, and send follow-up prompts—while every worker stays visible in Tessera.
 
 Representative operations: `status` · `worktree create` · `session launch` · `session wait` / `session read` · `session prompt`
 
@@ -72,6 +74,7 @@ Edit project files, review diffs, select changes, commit, sync, publish branches
 
 | Built for | What you get |
 |---|---|
+| **Claude Code, Codex, and OpenCode** | Start any supported provider in PTY or rich GUI mode and keep its conversation, tools, and state visible. |
 | **Projects and sessions** | Collections, persistent tabs, split panes, list view, and Kanban board. |
 | **Terminal and GUI** | Run PTY sessions and rich conversations side by side in the same workspace. |
 | **Custom models** | Add custom model IDs in Settings and select them when starting a session. |
