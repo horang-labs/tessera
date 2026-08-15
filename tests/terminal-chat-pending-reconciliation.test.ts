@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { reconcilePendingTerminalChatMessages } from '@/lib/chat/terminal-chat-live-refresh';
+import {
+  reconcilePendingTerminalChatMessages,
+  registerPendingTerminalChatMessage,
+} from '@/lib/chat/terminal-chat-live-refresh';
+import { useChatStore } from '@/stores/chat-store';
 import type { EnhancedMessage } from '@/types/chat';
 
 function userMessage(id: string, content: string, timestamp: string): EnhancedMessage {
@@ -49,4 +53,28 @@ test('one canonical user turn confirms at most one pending send', () => {
     reconcilePendingTerminalChatMessages([first, second], [canonical]),
     [second],
   );
+});
+
+test('pending registration preserves the pre-ack submission timestamp', () => {
+  const sessionId = 'terminal-chat-captured-timestamp';
+  const content = '기존 플랫폼 값이 있으면 추가하지 않아도 됩니다';
+  const submittedAt = '2026-08-15T02:52:05.878Z';
+  const canonical = userMessage(
+    'hist-user-captured',
+    content,
+    '2026-08-15T02:52:06.146Z',
+  );
+
+  try {
+    registerPendingTerminalChatMessage(sessionId, content, submittedAt);
+    const [pending] = useChatStore.getState().messages.get(sessionId) ?? [];
+
+    assert.equal(pending?.timestamp, submittedAt);
+    assert.deepEqual(
+      reconcilePendingTerminalChatMessages(pending ? [pending] : [], [canonical]),
+      [],
+    );
+  } finally {
+    useChatStore.getState().clearSession(sessionId);
+  }
 });
