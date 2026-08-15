@@ -28,7 +28,9 @@ test('Electron injects the app secret only for its four HTTP and WebSocket origi
 
 test('Electron installs header injection before creating any app window', () => {
   const registerIndex = electronMainSource.indexOf('await registerAppSecretHeader(port);');
-  const createIndex = electronMainSource.indexOf('mainWindow = createWindow(port);');
+  const createIndex = electronMainSource.indexOf(
+    'mainWindow = createWindow(port, restoredLayout.main ?? undefined);',
+  );
 
   assert.notEqual(registerIndex, -1);
   assert.notEqual(createIndex, -1);
