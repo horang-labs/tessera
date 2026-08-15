@@ -1,19 +1,19 @@
 /**
  * Codex rollout (JSONL) → SessionHistoryEvent decoder.
  *
- * A rollout records the same turn twice: `event_msg` carries what the TUI
- * showed, `response_item` carries what went to the model. Measured on a 74MB
- * rollout, every one of the 78 `event_msg` conversation entries also appears
- * among the 96 `response_item` messages — the extra 18 being developer
- * instructions and injected AGENTS.md context that no user ever typed.
+ * Codex 0.145 records conversation in `event_msg`. Although the same turns also
+ * appear in `response_item`, those copies contain model-facing context and must
+ * remain ignored. Codex 0.147 stopped writing conversation `event_msg` entries,
+ * so only that version and newer read conversation from `response_item.message`.
  *
- * So the two streams are split by role rather than merged and deduped:
- *   - conversation  → `event_msg` (user_message / agent_message)
+ * The rollout's `session_meta.payload.cli_version` gates the new source:
+ *   - Codex <= 0.146 → `event_msg` (user_message / agent_message)
+ *   - Codex >= 0.147 → `response_item.message`
  *   - tools         → `response_item` (function_call, custom_tool_call, …)
  *   - everything else is dropped
  *
- * That removes the need for dedup entirely and keeps the injected prompts out
- * of the chat view.
+ * Developer and synthetic user context is filtered out of response messages so
+ * only the conversation visible to the user reaches the chat view.
  *
  * Reasoning is not decoded: `response_item.reasoning` ships `encrypted_content`
  * with an empty `summary` in every rollout inspected, so there is no text to
@@ -31,6 +31,16 @@ import type { FileReadImageToolResult } from '@/types/tool-result';
 /** Mirrors HISTORY_VERSION in session-history.ts. */
 const HISTORY_VERSION = 1;
 
+const RESPONSE_ITEM_CONVERSATION_MIN_MINOR = 147;
+const SYNTHETIC_RESPONSE_USER_PREFIXES = [
+  '# AGENTS.md instructions',
+  '<INSTRUCTIONS>',
+  '<environment_context>',
+  '<user_instructions>',
+  '<recommended_plugins>',
+  '<skill>',
+];
+
 interface PendingToolCall {
   toolName: string;
   toolKind?: ToolCallKind;
@@ -41,10 +51,25 @@ interface PendingToolCall {
 export interface CodexTranscriptDecoderState {
   /** Calls awaiting their output, keyed by Codex `call_id`. */
   pendingToolCalls: Map<string, PendingToolCall>;
+  /** Whether this rollout version stores conversation in response_item.message. */
+  readResponseItemConversation: boolean;
 }
 
 export function createCodexTranscriptDecoderState(): CodexTranscriptDecoderState {
-  return { pendingToolCalls: new Map() };
+  return {
+    pendingToolCalls: new Map(),
+    // Missing or malformed metadata keeps the proven 0.145 behavior.
+    readResponseItemConversation: false,
+  };
+}
+
+function versionUsesResponseItemConversation(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d+)\.(\d+)/.exec(value);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || (major === 0 && minor >= RESPONSE_ITEM_CONVERSATION_MIN_MINOR);
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -229,6 +254,44 @@ function decodeEventMessage(
   return null;
 }
 
+function readResponseMessage(
+  payload: Record<string, any>,
+): { role: 'user' | 'assistant'; text: string } | null {
+  if (payload.role !== 'user' && payload.role !== 'assistant') return null;
+  if (!Array.isArray(payload.content)) return null;
+
+  const text = payload.content
+    .flatMap((block: unknown) => {
+      if (!isRecord(block)) return [];
+      if (block.type !== 'input_text' && block.type !== 'output_text' && block.type !== 'text') {
+        return [];
+      }
+      return typeof block.text === 'string' && block.text.trim() ? [block.text] : [];
+    })
+    .join('\n')
+    .trim();
+
+  return text ? { role: payload.role, text } : null;
+}
+
+function isSyntheticResponseUserMessage(text: string): boolean {
+  const trimmed = text.trimStart();
+  return SYNTHETIC_RESPONSE_USER_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
+function decodeResponseMessage(
+  payload: Record<string, any>,
+  timestamp: string,
+): SessionHistoryEvent | null {
+  const message = readResponseMessage(payload);
+  if (!message) return null;
+  if (message.role === 'user' && isSyntheticResponseUserMessage(message.text)) return null;
+
+  return message.role === 'user'
+    ? { v: HISTORY_VERSION, type: 'user_message', timestamp, content: message.text }
+    : { v: HISTORY_VERSION, type: 'assistant_message', timestamp, content: message.text };
+}
+
 /**
  * Decode one rollout line. Returns [] for blank lines, malformed JSON, and every
  * record the chat view does not render (`token_count`, `task_started`,
@@ -253,12 +316,23 @@ export function decodeCodexTranscriptLine(
   const payload = record.payload;
   const timestamp = readTimestamp(record);
 
+  if (record.type === 'session_meta') {
+    state.readResponseItemConversation = versionUsesResponseItemConversation(payload.cli_version);
+    return [];
+  }
+
   if (record.type === 'event_msg') {
+    if (state.readResponseItemConversation) return [];
     const event = decodeEventMessage(payload, timestamp);
     return event ? [event] : [];
   }
 
   if (record.type === 'response_item') {
+    if (payload.type === 'message') {
+      if (!state.readResponseItemConversation) return [];
+      const event = decodeResponseMessage(payload, timestamp);
+      return event ? [event] : [];
+    }
     if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
       const event = decodeToolCall(payload, state, timestamp);
       return event ? [event] : [];
@@ -267,8 +341,6 @@ export function decodeCodexTranscriptLine(
       const event = decodeToolResult(payload, state, timestamp);
       return event ? [event] : [];
     }
-    // response_item.message duplicates event_msg (see file header) and also
-    // carries developer/injected turns, so it is deliberately skipped.
     return [];
   }
 

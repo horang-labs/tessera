@@ -1402,6 +1402,7 @@ export const ko: I18nMessages = {
     preparation: {
       preparing: '준비 중',
       failed: '준비 실패',
+      failedTooltip: '워크트리 준비 스크립트가 실패했습니다. 클릭하여 Scripts에서 오류를 확인하세요.',
       title: '워크트리 준비',
       runningDescription: '이 워크트리에서 준비 스크립트가 실행되고 있습니다. 이 창을 닫아도 실행은 계속됩니다.',
       failedDescription: '준비 스크립트가 끝까지 실행되지 못했습니다. 프로젝트 설정에서 고친 뒤 다시 실행하세요.',

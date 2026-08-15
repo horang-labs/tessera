@@ -1395,6 +1395,7 @@ export const zh: I18nMessages = {
     preparation: {
       preparing: '准备中',
       failed: '准备失败',
+      failedTooltip: '工作树准备脚本失败。点击可在 Scripts 中查看错误。',
       title: '工作树准备',
       runningDescription: '准备脚本正在此工作树中运行。关闭此视图不会中止运行。',
       failedDescription: '准备脚本没有执行完。请在项目设置中修改后重新运行。',

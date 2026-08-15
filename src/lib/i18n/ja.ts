@@ -1395,6 +1395,7 @@ export const ja: I18nMessages = {
     preparation: {
       preparing: '準備中',
       failed: '準備に失敗',
+      failedTooltip: 'ワークツリーの準備スクリプトが失敗しました。クリックして Scripts でエラーを確認してください。',
       title: 'ワークツリーの準備',
       runningDescription: 'このワークツリーで準備スクリプトが実行中です。この画面を閉じても実行は続きます。',
       failedDescription: '準備スクリプトが最後まで実行されませんでした。プロジェクト設定で修正してから、もう一度実行してください。',
