@@ -160,6 +160,16 @@ test('a session-triggered refresh is labeled with the session event', async () =
   assert.ok(headers['X-Tessera-Install-Id'], 'session events still carry the install id');
 });
 
+test('a prompt-triggered refresh is content-free and labeled with the prompt event', async () => {
+  __resetRemoteModelConfigForTests();
+  const { fn, calls } = mockFetch(jsonResponse(validDoc, '"mc-2"'));
+  await refreshRemoteModelConfig('prompt', { fetchImpl: fn, hostInfo: HOST });
+  const headers = calls[0].init.headers as Record<string, string>;
+  assert.equal(headers['X-Tessera-Event'], 'prompt');
+  assert.ok(headers['X-Tessera-Install-Id'], 'prompt events still carry the install id');
+  assert.equal(calls[0].init.body, undefined, 'prompt content must never reach the Worker');
+});
+
 test('install_id is sent even when telemetry is disabled by env (full count, no gating)', async () => {
   __resetRemoteModelConfigForTests();
   const { fn, calls } = mockFetch(jsonResponse(validDoc, '"mc-2"'));

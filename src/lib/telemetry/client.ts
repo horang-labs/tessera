@@ -378,6 +378,7 @@ export function captureTelemetryPromptSubmitted(
   correlationKey: string,
   properties: TelemetryEventProperties,
 ): Promise<void> {
+  captureCloudflarePromptBeacon();
   const source = properties.source;
   if (
     isTelemetryReady()
@@ -388,6 +389,22 @@ export function captureTelemetryPromptSubmitted(
     pendingPromptTurns.set(correlationKey, { source, startedAt: Date.now() });
   }
   return captureTelemetryEvent('prompt_submitted', properties);
+}
+
+/**
+ * Content-free operational beacon. Unlike PostHog product telemetry this is
+ * deliberately independent of opt-out/DNT: it only proves an installed app
+ * reached a prompt submission boundary. The same-origin server route receives
+ * no prompt, session identifier, source, or other user-authored value.
+ */
+function captureCloudflarePromptBeacon(): void {
+  if (!isBrowser()) return;
+  void fetch('/api/telemetry/prompt-beacon', {
+    method: 'POST',
+    keepalive: true,
+  }).catch(() => {
+    // Usage beacons must never affect prompt delivery.
+  });
 }
 
 export function captureTelemetryPromptTurnFinished(
