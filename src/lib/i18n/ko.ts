@@ -1131,6 +1131,8 @@ export const ko: I18nMessages = {
       worktreeFallback: '활성 워크트리',
       selectionSummary: '{{files}}개 선택됨',
       includeFile: '{{path}}을(를) 커밋에 포함',
+      selectAll: '전체 선택',
+      deselectAll: '전체 해제',
       button: '커밋',
       buttonPending: '커밋 중…',
       menuButtonCount: '커밋 ({{count}})',

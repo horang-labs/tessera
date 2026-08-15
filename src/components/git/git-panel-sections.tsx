@@ -653,6 +653,7 @@ export function GitPanelContentSection({
     message: string;
     onGenerate: () => void;
     onMessageChange: (value: string) => void;
+    onSetAllSelected: (selected: boolean) => void;
     onToggleFile: (path: string) => void;
     totals: { files: number; added: number; removed: number };
   };
@@ -741,6 +742,8 @@ export function GitPanelContentSection({
     />
   );
   const hasTarget = targetSelected ?? Boolean(sessionId);
+  const allCommitFilesSelected = changedFileCount > 0
+    && commit.totals.files === changedFileCount;
 
   const contentBody = (
     <>
@@ -789,14 +792,27 @@ export function GitPanelContentSection({
               />
             ) : (
               <>
-                <div className="flex items-center justify-between px-1">
+                <div className="flex items-center justify-between gap-2 px-1">
                   <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
-                    Changed files
+                    {t("gitPanel.commit.changedFiles")}
                   </span>
-                  <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
-                    {data.changedFilesTruncated
-                      ? (data.changedFilesTotal ?? `${changedFileCount}+`)
-                      : changedFileCount}
+                  <span className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={primary.pendingVerb !== null}
+                      onClick={() => commit.onSetAllSelected(!allCommitFilesSelected)}
+                      {...telemetryClickAttributes("git.commit_file.toggle_all", "git_panel")}
+                      className="rounded px-1 py-0.5 text-[10px] font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {t(allCommitFilesSelected
+                        ? "gitPanel.commit.deselectAll"
+                        : "gitPanel.commit.selectAll")}
+                    </button>
+                    <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
+                      {data.changedFilesTruncated
+                        ? (data.changedFilesTotal ?? `${changedFileCount}+`)
+                        : changedFileCount}
+                    </span>
                   </span>
                 </div>
                 <ScrollArea className={cn(phoneScrollableContent ? "overflow-y-visible" : "flex-1")}>

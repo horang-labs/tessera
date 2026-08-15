@@ -387,6 +387,7 @@ export function GitPanel({
               message: controller.commitMessage,
               onGenerate: () => void controller.generateCommitMessage(),
               onMessageChange: controller.setCommitMessage,
+              onSetAllSelected: controller.setAllCommitFilesSelected,
               onToggleFile: controller.toggleCommitFile,
               totals: controller.commitTotals,
             }}

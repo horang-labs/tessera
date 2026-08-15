@@ -1124,6 +1124,8 @@ export const en: I18nMessages = {
       worktreeFallback: 'active worktree',
       selectionSummary: '{{files}} selected',
       includeFile: 'Include {{path}} in the commit',
+      selectAll: 'Select all',
+      deselectAll: 'Deselect all',
       button: 'Commit',
       buttonPending: 'Committing…',
       menuButtonCount: 'Commit ({{count}})',
