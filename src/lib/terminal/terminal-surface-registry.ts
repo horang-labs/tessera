@@ -563,13 +563,21 @@ export class TerminalSurface {
     return true;
   }
 
-  sendInput(data: string): boolean {
+  sendInput(
+    data: string,
+    promptSource: 'pty_chat_view' | 'pty_direct' = 'pty_direct',
+  ): boolean {
     if (
       this.disposed
       || this.snapshotReplay?.phase === 'parsing'
       || this.state.status === 'exited'
     ) return false;
-    return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
+    return wsClient.sendTerminalInput(
+      this.actualTerminalId,
+      this.surfaceId,
+      data,
+      promptSource,
+    );
   }
 
   supportsEscapeInterrupt(): boolean {
@@ -2027,12 +2035,19 @@ export function closeAndDisposeTerminalSurface(surface: TerminalSurface): void {
 }
 
 /** Send through an already-attached surface, preferring the visible/running one. */
-export function sendInputToTerminal(terminalId: string, data: string): boolean {
+export function sendInputToTerminal(
+  terminalId: string,
+  data: string,
+  promptSource: 'pty_chat_view' | 'pty_direct' = 'pty_direct',
+): boolean {
   const candidates = [...surfaces.values()].filter((surface) => surface.matchesTerminal(terminalId));
   for (const surface of candidates) {
-    if (surface.getSnapshot().status === 'running' && surface.sendInput(data)) return true;
+    if (
+      surface.getSnapshot().status === 'running'
+      && surface.sendInput(data, promptSource)
+    ) return true;
   }
-  return candidates.some((surface) => surface.sendInput(data));
+  return candidates.some((surface) => surface.sendInput(data, promptSource));
 }
 
 /** Whether the provider attached behind this terminal declares one-Escape cancellation. */

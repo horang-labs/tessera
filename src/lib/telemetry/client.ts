@@ -124,8 +124,9 @@ const allowedSources = new Set([
   'project_import',
   'git_panel',
   'manual',
-  'chat',
-  'terminal',
+  'gui',
+  'pty_chat_view',
+  'pty_direct',
 ]);
 const allowedViews = new Set(['list', 'kanban']);
 const allowedGitTabs = new Set(['git', 'files', 'scripts', 'memory']);

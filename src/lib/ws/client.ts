@@ -184,7 +184,7 @@ export class WebSocketClient {
 
     // Count the accepted submission, never the message body. Capturing here
     // covers button, Enter, resume-and-send, and other composer entry points.
-    void captureTelemetryEvent('prompt_submitted', { source: 'chat' });
+    void captureTelemetryEvent('prompt_submitted', { source: 'gui' });
 
     applyOptimisticUserMessage(sessionId, content, skillName, displayContent, {
       messageId,
@@ -412,12 +412,17 @@ export class WebSocketClient {
     return sent;
   }
 
-  sendTerminalInput(terminalId: string, surfaceId: string, data: string): boolean {
+  sendTerminalInput(
+    terminalId: string,
+    surfaceId: string,
+    data: string,
+    promptSource: 'pty_chat_view' | 'pty_direct' = 'pty_direct',
+  ): boolean {
     const sent = this.sendRequest('terminal_input', { terminalId, surfaceId, data });
     // A carriage return is the terminal's submit boundary. Do not inspect or
     // retain any buffered text that preceded it.
     if (sent && data === '\r') {
-      void captureTelemetryEvent('prompt_submitted', { source: 'terminal' });
+      void captureTelemetryEvent('prompt_submitted', { source: promptSource });
     }
     return sent;
   }

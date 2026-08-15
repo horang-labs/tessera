@@ -60,7 +60,7 @@ export function sendTerminalChatMessage(
   if (!pasteInputToTerminal(terminalId, body)) return null;
 
   const timer = setTimeout(() => {
-    sendInputToTerminal(terminalId, SUBMIT_SEQUENCE);
+    sendInputToTerminal(terminalId, SUBMIT_SEQUENCE, 'pty_chat_view');
   }, TERMINAL_CHAT_SUBMIT_DELAY_MS);
 
   return { cancel: () => clearTimeout(timer) };
