@@ -18,6 +18,30 @@ Tessera helps you run Claude Code, Codex, and OpenCode side by side in terminal 
 
 ## Product Demos
 
+### Tessera CLI: let agents operate Tessera
+
+Invoke `/tessera-cli` in a managed Codex or Claude Code session to create isolated worktrees, launch parallel sessions, monitor progress, and send follow-up prompts from the lead agent.
+
+![A lead agent creating and coordinating parallel Tessera sessions](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/tessera-cli-orchestration.gif)
+
+### Work from your phone
+
+Pair a phone from **Settings → Remote access**, then continue PTY and GUI sessions, switch a PTY into Chat View, and open session or Files/Git panels from mobile.
+
+![Tessera mobile remote workflow](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/mobile-remote.gif)
+
+### PTY Chat View
+
+Use the chat icon in a PTY session header to read and continue Codex or OpenCode terminal conversations in a focused chat layout without losing the live terminal.
+
+![Switching between a PTY session and PTY Chat View](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/pty-chatview.gif)
+
+### Files and Git workflow
+
+Edit project files, review diffs, select changes, commit, sync, publish branches, and open pull requests without leaving Tessera.
+
+![Editing files and completing a Git workflow in Tessera](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/file-git-workflow.gif)
+
 ### Projects, collections, sessions, tabs, and panes
 
 Organize AI coding work by project and collection, then open sessions across persistent tabs and split panes.
@@ -52,7 +76,7 @@ Open agent sessions, terminals, and files as movable tabs so you can reshape the
 
 ### Rich composer controls
 
-Open new panels, continue an existing conversation, tune reasoning, select models, choose permissions, use voice input (browser runtime only), add `@` references, attach images, and send context-rich prompts from one composer.
+Open new panels, continue an existing conversation, tune reasoning, select discovered or custom model IDs, choose permissions, use voice input (browser runtime only), add `@` references, attach images, and send context-rich prompts from one composer.
 
 <p align="center">
   <img src="https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/composer-controls.gif" alt="Composer controls and rich context input" width="25%">
