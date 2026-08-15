@@ -3,6 +3,7 @@ import logger from '../logger';
 import { invalidateProviderSessionOptionsCache } from '../cli/provider-session-options';
 import { refreshRemoteModelConfig, type ModelConfigFetchReason } from './remote-config';
 import type {
+  TelemetryFormFactor,
   TelemetryPromptSource,
   TelemetryProvider,
 } from '@/lib/telemetry/usage-dimensions';
@@ -27,7 +28,11 @@ export function setModelConfigBroadcast(fn: BroadcastFn): void {
  */
 export async function triggerModelConfigRefresh(
   reason: ModelConfigFetchReason,
-  dimensions: { provider?: TelemetryProvider; source?: TelemetryPromptSource } = {},
+  dimensions: {
+    provider?: TelemetryProvider;
+    source?: TelemetryPromptSource;
+    formFactor?: TelemetryFormFactor;
+  } = {},
 ): Promise<void> {
   try {
     const { changed } = await refreshRemoteModelConfig(reason, {}, dimensions);

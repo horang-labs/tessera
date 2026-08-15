@@ -19,7 +19,7 @@ test('every privacy-safe prompt submission also emits the opt-out-independent be
   );
 });
 
-test('the browser beacon and server route carry only closed provider and source dimensions', () => {
+test('the browser beacon and server route carry only closed usage dimensions', () => {
   const client = source('src/lib/telemetry/client.ts');
   const beacon = client.match(/function captureCloudflarePromptBeacon\(provider: unknown, source: unknown\)[\s\S]*?\n}\n/)?.[0] ?? '';
   const route = source('src/app/api/telemetry/prompt-beacon/route.ts');
@@ -29,9 +29,11 @@ test('the browser beacon and server route carry only closed provider and source 
   assert.doesNotMatch(beacon, /body\s*:|properties|correlationKey/);
   assert.match(beacon, /'X-Tessera-Provider': normalizeTelemetryProvider\(provider\)/);
   assert.match(beacon, /'X-Tessera-Source': normalizeTelemetryPromptSource\(source\)/);
+  assert.match(beacon, /'X-Tessera-Form-Factor': normalizeTelemetryFormFactor/);
   assert.match(route, /normalizeTelemetryProvider\(req\.headers\.get\('x-tessera-provider'\)\)/);
   assert.match(route, /normalizeTelemetryPromptSource\(req\.headers\.get\('x-tessera-source'\)\)/);
-  assert.match(route, /triggerModelConfigRefresh\('prompt', \{ provider, source \}\)/);
+  assert.match(route, /normalizeTelemetryFormFactor\(req\.headers\.get\('x-tessera-form-factor'\)\)/);
+  assert.match(route, /triggerModelConfigRefresh\('prompt', \{ provider, source, formFactor \}\)/);
   assert.doesNotMatch(route, /req\.(?:json|text|formData)\(|body\s*:/);
 });
 
@@ -45,4 +47,5 @@ test('the Worker request supports a dedicated prompt event', () => {
   assert.match(remoteConfig, /'X-Tessera-Platform': String\(hostInfo\.platform\)/);
   assert.match(remoteConfig, /headers\['X-Tessera-Provider'\] = normalizeTelemetryProvider/);
   assert.match(remoteConfig, /headers\['X-Tessera-Source'\] = normalizeTelemetryPromptSource/);
+  assert.match(remoteConfig, /headers\['X-Tessera-Form-Factor'\] = normalizeTelemetryFormFactor/);
 });

@@ -8,6 +8,7 @@ import {
   type TelemetryUiSurface,
 } from './ui-click';
 import {
+  normalizeTelemetryFormFactor,
   normalizeTelemetryPromptSource,
   normalizeTelemetryProvider,
 } from './usage-dimensions';
@@ -409,6 +410,9 @@ function captureCloudflarePromptBeacon(provider: unknown, source: unknown): void
     headers: {
       'X-Tessera-Provider': normalizeTelemetryProvider(provider),
       'X-Tessera-Source': normalizeTelemetryPromptSource(source),
+      'X-Tessera-Form-Factor': normalizeTelemetryFormFactor(
+        detectTelemetryClientFormFactor(),
+      ),
     },
     keepalive: true,
   }).catch(() => {
