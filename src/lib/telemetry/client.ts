@@ -7,7 +7,10 @@ import {
   type TelemetryUiControl,
   type TelemetryUiSurface,
 } from './ui-click';
-import { normalizeTelemetryProvider } from './usage-dimensions';
+import {
+  normalizeTelemetryPromptSource,
+  normalizeTelemetryProvider,
+} from './usage-dimensions';
 
 export type TelemetryEventName =
   | 'first_run_started'
@@ -379,7 +382,7 @@ export function captureTelemetryPromptSubmitted(
   correlationKey: string,
   properties: TelemetryEventProperties,
 ): Promise<void> {
-  captureCloudflarePromptBeacon(properties.provider_id);
+  captureCloudflarePromptBeacon(properties.provider_id, properties.source);
   const source = properties.source;
   if (
     isTelemetryReady()
@@ -396,15 +399,16 @@ export function captureTelemetryPromptSubmitted(
  * Content-free operational beacon. Unlike PostHog product telemetry this is
  * deliberately independent of opt-out/DNT: it only proves an installed app
  * reached a prompt submission boundary. The same-origin server route receives
- * no prompt, session identifier, source, or other user-authored value. Provider
- * is reduced to a closed enum before it leaves the browser.
+ * no prompt, session identifier, or user-authored value. Provider and submission
+ * source are reduced to closed enums before they leave the browser.
  */
-function captureCloudflarePromptBeacon(provider: unknown): void {
+function captureCloudflarePromptBeacon(provider: unknown, source: unknown): void {
   if (!isBrowser()) return;
   void fetch('/api/telemetry/prompt-beacon', {
     method: 'POST',
     headers: {
       'X-Tessera-Provider': normalizeTelemetryProvider(provider),
+      'X-Tessera-Source': normalizeTelemetryPromptSource(source),
     },
     keepalive: true,
   }).catch(() => {

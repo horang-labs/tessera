@@ -2,7 +2,10 @@ import type { ServerTransportMessage } from '../ws/message-types';
 import logger from '../logger';
 import { invalidateProviderSessionOptionsCache } from '../cli/provider-session-options';
 import { refreshRemoteModelConfig, type ModelConfigFetchReason } from './remote-config';
-import type { TelemetryProvider } from '@/lib/telemetry/usage-dimensions';
+import type {
+  TelemetryPromptSource,
+  TelemetryProvider,
+} from '@/lib/telemetry/usage-dimensions';
 
 // No periodic poll: the remote model config is refreshed (and the usage beacon counted)
 // on app launch (server.ts), each Claude session creation (session-orchestrator-lifecycle),
@@ -24,7 +27,7 @@ export function setModelConfigBroadcast(fn: BroadcastFn): void {
  */
 export async function triggerModelConfigRefresh(
   reason: ModelConfigFetchReason,
-  dimensions: { provider?: TelemetryProvider } = {},
+  dimensions: { provider?: TelemetryProvider; source?: TelemetryPromptSource } = {},
 ): Promise<void> {
   try {
     const { changed } = await refreshRemoteModelConfig(reason, {}, dimensions);
