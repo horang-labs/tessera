@@ -55,7 +55,7 @@ captions=(
 
 # Keep the opening and result frames readable while moving through the middle
 # of the story quickly. Delays are GIF centiseconds.
-scene_delays=(150 110 130 110 150)
+scene_delays=(250 220 250 220 250)
 
 for index in "${!keyframes[@]}"; do
   source_path="$KEYFRAME_DIR/${keyframes[$index]}"
@@ -88,8 +88,8 @@ for index in "${!keyframes[@]}"; do
   fi
 done
 
-# Four 150 ms crossfades, split into five equal frames. The full story is about
-# seven seconds rather than forcing readers through a slow 11.8-second loop.
+# Four 200 ms crossfades, split into five equal frames. Each caption stays on
+# screen for at least 2.2 seconds so readers can follow both the UI and label.
 for transition in 0 1 2 3; do
   next_scene=$((transition + 1))
   for blend in 17 33 50 67 83; do
@@ -113,7 +113,7 @@ gif_args=(
 )
 for transition in 0 1 2 3; do
   for blend in 17 33 50 67 83; do
-    gif_args+=( -delay 3 "$TMP_DIR/transition-$transition-$blend.png" )
+    gif_args+=( -delay 4 "$TMP_DIR/transition-$transition-$blend.png" )
   done
   gif_args+=( -delay "${scene_delays[$((transition + 1))]}" "$TMP_DIR/scene-$((transition + 1)).png" )
 done
