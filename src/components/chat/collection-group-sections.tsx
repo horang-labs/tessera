@@ -1399,10 +1399,9 @@ export function ChatItemRow({
   const workflowIconFill = workflowStatus
     ? CHAT_WORKFLOW_ICON_FILL[workflowStatus]
     : null;
-  // A chat is not a Worktree row: even if its backing directory reports Git
-  // stats, keep the row identified by the chat bubble instead of replacing
-  // title space with a Worktree diff badge. Provider-off rows already carry
-  // the bubble in the leading slot.
+  // Desktop shows Git stats for chats backed by a changed worktree. Phone keeps
+  // that badge hidden so the always-visible overflow action has enough room.
+  const showTrailingDiff = !!session.diffStats && session.diffStats.changedFiles > 0;
   const showTrailingBubble = showProviderIcons;
   const hasCanonicalUnread = useProjectViewSessionUnread(session.id);
   const hasUnread = !isActive && hasCanonicalUnread;
@@ -1561,9 +1560,9 @@ export function ChatItemRow({
           )}
         </div>
 
-        {/* When a provider logo occupies the leading slot, keep chat identity on
-            the trailing edge as well. Phone never hides it behind sticky hover. */}
-        {!isRenaming && showTrailingBubble && (
+        {/* Desktop retains the worktree diff. When a provider logo occupies the
+            leading slot, keep chat identity on the trailing edge as well. */}
+        {!isRenaming && (showTrailingDiff || showTrailingBubble) && (
           <span
             className={cn(
               'flex shrink-0 items-center gap-1.5 transition-opacity duration-150',
@@ -1571,18 +1570,21 @@ export function ChatItemRow({
               isHovered ? 'sm:opacity-0' : 'sm:opacity-100',
             )}
           >
-            {workflowColor && workflowIconFill ? (
-              <WorkflowMessageSquareIcon
-                className="h-3.5 w-3.5 opacity-95"
-                style={{ color: workflowColor }}
-                fillColor={workflowIconFill}
-                testId={`collection-chat-status-bubble-${session.id}`}
-              />
-            ) : (
-              <MessageSquare
-                className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
-                data-testid={`collection-chat-status-bubble-${session.id}`}
-              />
+            <DiffStatsBadge stats={session.diffStats} className="max-sm:hidden" />
+            {showTrailingBubble && (
+              workflowColor && workflowIconFill ? (
+                <WorkflowMessageSquareIcon
+                  className="h-3.5 w-3.5 opacity-95"
+                  style={{ color: workflowColor }}
+                  fillColor={workflowIconFill}
+                  testId={`collection-chat-status-bubble-${session.id}`}
+                />
+              ) : (
+                <MessageSquare
+                  className="h-3.5 w-3.5 text-(--text-secondary) opacity-80"
+                  data-testid={`collection-chat-status-bubble-${session.id}`}
+                />
+              )
             )}
           </span>
         )}

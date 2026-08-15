@@ -37,10 +37,10 @@ assert.match(
   /group\/chat[^'`]*max-sm:pr-10/,
   'phone chat rows reserve the trailing width occupied by the always-visible overflow action',
 );
-assert.doesNotMatch(
+assert.match(
   chatRow,
-  /DiffStatsBadge/,
-  'chat rows never show Worktree Git diff stats',
+  /<DiffStatsBadge stats=\{session\.diffStats\} className="max-sm:hidden" \/>/,
+  'phone chat rows hide Git diff stats without removing them from desktop',
 );
 assert.match(
   chatRow,
@@ -53,4 +53,4 @@ assert.match(
   'the chat overflow action remains visible and tappable without hover on a phone',
 );
 
-console.log('ok — phone task and chat actions retain identity while hiding inappropriate Git diff stats');
+console.log('ok — phone task and chat actions retain identity while hiding Git diff stats only on phones');
