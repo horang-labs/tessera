@@ -220,7 +220,7 @@ test('prompt submission telemetry keeps only the static input source', () => {
       event: 'prompt_submitted',
       properties: {
         token: 'sdk-token-that-must-not-be-trusted',
-        source: 'chat',
+        source: 'pty_chat_view',
         prompt: 'the private user prompt',
         content: [{ type: 'text', text: 'another private prompt' }],
         message: 'private message',
@@ -240,7 +240,7 @@ test('prompt submission telemetry keeps only the static input source', () => {
   );
 
   assert.equal(result?.event, 'prompt_submitted');
-  assert.equal(result?.properties?.source, 'chat');
+  assert.equal(result?.properties?.source, 'pty_chat_view');
   assert.equal(result?.properties?.token, 'phc-public-project-token');
   assert.doesNotMatch(JSON.stringify(result), /private|display content|sdk-token/);
 });
