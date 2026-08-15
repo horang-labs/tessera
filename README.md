@@ -7,7 +7,7 @@
 <p align="center"><strong>Run more agents. Lose less context.</strong></p>
 
 <p align="center">
-  The local control room for Claude Code, Codex, and OpenCode—parallel sessions, isolated worktrees, Git, and mobile access in one place.
+  The local control room for Claude Code, Codex, and OpenCode—parallel sessions, isolated worktrees, Kanban, Git, and mobile access in one place.
 </p>
 
 <p align="center">
@@ -50,6 +50,12 @@ Representative operations: `status` · `worktree create` · `session launch` · 
 
 ![A lead agent creating and coordinating parallel Tessera sessions](docs/assets/readme/tessera-cli-orchestration.gif)
 
+## Turn parallel sessions into a delivery pipeline
+
+The Kanban board tracks direct chats and worktree-backed tasks across **Chat, Todo, Doing, Review, and Done**. Move cards as work progresses, see live agent and diff state, and open the linked PTY or GUI session without leaving the board.
+
+![Moving agent tasks through the Tessera Kanban workflow](docs/assets/readme/kanban-board-dnd.gif)
+
 ## Keep coding from your phone
 
 Pair a device from **Settings → Remote access**. Continue PTY and GUI sessions, switch a PTY into Chat View, and open the session or Files/Git panels from mobile.
@@ -75,18 +81,13 @@ Edit project files, review diffs, select changes, commit, sync, publish branches
 | Built for | What you get |
 |---|---|
 | **Claude Code, Codex, and OpenCode** | Start any supported provider in PTY or rich GUI mode and keep its conversation, tools, and state visible. |
-| **Projects and sessions** | Collections, persistent tabs, split panes, list view, and Kanban board. |
+| **Projects and sessions** | Collections, persistent tabs, split panes, list view, and a task-aware Kanban board. |
 | **Terminal and GUI** | Run PTY sessions and rich conversations side by side in the same workspace. |
 | **Custom models** | Add custom model IDs in Settings and select them when starting a session. |
 | **Live context** | Follow tool calls, failures, instructions, memory, file changes, diffs, and branch state. |
 | **Task-aware Git** | Keep tasks, sessions, worktrees, and pull requests connected from start to finish. |
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/assets/readme/list-view.png" alt="Tessera list view"></td>
-    <td width="50%"><img src="docs/assets/readme/kanban-board.png" alt="Tessera Kanban board"></td>
-  </tr>
-</table>
+![Rearranging persistent sessions across tabs and split panes](docs/assets/readme/dnd-multipanel.gif)
 
 ## Install
 
