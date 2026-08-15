@@ -1374,6 +1374,7 @@ export interface I18nMessages {
     preparation: {
       preparing: string;
       failed: string;
+      failedTooltip: string;
       title: string;
       runningDescription: string;
       failedDescription: string;

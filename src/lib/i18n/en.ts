@@ -1395,6 +1395,7 @@ export const en: I18nMessages = {
     preparation: {
       preparing: 'Preparing',
       failed: 'Preparation failed',
+      failedTooltip: 'The worktree preparation script failed. Click to inspect the error in Scripts.',
       title: 'Worktree preparation',
       runningDescription: 'The preparation script is running in this worktree. Closing this view does not stop it.',
       failedDescription: 'The preparation script did not finish. Fix it in the project settings, then run it again.',
