@@ -76,9 +76,14 @@ jobs:
               cat "$RUNNER_TEMP/server.log"
               exit 1
             fi
-            # Any HTTP status means the server is up — an auth redirect is fine.
+            # An auth redirect is fine, but a rendered 5xx response is not.
             status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SMOKE_PORT/" || true)"
             if [ -n "$status" ] && [ "$status" != "000" ]; then
+              if [ "$status" -ge 500 ]; then
+                echo "::error::tessera responded with HTTP $status"
+                cat "$RUNNER_TEMP/server.log"
+                exit 1
+              fi
               echo "Server responded with HTTP $status"
               exit 0
             fi
@@ -96,9 +101,9 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Mark package as latest
+        if: ${{ github.event.inputs.dist_tag_version != '' }}
         run: |
-          version="${DIST_TAG_VERSION:-$PACKAGE_VERSION}"
-          npm dist-tag add "$PACKAGE_NAME@$version" latest
+          npm dist-tag add "$PACKAGE_NAME@$DIST_TAG_VERSION" latest
         env:
           DIST_TAG_VERSION: ${{ github.event.inputs.dist_tag_version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

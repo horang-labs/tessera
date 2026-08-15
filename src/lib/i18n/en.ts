@@ -540,8 +540,6 @@ export const en: I18nMessages = {
     executionModeNote: 'Existing sessions keep the interface they were created with.',
     tesseraCliTitle: 'Use Tessera CLI in agent sessions',
     tesseraCliDescription: 'This does not install anything separately. Tessera temporarily injects the skill and connection bridge only into GUI or PTY agent sessions started by Tessera.',
-    telemetryTitle: 'Share anonymous usage data',
-    telemetryDescription: 'Share anonymous product-interaction telemetry, including which named controls and features are used. Telemetry is collected with PostHog and stored in the US region. We never collect visible UI text, IP addresses, prompts, messages, file paths, or command output.',
     aiCli: 'Claude Code / Codex',
     providerReady: 'Ready to use for chat and worktree sessions.',
     providerNeedsLogin: 'Installed, but login is required before Tessera can use it.',
