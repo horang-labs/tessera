@@ -26,7 +26,7 @@ Invoke `/tessera-cli` in a managed Codex or Claude Code session to create isolat
 
 ### Work from your phone
 
-Pair a phone from **Settings → Remote access**, then follow sessions, type in PTYs, and attach images from the mobile UI.
+Pair a phone from **Settings → Remote access**, then follow and continue sessions, switch between active work, and attach images from the mobile UI.
 
 ![Tessera mobile remote workflow](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/mobile-remote.gif)
 
