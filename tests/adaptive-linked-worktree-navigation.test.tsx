@@ -230,7 +230,7 @@ test('adaptive Worktree rows expose parent Worktree archive and independent chil
   assert.match(expanded, /data-testid="collection-subsession-quick-archive-one"/);
 });
 
-test('direct Project Worktree Sessions keep their chat identity', () => {
+test('direct Project Worktree Sessions keep their chat identity and desktop diff stats', () => {
   useSettingsStore.setState((state) => ({
     settings: { ...state.settings, showProviderIcons: true },
   }));
@@ -266,6 +266,7 @@ test('direct Project Worktree Sessions keep their chat identity', () => {
 
   assert.match(markup, /collection-chat-status-bubble-direct-session/);
   assert.match(markup, /aria-label="More options"/);
-  assert.doesNotMatch(markup, /\+1\.4k|\+1,400/);
+  assert.match(markup, /<span class="[^"]*max-sm:hidden" title="\+1,400 −63\n12 files changed">/);
+  assert.match(markup, /\+1\.4k/);
   assert.doesNotMatch(markup, /collection-task-worktree-icon/);
 });
