@@ -17,7 +17,7 @@ import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import * as dbSessions from '@/lib/db/sessions';
 import { getTerminalProviderSessionForTesseraSession } from '@/lib/db/terminal-provider-sessions';
 import logger from '@/lib/logger';
-import { paginateReplayMessages } from '@/lib/session-history';
+import { paginateReplayMessages, sessionHistory } from '@/lib/session-history';
 import { reduceSessionReplayEvents, type SessionReplayState } from '@/lib/session-replay-reducer';
 import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import { readPersistedTerminalProviderSessionId } from '@/lib/terminal/provider-session-identity';
@@ -122,10 +122,23 @@ async function decodeReplayState(
   if (!providerSessionId) return null;
 
   const binding = getTerminalProviderSessionForTesseraSession(session.id);
+  sessionHistory.flushSession(session.id);
+  const tesseraEvents = await sessionHistory.readEvents(session.id);
+  const knownUserPrompts = tesseraEvents.flatMap((event) => {
+    if (event.type !== 'user_message') return [];
+    const text = typeof event.content === 'string'
+      ? event.content
+      : event.content
+        .flatMap((block) => block.type === 'text' ? [block.text] : [])
+        .join('\n');
+    const trimmed = text.trim();
+    return trimmed ? [trimmed] : [];
+  });
   const events: SessionHistoryEvent[] | null = await provider.readTerminalTranscriptEvents({
     sessionId: session.id,
     providerSessionId,
     transcriptPath: binding?.transcript_path ?? null,
+    knownUserPrompts,
     ...(userId ? { userId } : {}),
   });
   if (!events) return null;

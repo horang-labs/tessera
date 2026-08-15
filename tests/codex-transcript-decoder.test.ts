@@ -25,7 +25,7 @@ test('conversation comes from event_msg', () => {
   );
 });
 
-test('response_item messages are skipped — they duplicate event_msg', () => {
+test('legacy response_item copies do not duplicate event_msg conversation', () => {
   // Measured on a real rollout: every event_msg turn reappears here, alongside
   // developer instructions and injected context nobody typed.
   const events = decodeCodexTranscript([
@@ -44,6 +44,114 @@ test('response_item messages are skipped — they duplicate event_msg', () => {
 
   assert.equal(events.length, 1);
   assert.equal((events[0] as any).content, 'hello');
+});
+
+test('conversation survives Codex response-item-only turns without duplicating legacy events', () => {
+  const events = decodeCodexTranscript([
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: '<environment_context>injected</environment_context>' }],
+    }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'new-format prompt' }],
+    }),
+    line('response_item', {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'new-format reply' }],
+    }),
+    // A resumed rollout can contain turns written by both Codex formats.
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'legacy prompt' }],
+    }),
+    line('event_msg', { type: 'user_message', message: 'legacy prompt' }),
+    line('event_msg', { type: 'agent_message', message: 'legacy reply' }),
+    line('response_item', {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'legacy reply' }],
+    }),
+  ]);
+
+  assert.deepEqual(
+    events.map((event) => [event.type, (event as any).content]),
+    [
+      ['user_message', 'new-format prompt'],
+      ['assistant_message', 'new-format reply'],
+      ['user_message', 'legacy prompt'],
+      ['assistant_message', 'legacy reply'],
+    ],
+  );
+});
+
+test('response-only conversation trusts recorded prompts over synthetic marker heuristics', () => {
+  const realPrompt = '<environment_context> is the tag I want to discuss';
+  const events = decodeCodexTranscript([
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: '<recommended_plugins>injected</recommended_plugins>' }],
+    }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: realPrompt }],
+    }),
+  ], { knownUserPrompts: [realPrompt] });
+
+  assert.deepEqual(
+    events.map((event) => [event.type, (event as any).content]),
+    [['user_message', realPrompt]],
+  );
+});
+
+test('cross-source deduplication keeps a repeated message from the same source', () => {
+  const events = decodeCodexTranscript([
+    line('event_msg', { type: 'user_message', message: 'retry this' }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'retry this' }],
+    }),
+    line('event_msg', { type: 'user_message', message: 'retry this' }),
+  ]);
+
+  assert.deepEqual(
+    events.map((event) => [event.type, (event as any).content]),
+    [
+      ['user_message', 'retry this'],
+      ['user_message', 'retry this'],
+    ],
+  );
+});
+
+test('cross-source deduplication does not span intervening rollout activity', () => {
+  const events = decodeCodexTranscript([
+    line('response_item', {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'same reply' }],
+    }),
+    line('response_item', {
+      type: 'custom_tool_call',
+      name: 'exec_command',
+      call_id: 'between-turns',
+      input: 'pwd',
+    }),
+    line('event_msg', { type: 'agent_message', message: 'same reply' }),
+  ]);
+
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === 'assistant_message')
+      .map((event) => event.content),
+    ['same reply', 'same reply'],
+  );
 });
 
 test('a function_call pairs with the output that arrives later', () => {

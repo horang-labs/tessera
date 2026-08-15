@@ -6,9 +6,9 @@ import {
 
 /**
  * Codex rollout JSONL lines are `{ type, payload, timestamp }`. Conversation
- * turns live in `response_item` payloads of type `message`; `event_msg` lines
- * mirror the same turns for the TUI, so reading both would duplicate every
- * message.
+ * turns live in `response_item` payloads of type `message`; legacy `event_msg`
+ * lines may mirror the same turns for the TUI, so this parser reads only the
+ * canonical model-facing representation.
  */
 interface CodexRolloutLine {
   type?: unknown;
@@ -27,6 +27,7 @@ const SYNTHETIC_USER_MARKERS = [
   '<INSTRUCTIONS>',
   '<environment_context>',
   '<user_instructions>',
+  '<recommended_plugins>',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,8 +49,18 @@ function extractText(content: unknown): string {
   return parts.join('\n');
 }
 
-function looksSynthetic(text: string): boolean {
-  return SYNTHETIC_USER_MARKERS.some((marker) => text.includes(marker));
+export function looksLikeSyntheticCodexUserMessage(text: string): boolean {
+  const trimmed = text.trimStart();
+  return SYNTHETIC_USER_MARKERS.some((marker) => trimmed.startsWith(marker));
+}
+
+/** Decode one model-facing conversation item without admitting developer context. */
+export function readCodexResponseMessage(payload: unknown): NativeTranscriptMessage | null {
+  if (!isRecord(payload) || payload.type !== 'message') return null;
+  if (payload.role !== 'user' && payload.role !== 'assistant') return null;
+
+  const text = extractText(payload.content).trim();
+  return text ? { role: payload.role, text } : null;
 }
 
 export function parseCodexNativeTranscript(
@@ -75,20 +86,19 @@ export function parseCodexNativeTranscript(
     }
 
     if (entry.type !== 'response_item' || !isRecord(entry.payload)) continue;
-    const payload = entry.payload;
-    if (payload.type !== 'message') continue;
-    // `developer` carries the system prompt and sandbox policy — never a turn.
-    if (payload.role !== 'user' && payload.role !== 'assistant') continue;
+    const message = readCodexResponseMessage(entry.payload);
+    if (!message) continue;
 
-    const text = extractText(payload.content).trim();
-    if (!text) continue;
-
-    if (payload.role === 'user') {
-      const isKnownPrompt = knownPrompts.has(normalizePromptForComparison(text));
-      if (knownPrompts.size > 0 ? !isKnownPrompt : looksSynthetic(text)) continue;
+    if (message.role === 'user') {
+      const isKnownPrompt = knownPrompts.has(normalizePromptForComparison(message.text));
+      if (
+        knownPrompts.size > 0
+          ? !isKnownPrompt
+          : looksLikeSyntheticCodexUserMessage(message.text)
+      ) continue;
     }
 
-    messages.push({ role: payload.role, text });
+    messages.push(message);
   }
 
   return messages;
