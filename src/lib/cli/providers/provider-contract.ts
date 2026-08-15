@@ -186,8 +186,6 @@ export interface CliProvider {
     providerSessionId: string;
     /** Hook-reported transcript path, when one was captured. */
     transcriptPath?: string | null;
-    /** User turns Tessera observed directly, used to reject provider-injected context. */
-    knownUserPrompts?: readonly string[];
     /**
      * Owner of the session. Providers that shell out must resolve the user's
      * agent environment (native vs. WSL) from it — running the CLI on the wrong

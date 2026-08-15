@@ -25,29 +25,39 @@ test('conversation comes from event_msg', () => {
   );
 });
 
-test('legacy response_item copies do not duplicate event_msg conversation', () => {
-  // Measured on a real rollout: every event_msg turn reappears here, alongside
-  // developer instructions and injected context nobody typed.
+test('Codex 0.145 conversation remains event-msg-only', () => {
   const events = decodeCodexTranscript([
-    line('event_msg', { type: 'user_message', message: 'hello' }),
+    line('session_meta', { cli_version: '0.145.0' }),
     line('response_item', {
       type: 'message',
       role: 'user',
-      content: [{ type: 'input_text', text: 'hello' }],
+      content: [{
+        type: 'input_text',
+        text: '<image name=[Image #1] path="/tmp/screenshot.png">\n</image>\nvisible prompt',
+      }],
+    }),
+    line('event_msg', { type: 'user_message', message: '[Image #1] visible prompt' }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: '<skill>injected instructions</skill>' }],
     }),
     line('response_item', {
       type: 'message',
       role: 'developer',
-      content: [{ type: 'input_text', text: '<permissions instructions>' }],
+      content: [{ type: 'input_text', text: 'developer instructions' }],
     }),
   ]);
 
-  assert.equal(events.length, 1);
-  assert.equal((events[0] as any).content, 'hello');
+  assert.deepEqual(
+    events.map((event) => [event.type, (event as any).content]),
+    [['user_message', '[Image #1] visible prompt']],
+  );
 });
 
-test('conversation survives Codex response-item-only turns without duplicating legacy events', () => {
+test('Codex 0.147 conversation comes from response items without injected context', () => {
   const events = decodeCodexTranscript([
+    line('session_meta', { cli_version: '0.147.0' }),
     line('response_item', {
       type: 'message',
       role: 'user',
@@ -56,25 +66,19 @@ test('conversation survives Codex response-item-only turns without duplicating l
     line('response_item', {
       type: 'message',
       role: 'user',
+      content: [{ type: 'input_text', text: '<skill>injected instructions</skill>' }],
+    }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
       content: [{ type: 'input_text', text: 'new-format prompt' }],
     }),
+    line('event_msg', { type: 'user_message', message: 'new-format prompt' }),
+    line('event_msg', { type: 'agent_message', message: 'new-format reply' }),
     line('response_item', {
       type: 'message',
       role: 'assistant',
       content: [{ type: 'output_text', text: 'new-format reply' }],
-    }),
-    // A resumed rollout can contain turns written by both Codex formats.
-    line('response_item', {
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_text', text: 'legacy prompt' }],
-    }),
-    line('event_msg', { type: 'user_message', message: 'legacy prompt' }),
-    line('event_msg', { type: 'agent_message', message: 'legacy reply' }),
-    line('response_item', {
-      type: 'message',
-      role: 'assistant',
-      content: [{ type: 'output_text', text: 'legacy reply' }],
     }),
   ]);
 
@@ -83,74 +87,7 @@ test('conversation survives Codex response-item-only turns without duplicating l
     [
       ['user_message', 'new-format prompt'],
       ['assistant_message', 'new-format reply'],
-      ['user_message', 'legacy prompt'],
-      ['assistant_message', 'legacy reply'],
     ],
-  );
-});
-
-test('response-only conversation trusts recorded prompts over synthetic marker heuristics', () => {
-  const realPrompt = '<environment_context> is the tag I want to discuss';
-  const events = decodeCodexTranscript([
-    line('response_item', {
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_text', text: '<recommended_plugins>injected</recommended_plugins>' }],
-    }),
-    line('response_item', {
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_text', text: realPrompt }],
-    }),
-  ], { knownUserPrompts: [realPrompt] });
-
-  assert.deepEqual(
-    events.map((event) => [event.type, (event as any).content]),
-    [['user_message', realPrompt]],
-  );
-});
-
-test('cross-source deduplication keeps a repeated message from the same source', () => {
-  const events = decodeCodexTranscript([
-    line('event_msg', { type: 'user_message', message: 'retry this' }),
-    line('response_item', {
-      type: 'message',
-      role: 'user',
-      content: [{ type: 'input_text', text: 'retry this' }],
-    }),
-    line('event_msg', { type: 'user_message', message: 'retry this' }),
-  ]);
-
-  assert.deepEqual(
-    events.map((event) => [event.type, (event as any).content]),
-    [
-      ['user_message', 'retry this'],
-      ['user_message', 'retry this'],
-    ],
-  );
-});
-
-test('cross-source deduplication does not span intervening rollout activity', () => {
-  const events = decodeCodexTranscript([
-    line('response_item', {
-      type: 'message',
-      role: 'assistant',
-      content: [{ type: 'output_text', text: 'same reply' }],
-    }),
-    line('response_item', {
-      type: 'custom_tool_call',
-      name: 'exec_command',
-      call_id: 'between-turns',
-      input: 'pwd',
-    }),
-    line('event_msg', { type: 'agent_message', message: 'same reply' }),
-  ]);
-
-  assert.deepEqual(
-    events
-      .filter((event) => event.type === 'assistant_message')
-      .map((event) => event.content),
-    ['same reply', 'same reply'],
   );
 });
 

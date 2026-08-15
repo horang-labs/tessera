@@ -1,14 +1,14 @@
 /**
  * Codex rollout (JSONL) → SessionHistoryEvent decoder.
  *
- * Legacy Codex rollouts record the same turn twice: `event_msg` carries what
- * the TUI showed, while `response_item` carries what went to the model. Codex
- * 0.147 stopped writing conversation `event_msg` entries, so current rollouts
- * can only be replayed from `response_item.message`.
+ * Codex 0.145 records conversation in `event_msg`. Although the same turns also
+ * appear in `response_item`, those copies contain model-facing context and must
+ * remain ignored. Codex 0.147 stopped writing conversation `event_msg` entries,
+ * so only that version and newer read conversation from `response_item.message`.
  *
- * Both representations are therefore decoded, with adjacent cross-source
- * copies collapsed for legacy and mixed-version rollouts:
- *   - conversation  → `event_msg` and `response_item.message`
+ * The rollout's `session_meta.payload.cli_version` gates the new source:
+ *   - Codex <= 0.146 → `event_msg` (user_message / agent_message)
+ *   - Codex >= 0.147 → `response_item.message`
  *   - tools         → `response_item` (function_call, custom_tool_call, …)
  *   - everything else is dropped
  *
@@ -27,14 +27,19 @@ import { inferToolCallKindFromToolName } from '@/types/tool-call-kind';
 import { buildToolDisplay } from '@/lib/tool-display';
 import { extractImageToolResult } from '@/lib/tool-results/tool-image';
 import type { FileReadImageToolResult } from '@/types/tool-result';
-import {
-  looksLikeSyntheticCodexUserMessage,
-  readCodexResponseMessage,
-} from './native-transcript';
-import { normalizePromptForComparison } from '@/lib/session/native-transcript-types';
 
 /** Mirrors HISTORY_VERSION in session-history.ts. */
 const HISTORY_VERSION = 1;
+
+const RESPONSE_ITEM_CONVERSATION_MIN_MINOR = 147;
+const SYNTHETIC_RESPONSE_USER_PREFIXES = [
+  '# AGENTS.md instructions',
+  '<INSTRUCTIONS>',
+  '<environment_context>',
+  '<user_instructions>',
+  '<recommended_plugins>',
+  '<skill>',
+];
 
 interface PendingToolCall {
   toolName: string;
@@ -43,40 +48,28 @@ interface PendingToolCall {
   toolDisplay?: ToolDisplayMetadata;
 }
 
-type CodexConversationEvent = {
-  v: number;
-  type: 'user_message' | 'assistant_message';
-  timestamp: string;
-  content: string;
-};
-
 export interface CodexTranscriptDecoderState {
   /** Calls awaiting their output, keyed by Codex `call_id`. */
   pendingToolCalls: Map<string, PendingToolCall>;
-  /** Last visible turn, used only to collapse the two rollout representations. */
-  lastConversation?: {
-    source: 'event_msg' | 'response_item';
-    type: 'user_message' | 'assistant_message';
-    content: string;
-  };
-  knownUserPrompts: Set<string>;
+  /** Whether this rollout version stores conversation in response_item.message. */
+  readResponseItemConversation: boolean;
 }
 
-export interface CodexTranscriptDecoderOptions {
-  knownUserPrompts?: readonly string[];
-}
-
-export function createCodexTranscriptDecoderState(
-  options: CodexTranscriptDecoderOptions = {},
-): CodexTranscriptDecoderState {
+export function createCodexTranscriptDecoderState(): CodexTranscriptDecoderState {
   return {
     pendingToolCalls: new Map(),
-    knownUserPrompts: new Set(
-      (options.knownUserPrompts ?? [])
-        .map(normalizePromptForComparison)
-        .filter(Boolean),
-    ),
+    // Missing or malformed metadata keeps the proven 0.145 behavior.
+    readResponseItemConversation: false,
   };
+}
+
+function versionUsesResponseItemConversation(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d+)\.(\d+)/.exec(value);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 0 || (major === 0 && minor >= RESPONSE_ITEM_CONVERSATION_MIN_MINOR);
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -248,7 +241,7 @@ function decodeToolResult(
 function decodeEventMessage(
   payload: Record<string, any>,
   timestamp: string,
-): CodexConversationEvent | null {
+): SessionHistoryEvent | null {
   const message = typeof payload.message === 'string' ? payload.message : '';
   if (!message.trim()) return null;
 
@@ -261,41 +254,42 @@ function decodeEventMessage(
   return null;
 }
 
+function readResponseMessage(
+  payload: Record<string, any>,
+): { role: 'user' | 'assistant'; text: string } | null {
+  if (payload.role !== 'user' && payload.role !== 'assistant') return null;
+  if (!Array.isArray(payload.content)) return null;
+
+  const text = payload.content
+    .flatMap((block: unknown) => {
+      if (!isRecord(block)) return [];
+      if (block.type !== 'input_text' && block.type !== 'output_text' && block.type !== 'text') {
+        return [];
+      }
+      return typeof block.text === 'string' && block.text.trim() ? [block.text] : [];
+    })
+    .join('\n')
+    .trim();
+
+  return text ? { role: payload.role, text } : null;
+}
+
+function isSyntheticResponseUserMessage(text: string): boolean {
+  const trimmed = text.trimStart();
+  return SYNTHETIC_RESPONSE_USER_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
 function decodeResponseMessage(
   payload: Record<string, any>,
   timestamp: string,
-  state: CodexTranscriptDecoderState,
-): CodexConversationEvent | null {
-  const message = readCodexResponseMessage(payload);
+): SessionHistoryEvent | null {
+  const message = readResponseMessage(payload);
   if (!message) return null;
-  if (message.role === 'user') {
-    const isKnownPrompt = state.knownUserPrompts.has(normalizePromptForComparison(message.text));
-    if (
-      state.knownUserPrompts.size > 0
-        ? !isKnownPrompt
-        : looksLikeSyntheticCodexUserMessage(message.text)
-    ) return null;
-  }
+  if (message.role === 'user' && isSyntheticResponseUserMessage(message.text)) return null;
 
   return message.role === 'user'
     ? { v: HISTORY_VERSION, type: 'user_message', timestamp, content: message.text }
     : { v: HISTORY_VERSION, type: 'assistant_message', timestamp, content: message.text };
-}
-
-function omitCrossSourceConversationDuplicate(
-  event: CodexConversationEvent,
-  source: 'event_msg' | 'response_item',
-  state: CodexTranscriptDecoderState,
-): CodexConversationEvent | null {
-  const previous = state.lastConversation;
-  const isDuplicate = previous
-    && previous.source !== source
-    && previous.type === event.type
-    && previous.content === event.content;
-  if (isDuplicate) return null;
-
-  state.lastConversation = { source, type: event.type, content: event.content };
-  return event;
 }
 
 /**
@@ -322,27 +316,23 @@ export function decodeCodexTranscriptLine(
   const payload = record.payload;
   const timestamp = readTimestamp(record);
 
+  if (record.type === 'session_meta') {
+    state.readResponseItemConversation = versionUsesResponseItemConversation(payload.cli_version);
+    return [];
+  }
+
   if (record.type === 'event_msg') {
+    if (state.readResponseItemConversation) return [];
     const event = decodeEventMessage(payload, timestamp);
-    if (!event) {
-      state.lastConversation = undefined;
-      return [];
-    }
-    const unique = omitCrossSourceConversationDuplicate(event, 'event_msg', state);
-    return unique ? [unique] : [];
+    return event ? [event] : [];
   }
 
   if (record.type === 'response_item') {
     if (payload.type === 'message') {
-      const event = decodeResponseMessage(payload, timestamp, state);
-      if (!event) {
-        state.lastConversation = undefined;
-        return [];
-      }
-      const unique = omitCrossSourceConversationDuplicate(event, 'response_item', state);
-      return unique ? [unique] : [];
+      if (!state.readResponseItemConversation) return [];
+      const event = decodeResponseMessage(payload, timestamp);
+      return event ? [event] : [];
     }
-    state.lastConversation = undefined;
     if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
       const event = decodeToolCall(payload, state, timestamp);
       return event ? [event] : [];
@@ -354,16 +344,12 @@ export function decodeCodexTranscriptLine(
     return [];
   }
 
-  state.lastConversation = undefined;
   return [];
 }
 
 /** Decode a whole rollout in order. */
-export function decodeCodexTranscript(
-  lines: Iterable<string>,
-  options: CodexTranscriptDecoderOptions = {},
-): SessionHistoryEvent[] {
-  const state = createCodexTranscriptDecoderState(options);
+export function decodeCodexTranscript(lines: Iterable<string>): SessionHistoryEvent[] {
+  const state = createCodexTranscriptDecoderState();
   const events: SessionHistoryEvent[] = [];
   for (const line of lines) {
     events.push(...decodeCodexTranscriptLine(line, state));

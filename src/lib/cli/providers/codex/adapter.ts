@@ -312,7 +312,6 @@ export class CodexAdapter implements CliProvider {
     providerSessionId: string;
     transcriptPath?: string | null;
     userId?: string;
-    knownUserPrompts?: readonly string[];
   }): Promise<SessionHistoryEvent[] | null> {
     const filePath = await resolveCodexTranscriptPath({
       providerSessionId: options.providerSessionId,
@@ -321,9 +320,7 @@ export class CodexAdapter implements CliProvider {
     });
     if (!filePath) return null;
 
-    const decoderState = createCodexTranscriptDecoderState({
-      knownUserPrompts: options.knownUserPrompts,
-    });
+    const decoderState = createCodexTranscriptDecoderState();
     const events: SessionHistoryEvent[] = [];
     const stream = createReadStream(filePath, { encoding: 'utf-8' });
 
