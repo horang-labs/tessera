@@ -31,6 +31,7 @@ export type TelemetryEventName =
 
 export type TelemetryOptOutSource = 'setup' | 'settings';
 export type TelemetryProviderSetupIssueStatus = 'missing' | 'needs_login' | 'unavailable';
+export type TelemetryClientFormFactor = 'mobile' | 'desktop';
 
 export type TelemetryEventProperties = Record<string, unknown>;
 type TelemetryCaptureOptions = Pick<CaptureOptions, 'send_instantly' | 'transport'>;
@@ -82,6 +83,7 @@ const allowedProperties = new Set([
   'app_version',
   'arch',
   'channel',
+  'client_form_factor',
   'distinct_id',
   'environment',
   'error_code',
@@ -180,6 +182,7 @@ const allowedProjectImportErrorCodes = new Set([
   'unknown',
 ]);
 const allowedEnvironments = new Set(['native', 'wsl']);
+const allowedClientFormFactors = new Set<TelemetryClientFormFactor>(['mobile', 'desktop']);
 const allowedSettings = new Set([
   'language',
   'agentExecutionMode',
@@ -325,6 +328,7 @@ function baseProperties(context: TelemetryRuntimeContext): TelemetryEventPropert
     platform: context.platform,
     arch: context.arch,
     channel: context.channel,
+    client_form_factor: detectTelemetryClientFormFactor(),
     $geoip_disable: true,
     $process_person_profile: false,
   };
@@ -351,6 +355,10 @@ export function sanitizeTelemetryProperties(
     if (key === 'result' && (typeof value !== 'string' || !allowedResults.has(value))) continue;
     if (key === 'error_code' && (typeof value !== 'string' || !allowedProjectImportErrorCodes.has(value))) continue;
     if (key === 'environment' && (typeof value !== 'string' || !allowedEnvironments.has(value))) continue;
+    if (
+      key === 'client_form_factor'
+      && (typeof value !== 'string' || !allowedClientFormFactors.has(value as TelemetryClientFormFactor))
+    ) continue;
     if (key === 'setting' && (typeof value !== 'string' || !allowedSettings.has(value))) continue;
     if (key === 'control' && !isTelemetryUiControl(value)) continue;
     if (key === 'surface' && !isTelemetryUiSurface(value)) continue;
@@ -499,6 +507,40 @@ async function loadPostHog(): Promise<PostHogClient | null> {
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined';
+}
+
+interface TelemetryNavigatorLike {
+  userAgent?: string;
+  platform?: string;
+  maxTouchPoints?: number;
+  userAgentData?: { mobile?: boolean };
+}
+
+/**
+ * Reduce browser device signals to one non-identifying usage dimension. Raw
+ * user-agent, viewport, screen, and touch data never leave the client.
+ */
+export function detectTelemetryClientFormFactor(
+  navigatorLike: TelemetryNavigatorLike | undefined = typeof navigator === 'undefined'
+    ? undefined
+    : navigator as TelemetryNavigatorLike,
+): TelemetryClientFormFactor {
+  if (navigatorLike?.userAgentData?.mobile === true) return 'mobile';
+
+  const userAgent = navigatorLike?.userAgent ?? '';
+  if (/Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(userAgent)) {
+    return 'mobile';
+  }
+
+  // iPadOS can request desktop sites and identify as Macintosh.
+  if (
+    /Macintosh/i.test(userAgent)
+    && (navigatorLike?.maxTouchPoints ?? 0) > 1
+  ) {
+    return 'mobile';
+  }
+
+  return 'desktop';
 }
 
 function isBrowserDntEnabled(): boolean {
