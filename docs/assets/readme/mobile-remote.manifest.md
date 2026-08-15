@@ -3,11 +3,10 @@
 - Asset: `mobile-remote.gif`
 - Recorded: 2026-08-15
 - Source viewport: 390 × 844 CSS pixels, dark color scheme
-- Editorial crop: 32 pixels from the left edge and 16 pixels from the bottom edge,
-  removing only the provider quota and internal usage/status rails while preserving the
-  mobile composer border and attachment/input controls
-- Output: 358 × 828, 157 frames, 13.08 seconds, 1,692,087 bytes
-- SHA-256: `4b517e740ebb5976d9a3adb692f53469da9c09af40dc7025464e0b03c9e710db`
+- Editorial treatment: none; the complete 390 × 844 source viewport is preserved with no
+  crop or scale, including the provider and session usage/status rails
+- Output: 390 × 844, 156 frames, 13.00 seconds, 1,733,773 bytes
+- SHA-256: `4805c30e46622aecadc658940a8dfe918f05d166d3fe5f942bfe55e8c0d0952a`
 - Seed: read-only `/home/work/.tessera_demo` copy; combined database fingerprint
   `24d4a3a2b5c85dd177963636c1058a552d0523ac16b032b9f55d90b0f2b4574f`
 - Reproduce: build the production UI with `npm run build`, then run

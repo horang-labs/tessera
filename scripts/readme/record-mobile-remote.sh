@@ -184,9 +184,9 @@ playwright-cli -s="$session_name" video-stop >/dev/null
 playwright-cli -s="$session_name" close >/dev/null
 
 ffmpeg -y -v error -i "$webm" -vf \
-  "crop=358:828:32:0,fps=12,palettegen=max_colors=128:stats_mode=diff" "$palette"
+  "fps=12,palettegen=max_colors=128:stats_mode=diff" "$palette"
 ffmpeg -y -v error -i "$webm" -i "$palette" -lavfi \
-  "crop=358:828:32:0,fps=12[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" "$gif"
+  "[0:v]fps=12[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" "$gif"
 
 for sample in 0.5 2.8 6.3 10.5; do
   sample_name=${sample/./-}
@@ -197,7 +197,7 @@ montage \
   "$run_root/contact-2-8.png" \
   "$run_root/contact-6-3.png" \
   "$run_root/contact-10-5.png" \
-  -tile 2x2 -geometry 358x828+12+12 \
+  -tile 2x2 -geometry 390x844+12+12 \
   -background '#0b0b0b' "$contact_sheet"
 
 seed_after=$(sha256sum "$seed_dir/tessera.db" "$seed_dir/tessera-dev.db" | sha256sum | cut -d' ' -f1)
