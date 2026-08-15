@@ -112,6 +112,8 @@ export interface UserSettings {
   geminiApiKey: string;
   favoriteSkills: string[];
   agentEnvironment: AgentEnvironment;
+  /** Inject Tessera's session-scoped control skill into managed GUI and PTY CLIs. */
+  tesseraCliEnabled: boolean;
   cliCommandOverrides: CliCommandOverrides;
   windowsCloseBehavior: WindowsCloseBehavior;
   setup: SetupState;

@@ -9,6 +9,7 @@ import {
   buildWslLoginShellCommand,
   escapeWslShCommandForWindows,
 } from './wsl-login-shell-command';
+import { buildPosixOpenCodeOverlayActivation } from './providers/opencode/config-overlay';
 
 type LoginShellEnvironment = Record<string, string>;
 
@@ -151,6 +152,8 @@ export interface SpawnCliRuntimeOptions {
   // discovery or config (e.g. git). Real agent CLIs (claude, codex) still need
   // the login shell for nvm PATH etc.
   loginShell?: boolean;
+  /** Allowlisted per-launch values reasserted after WSL login rc files run. */
+  guestEnvironment?: Record<string, string | undefined>;
 }
 
 export function spawnCliProcess(
@@ -534,7 +537,12 @@ function spawnWslCli(
   const wslCwd = typeof cwd === 'string' && cwd.length > 0
     ? normalizeCwdForCliEnvironment(cwd, 'wsl')
     : null;
-  const script = buildLoginShellExecScript(command, args, wslCwd);
+  const script = buildLoginShellExecScript(
+    command,
+    args,
+    wslCwd,
+    runtimeOptions?.guestEnvironment,
+  );
 
   // Fixed-path binaries (git) don't need the user's login shell; running them in
   // a plain `sh -c` avoids the per-call cost of sourcing the user's rc files
@@ -711,22 +719,36 @@ function quoteBashArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildLoginShellExecScript(
+export function buildLoginShellExecScript(
   command: string,
   args: string[],
   cwd: string | null,
+  guestEnvironment?: Record<string, string | undefined>,
 ): string {
+  const environmentCommands = Object.entries(guestEnvironment ?? {}).map(([key, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid guest environment key: ${key}`);
+    }
+    return value === undefined
+      ? `unset ${key}`
+      : `export ${key}=${quoteBashArg(value)}`;
+  });
   const commandExpression = [
     'exec',
     quoteBashArg(command),
     ...args.map(quoteBashArg),
   ].join(' ');
+  const openCodeActivation = guestEnvironment?.TESSERA_OPENCODE_CONFIG_DIR
+    ? buildPosixOpenCodeOverlayActivation(guestEnvironment.TESSERA_OPENCODE_CONFIG_DIR)
+    : '';
+  const launchExpression = openCodeActivation
+    + [...environmentCommands, commandExpression].join('; ');
 
   if (!cwd) {
-    return commandExpression;
+    return launchExpression;
   }
 
-  return `cd -- ${quoteBashArg(cwd)} && ${commandExpression}`;
+  return `cd -- ${quoteBashArg(cwd)} && ${launchExpression}`;
 }
 
 function windowsExecutablePathToWslPath(windowsPath: string): string | null {

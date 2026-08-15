@@ -3,6 +3,11 @@ import path from 'node:path';
 
 export const TESSERA_CONTROL_SKILL_NAME = 'tessera-cli';
 
+export interface TesseraControlSkillMetadata {
+  name: string;
+  description: string;
+}
+
 export interface BundledTesseraControlSkillFile {
   relativePath: string;
   content: string;
@@ -30,6 +35,23 @@ export function readBundledTesseraControlSkillFiles(
     relativePath,
     content: fs.readFileSync(path.join(skillDir, relativePath), 'utf8'),
   }));
+}
+
+export function readBundledTesseraControlSkillMetadata(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): TesseraControlSkillMetadata {
+  const skillFile = readBundledTesseraControlSkillFiles(env, cwd)
+    .find((file) => file.relativePath === 'SKILL.md');
+  const description = skillFile?.content.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+  if (!description) {
+    throw new Error('Bundled Tessera control skill is missing its description');
+  }
+
+  return {
+    name: TESSERA_CONTROL_SKILL_NAME,
+    description,
+  };
 }
 
 export function materializeTesseraControlSkill(

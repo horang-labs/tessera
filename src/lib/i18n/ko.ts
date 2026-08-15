@@ -294,6 +294,12 @@ export const ko: I18nMessages = {
         not_installed: '설치 안 됨',
       },
     },
+    tesseraCli: {
+      title: 'Tessera CLI',
+      description: '켜도 별도로 설치되지 않습니다. Tessera가 시작하는 GUI 또는 PTY 에이전트 세션에만 Tessera CLI 스킬과 연결 브리지가 임시로 자동 주입됩니다.',
+      enabled: '관리되는 에이전트 세션에서 Tessera CLI 사용',
+      existingSessions: '다음에 에이전트 프로세스를 시작하거나 재개할 때 적용됩니다. 실행 중인 세션은 바뀌지 않습니다.',
+    },
     cliDiagnostics: {
       title: 'CLI 진단',
       run: '진단 실행',
@@ -534,6 +540,8 @@ export const ko: I18nMessages = {
     executionModeTitle: '에이전트를 어떻게 열까요?',
     executionModeDescription: '새 세션에서 사용할 기본 화면을 선택하세요. 나중에 설정에서 바꿀 수 있습니다.',
     executionModeNote: '이미 만든 세션은 생성할 때 선택된 화면을 유지합니다.',
+    tesseraCliTitle: '에이전트 세션에서 Tessera CLI 사용',
+    tesseraCliDescription: '별도로 설치되지 않습니다. Tessera가 시작하는 GUI 또는 PTY 에이전트 세션에만 스킬과 연결 브리지가 임시로 자동 주입됩니다.',
     telemetryTitle: '익명 사용량 데이터 공유',
     telemetryDescription: '어떤 이름의 컨트롤과 기능을 사용하는지 포함한 익명 제품 상호작용 텔레메트리를 공유합니다. 텔레메트리는 PostHog로 수집되며 US 리전에 저장됩니다. 화면 텍스트, IP 주소, 프롬프트, 메시지, 파일 경로, 명령 출력은 일절 수집하지 않습니다.',
     aiCli: 'Claude Code / Codex',

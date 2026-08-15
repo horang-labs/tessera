@@ -767,6 +767,7 @@ export class TerminalManager {
           // (terminal-resolver의 재단언 스니펫이 소비).
           { name: 'TESSERA_CODEX_HOME', path: !terminalEnv.TESSERA_CODEX_HOME?.startsWith('/') },
           { name: 'OPENCODE_CONFIG_DIR', path: !terminalEnv.OPENCODE_CONFIG_DIR?.startsWith('/') },
+          { name: 'TESSERA_OPENCODE_CONFIG_DIR', path: !terminalEnv.TESSERA_OPENCODE_CONFIG_DIR?.startsWith('/') },
           { name: 'TERM' },
           { name: 'COLORTERM' },
           { name: 'TERM_PROGRAM' },

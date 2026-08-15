@@ -150,6 +150,26 @@ test('WSL overlay create script tolerates a missing codex home', () => {
   }
 });
 
+test('WSL lifecycle overlay preserves the account Tessera skill when injection is off', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-codex-off-'));
+  const accountSkill = path.join(home, '.codex/skills/tessera-cli/SKILL.md');
+  fs.mkdirSync(path.dirname(accountSkill), { recursive: true });
+  fs.writeFileSync(accountSkill, 'user-owned Tessera skill\n');
+  try {
+    const stdout = runScript(
+      buildWslCodexOverlayCreateScript('terminal-wsl-off', b64('{}'), 'posix', false),
+      home,
+    );
+    const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/SKILL.md'), 'utf8'),
+      'user-owned Tessera skill\n',
+    );
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('WSL overlay cleanup keeps recorded rollout paths resumable', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-resume-'));
   const codexHome = path.join(home, '.codex');

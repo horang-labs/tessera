@@ -24,6 +24,7 @@ import CliDiagnosticsPanel from './cli-diagnostics-panel';
 import ToolStatusList from './tool-status-list';
 import GitSettings from './git-settings';
 import AgentExecutionModeSettings from './agent-execution-mode-settings';
+import TesseraCliSettings from './tessera-cli-settings';
 import TerminalViewDefaultSettings from './terminal-view-default-settings';
 import NewSessionKindSettings from './new-session-kind-settings';
 import CustomModelSettings from './custom-model-settings';
@@ -198,6 +199,9 @@ export default function SettingsPanel() {
       case 'development':
         return (
           <>
+            <SettingsCard testId="settings-section-development-tessera-cli">
+              <TesseraCliSettings />
+            </SettingsCard>
             <SettingsCard testId="settings-section-development-cli-status">
               <h3 className="font-medium text-(--text-primary)">
                 {t('settings.cliStatus.title')}

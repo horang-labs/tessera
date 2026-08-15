@@ -10,15 +10,19 @@ interface CommandState {
   commands: Record<string, CommandInfo[]>;
   /** Provider invalidation revision per session. */
   revisions: Record<string, number>;
+  /** Global invalidation revision for settings that affect every catalog. */
+  catalogRevision: number;
   setCommands: (sessionId: string, commands: CommandInfo[]) => void;
   getCommands: (sessionId: string) => CommandInfo[];
   invalidateSession: (sessionId: string) => void;
+  invalidateAll: () => void;
   clearSession: (sessionId: string) => void;
 }
 
 export const useCommandStore = create<CommandState>((set, get) => ({
   commands: {},
   revisions: {},
+  catalogRevision: 0,
   setCommands: (sessionId, commands) =>
     set((s) => ({ commands: { ...s.commands, [sessionId]: commands } })),
   getCommands: (sessionId) => get().commands[sessionId] ?? [],
@@ -33,6 +37,11 @@ export const useCommandStore = create<CommandState>((set, get) => ({
         },
       };
     }),
+  invalidateAll: () =>
+    set((s) => ({
+      commands: {},
+      catalogRevision: s.catalogRevision + 1,
+    })),
   clearSession: (sessionId) =>
     set((s) => {
       const { [sessionId]: _, ...commands } = s.commands;

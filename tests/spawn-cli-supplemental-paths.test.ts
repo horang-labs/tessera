@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSpawnEnvironment } from '../src/lib/cli/spawn-cli-runtime';
+import {
+  buildLoginShellExecScript,
+  buildSpawnEnvironment,
+} from '../src/lib/cli/spawn-cli-runtime';
 import type { SpawnCliCache } from '../src/lib/cli/spawn-cli-cache';
 import { getRuntimePlatform } from '../src/lib/system/runtime-platform';
 
@@ -57,4 +60,36 @@ test('explicit CODEX_HOME overrides only its login-shell supplement', () => {
 
   assert.equal(env.CODEX_HOME, '/tmp/codex-account-home');
   assert.equal(env.HTTPS_PROXY, 'https://login-shell-proxy.test');
+});
+
+test('WSL guest launch values are applied after login rc and shell-quoted', () => {
+  const script = buildLoginShellExecScript(
+    'codex',
+    ['app-server'],
+    '/workspace/it has spaces',
+    {
+      TESSERA_ENV: '1',
+      TESSERA_CLI_COMMAND: "/home/user/it's tessera",
+      TESSERA_WORKTREE_ID: undefined,
+    },
+  );
+
+  assert.match(script, /^cd -- '\/workspace\/it has spaces' && /);
+  assert.match(script, /export TESSERA_ENV='1'/);
+  assert.match(script, /export TESSERA_CLI_COMMAND='\/home\/user\/it'\\''s tessera'/);
+  assert.match(script, /unset TESSERA_WORKTREE_ID/);
+  assert.match(script, /exec 'codex' 'app-server'$/);
+  assert.throws(
+    () => buildLoginShellExecScript('codex', [], null, { 'BAD-NAME': 'x' }),
+    /Invalid guest environment key/,
+  );
+});
+
+test('WSL OpenCode preserves rc config before reasserting its managed overlay', () => {
+  const script = buildLoginShellExecScript('opencode', ['acp'], null, {
+    OPENCODE_CONFIG_DIR: '/home/user/.tessera/overlay',
+    TESSERA_OPENCODE_CONFIG_DIR: '/home/user/.tessera/overlay',
+  });
+  assert.ok(script.indexOf('tessera_oc_source="${OPENCODE_CONFIG_DIR:-}"') < script.indexOf('export OPENCODE_CONFIG_DIR='));
+  assert.match(script, /export TESSERA_OPENCODE_CONFIG_DIR=/);
 });

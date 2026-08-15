@@ -604,6 +604,13 @@ test('WSL terminals cross hook coordinates and overlay homes via WSLENV', () => 
   // Windows 경로일 때만 경로 변환(orca endpointFlag 미러).
   assert.match(terminalManagerSource, /\{ name: 'CODEX_HOME', path: !terminalEnv\.CODEX_HOME\?\.startsWith\('\/'\) \}/);
   assert.match(terminalManagerSource, /\{ name: 'OPENCODE_CONFIG_DIR', path: !terminalEnv\.OPENCODE_CONFIG_DIR\?\.startsWith\('\/'\) \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_OPENCODE_CONFIG_DIR', path: !terminalEnv\.TESSERA_OPENCODE_CONFIG_DIR\?\.startsWith\('\/'\) \}/);
+});
+
+test('login-shell profiles preserve custom OpenCode config before restoring the overlay', () => {
+  assert.match(terminalResolverSource, /buildPosixOpenCodeOverlayActivation\(\)/);
+  assert.match(providerLaunchModuleSource, /TESSERA_OPENCODE_CONFIG_DIR: overlayDir/);
+  assert.match(providerLaunchModuleSource, /TESSERA_OPENCODE_CONFIG_DIR: overlay\.configDir/);
 });
 
 test('login-shell profiles cannot silently displace the injected CODEX_HOME overlay', () => {

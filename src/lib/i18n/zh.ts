@@ -294,6 +294,12 @@ export const zh: I18nMessages = {
         not_installed: '未安装',
       },
     },
+    tesseraCli: {
+      title: 'Tessera CLI',
+      description: '开启此选项不会单独安装任何内容。Tessera 只会向由 Tessera 启动的 GUI 或 PTY 智能体会话临时注入 Tessera CLI 技能和连接桥。',
+      enabled: '在托管的智能体会话中使用 Tessera CLI',
+      existingSessions: '更改会在智能体进程下次启动或恢复时生效，不会影响正在运行的会话。',
+    },
     cliDiagnostics: {
       title: 'CLI 诊断',
       run: '运行诊断',
@@ -532,6 +538,8 @@ export const zh: I18nMessages = {
     executionModeTitle: '智能体应如何打开？',
     executionModeDescription: '选择新会话的默认界面。之后可在设置中更改。',
     executionModeNote: '现有会话会保留创建时选择的界面。',
+    tesseraCliTitle: '在智能体会话中使用 Tessera CLI',
+    tesseraCliDescription: '这不会单独安装任何内容。Tessera 只会向由 Tessera 启动的 GUI 或 PTY 智能体会话临时注入技能和连接桥。',
     telemetryTitle: '共享匿名使用数据',
     telemetryDescription: '共享匿名的产品交互遥测，包括使用了哪些具名控件和功能。遥测由 PostHog 收集，并存储在美国区域。我们绝不会收集界面可见文本、IP 地址、提示词、消息、文件路径或命令输出。',
     aiCli: 'Claude Code / Codex',

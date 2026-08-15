@@ -175,6 +175,12 @@ export interface I18nMessages {
       enabled: string;
       disabledByEnv: string;
     };
+    tesseraCli: {
+      title: string;
+      description: string;
+      enabled: string;
+      existingSessions: string;
+    };
     shortcuts: string;
     appearance: string;
     theme: {
@@ -509,6 +515,8 @@ export interface I18nMessages {
     executionModeTitle: string;
     executionModeDescription: string;
     executionModeNote: string;
+    tesseraCliTitle: string;
+    tesseraCliDescription: string;
     telemetryTitle: string;
     telemetryDescription: string;
     aiCli: string;

@@ -156,6 +156,7 @@ export function appendTrustedHookState(
 export function createCodexOverlay(
   terminalId: string,
   hookStyle: HookCommandStyle = 'posix',
+  includeControlSkill = true,
 ): string {
   const overlayDir = overlayDirFor(terminalId);
   // stale 재생성: 이전 런치 잔여 제거(심링크는 unlink만 → 타깃 무손상).
@@ -222,7 +223,7 @@ export function createCodexOverlay(
   }
   const accountSkillsDir = path.join(systemHome, 'skills');
   for (const entry of accountSkillEntries) {
-    if (entry === TESSERA_CONTROL_SKILL_NAME) continue;
+    if (includeControlSkill && entry === TESSERA_CONTROL_SKILL_NAME) continue;
     const source = path.join(accountSkillsDir, entry);
     const target = path.join(overlaySkillsDir, entry);
     try {
@@ -242,7 +243,7 @@ export function createCodexOverlay(
       logger.warn({ error, entry }, 'codex overlay: user skill could not be mirrored');
     }
   }
-  materializeTesseraControlSkill(overlaySkillsDir);
+  if (includeControlSkill) materializeTesseraControlSkill(overlaySkillsDir);
 
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksPath = path.join(overlayDir, 'hooks.json');

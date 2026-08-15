@@ -104,6 +104,7 @@ export function buildWslCodexOverlayCreateScript(
   terminalId: string,
   hooksJsonB64: string,
   env: NodeJS.ProcessEnv = process.env,
+  includeControlSkill = true,
 ): string {
   assertSafeTerminalId(terminalId);
   assertBase64(hooksJsonB64, 'hooks.json');
@@ -132,12 +133,14 @@ export function buildWslCodexOverlayCreateScript(
     'if [ -d "$src/skills" ]; then',
     '  for entry in "$src"/skills/* "$src"/skills/.*; do',
     '    name="${entry##*/}"',
-    `    case "$name" in .|..|${TESSERA_CONTROL_SKILL_NAME}) continue ;; esac`,
+    `    case "$name" in .|..${includeControlSkill ? `|${TESSERA_CONTROL_SKILL_NAME}` : ''}) continue ;; esac`,
     '    [ -e "$entry" ] || continue',
     '    ln -s "$src/skills/$name" "$skills/$name" 2>/dev/null || true',
     '  done',
     'fi',
-    ...buildPosixTesseraControlSkillMaterialization('skills', env),
+    ...(includeControlSkill
+      ? buildPosixTesseraControlSkillMaterialization('skills', env)
+      : []),
     `printf '%s' '${hooksJsonB64}' | base64 -d > "$overlay/hooks.json"`,
     'chmod 600 "$overlay/hooks.json"',
     // 호스트가 파싱하는 보고 라인들. --exec sh는 non-login이라 rc 노이즈가 없다.
@@ -322,20 +325,30 @@ function toBase64(value: string): string {
 export async function createCodexOverlayInWsl(
   terminalId: string,
   hookStyle: HookCommandStyle = 'posix',
+  includeControlSkill = true,
 ): Promise<string> {
   assertSafeTerminalId(terminalId);
-  return chainGuestOp(terminalId, () => createOverlayScripts(terminalId, hookStyle));
+  return chainGuestOp(
+    terminalId,
+    () => createOverlayScripts(terminalId, hookStyle, includeControlSkill),
+  );
 }
 
 async function createOverlayScripts(
   terminalId: string,
   hookStyle: HookCommandStyle,
+  includeControlSkill: boolean,
 ): Promise<string> {
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksJson = JSON.stringify(hookSettings, null, 2) + '\n';
 
   const createdStdout = await runWslScript(
-    buildWslCodexOverlayCreateScript(terminalId, toBase64(hooksJson)),
+    buildWslCodexOverlayCreateScript(
+      terminalId,
+      toBase64(hooksJson),
+      process.env,
+      includeControlSkill,
+    ),
     CREATE_TIMEOUT_MS,
   );
   const overlayPath = readWslOverlayReport(createdStdout, 'TESSERA_OVERLAY');

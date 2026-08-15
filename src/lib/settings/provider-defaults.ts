@@ -599,6 +599,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     geminiApiKey: '',
     favoriteSkills: [],
     agentEnvironment: 'native',
+    tesseraCliEnabled: false,
     cliCommandOverrides: {},
     windowsCloseBehavior: 'ask',
     setup: {
@@ -675,6 +676,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,
     kanbanSessionOpenMode: normalizeKanbanSessionOpenMode(raw?.kanbanSessionOpenMode),
+    tesseraCliEnabled: raw?.tesseraCliEnabled === true,
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
     managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),

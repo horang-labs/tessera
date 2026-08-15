@@ -5,7 +5,10 @@ import { processManager } from '@/lib/cli/process-manager';
 import { listClaudeSkills } from '@/lib/cli/providers/claude-code/skill-discovery-client';
 import { listCodexSkills } from '@/lib/cli/providers/codex/skill-discovery-client';
 import { listOpenCodeCommands } from '@/lib/cli/providers/opencode/command-discovery-client';
+import type { SkillInfo } from '@/lib/cli/providers/skill-types';
+import { prependPendingTesseraCliSkill } from '@/lib/control/pending-tessera-cli-skill';
 import { waitForPreparationBeforeSkillDiscovery } from '@/lib/projects/preparation-gate';
+import { SettingsManager } from '@/lib/settings/manager';
 import logger from '@/lib/logger';
 
 /**
@@ -60,15 +63,16 @@ export async function GET(
       }
     }
 
+    let skills: SkillInfo[] = [];
+
     if (providerId === 'codex') {
       try {
-        const skills = processInfo?.skillSource
+        skills = processInfo?.skillSource
           ? await processInfo.skillSource.listSkills()
           : await listCodexSkills({
               userId: auth.userId,
               workDir,
             });
-        return NextResponse.json({ skills });
       } catch (error) {
         logger.warn({
           sessionId: id,
@@ -79,33 +83,35 @@ export async function GET(
           { status: 503 },
         );
       }
-    }
-
-    if (providerId === 'claude-code') {
+    } else if (providerId === 'claude-code') {
       const reportedCommands = processManager.getCommands(id);
       if (reportedCommands.length > 0) {
-        return NextResponse.json({ skills: reportedCommands });
-      }
-
-      return NextResponse.json({
-        skills: await listClaudeSkills({
+        skills = reportedCommands;
+      } else {
+        skills = await listClaudeSkills({
           userId: auth.userId,
           workDir,
-        }),
-      });
-    }
-
-    if (providerId === 'opencode') {
-      const commands = processInfo
+        });
+      }
+    } else if (providerId === 'opencode') {
+      skills = processInfo
         ? processManager.getCommands(id)
         : await listOpenCodeCommands({
             userId: auth.userId,
             workDir,
           });
-      return NextResponse.json({ skills: commands });
     }
 
-    return NextResponse.json({ skills: [] });
+    const tesseraCliEnabled = !processInfo
+      ? (await SettingsManager.load(auth.userId, { silent: true })).tesseraCliEnabled
+      : false;
+    return NextResponse.json({
+      skills: prependPendingTesseraCliSkill(skills, {
+        providerId,
+        enabled: tesseraCliEnabled,
+        hasProcess: Boolean(processInfo),
+      }),
+    });
   } catch (error) {
     logger.warn({ sessionId: id, error }, 'Failed to discover session skills');
     return NextResponse.json({ skills: [] });

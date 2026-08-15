@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '@/lib/settings/defaults';
 import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { i18n } from '@/lib/i18n';
 import { useBoardStore, type ViewMode } from '@/stores/board-store';
+import { useCommandStore } from '@/stores/command-store';
 import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
@@ -89,6 +90,15 @@ function buildProjectSidebarWidths(
 
 function syncI18nLanguage(language: UserSettings['language']): void {
   void i18n.changeLanguage(language);
+}
+
+function invalidateSkillCatalogsWhenTesseraCliChanges(
+  prior: UserSettings,
+  next: UserSettings,
+): void {
+  if (prior.tesseraCliEnabled !== next.tesseraCliEnabled) {
+    useCommandStore.getState().invalidateAll();
+  }
 }
 
 interface SettingsSyncMessage {
@@ -226,6 +236,7 @@ export const useSettingsStore = create<SettingsState>()(
         const prior = get().settings;
         const settings = normalizeUserSettings(externalSettings);
         set({ settings });
+        invalidateSkillCatalogsWhenTesseraCliChanges(prior, settings);
         syncI18nLanguage(settings.language);
         if (JSON.stringify(prior.providerCustomModels) !== JSON.stringify(settings.providerCustomModels)) {
           void import('@/hooks/use-provider-session-options').then(
@@ -351,6 +362,9 @@ export const useSettingsStore = create<SettingsState>()(
           invalidateProviderSessionOptionsClientCache();
         }
         if (saved) {
+          invalidateSkillCatalogsWhenTesseraCliChanges(prior, updated);
+        }
+        if (saved) {
           for (const setting of Object.keys(partial)) {
             void captureTelemetryEvent('settings_changed', { setting });
           }
@@ -377,6 +391,7 @@ export const useSettingsStore = create<SettingsState>()(
           if (!response.ok) {
             throw new Error(`Settings reset failed with status ${response.status}`);
           }
+          invalidateSkillCatalogsWhenTesseraCliChanges(prior, defaults);
           const { invalidateProviderSessionOptionsClientCache } = await import(
             '@/hooks/use-provider-session-options'
           );
@@ -397,11 +412,13 @@ export const useSettingsStore = create<SettingsState>()(
           if (response.ok) {
             const data = await response.json();
             const settings = normalizeUserSettings(data.settings);
+            const prior = get().settings;
             set({
               settings,
               serverHostInfo: data.serverHostInfo ?? null,
               isLoading: false,
             });
+            invalidateSkillCatalogsWhenTesseraCliChanges(prior, settings);
             syncI18nLanguage(settings.language);
           } else {
             set({ isLoading: false });

@@ -50,7 +50,7 @@ test('Codex skill discovery requests the active working directory and forces a r
   };
   adapterInternals._processRuntimeConfig.set(proc, { cwd: '/workspace/project' });
   adapterInternals._awaitResponse = async () => ({
-    id: 3,
+    id: 4,
     result: {
       data: [{
         cwd: '/workspace/project',
@@ -72,13 +72,60 @@ test('Codex skill discovery requests the active working directory and forces a r
   assert.equal(writes.length, 1);
   assert.deepEqual(JSON.parse(writes[0]), {
     jsonrpc: '2.0',
-    id: 3,
+    id: 4,
     method: 'skills/list',
     params: {
       cwds: ['/workspace/project'],
       forceReload: true,
     },
   });
+});
+
+test('Codex managed GUI handshake registers extra skill roots before starting the thread', async () => {
+  const adapter = new CodexAdapter();
+  const proc = createMockProcess();
+  const writes: string[] = [];
+  proc.stdin?.on('data', (chunk) => writes.push(chunk.toString()));
+  const internals = adapter as unknown as {
+    _performHandshake: (
+      process: ChildProcess,
+      sessionId: string,
+      options: Record<string, unknown>,
+    ) => Promise<void>;
+    _awaitResponse: (
+      process: ChildProcess,
+      id: number,
+      method: string,
+    ) => Promise<{ result: Record<string, any> }>;
+  };
+  internals._awaitResponse = async (_process, _id, method) => (
+    method === 'thread/start'
+      ? { result: { thread: { id: 'thread-managed' } } }
+      : { result: {} }
+  );
+
+  await internals._performHandshake(proc, '__provider__', {
+    managedLaunch: {
+      environment: {},
+      guestEnvironment: {},
+      skillOverlay: {
+        rootDir: '/tmp/tessera-managed-overlay',
+        skillsDir: '/tmp/tessera-managed-skills',
+      },
+    },
+  });
+
+  const messages = writes.map((line) => JSON.parse(line));
+  assert.deepEqual(
+    messages.map((message) => [message.id, message.method]),
+    [
+      [1, 'initialize'],
+      [undefined, 'initialized'],
+      [2, 'skills/extraRoots/set'],
+      [3, 'thread/start'],
+    ],
+  );
+  assert.deepEqual(messages[2].params, { extraRoots: ['/tmp/tessera-managed-skills'] });
 });
 
 test('Codex skills/changed notification invalidates the client skill cache', () => {
@@ -122,6 +169,22 @@ test('skills_changed clears a loaded list and advances its reload revision', () 
     previousRevision + 1,
   );
   useCommandStore.getState().clearSession('session-1');
+});
+
+test('a catalog-wide settings change cancels cached and in-flight skill loads', () => {
+  useCommandStore.getState().setCommands('session-1', [{
+    name: 'stale-skill',
+    description: 'Stale',
+  }]);
+  const previousCatalogRevision = useCommandStore.getState().catalogRevision;
+
+  useCommandStore.getState().invalidateAll();
+
+  assert.deepEqual(useCommandStore.getState().commands, {});
+  assert.equal(
+    useCommandStore.getState().catalogRevision,
+    previousCatalogRevision + 1,
+  );
 });
 
 test('Codex skill loading retries a temporary unavailable response without caching empty', async () => {

@@ -714,6 +714,7 @@ test('shared provider launches inject the complete control bridge environment fo
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
       resolveAgentEnvironment: async () => agentEnvironment,
+      resolveTesseraCliEnabled: async () => true,
       prepareControlCliBridge: async (context) => {
         assert.deepEqual(context, {
           agentEnvironment,
@@ -805,6 +806,66 @@ test('shared provider launches inject the complete control bridge environment fo
   }
 });
 
+test('disabled Tessera CLI omits the bridge and canonical skill while retaining lifecycle overlays', async () => {
+  const previousCliCommand = process.env.TESSERA_CLI_COMMAND;
+  process.env.TESSERA_CLI_COMMAND = '/stale/parent/tessera';
+  try {
+    for (const provider of ['claude-code', 'codex', 'opencode']) {
+      const captured: CapturedSpawn[] = [];
+      const manager = createManager(captured);
+      const sessionId = `control-disabled-${provider}`;
+      createTerminalSession(sessionId, provider);
+      let bridgeCalls = 0;
+      const launcher = modules.createProviderLaunchModule({
+        terminalManager: manager,
+        resolveTesseraCliEnabled: async () => false,
+        prepareControlCliBridge: async () => {
+          bridgeCalls += 1;
+          throw new Error('bridge must not be prepared while disabled');
+        },
+      });
+
+      await launcher.launch({
+        sessionId,
+        userId: 'provider-launch-user',
+        mode: 'detached',
+      });
+
+      const spawned = captured[0];
+      assert.equal(bridgeCalls, 0);
+      assert.equal(spawned?.env?.TESSERA_CLI_COMMAND, undefined);
+      if (provider === 'claude-code') {
+        assert.doesNotMatch(spawned?.args.join(' ') ?? '', /--plugin-dir/);
+      } else if (provider === 'codex') {
+        assert.ok(spawned?.env?.CODEX_HOME);
+        assert.equal(
+          fs.existsSync(path.join(spawned.env.CODEX_HOME, 'skills', 'tessera-cli')),
+          false,
+        );
+        assert.equal(fs.existsSync(path.join(spawned.env.CODEX_HOME, 'hooks.json')), true);
+      } else {
+        assert.ok(spawned?.env?.OPENCODE_CONFIG_DIR);
+        assert.equal(
+          fs.existsSync(path.join(spawned.env.OPENCODE_CONFIG_DIR, 'skills', 'tessera-cli')),
+          false,
+        );
+        assert.equal(
+          fs.existsSync(path.join(
+            spawned.env.OPENCODE_CONFIG_DIR,
+            'plugins',
+            'tessera-lifecycle.js',
+          )),
+          true,
+        );
+      }
+      await manager.closeSession(sessionId, 'provider-launch-user');
+    }
+  } finally {
+    if (previousCliCommand === undefined) delete process.env.TESSERA_CLI_COMMAND;
+    else process.env.TESSERA_CLI_COMMAND = previousCliCommand;
+  }
+});
+
 test('managed fake-provider launches discover the canonical skill in a WSL-like environment', async () => {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   const previousHome = process.env.HOME;
@@ -849,6 +910,7 @@ test('managed fake-provider launches discover the canonical skill in a WSL-like 
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
       resolveAgentEnvironment: async () => 'wsl',
+      resolveTesseraCliEnabled: async () => true,
       prepareControlCliBridge: async ({ projectId, sessionId }) => ({
         commandPath: `/home/agent/.tessera/control/${sessionId}/tessera`,
         environment: {
@@ -1235,6 +1297,7 @@ test('a preparation timeout still removes the WSL overlay whose spawn it abandon
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
       resolveAgentEnvironment: async () => 'wsl',
+      resolveTesseraCliEnabled: async () => true,
       preparationTimeoutMs: 1_000,
     });
 
@@ -1313,6 +1376,7 @@ test('a deterministically failing WSL overlay is not retried: Claude launches an
     const launcher = modules.createProviderLaunchModule({
       terminalManager: manager,
       resolveAgentEnvironment: async () => 'wsl',
+      resolveTesseraCliEnabled: async () => true,
     });
 
     await launcher.launch({

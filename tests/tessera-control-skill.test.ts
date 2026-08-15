@@ -105,16 +105,45 @@ test('the Codex overlay exposes the canonical skill without changing user-owned 
   }
 });
 
+test('the Codex lifecycle overlay keeps a user-owned Tessera skill when injection is off', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-skill-overlay-off-'));
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  const previousCodexHome = process.env.CODEX_HOME;
+  const accountHome = path.join(root, 'account');
+  const accountSkill = path.join(accountHome, 'skills', 'tessera-cli', 'SKILL.md');
+  const userSkill = 'user-owned Tessera skill\n';
+  fs.mkdirSync(path.dirname(accountSkill), { recursive: true });
+  fs.writeFileSync(accountSkill, userSkill);
+  process.env.TESSERA_DATA_DIR = path.join(root, 'data');
+  process.env.CODEX_HOME = accountHome;
+
+  try {
+    const overlayHome = createCodexOverlay('control-skill-codex-off', 'posix', false);
+    const overlaySkill = path.join(overlayHome, 'skills', 'tessera-cli', 'SKILL.md');
+    assert.equal(fs.readFileSync(overlaySkill, 'utf8'), userSkill);
+    assert.equal(fs.readFileSync(accountSkill, 'utf8'), userSkill);
+    cleanupCodexOverlayForTerminal('control-skill-codex-off');
+  } finally {
+    if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
+    else process.env.TESSERA_DATA_DIR = previousDataDir;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('the OpenCode overlay exposes the canonical skill without changing global config', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-skill-overlay-'));
   const dataDir = path.join(root, 'data');
   const globalConfig = path.join(root, 'global-config');
   const globalSkill = path.join(globalConfig, 'skills', 'tessera-cli', 'SKILL.md');
+  const globalSettings = path.join(globalConfig, 'settings.json');
   const userSkill = '---\nname: tessera-cli\ndescription: global user skill\n---\nGlobal.\n';
   const previousDataDir = process.env.TESSERA_DATA_DIR;
   const previousOpenCodeConfigDir = process.env.OPENCODE_CONFIG_DIR;
   fs.mkdirSync(path.dirname(globalSkill), { recursive: true });
   fs.writeFileSync(globalSkill, userSkill);
+  fs.writeFileSync(globalSettings, '{"theme":"user"}\n');
   process.env.TESSERA_DATA_DIR = dataDir;
   process.env.OPENCODE_CONFIG_DIR = globalConfig;
 
@@ -124,16 +153,37 @@ test('the OpenCode overlay exposes the canonical skill without changing global c
       path.join(overlay.configDir, 'skills', 'tessera-cli'),
     );
     assert.equal(fs.readFileSync(globalSkill, 'utf8'), userSkill);
+    assert.equal(
+      fs.readFileSync(path.join(overlay.configDir, 'settings.json'), 'utf8'),
+      '{"theme":"user"}\n',
+    );
 
     overlay.dispose();
     assert.equal(fs.existsSync(overlay.configDir), false);
     assert.equal(fs.readFileSync(globalSkill, 'utf8'), userSkill);
+    assert.equal(fs.readFileSync(globalSettings, 'utf8'), '{"theme":"user"}\n');
   } finally {
     if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
     else process.env.TESSERA_DATA_DIR = previousDataDir;
     if (previousOpenCodeConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previousOpenCodeConfigDir;
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the OpenCode lifecycle overlay omits the canonical skill when injection is off', () => {
+  const overlay = createOpenCodeOverlay('control-skill-opencode-off', false);
+  try {
+    assert.equal(
+      fs.existsSync(path.join(overlay.configDir, 'skills', 'tessera-cli')),
+      false,
+    );
+    assert.equal(
+      fs.existsSync(path.join(overlay.configDir, 'plugins', 'tessera-lifecycle.js')),
+      true,
+    );
+  } finally {
+    overlay.dispose();
   }
 });
 
