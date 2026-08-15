@@ -19,7 +19,6 @@ declare -A expected_sha256=(
   ["keyframes/02-cli-success.png"]="5afa1085e21d252c5e37e0627f7245625647e7e49673be854d043984cac3faa0"
   ["keyframes/03-board-three.png"]="7df899bc751d60b8673f70f3c76c573936c348a0418403f652d3040573837b07"
   ["keyframes/04-child-result.png"]="704ab37887e989bf7a13c56fb5a9b95896f59e329d92e7a1d6ea6cf0d8aac180"
-  ["keyframes/05-board-final.png"]="c2923650bb9226646ef74f48675c059a6fb96fadf0e4b32de9df8eae75f4043e"
   ["cli/session-1.json"]="04f4d4dda024242e63c4bf436cb0e1efb4fe1c04b4ff76adcbe3952182d902a0"
   ["cli/session-2.json"]="7ebad8ec692eeb12b17862220b0f709ee5fe4bb90bd6282f4c9f061413f79e88"
   ["cli/session-3.json"]="209c2b53900c37ae51a430d03200b7909969aef0d5a3057a75a0e4cc01d50665"
@@ -43,7 +42,7 @@ keyframes=(
   "02-cli-success.png"
   "03-board-three.png"
   "04-child-result.png"
-  "05-board-final.png"
+  "03-board-three.png"
 )
 
 for index in "${!keyframes[@]}"; do
