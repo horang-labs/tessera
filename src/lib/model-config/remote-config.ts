@@ -10,6 +10,10 @@ import type {
   ProviderModelOption,
   ProviderReasoningEffortOption,
 } from '@/lib/cli/provider-session-option-types';
+import {
+  normalizeTelemetryProvider,
+  type TelemetryProvider,
+} from '@/lib/telemetry/usage-dimensions';
 
 // Fetches Tessera's curated Claude model list from the remote Worker, caches it on disk,
 // and exposes it to buildClaudeSessionOptions(). There is no hardcoded base list;
@@ -234,6 +238,7 @@ export async function ensureModelConfigReady(): Promise<void> {
 async function buildRequestHeaders(
   hostInfo: ServerHostInfo,
   reason: ModelConfigFetchReason,
+  dimensions: { provider?: TelemetryProvider },
 ): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -244,6 +249,9 @@ async function buildRequestHeaders(
     'X-Tessera-Arch': String(hostInfo.arch),
     'X-Tessera-Channel': hostInfo.channel,
   };
+  if (reason === 'prompt') {
+    headers['X-Tessera-Provider'] = normalizeTelemetryProvider(dimensions.provider);
+  }
   // install_id is a random UUID (never PII); it's what lets the Worker de-dupe launches
   // into unique installs. Sent unconditionally — the config fetch IS the launch count.
   try {
@@ -266,8 +274,9 @@ async function buildRequestHeaders(
 export function refreshRemoteModelConfig(
   reason: ModelConfigFetchReason,
   deps: { fetchImpl?: typeof fetch; hostInfo?: ServerHostInfo } = {},
+  dimensions: { provider?: TelemetryProvider } = {},
 ): Promise<{ changed: boolean }> {
-  const promise = doRefresh(reason, deps);
+  const promise = doRefresh(reason, deps, dimensions);
   inFlightRefresh = promise;
   void promise.finally(() => {
     if (inFlightRefresh === promise) inFlightRefresh = null;
@@ -278,12 +287,13 @@ export function refreshRemoteModelConfig(
 async function doRefresh(
   reason: ModelConfigFetchReason,
   deps: { fetchImpl?: typeof fetch; hostInfo?: ServerHostInfo },
+  dimensions: { provider?: TelemetryProvider },
 ): Promise<{ changed: boolean }> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const hostInfo = deps.hostInfo ?? getServerHostInfo();
   await ensureRemoteModelConfigLoaded();
 
-  const headers = await buildRequestHeaders(hostInfo, reason);
+  const headers = await buildRequestHeaders(hostInfo, reason, dimensions);
   if (activeConfig?.etag) headers['If-None-Match'] = activeConfig.etag;
 
   const controller = new AbortController();

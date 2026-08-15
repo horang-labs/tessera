@@ -15,6 +15,7 @@ import { useChatStore, isTurnInFlight } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { resolveStoredCanonicalSession } from '@/lib/projects/stored-session-resolution';
 import {
   applyLocalInteractiveResponseStart,
   finalizeInFlightTurn,
@@ -33,6 +34,11 @@ import {
 type ServerMessageListener = (msg: ServerTransportMessage) => void;
 
 const TERMINAL_PROMPT_RESPONSE_TIMEOUT_MS = 10_000;
+
+function resolvePromptProvider(sessionId: string): string | undefined {
+  const { projects, retainedSessions } = useSessionStore.getState();
+  return resolveStoredCanonicalSession(projects, retainedSessions, sessionId)?.provider;
+}
 
 export interface SendMessageOptions {
   forceTranslateInput?: boolean;
@@ -63,6 +69,7 @@ export class WebSocketClient {
   private wasReconnect = false;
   private connectionGeneration = 0;
   private readonly pendingTerminalCloses = new Set<string>();
+  private readonly terminalPromptProviders = new Map<string, string>();
   private readonly pendingPreviewReleases = new Map<string, {
     terminalId: string;
     sessionId?: string | null;
@@ -212,6 +219,7 @@ export class WebSocketClient {
     // covers button, Enter, resume-and-send, and other composer entry points.
     void captureTelemetryPromptSubmitted(sessionId, {
       source: 'gui',
+      provider_id: resolvePromptProvider(sessionId),
       has_skill: Boolean(skillName),
       has_attachment: options?.telemetry?.hasAttachment
         ?? (inferredAttachmentCount > 0),
@@ -304,6 +312,7 @@ export class WebSocketClient {
     if (sent) {
       void captureTelemetryPromptSubmitted(sessionId, {
         source: 'gui',
+        provider_id: resolvePromptProvider(sessionId),
         has_skill: false,
         has_attachment: false,
         attachment_count: 0,
@@ -440,6 +449,9 @@ export class WebSocketClient {
   }): boolean {
     // A deliberate restart supersedes a close queued during a disconnect.
     this.pendingTerminalCloses.delete(args.terminalId);
+    const provider = args.launch?.providerId
+      ?? (args.sessionId ? resolvePromptProvider(args.sessionId) : undefined);
+    if (provider) this.terminalPromptProviders.set(args.terminalId, provider);
     return this.sendRequest('terminal_create', args);
   }
 
@@ -466,7 +478,10 @@ export class WebSocketClient {
     // A carriage return is the terminal's submit boundary. Do not inspect or
     // retain any buffered text that preceded it.
     if (sent && data === '\r') {
-      void captureTelemetryPromptSubmitted(terminalId, { source: 'pty_direct' });
+      void captureTelemetryPromptSubmitted(terminalId, {
+        source: 'pty_direct',
+        provider_id: this.terminalPromptProviders.get(terminalId),
+      });
     }
     return sent;
   }
@@ -484,7 +499,10 @@ export class WebSocketClient {
         if (timer !== null) clearTimeout(timer);
         this.terminalPromptCallbacks.delete(request.requestId);
         if (result.accepted) {
-          void captureTelemetryPromptSubmitted(sessionId, { source: 'pty_chat_view' });
+          void captureTelemetryPromptSubmitted(sessionId, {
+            source: 'pty_chat_view',
+            provider_id: resolvePromptProvider(sessionId),
+          });
         }
         resolve(result);
       };
@@ -537,6 +555,7 @@ export class WebSocketClient {
   closeTerminal(terminalId: string): boolean {
     const sent = this.sendRequest('terminal_close', { terminalId });
     if (!sent) this.pendingTerminalCloses.add(terminalId);
+    this.terminalPromptProviders.delete(terminalId);
     return sent;
   }
 

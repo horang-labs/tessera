@@ -10,11 +10,11 @@ test('successful chat and terminal submissions emit content-free semantic teleme
   );
   assert.match(
     wsClientSource,
-    /captureTelemetryPromptSubmitted\(terminalId, \{ source: 'pty_direct' \}\)/,
+    /captureTelemetryPromptSubmitted\(terminalId, \{[\s\S]*?source: 'pty_direct',[\s\S]*?provider_id:/,
   );
   assert.match(
     wsClientSource,
-    /captureTelemetryPromptSubmitted\(sessionId, \{ source: 'pty_chat_view' \}\)/,
+    /captureTelemetryPromptSubmitted\(sessionId, \{[\s\S]*?source: 'pty_chat_view',[\s\S]*?provider_id:/,
   );
 
   for (const match of wsClientSource.matchAll(/captureTelemetryPromptSubmitted\([^,]+,\s*\{[\s\S]*?\}\);/g)) {
