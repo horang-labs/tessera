@@ -38,6 +38,7 @@ export function TaskPreparationBadge({
 
   const isRunning = badge === 'running';
   const label = isRunning ? t('task.preparation.preparing') : t('task.preparation.failed');
+  const tooltip = isRunning ? label : t('task.preparation.failedTooltip');
   const icon = isRunning
     ? <Loader2 className="h-3 w-3 animate-spin" />
     : <AlertTriangle className="h-3 w-3" />;
@@ -55,7 +56,7 @@ export function TaskPreparationBadge({
         // than whichever worktree happened to be open before.
         openTab('scripts');
       }}
-      title={label}
+      title={tooltip}
       aria-label={label}
       className={`${tone} ${isRunning ? 'hover:text-(--text-primary)' : 'hover:opacity-80'}`}
       data-testid="task-preparation-badge"
