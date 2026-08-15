@@ -1,7 +1,15 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
-import { ArrowUp, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type DragEvent,
+} from 'react';
+import { ArrowUp, ImagePlus, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
@@ -23,7 +31,10 @@ import {
   getNativeFileDropAbsolutePaths,
   isNativeFileDrag,
 } from '@/lib/dnd/native-file-drop';
-import { uploadTerminalClipboardFile } from '@/lib/terminal/terminal-clipboard-paste';
+import {
+  TERMINAL_IMAGE_FILE_ACCEPT,
+  uploadTerminalClipboardFile,
+} from '@/lib/terminal/terminal-clipboard-paste';
 import { insertTerminalChatPathsAtCursor } from '@/lib/terminal/terminal-chat-composer-input';
 import {
   resolveComposerArrowScroll,
@@ -94,6 +105,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
   const submittingRef = useRef(false);
   const retrySubmissionRef = useRef<{ text: string; id: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const isDragOver = dragDepth > 0;
   const isUploadingImage = pendingImageUploads > 0;
 
@@ -168,6 +180,19 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     insertPaths(paths);
   }, [acceptsPathDrop, insertPaths, isBlocked, isSubmitting]);
 
+  const attachImages = useCallback(async (imageFiles: File[]) => {
+    if (imageFiles.length === 0) return;
+    setPendingImageUploads((count) => count + imageFiles.length);
+    try {
+      insertPaths(await Promise.all(imageFiles.map(uploadTerminalClipboardFile)));
+    } catch {
+      toast.error(t('chat.terminalInputBar.imageAttachFailed'));
+    } finally {
+      setPendingImageUploads((count) => Math.max(0, count - imageFiles.length));
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    }
+  }, [insertPaths, t]);
+
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     // Match the desktop PTY clipboard policy: when a clipboard exposes both,
     // ordinary text wins and the textarea's native paste remains untouched.
@@ -179,15 +204,15 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     if (imageFiles.length === 0) return;
 
     event.preventDefault();
-    setPendingImageUploads((count) => count + imageFiles.length);
-    void Promise.all(imageFiles.map(uploadTerminalClipboardFile))
-      .then(insertPaths)
-      .catch(() => toast.error(t('chat.terminalInputBar.imageAttachFailed')))
-      .finally(() => {
-        setPendingImageUploads((count) => Math.max(0, count - imageFiles.length));
-        requestAnimationFrame(() => textareaRef.current?.focus());
-      });
-  }, [insertPaths, t]);
+    void attachImages(imageFiles);
+  }, [attachImages]);
+
+  const handleImageSelect = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file || isBlocked || isSubmitting || isUploadingImage) return;
+    void attachImages([file]);
+  }, [attachImages, isBlocked, isSubmitting, isUploadingImage]);
 
   const submit = useCallback(async () => {
     const text = value;
@@ -288,7 +313,44 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
               isDragOver && 'border-(--accent) ring-2 ring-(--accent)/30 ring-inset',
             )}
           >
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept={TERMINAL_IMAGE_FILE_ACCEPT}
+              className="hidden"
+              onChange={handleImageSelect}
+              disabled={isBlocked || isSubmitting || isUploadingImage}
+              tabIndex={-1}
+              data-testid="terminal-chat-composer-image-input"
+            />
             <div className="flex items-end gap-2 px-3 py-2">
+              <button
+                {...telemetryClickAttributes('terminal.attach', 'terminal')}
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                disabled={isBlocked || isSubmitting || isUploadingImage}
+                aria-label={t(
+                  isUploadingImage
+                    ? 'chat.terminalInputBar.attachingImage'
+                    : 'chat.terminalInputBar.attachImage',
+                )}
+                title={t(
+                  isUploadingImage
+                    ? 'chat.terminalInputBar.attachingImage'
+                    : 'chat.terminalInputBar.attachImage',
+                )}
+                aria-busy={isUploadingImage}
+                data-testid="terminal-chat-composer-attach-image"
+                className={cn(
+                  'hidden shrink-0 items-center justify-center rounded-md text-(--text-muted) transition-colors',
+                  'hover:text-(--accent) disabled:opacity-40 max-sm:flex',
+                  PHONE_TOUCH_TARGET,
+                )}
+              >
+                {isUploadingImage
+                  ? <span className="animate-spin"><Loader2 className="h-4 w-4" /></span>
+                  : <ImagePlus className="h-4 w-4" />}
+              </button>
               <textarea
                 {...telemetryClickAttributes('terminal.chat.input', 'terminal')}
                 ref={textareaRef}
