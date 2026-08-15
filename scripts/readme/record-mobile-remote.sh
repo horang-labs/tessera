@@ -36,7 +36,6 @@ demo_home="$run_root/home"
 server_log="$run_root/server.log"
 safe_project="$run_root/mobile-demo"
 palette="$run_root/palette.png"
-max_duration=33
 mkdir -p "$data_dir" "$demo_home/.codex" "$safe_project" "$output_dir"
 cp -a "$seed_dir/." "$data_dir"
 cp -a /home/work/.codex/auth.json /home/work/.codex/config.toml "$demo_home/.codex/"
@@ -226,12 +225,27 @@ playwright-cli -s="$session_name" goto "$origin/" >/dev/null
 cd "$repo_root"
 playwright-cli -s="$session_name" run-code --filename scripts/readme/mobile-remote.prepare.js >/dev/null
 playwright-cli -s="$session_name" video-start "$webm" --size "390x844" >/dev/null
+recording_started_page_ms=$(playwright-cli -s="$session_name" --raw eval "performance.now()")
 playwright-cli -s="$session_name" run-code --filename scripts/readme/mobile-remote.hero.js
 demo_complete=$(playwright-cli -s="$session_name" --raw eval \
   "document.documentElement.dataset.readmeMobileDemoComplete === 'true'")
 test "$demo_complete" = "true" || fail 'mobile hero did not reach its verified final scene'
+hero_finished_page_ms=$(playwright-cli -s="$session_name" --raw eval \
+  "Number(document.documentElement.dataset.readmeMobileDemoCompleteAt)")
 playwright-cli -s="$session_name" video-stop >/dev/null
 playwright-cli -s="$session_name" close >/dev/null
+
+# Playwright takes several seconds to finalize a video after the hero has
+# already finished. Keep a small end beat, but remove that mechanical tail.
+max_duration=$(awk \
+  -v started="$recording_started_page_ms" \
+  -v finished="$hero_finished_page_ms" \
+  'BEGIN {
+    duration = (finished - started) / 1000 + 0.80
+    if (duration <= 0) exit 1
+    if (duration > 24) duration = 24
+    printf "%.3f", duration
+  }')
 
 ffmpeg -y -v error -t "$max_duration" -i "$webm" -vf \
   "fps=12,palettegen=max_colors=128:stats_mode=diff" "$palette"
