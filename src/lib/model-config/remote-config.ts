@@ -16,8 +16,8 @@ import type {
 // runtime-discovered aliases and user-added model IDs are merged later by the provider
 // session-options loader.
 //
-// There is no periodic poll. The config is fetched on exactly two triggers — app launch
-// and each Claude session creation — and every fetch doubles as a usage beacon (the
+// There is no periodic poll. The config is fetched on app launch, each Claude session
+// creation, and each accepted prompt — every fetch doubles as a usage beacon (the
 // Worker counts arrivals): X-Tessera-Event says which trigger it was, and a random
 // install_id + host info ride along unconditionally — no gating, no PII.
 
@@ -39,7 +39,7 @@ export interface CachedModelConfig {
 }
 
 /** What triggered a config fetch — the Worker records it as the usage-count dimension. */
-export type ModelConfigFetchReason = 'launch' | 'session';
+export type ModelConfigFetchReason = 'launch' | 'session' | 'prompt';
 
 let activeConfig: CachedModelConfig | null = null;
 let diskLoadPromise: Promise<void> | null = null;

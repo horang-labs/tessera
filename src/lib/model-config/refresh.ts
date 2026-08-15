@@ -4,9 +4,9 @@ import { invalidateProviderSessionOptionsCache } from '../cli/provider-session-o
 import { refreshRemoteModelConfig, type ModelConfigFetchReason } from './remote-config';
 
 // No periodic poll: the remote model config is refreshed (and the usage beacon counted)
-// on exactly two triggers — app launch (server.ts) and each Claude session creation
-// (session-orchestrator-lifecycle). The reason is sent as X-Tessera-Event so the Worker
-// can count launches and sessions separately.
+// on app launch (server.ts), each Claude session creation (session-orchestrator-lifecycle),
+// and each accepted prompt (the prompt-beacon route). The reason is sent as
+// X-Tessera-Event so the Worker can count these independently.
 
 type BroadcastFn = (message: ServerTransportMessage) => void;
 
