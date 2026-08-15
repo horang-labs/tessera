@@ -2,20 +2,31 @@
 
 - Asset: `mobile-remote.gif`
 - Recorded: 2026-08-15
-- Viewport: 390 × 844 CSS pixels, dark theme
-- Output: 390 × 844, 12 fps, 185 frames, 15.41 seconds, 864,640 bytes
-- SHA-256: `f2ec64b5ff148c581d5f606a49b5a284a5588c260e5bc895fe45f77175785ae7`
-- Seed: read-only `/home/work/.tessera_demo` copy; database fingerprint
+- Source viewport: 390 × 844 CSS pixels, dark color scheme
+- Editorial crop: 32 pixels from the left edge, removing only the provider quota rail
+- Output: 358 × 844, 157 frames, 13.08 seconds, 1,746,749 bytes
+- SHA-256: `fdb04945a810869ec66de28768cd459f5ffaec6b2bf355841e7b67c0c485ed4a`
+- Seed: read-only `/home/work/.tessera_demo` copy; combined database fingerprint
   `24d4a3a2b5c85dd177963636c1058a552d0523ac16b032b9f55d90b0f2b4574f`
-- Reproduce: `scripts/readme/record-mobile-remote.sh`
+- Reproduce: build the production UI with `npm run build`, then run
+  `scripts/readme/record-mobile-remote.sh`
 
-The recorder creates a uniquely named private copy, migrates and anonymizes that copy,
-and uses a disposable `/tmp/tessera-mobile-demo` Git project. It starts a browser-only
-development server with an ephemeral JWT minted from the copied local key; no auth bypass,
-credential, token, production database, or normal Tessera home is used or recorded.
+The story uses only existing persisted GUI sessions and their original transcript history:
 
-The visible flow is real Tessera UI: copied demo session navigation, the compact tab
-switcher, a standalone shell PTY, buffered mobile PTY input/send, and the PTY image file
-input. The terminal attachment path is an isolated `/tmp/tessera-uploads/...` file. Remote
-Access pairing was omitted because it did not improve this short interaction story. The
-opening and closing black fades provide a clean loop. No production behavior is modified.
+1. `commands.ts command handler`
+   - Tessera session: `acd4f912-392b-4a24-b9bc-783883bc9c8c`
+   - Provider: OpenCode
+   - Original history SHA-256:
+     `508f1719945536252fa4055c81a3f571b43e423ab23f2f1645ad9bf8629858db`
+2. `MV3 service worker connectivity`
+   - Tessera session: `230084a9-6d71-4124-8f9f-310195947560`
+   - Provider: OpenCode
+   - Original history SHA-256:
+     `2b96331d2c06483e308f25f7788d307221c3b208b3e341be408c51288bd9197e`
+
+The recorder copies and migrates the seed privately, maps only project/worktree filesystem
+paths to `/tmp/tessera-mobile-demo`, and preserves session titles, provider state, collections,
+tasks, and history. It opens on the populated mobile sidebar, cuts to the real command-handler
+conversation and attachment affordance, returns briefly to the real session list, then ends on
+the populated MV3 investigation. It does not create or open a Shell, create a session or
+worktree, send input, stage an attachment, inject UI, mock a provider, or claim PTY behavior.

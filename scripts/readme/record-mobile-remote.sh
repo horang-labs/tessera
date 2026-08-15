@@ -7,6 +7,7 @@ output_dir="$repo_root/docs/assets/readme"
 webm="$output_dir/mobile-remote.webm"
 gif="$output_dir/mobile-remote.gif"
 palette=""
+contact_sheet=/home/work/tmp/tessera-readme-mobile-final-contact-sheet.png
 server_pid=""
 session_name="readme-mobile-remote-$$"
 
@@ -17,8 +18,10 @@ fail() {
 
 command -v playwright-cli >/dev/null || fail 'playwright-cli is required'
 command -v ffmpeg >/dev/null || fail 'ffmpeg is required'
+command -v montage >/dev/null || fail 'ImageMagick montage is required'
 command -v sqlite3 >/dev/null || fail 'sqlite3 is required'
 test -d "$repo_root/node_modules" || fail 'run npm ci first'
+test -f "$repo_root/.next/BUILD_ID" || fail 'run npm run build first'
 test -f "$seed_dir/tessera.db" || fail "missing read-only seed: $seed_dir/tessera.db"
 
 seed_before=$(sha256sum "$seed_dir/tessera.db" "$seed_dir/tessera-dev.db" | sha256sum | cut -d' ' -f1)
@@ -52,7 +55,7 @@ start_server() {
     -u TESSERA_PANE_TOKEN -u TESSERA_SESSION_ID -u TESSERA_PROJECT_ID \
     -u TESSERA_WORKTREE_ID -u TESSERA_CLI_COMMAND -u TESSERA_CODEX_HOME -u CODEX_HOME \
     HOME="$demo_home" ZDOTDIR="$demo_home" PS1='demo $ ' PATH="$clean_path" \
-    NEXT_TELEMETRY_DISABLED=1 NODE_ENV=development HOST=127.0.0.1 PORT="$port" \
+    NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production HOST=127.0.0.1 PORT="$port" \
     TESSERA_DATA_DIR="$data_dir" TESSERA_PRODUCTION_DB=1 LOG_LEVEL=error \
     node "$repo_root/node_modules/.bin/tsx" "$repo_root/server.ts" >"$server_log" 2>&1 &
   server_pid=$!
@@ -91,58 +94,59 @@ start_server
 stop_server
 
 db="$data_dir/tessera.db"
-source_project_id=$(sqlite3 "$db" "select id from projects where display_name='browser-operator' limit 1")
+source_project_id=$(sqlite3 "$db" "select id from projects where display_name='browser-operator' and id like '/home/work/%' limit 1")
 test -n "$source_project_id" || fail 'the demo seed no longer contains browser-operator'
-project_worktree_id=$(sqlite3 "$db" "select project_worktree_id from projects where id='$source_project_id' limit 1")
-test -n "$project_worktree_id" || fail 'the demo project has no project Worktree identity'
 
 sqlite3 "$db" <<SQL
 PRAGMA foreign_keys=OFF;
 BEGIN;
 UPDATE projects
-SET id='$safe_project', decoded_path='$safe_project', display_name='Tessera Mobile', visible=1
+SET id='$safe_project', decoded_path='$safe_project', visible=1, sort_order=0
 WHERE id='$source_project_id';
 UPDATE projects SET visible=0 WHERE id <> '$safe_project';
-UPDATE worktrees SET filesystem_path='$safe_project', canonical_path_key='$safe_project'
-WHERE id='$project_worktree_id';
 UPDATE sessions
-SET project_id='$safe_project', work_dir='$safe_project', deleted=1
+SET project_id='$safe_project',
+    work_dir=CASE
+      WHEN work_dir='$source_project_id' THEN '$safe_project'
+      WHEN work_dir LIKE '/home/work/.tessera_demo/worktrees/browser-operator/%'
+        THEN replace(work_dir, '/home/work/.tessera_demo/worktrees/browser-operator/', '$safe_project/')
+      ELSE work_dir
+    END
 WHERE project_id='$source_project_id';
-UPDATE sessions SET deleted=0, archived=0, task_id=NULL, collection_id=NULL,
-  chat_workflow_status='chat', title='Mobile terminal polish', sort_order=0,
-  worktree_id='$project_worktree_id', scope_branch='main', worktree_branch='main', worktree_managed=0
-WHERE id='8ace6e58-8689-4694-9ff6-3c9123db6561';
-UPDATE sessions SET deleted=0, archived=0, task_id=NULL, collection_id=NULL,
-  chat_workflow_status='chat', title='Session tabs on phone', sort_order=1,
-  worktree_id='$project_worktree_id', scope_branch='main', worktree_branch='main', worktree_managed=0
-WHERE id='d63956c6-4b2d-4203-8ca0-b2ebca25deb5';
-UPDATE sessions SET deleted=0, archived=0, task_id=NULL, collection_id=NULL,
-  chat_workflow_status='chat', title='Image attachment flow', sort_order=2,
-  worktree_id='$project_worktree_id', scope_branch='main', worktree_branch='main', worktree_managed=0
-WHERE id='8924f1c3-ae70-43d6-bea4-fe97c84dee2c';
-UPDATE sessions SET deleted=0, archived=0, task_id=NULL, collection_id=NULL,
-  chat_workflow_status='chat', title='Responsive navigation', sort_order=3,
-  worktree_id='$project_worktree_id', scope_branch='main', worktree_branch='main', worktree_managed=0
-WHERE id='060dd68b-0f5b-466d-ac25-e7ce7eb51079';
-DELETE FROM tasks;
-DELETE FROM collections;
+UPDATE tasks
+SET project_id='$safe_project',
+    worktree_path=CASE
+      WHEN worktree_path='$source_project_id' THEN '$safe_project'
+      WHEN worktree_path LIKE '/home/work/.tessera_demo/worktrees/browser-operator/%'
+        THEN replace(worktree_path, '/home/work/.tessera_demo/worktrees/browser-operator/', '$safe_project/')
+      ELSE worktree_path
+    END
+WHERE project_id='$source_project_id';
+UPDATE collections SET project_id='$safe_project' WHERE project_id='$source_project_id';
+UPDATE worktrees
+SET filesystem_path=CASE
+      WHEN filesystem_path='$source_project_id' THEN '$safe_project'
+      WHEN filesystem_path LIKE '/home/work/.tessera_demo/worktrees/browser-operator/%'
+        THEN replace(filesystem_path, '/home/work/.tessera_demo/worktrees/browser-operator/', '$safe_project/')
+      ELSE filesystem_path
+    END,
+    canonical_path_key=CASE
+      WHEN canonical_path_key='$source_project_id' THEN '$safe_project'
+      WHEN canonical_path_key LIKE '/home/work/.tessera_demo/worktrees/browser-operator/%'
+        THEN replace(canonical_path_key, '/home/work/.tessera_demo/worktrees/browser-operator/', '$safe_project/')
+      ELSE canonical_path_key
+    END
+WHERE filesystem_path='$source_project_id'
+   OR filesystem_path LIKE '/home/work/.tessera_demo/worktrees/browser-operator/%';
 COMMIT;
 SQL
 
-node - "$data_dir" <<'NODE'
-const fs = require('node:fs');
-const path = require('node:path');
-const dataDir = process.argv[2];
-for (const name of fs.readdirSync(path.join(dataDir, 'settings'))) {
-  if (!name.endsWith('.json')) continue;
-  const filename = path.join(dataDir, 'settings', name);
-  const settings = JSON.parse(fs.readFileSync(filename, 'utf8'));
-  settings.theme = 'dark';
-  settings.notifications = { ...(settings.notifications || {}), soundEnabled: false, showToast: false };
-  settings.profile = { ...(settings.profile || {}), displayName: 'Demo' };
-  fs.writeFileSync(filename, `${JSON.stringify(settings, null, 2)}\n`);
-}
-NODE
+for session_id in \
+  acd4f912-392b-4a24-b9bc-783883bc9c8c \
+  230084a9-6d71-4124-8f9f-310195947560; do
+  cmp -s "$seed_dir/session-history/$session_id.jsonl" "$data_dir/session-history/$session_id.jsonl" \
+    || fail "copied session history changed: $session_id"
+done
 
 start_server
 for _ in $(seq 1 240); do
@@ -171,8 +175,6 @@ playwright-cli -s="$session_name" resize 390 844 >/dev/null
 playwright-cli -s="$session_name" cookie-set jwt "$browser_jwt" \
   --domain=127.0.0.1 --path=/ --sameSite=Lax >/dev/null
 playwright-cli -s="$session_name" goto "$origin/" >/dev/null
-playwright-cli -s="$session_name" localstorage-set tesseraReadmeAttachment \
-  "$repo_root/docs/assets/readme/kanban-board.png" >/dev/null
 
 cd "$repo_root"
 playwright-cli -s="$session_name" run-code --filename scripts/readme/mobile-remote.prepare.js >/dev/null
@@ -182,14 +184,33 @@ playwright-cli -s="$session_name" video-stop >/dev/null
 playwright-cli -s="$session_name" close >/dev/null
 
 ffmpeg -y -v error -i "$webm" -vf \
-  "fps=12,scale=390:844:flags=lanczos,palettegen=max_colors=128:stats_mode=diff" "$palette"
+  "crop=358:844:32:0,fps=12,palettegen=max_colors=128:stats_mode=diff" "$palette"
 ffmpeg -y -v error -i "$webm" -i "$palette" -lavfi \
-  "fps=12,scale=390:844:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" "$gif"
+  "crop=358:844:32:0,fps=12[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" "$gif"
+
+for sample in 0.5 2.8 6.3 10.5; do
+  sample_name=${sample/./-}
+  ffmpeg -y -v error -ss "$sample" -i "$gif" -frames:v 1 "$run_root/contact-$sample_name.png"
+done
+montage \
+  "$run_root/contact-0-5.png" \
+  "$run_root/contact-2-8.png" \
+  "$run_root/contact-6-3.png" \
+  "$run_root/contact-10-5.png" \
+  -tile 2x2 -geometry 358x844+12+12 \
+  -background '#0b0b0b' "$contact_sheet"
 
 seed_after=$(sha256sum "$seed_dir/tessera.db" "$seed_dir/tessera-dev.db" | sha256sum | cut -d' ' -f1)
 test "$seed_before" = "$seed_after" || fail 'read-only demo seed changed during recording'
+for session_id in \
+  acd4f912-392b-4a24-b9bc-783883bc9c8c \
+  230084a9-6d71-4124-8f9f-310195947560; do
+  cmp -s "$seed_dir/session-history/$session_id.jsonl" "$data_dir/session-history/$session_id.jsonl" \
+    || fail "session history changed during recording: $session_id"
+done
 test "$(stat -c %s "$gif")" -lt 8388608 || fail 'GIF exceeds 8 MiB'
 
 ffprobe -v error -show_entries format=duration,size -of default=nw=1 "$gif"
 identify -format 'width=%w\nheight=%h\nframes=%n\n' "$gif" | head -3
 printf 'seed_sha256=%s\n' "$seed_after"
+printf 'contact_sheet=%s\n' "$contact_sheet"
