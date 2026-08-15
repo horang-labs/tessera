@@ -15,6 +15,8 @@ import { createDatabaseControlSessionMutator } from './session-mutator';
 import { createTerminalControlSessionObserver } from './session-observer';
 import { resolveControlUserId } from './user-context';
 import { createDatabaseControlWorktreeCreator } from './worktree-creator';
+import { SettingsManager } from '@/lib/settings/manager';
+import { captureServerTelemetryEvent } from '@/lib/telemetry/server';
 
 export interface ControlRuntimeHost {
   runtimeId: string;
@@ -70,6 +72,12 @@ export async function startControlRuntimeHost(
     });
     requestHandler = createControlHttpHandler({
       descriptor: descriptorHandle.descriptor,
+      captureTelemetry: async ({ operation, result }) => {
+        const userId = await requireUserId();
+        const settings = await SettingsManager.load(userId, { silent: true });
+        if (!settings.telemetry.enabled) return;
+        await captureServerTelemetryEvent('tessera_cli_command', { operation, result });
+      },
       service: createControlService({
         appVersion: options.appVersion,
         runtimeId: descriptorHandle.descriptor.runtimeId,

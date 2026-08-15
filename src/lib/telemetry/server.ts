@@ -14,7 +14,8 @@ export type ServerTelemetryEventName =
   | 'settings_cli_diagnostics_provider_result'
   | 'settings_cli_diagnostics_raw_log'
   | 'settings_cli_diagnostics_run_completed'
-  | 'ai_title_generation_result';
+  | 'ai_title_generation_result'
+  | 'tessera_cli_command';
 
 export type ServerTelemetryProperties = Record<string, unknown>;
 
@@ -32,6 +33,7 @@ const allowedEvents = new Set<ServerTelemetryEventName>([
   'settings_cli_diagnostics_raw_log',
   'settings_cli_diagnostics_run_completed',
   'ai_title_generation_result',
+  'tessera_cli_command',
 ]);
 
 export function isServerTelemetryCaptureAllowed(request?: NextRequest): boolean {
