@@ -12,6 +12,7 @@ import {
 } from '../src/lib/telemetry/ui-click';
 import { isSensitiveTelemetryPropertyName } from '../src/lib/telemetry/privacy';
 import {
+  detectTelemetryClientFormFactor,
   prepareTelemetryCaptureForTransport,
   sanitizeTelemetryProperties,
 } from '../src/lib/telemetry/client';
@@ -135,6 +136,7 @@ test('semantic telemetry transport keeps only allowlisted safe properties', () =
     control: 'composer.send',
     surface: 'composer',
     result: 'success',
+    client_form_factor: 'mobile',
     prompt: 'private prompt',
     title: 'private title',
     file_path: '/home/private/repo',
@@ -146,7 +148,38 @@ test('semantic telemetry transport keeps only allowlisted safe properties', () =
     control: 'composer.send',
     surface: 'composer',
     result: 'success',
+    client_form_factor: 'mobile',
   });
+});
+
+test('client form factor is reduced locally without transmitting raw device signals', () => {
+  assert.equal(detectTelemetryClientFormFactor({
+    userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit Mobile',
+    platform: 'Linux armv8l',
+    maxTouchPoints: 5,
+  }), 'mobile');
+  assert.equal(detectTelemetryClientFormFactor({
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit',
+    platform: 'MacIntel',
+    maxTouchPoints: 5,
+  }), 'mobile');
+  assert.equal(detectTelemetryClientFormFactor({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Electron/37.0',
+    platform: 'Win32',
+    maxTouchPoints: 0,
+  }), 'desktop');
+
+  assert.deepEqual(sanitizeTelemetryProperties({
+    client_form_factor: 'mobile',
+    user_agent: 'private raw agent',
+    viewport_width: 390,
+    screen_width: 430,
+  }), {
+    client_form_factor: 'mobile',
+  });
+  assert.deepEqual(sanitizeTelemetryProperties({
+    client_form_factor: 'phone-with-model-name',
+  }), {});
 });
 
 test('PostHog transport keeps its public project token while dropping private SDK properties', () => {
@@ -177,5 +210,6 @@ test('PostHog transport keeps its public project token while dropping private SD
   assert.equal(result?.properties?.token, 'phc-public-project-token');
   assert.equal(result?.properties?.control, 'composer.send');
   assert.equal(result?.properties?.surface, 'composer');
+  assert.equal(result?.properties?.client_form_factor, 'desktop');
   assert.doesNotMatch(JSON.stringify(result), /private prompt|localhost\/private|sdk-token/);
 });
