@@ -1,23 +1,81 @@
 async page => {
-  // Open on a populated project/session index, then cut directly to useful work.
-  await page.waitForTimeout(900);
-  await page.getByText('commands.ts command handler', { exact: true }).first().click();
+  const setCaption = async (text) => {
+    await page.evaluate((nextText) => {
+      let caption = document.getElementById('readme-mobile-caption');
+      if (!caption) {
+        caption = document.createElement('div');
+        caption.id = 'readme-mobile-caption';
+        Object.assign(caption.style, {
+          position: 'fixed',
+          left: '50%',
+          bottom: '158px',
+          transform: 'translateX(-50%)',
+          zIndex: '2147483647',
+          maxWidth: '340px',
+          padding: '7px 12px',
+          border: '1px solid rgba(255,255,255,.16)',
+          borderRadius: '999px',
+          background: 'rgba(17,24,39,.88)',
+          boxShadow: '0 6px 20px rgba(0,0,0,.28)',
+          color: '#fff',
+          font: '600 14px/1.25 system-ui, sans-serif',
+          textAlign: 'center',
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+        });
+        document.body.appendChild(caption);
+      }
+      caption.textContent = nextText;
+    }, text);
+  };
+
+  await setCaption('Choose any session from your phone');
+  await page.waitForTimeout(1_800);
+
+  await page.getByText('Mobile PTY workflow', { exact: true }).first().click();
+  const terminalInput = page.getByTestId('terminal-input-bar-textarea');
+  await terminalInput.waitFor({ state: 'visible', timeout: 30_000 });
+  await setCaption('Continue work in the live PTY');
+  await page.waitForTimeout(1_500);
+  await terminalInput.pressSequentially('What should I review next?', { delay: 42 });
+  await page.waitForTimeout(350);
+  await page.getByTestId('terminal-input-bar-send').click();
+  await page.waitForTimeout(300);
+  await page.getByTestId('terminal-input-bar-key-enter').click();
+  await page.waitForTimeout(8_000);
+
+  await setCaption('Read the same PTY in Chat View');
+  await page.getByTestId('terminal-view-toggle').click();
+  await page.getByTestId('terminal-chat-overlay').waitFor({ timeout: 10_000 });
+  await page.getByText('What should I review next?', { exact: true }).waitFor({ timeout: 30_000 });
+  await page.waitForTimeout(2_600);
+
+  await setCaption('Switch sessions from the sidebar');
+  await page.getByTestId('tab-bar-sidebar-toggle').click();
+  await page.getByText('Mobile GUI workflow', { exact: true }).first().waitFor();
+  await page.waitForTimeout(1_800);
+  await page.getByText('Mobile GUI workflow', { exact: true }).first().click();
 
   const composer = page.getByRole('textbox', { name: 'Type a message... (/ skills, @ refs)' });
   await composer.waitFor({ state: 'visible', timeout: 30_000 });
   await page.getByText('Supported commands', { exact: false }).waitFor({ timeout: 30_000 });
-  await page.waitForTimeout(3200);
+  await setCaption('Continue in a rich GUI conversation');
+  await page.waitForTimeout(2_200);
+  await composer.pressSequentially('Summarize the next implementation step.', { delay: 34 });
+  await page.waitForTimeout(1_800);
 
-  // Let the real attachment affordance read clearly without opening a chooser.
-  await page.getByRole('button', { name: 'Attach file' }).hover();
-  await page.waitForTimeout(900);
+  await setCaption('Open Files and Git without leaving');
+  await page.getByTestId('tab-bar-git-toggle').click();
+  await page.getByTestId('git-panel').waitFor({ state: 'visible', timeout: 20_000 });
+  await page.waitForTimeout(1_500);
+  await page.getByRole('tab', { name: 'Files' }).click();
+  await page.waitForTimeout(2_400);
+  await page.getByTestId('git-panel-close-btn').click();
 
-  await page.getByTestId('tab-bar-sidebar-toggle').click();
-  await page.getByRole('button', { name: 'Collapse sidebar' }).waitFor();
-  await page.waitForTimeout(1000);
-
-  await page.getByText('MV3 service worker connectivity', { exact: true }).first().click();
-  await page.getByText('Manifest Update Needed', { exact: true }).waitFor({ timeout: 30_000 });
-  await page.getByRole('textbox', { name: 'Type a message... (/ skills, @ refs)' }).waitFor();
-  await page.waitForTimeout(3800);
+  await setCaption('Keep coding from anywhere');
+  await composer.waitFor({ state: 'visible' });
+  await page.waitForTimeout(1_600);
+  await page.evaluate(() => {
+    document.documentElement.dataset.readmeMobileDemoComplete = 'true';
+  });
 }
