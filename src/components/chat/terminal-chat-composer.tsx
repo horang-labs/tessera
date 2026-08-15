@@ -42,7 +42,10 @@ import {
 } from '@/lib/chat/composer-arrow-scroll';
 import { MessageRowShell } from './message-row-shell';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
-import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import {
+  telemetryClickAttributes,
+  telemetryIgnoreAttributes,
+} from '@/lib/telemetry/ui-click';
 
 export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
   onCancel,
@@ -314,6 +317,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
             )}
           >
             <input
+              {...telemetryIgnoreAttributes}
               ref={imageInputRef}
               type="file"
               accept={TERMINAL_IMAGE_FILE_ACCEPT}

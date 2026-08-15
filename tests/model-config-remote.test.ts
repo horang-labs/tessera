@@ -196,15 +196,13 @@ test('an unrecognized prompt provider is reduced to unknown', async () => {
   assert.equal(headers['X-Tessera-Form-Factor'], 'unknown');
 });
 
-test('install_id is sent even when telemetry is disabled by env (full count, no gating)', async () => {
+test('the Worker is never contacted when runtime telemetry is disabled', async () => {
   __resetRemoteModelConfigForTests();
   const { fn, calls } = mockFetch(jsonResponse(validDoc, '"mc-2"'));
   await refreshRemoteModelConfig('launch', { fetchImpl: fn, hostInfo: { ...HOST, telemetryDisabledByEnv: true } });
-  const headers = calls[0].init.headers as Record<string, string>;
-  assert.ok(
-    headers['X-Tessera-Install-Id'],
-    'the config fetch IS the count — install id is sent regardless of the in-app/DNT gate',
-  );
+  await refreshRemoteModelConfig('session', { fetchImpl: fn, hostInfo: { ...HOST, telemetryDisabledByEnv: true } });
+  await refreshRemoteModelConfig('prompt', { fetchImpl: fn, hostInfo: { ...HOST, telemetryDisabledByEnv: true } });
+  assert.equal(calls.length, 0);
 });
 
 test('a 304 keeps the current list and reports not-changed', async () => {

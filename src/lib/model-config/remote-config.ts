@@ -27,7 +27,8 @@ import {
 // There is no periodic poll. The config is fetched on app launch, each Claude session
 // creation, and each accepted prompt — every fetch doubles as a usage beacon (the
 // Worker counts arrivals): X-Tessera-Event says which trigger it was, and a random
-// install_id + host info ride along unconditionally — no gating, no PII.
+// install_id + host info ride along in production — no PII. Local development,
+// explicit Electron test instances, and debug builds do not contact the Worker.
 
 const CACHE_FILE = 'model-config.json';
 const FETCH_TIMEOUT_MS = 10_000;
@@ -262,8 +263,8 @@ async function buildRequestHeaders(
     headers['X-Tessera-Source'] = normalizeTelemetryPromptSource(dimensions.source);
     headers['X-Tessera-Form-Factor'] = normalizeTelemetryFormFactor(dimensions.formFactor);
   }
-  // install_id is a random UUID (never PII); it's what lets the Worker de-dupe launches
-  // into unique installs. Sent unconditionally — the config fetch IS the launch count.
+  // install_id is a random UUID (never PII); it's what lets the Worker de-dupe production
+  // launches into unique installs. Runtime-disabled local/test builds return before here.
   try {
     const bootstrap = await getTelemetryBootstrapInfo(hostInfo);
     if (bootstrap.installId) {
@@ -310,6 +311,7 @@ async function doRefresh(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const hostInfo = deps.hostInfo ?? getServerHostInfo();
   await ensureRemoteModelConfigLoaded();
+  if (hostInfo.telemetryDisabledByEnv) return { changed: false };
 
   const headers = await buildRequestHeaders(hostInfo, reason, dimensions);
   if (activeConfig?.etag) headers['If-None-Match'] = activeConfig.etag;

@@ -373,15 +373,29 @@ function normalizeElectronLogLevel(value: string | undefined): ElectronLogLevel 
  * debug build logs everything on a plain double-click — no environment variable to set,
  * which a user launching the portable exe from Explorer has no way to do.
  */
-function readBuildStampedLogLevel(): string | undefined {
+interface TesseraBuildMetadata {
+  tesseraLogLevel?: unknown;
+  tesseraTelemetryDisabled?: unknown;
+}
+
+function readBuildMetadata(): TesseraBuildMetadata {
   try {
     const manifest = fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8');
-    const parsed = JSON.parse(manifest) as { tesseraLogLevel?: unknown };
-    return typeof parsed.tesseraLogLevel === 'string' ? parsed.tesseraLogLevel : undefined;
+    return JSON.parse(manifest) as TesseraBuildMetadata;
   } catch {
-    return undefined;
+    return {};
   }
 }
+
+const BUILD_METADATA = readBuildMetadata();
+
+function readBuildStampedLogLevel(): string | undefined {
+  return typeof BUILD_METADATA.tesseraLogLevel === 'string'
+    ? BUILD_METADATA.tesseraLogLevel
+    : undefined;
+}
+
+const BUILD_STAMPED_TELEMETRY_DISABLED = BUILD_METADATA.tesseraTelemetryDisabled === true;
 
 type LogLevelSource = 'TESSERA_ELECTRON_LOG_LEVEL' | 'LOG_LEVEL' | 'build' | 'default';
 
@@ -1293,6 +1307,7 @@ async function startServer(): Promise<number> {
       TESSERA_PRODUCTION_DB: '1',
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
+      ...(BUILD_STAMPED_TELEMETRY_DISABLED ? { TESSERA_TELEMETRY_DISABLED: '1' } : {}),
       // Carry a requested level down so the child's own startup log and pino agree with the
       // main process. Without this a build-stamped debug level would stop at this boundary,
       // since the child only ever reads the environment.
