@@ -22,7 +22,6 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import {
   captureTelemetryEvent,
-  captureTelemetryOptOut,
   normalizeTelemetryProviderSetupIssueStatus,
 } from '@/lib/telemetry/client';
 import { cn } from '@/lib/utils';
@@ -361,19 +360,6 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
     [refreshStatus, status?.activeEnvironment, switchingEnvironment, updateSettings],
   );
 
-  const handleTelemetryChange = useCallback(
-    async (enabled: boolean) => {
-      if (!enabled && settings.telemetry.enabled && !telemetryDisabledByEnv) {
-        await captureTelemetryOptOut('setup');
-      }
-
-      await updateSettings({
-        telemetry: { ...settings.telemetry, enabled },
-      });
-    },
-    [settings.telemetry, telemetryDisabledByEnv, updateSettings],
-  );
-
   return (
     <div className="flex min-h-screen flex-col bg-(--chat-bg) text-(--text-primary)">
       <ElectronTitlebar showMenu={false} />
@@ -494,12 +480,6 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                 </p>
               ) : null}
 
-              <SetupTelemetryConsent
-                enabled={settings.telemetry.enabled && !telemetryDisabledByEnv}
-                disabled={telemetryDisabledByEnv}
-                onChange={handleTelemetryChange}
-              />
-
               <div className="pt-2">
                 <button
                   {...telemetryClickAttributes('setup.advanced.toggle', 'setup')}
@@ -590,53 +570,6 @@ function SetupTesseraCliConsent({
           <span className="mt-1 block text-xs leading-5 text-(--text-muted)">
             {t('setup.tesseraCliDescription')}
           </span>
-        </span>
-      </label>
-    </div>
-  );
-}
-
-function SetupTelemetryConsent({
-  enabled,
-  disabled,
-  onChange,
-}: {
-  enabled: boolean;
-  disabled: boolean;
-  onChange: (enabled: boolean) => void;
-}) {
-  const { t } = useI18n();
-
-  return (
-    <div
-      className="rounded-lg border border-(--divider) bg-(--sidebar-bg) px-4 py-3"
-      data-testid="setup-telemetry-consent"
-    >
-      <label
-        htmlFor="setup-telemetry-enabled"
-        className="flex cursor-pointer items-start gap-3"
-      >
-        <input
-          {...telemetryClickAttributes('setup.telemetry.enabled', 'setup')}
-          type="checkbox"
-          id="setup-telemetry-enabled"
-          checked={enabled}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.checked)}
-          className="mt-1 h-4 w-4 accent-(--accent) disabled:cursor-not-allowed disabled:opacity-60"
-        />
-        <span className="min-w-0">
-          <span className="block text-sm font-medium text-(--text-primary)">
-            {t('setup.telemetryTitle')}
-          </span>
-          <span className="mt-1 block text-xs leading-5 text-(--text-muted)">
-            {t('setup.telemetryDescription')}
-          </span>
-          {disabled ? (
-            <span className="mt-2 block text-xs leading-5 text-(--text-muted)">
-              {t('settings.telemetry.disabledByEnv')}
-            </span>
-          ) : null}
         </span>
       </label>
     </div>

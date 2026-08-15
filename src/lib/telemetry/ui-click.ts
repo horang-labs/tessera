@@ -257,7 +257,6 @@ export const TELEMETRY_UI_CONTROLS = [
   'setup.environment.wsl',
   'setup.execution_mode',
   'setup.tessera_cli_enabled',
-  'setup.telemetry.enabled',
   'setup.account.username',
   'setup.account.password',
   'setup.account.create',

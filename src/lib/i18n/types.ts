@@ -517,8 +517,6 @@ export interface I18nMessages {
     executionModeNote: string;
     tesseraCliTitle: string;
     tesseraCliDescription: string;
-    telemetryTitle: string;
-    telemetryDescription: string;
     aiCli: string;
     providerReady: string;
     providerNeedsLogin: string;

@@ -540,8 +540,6 @@ export const ja: I18nMessages = {
     executionModeNote: '作成済みのセッションは、作成時に選択した画面を維持します。',
     tesseraCliTitle: 'エージェントセッションで Tessera CLI を使用',
     tesseraCliDescription: '別途インストールされません。Tessera が起動した GUI または PTY のエージェントセッションにだけ、スキルと接続ブリッジが一時的に自動注入されます。',
-    telemetryTitle: '匿名の利用データを共有',
-    telemetryDescription: '利用された名前付きコントロールや機能を含む、匿名の製品操作テレメトリを共有します。テレメトリは PostHog で収集され、米国リージョンに保存されます。画面上のテキスト、IP アドレス、プロンプト、メッセージ、ファイルパス、コマンド出力は一切収集しません。',
     aiCli: 'Claude Code / Codex',
     providerReady: 'Ready to use for chat and worktree sessions.',
     providerNeedsLogin: 'Installed, but login is required before Tessera can use it.',

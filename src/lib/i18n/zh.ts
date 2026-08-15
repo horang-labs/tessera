@@ -540,8 +540,6 @@ export const zh: I18nMessages = {
     executionModeNote: '现有会话会保留创建时选择的界面。',
     tesseraCliTitle: '在智能体会话中使用 Tessera CLI',
     tesseraCliDescription: '这不会单独安装任何内容。Tessera 只会向由 Tessera 启动的 GUI 或 PTY 智能体会话临时注入技能和连接桥。',
-    telemetryTitle: '共享匿名使用数据',
-    telemetryDescription: '共享匿名的产品交互遥测，包括使用了哪些具名控件和功能。遥测由 PostHog 收集，并存储在美国区域。我们绝不会收集界面可见文本、IP 地址、提示词、消息、文件路径或命令输出。',
     aiCli: 'Claude Code / Codex',
     providerReady: 'Ready to use for chat and worktree sessions.',
     providerNeedsLogin: 'Installed, but login is required before Tessera can use it.',
