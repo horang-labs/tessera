@@ -25,6 +25,7 @@ export type TelemetryEventName =
   | 'git_file_opened'
   | 'git_action_triggered'
   | 'ai_title_generation_result'
+  | 'prompt_submitted'
   | 'ui_control_clicked'
   | 'provider_selected'
   | 'telemetry_opt_out';
@@ -70,6 +71,7 @@ const allowedEvents = new Set<TelemetryEventName>([
   'git_file_opened',
   'git_action_triggered',
   'ai_title_generation_result',
+  'prompt_submitted',
   'ui_control_clicked',
   'provider_selected',
   'telemetry_opt_out',
@@ -122,6 +124,8 @@ const allowedSources = new Set([
   'project_import',
   'git_panel',
   'manual',
+  'chat',
+  'terminal',
 ]);
 const allowedViews = new Set(['list', 'kanban']);
 const allowedGitTabs = new Set(['git', 'files', 'scripts', 'memory']);

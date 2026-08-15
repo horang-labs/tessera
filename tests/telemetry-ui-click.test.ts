@@ -213,3 +213,34 @@ test('PostHog transport keeps its public project token while dropping private SD
   assert.equal(result?.properties?.client_form_factor, 'desktop');
   assert.doesNotMatch(JSON.stringify(result), /private prompt|localhost\/private|sdk-token/);
 });
+
+test('prompt submission telemetry keeps only the static input source', () => {
+  const result = prepareTelemetryCaptureForTransport(
+    {
+      event: 'prompt_submitted',
+      properties: {
+        token: 'sdk-token-that-must-not-be-trusted',
+        source: 'chat',
+        prompt: 'the private user prompt',
+        content: [{ type: 'text', text: 'another private prompt' }],
+        message: 'private message',
+        displayContent: 'private display content',
+      },
+    },
+    {
+      installId: 'install-test',
+      appSessionId: 'app-session-test',
+      appVersion: 'test',
+      platform: 'linux',
+      arch: 'x64',
+      channel: 'development',
+    },
+    true,
+    'phc-public-project-token',
+  );
+
+  assert.equal(result?.event, 'prompt_submitted');
+  assert.equal(result?.properties?.source, 'chat');
+  assert.equal(result?.properties?.token, 'phc-public-project-token');
+  assert.doesNotMatch(JSON.stringify(result), /private|display content|sdk-token/);
+});

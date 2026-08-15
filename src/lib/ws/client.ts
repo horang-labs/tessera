@@ -22,6 +22,7 @@ import {
 import { handleIncomingServerMessage } from './client-message-handlers';
 import { applyOptimisticUserMessage, buildClientRequest } from './client-transport';
 import { getClientId } from './client-id';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 type ServerMessageListener = (msg: ServerTransportMessage) => void;
 
@@ -180,6 +181,10 @@ export class WebSocketClient {
       console.error('WebSocket not connected');
       return;
     }
+
+    // Count the accepted submission, never the message body. Capturing here
+    // covers button, Enter, resume-and-send, and other composer entry points.
+    void captureTelemetryEvent('prompt_submitted', { source: 'chat' });
 
     applyOptimisticUserMessage(sessionId, content, skillName, displayContent, {
       messageId,
@@ -408,7 +413,13 @@ export class WebSocketClient {
   }
 
   sendTerminalInput(terminalId: string, surfaceId: string, data: string): boolean {
-    return this.sendRequest('terminal_input', { terminalId, surfaceId, data });
+    const sent = this.sendRequest('terminal_input', { terminalId, surfaceId, data });
+    // A carriage return is the terminal's submit boundary. Do not inspect or
+    // retain any buffered text that preceded it.
+    if (sent && data === '\r') {
+      void captureTelemetryEvent('prompt_submitted', { source: 'terminal' });
+    }
+    return sent;
   }
 
   setTerminalAppearance(
