@@ -10,6 +10,7 @@ import {
   type DragEvent,
 } from 'react';
 import { ArrowUp, ImagePlus, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
@@ -226,7 +227,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     try {
       const submission = retrySubmissionRef.current?.text === text
         ? retrySubmissionRef.current
-        : { text, id: crypto.randomUUID() };
+        : { text, id: uuidv4() };
       retrySubmissionRef.current = submission;
       const result = await sendTerminalChatMessage(sessionId, text, submission.id);
       if (!result.accepted) {

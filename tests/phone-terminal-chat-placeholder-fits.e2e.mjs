@@ -112,6 +112,25 @@ async function openComposer({ phone, fontScale }) {
   await context.addCookies([
     { name: 'jwt', value: await mintToken(), domain: '127.0.0.1', path: '/', sameSite: 'Lax' },
   ]);
+  await context.addInitScript(() => {
+    // A phone commonly reaches Tessera over a LAN HTTP origin, where Chromium does not
+    // expose secure-context-only Web Crypto helpers such as randomUUID().
+    Object.defineProperty(Crypto.prototype, 'randomUUID', {
+      configurable: true,
+      value: undefined,
+    });
+    const nativeSend = WebSocket.prototype.send;
+    window.__terminalSubmitFrames = [];
+    WebSocket.prototype.send = function captureTerminalSubmit(data) {
+      try {
+        const frame = JSON.parse(String(data));
+        if (frame?.type === 'terminal_prompt') window.__terminalSubmitFrames.push(frame);
+      } catch {
+        // Non-JSON frames are unrelated terminal traffic.
+      }
+      return nativeSend.call(this, data);
+    };
+  });
 
   const page = await context.newPage();
   // 'load' rather than 'domcontentloaded': an unstyled textarea measures as its content.
@@ -198,6 +217,14 @@ async function check({ phone, fontScale, name }) {
       'the PTY ChatView composer did not grow with multiline input'
         + ` — ${singleLine.clientHeight}px for one line, ${fourLines.clientHeight}px for four lines`,
     );
+
+    await input.fill('hello from PTY chat view');
+    await page.getByTestId('terminal-chat-composer-send').click();
+    await page.waitForFunction(() => window.__terminalSubmitFrames.length > 0, null, {
+      timeout: 2_000,
+    });
+    const frames = await page.evaluate(() => window.__terminalSubmitFrames);
+    assert.equal(frames.at(-1)?.text, 'hello from PTY chat view');
 
     console.log(`ok — ${name}: ${geometry}`);
   } finally {
