@@ -9,6 +9,7 @@ import {
   buildWslCodexOverlayCreateScript,
   buildWslCodexOverlayFinalizeScript,
   buildWslCodexOverlayResumeRepairScript,
+  buildWslCodexTrustBaselineWriteScript,
   buildWslCodexTrustPromotionScript,
   buildWslCodexTrustReportScript,
   readWslOverlayReport,
@@ -111,6 +112,17 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     );
     assert.equal(fs.readFileSync(path.join(overlay!, 'config.toml'), 'utf8'), finalConfig);
     assert.equal(fs.readFileSync(path.join(overlay!, '.tessera-overlay.json'), 'utf8'), marker);
+    const advancedBaseline = serializeCodexTrustBaseline(
+      'model = "gpt-5.4"\n\n[projects."/tmp/live"]\ntrust_level = "trusted"\n',
+    );
+    runScript(
+      buildWslCodexTrustBaselineWriteScript('terminal-wsl-test', b64(advancedBaseline)),
+      home,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, '.tessera-trust-baseline.json'), 'utf8'),
+      advancedBaseline,
+    );
 
     // 재실행(stale 재생성)이 이전 잔여를 지우고 실 홈은 건드리지 않는다.
     runScript(buildWslCodexOverlayCreateScript('terminal-wsl-test', b64(hooksJson)), home);
