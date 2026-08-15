@@ -270,6 +270,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'sidebar.archive.open',
   'sidebar.feedback.open',
   'sidebar.skills.open',
+  'sidebar.github_star',
   'sidebar.project.remove',
   'sidebar.filter.all',
   'sidebar.filter.running',

@@ -21,6 +21,7 @@ import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 import { ProviderUsageRail } from './provider-usage-rail';
+import { GitHubStarButton } from '@/components/github/github-star-button';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import {
   useLoadedProjectViews,
@@ -261,6 +262,7 @@ export function ProjectStrip({
       {!hideManagementActions && (
       <div className="flex flex-col items-center shrink-0">
         <div className="w-6 border-t border-(--divider)" />
+        <GitHubStarButton />
         <NotificationBell direction="right" />
         <Tooltip content={t('skill.dashboardTitle')} delay={300}>
           <Button

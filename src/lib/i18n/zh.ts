@@ -1091,6 +1091,9 @@ export const zh: I18nMessages = {
     allProjects: '所有项目',
     allProjectsDisabledPopout: '板视图弹出窗口打开时，"所有项目"不可用',
     addProject: '添加项目',
+    githubStar: '在 GitHub 上为 Tessera 加星',
+    githubStarFallback: '无法自动加星。请再次点击打开 GitHub。',
+    githubStarSuccess: '感谢为 Tessera 加星！',
   },
   gitPanel: {
     tabs: {

@@ -1091,6 +1091,9 @@ export const ja: I18nMessages = {
     allProjects: 'すべてのプロジェクト',
     allProjectsDisabledPopout: 'ボードのポップアウトが開いている間は、すべてのプロジェクトを利用できません',
     addProject: 'プロジェクトを追加',
+    githubStar: 'GitHub で Tessera に Star',
+    githubStarFallback: '自動で Star できませんでした。もう一度押して GitHub を開いてください。',
+    githubStarSuccess: 'Tessera への Star ありがとうございます！',
   },
   gitPanel: {
     tabs: {
