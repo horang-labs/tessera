@@ -50,12 +50,10 @@ import {
 import { WorkspaceInlineInputRow } from "@/components/workspace/workspace-inline-input-row";
 import { useWorkspaceInlineInput } from "@/components/workspace/use-workspace-inline-input";
 import {
-  DIR_TOGGLE_DOUBLE_CLICK_MS,
-  isRenameHotspotTarget,
-  RENAME_HOTSPOT_ATTR,
-  resolveDirToggleTiming,
   shouldOpenOnRowClick,
+  shouldToggleDirectoryOnClick,
 } from "@/components/workspace/workspace-inline-input-state";
+import { shouldReloadReselectedWorktree } from "@/components/workspace/workspace-file-panel-refresh";
 import {
   createWorkspaceDirectoryRequest,
   createWorkspaceFileRequest,
@@ -223,6 +221,8 @@ export function WorkspaceFilePanel({
   const canMutate = target !== null;
   const isDocumentVisible = useDocumentVisibility();
   const peekTarget = useWorkspacePeekStore((state) => state.target);
+  const previousPeekTargetRef = useRef(peekTarget);
+  const previousFileListTargetKeyRef = useRef(targetKey);
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -255,15 +255,21 @@ export function WorkspaceFilePanel({
   // carrying a tree snapshot from before a file-tab mutation. Subscribe to the
   // target object, not just its ID: clicking the already-selected Worktree is
   // still a new open event and must refresh this panel.
-  useEffect(() => {
-    if (target?.kind !== 'worktree' || peekTarget?.worktreeId !== target.id) return;
+  useEffect(function reloadReselectedWorktree() {
+    const previousTargetKey = previousFileListTargetKeyRef.current;
+    const peekChanged = previousPeekTargetRef.current !== peekTarget;
+    previousFileListTargetKeyRef.current = targetKey;
+    previousPeekTargetRef.current = peekTarget;
+    if (!shouldReloadReselectedWorktree({
+      currentTargetKey: targetKey,
+      isWorktreeTarget: target?.kind === 'worktree',
+      peekChanged,
+      peekWorktreeId: peekTarget?.worktreeId ?? null,
+      previousTargetKey,
+      targetId: target?.id ?? null,
+    })) return;
     void loadFiles({ silent: true });
-  }, [loadFiles, peekTarget, target]);
-
-  const deferredToggleRef = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (deferredToggleRef.current !== null) window.clearTimeout(deferredToggleRef.current);
-  }, []);
+  }, [loadFiles, peekTarget, target?.id, target?.kind, targetKey]);
 
   const expandPath = useCallback((path: string) => {
     if (!path) return;
@@ -479,42 +485,18 @@ export function WorkspaceFilePanel({
     });
   }
 
-  function clearDeferredToggle() {
-    if (deferredToggleRef.current === null) return;
-    window.clearTimeout(deferredToggleRef.current);
-    deferredToggleRef.current = null;
-  }
-
   /**
-   * A click on the folder's name may be the first half of a double-click that
-   * means rename, and toggling on both halves collapses and re-expands the row
-   * under the input. Clicks on the name wait the double-click window out.
-   */
+   * Toggle on the first click with no double-click delay. Chromium marks the
+   * second click with detail > 1, so it is dropped instead of toggling back.
+  */
   function handleDirectoryClick(event: MouseEvent, path: string) {
-    const timing = resolveDirToggleTiming({
-      clickCount: event.detail,
-      fromRenameHotspot: isRenameHotspotTarget(event.target),
-    });
-    clearDeferredToggle();
-    if (timing === "skip") return;
-    if (timing === "immediate") {
-      toggleDirectory(path);
-      return;
-    }
-    deferredToggleRef.current = window.setTimeout(() => {
-      deferredToggleRef.current = null;
-      toggleDirectory(path);
-    }, DIR_TOGGLE_DOUBLE_CLICK_MS);
+    if (!shouldToggleDirectoryOnClick(event.detail)) return;
+    toggleDirectory(path);
   }
 
-  /**
-   * Named apart from the hook's `startRename` because it does more: the first
-   * click of the gesture armed a deferred toggle, and it must not fire under
-   * the input that is about to open.
-   */
+  /** Named apart from the hook's `startRename` to keep row event handling local. */
   function beginRename(node: WorkspaceTreeNode) {
     if (!canMutate) return;
-    clearDeferredToggle();
     inlineInput.startRename({
       isDirectory: node.type === "directory",
       name: node.name,
@@ -577,14 +559,8 @@ export function WorkspaceFilePanel({
     return node.path.split("/").slice(0, -1).join("/");
   }
 
-  /**
-   * Like `beginRename`, this disarms a toggle left over from a click on a
-   * folder's name: it would fire under the placeholder and collapse the folder
-   * the row is sitting in, taking the half-typed name with it.
-   */
   function beginNewEntry(kind: "file" | "folder", parentPath: string) {
     if (!canMutate) return;
-    clearDeferredToggle();
     inlineInput.startNew(kind, parentPath);
   }
 
@@ -667,10 +643,7 @@ export function WorkspaceFilePanel({
             />
             <FolderIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
             <span
-              // The double-click-to-rename target is the name text alone, so the
-              // disclosure stays reachable on the chevron, the icon and the
-              // empty part of the row.
-              {...{ [RENAME_HOTSPOT_ATTR]: "" }}
+              // The double-click-to-rename target is the name text alone.
               onDoubleClick={(event) => {
                 if (!canMutate) return;
                 event.stopPropagation();
@@ -756,7 +729,6 @@ export function WorkspaceFilePanel({
           <span
             // Renaming is scoped to the name text, so the icon and the rest of
             // the row keep opening the file the way they always have.
-            {...{ [RENAME_HOTSPOT_ATTR]: "" }}
             onDoubleClick={(event) => {
               if (!canMutate) return;
               event.stopPropagation();

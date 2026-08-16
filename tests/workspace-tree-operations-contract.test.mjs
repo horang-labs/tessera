@@ -159,13 +159,9 @@ test('a double-click gesture creates only one file tab', () => {
   assert.match(filePanelSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
 });
 
-test('a deferred folder toggle cannot fire under an input that just opened', () => {
-  // Clicking a folder's name arms a toggle for the double-click window. Opening
-  // any input before it fires would let it collapse the folder the row sits in,
-  // taking the half-typed name with it — so both entry points disarm it.
-  assert.match(filePanelSource, /function beginRename\(node: WorkspaceTreeNode\) \{\s*if \(!canMutate\) return;\s*clearDeferredToggle\(\);/);
-  assert.match(filePanelSource, /function beginNewEntry\(kind: "file" \| "folder", parentPath: string\) \{\s*if \(!canMutate\) return;\s*clearDeferredToggle\(\);/);
-  // And nothing reaches the hook's startNew around that guard.
+test('folder toggles have no delayed timer that can fire under an input', () => {
+  assert.doesNotMatch(filePanelSource, /DIR_TOGGLE_DOUBLE_CLICK_MS/);
+  assert.doesNotMatch(filePanelSource, /deferredToggleRef/);
   const rawStartNew = filePanelSource.match(/inlineInput\.startNew\(/g) ?? [];
   assert.equal(rawStartNew.length, 1, 'startNew is only called from beginNewEntry');
 });
@@ -179,12 +175,11 @@ test('a watch reconcile cannot take the row being edited', () => {
 });
 
 test('double-clicking the name renames without fighting the row click', () => {
-  // The hotspot is the name text alone, and a folder holds its toggle back for
-  // the double-click window so the row does not collapse under the input.
-  assert.match(filePanelSource, /\[RENAME_HOTSPOT_ATTR\]: ""/);
+  // The first click toggles immediately and the second click is ignored before
+  // the double-click handler opens rename, so no timer delays ordinary clicks.
   assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*if \(!canMutate\) return;\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
-  assert.match(filePanelSource, /resolveDirToggleTiming\(\{/);
-  assert.match(inlineStateSource, /return clickCount > 1 \? "skip" : "deferred"/);
+  assert.match(filePanelSource, /if \(!shouldToggleDirectoryOnClick\(event\.detail\)\) return;/);
+  assert.match(inlineStateSource, /return clickCount <= 1;/);
 });
 
 test('the delete confirmation survives the move to inline entry', () => {
