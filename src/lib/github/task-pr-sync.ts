@@ -14,8 +14,10 @@ import * as dbTasks from '@/lib/db/tasks';
 import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import logger from '@/lib/logger';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import type { WorkflowStatus } from '@/types/task-entity';
 import type { TaskPrStatus } from '@/types/task-pr-status';
 import { probeTaskPrStatus } from './pr-status-provider';
+import { deriveTaskWorkflowStatusFromPr } from './task-pr-workflow-policy';
 
 export interface TaskPrUpdate {
   taskId: string;
@@ -23,6 +25,8 @@ export interface TaskPrUpdate {
   prStatusKnown: boolean;
   prUnsupported: boolean;
   remoteBranchExists?: boolean;
+  /** Present when the successful PR probe made GitHub authoritative for workflow. */
+  workflowStatus?: WorkflowStatus;
 }
 
 type Listener = (update: TaskPrUpdate) => void;
@@ -146,17 +150,21 @@ export function syncTaskPr(
 
       const nextStatus = probe.prStatus ?? null;
       const nextRemoteExists = probe.remoteBranchExists;
+      const workflowStatus = deriveTaskWorkflowStatusFromPr(nextStatus);
       const prUnchanged =
         !row.wasUnsupported
         && row.prStatusKnown
         && prStatusesEqual(row.prStatus, nextStatus ?? undefined);
       const remoteUnchanged = row.remoteBranchExists === nextRemoteExists;
-      if (prUnchanged && remoteUnchanged) return;
+      const workflowUnchanged =
+        workflowStatus === undefined || row.workflowStatus === workflowStatus;
+      if (prUnchanged && remoteUnchanged && workflowUnchanged) return;
 
-      dbTasks.setTaskPrStatus(taskId, {
+      const persistedWorkflowStatus = dbTasks.setTaskPrStatus(taskId, {
         unsupported: false,
         prStatus: nextStatus,
         remoteBranchExists: nextRemoteExists,
+        workflowStatus,
       });
       notify({
         taskId,
@@ -164,6 +172,7 @@ export function syncTaskPr(
         prStatusKnown: true,
         prUnsupported: false,
         remoteBranchExists: nextRemoteExists,
+        workflowStatus: persistedWorkflowStatus,
       });
     } catch (err) {
       logger.warn({ err, taskId }, 'Task PR sync failed');

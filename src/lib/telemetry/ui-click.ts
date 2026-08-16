@@ -117,6 +117,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'git.primary.pull',
   'git.primary.create_pr',
   'git.primary.view_pr',
+  'git.primary.archive_worktree',
   'git.primary.loading',
   'git.primary.up_to_date',
   'git.generate_commit_message',

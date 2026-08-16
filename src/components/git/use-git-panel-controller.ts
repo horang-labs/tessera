@@ -12,6 +12,7 @@ import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state"
 import { isOptimisticSessionId } from '@/lib/session/session-id';
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
+import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useGitStore } from "@/stores/git-store";
 import { useChatStore } from "@/stores/chat-store";
 import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
@@ -472,6 +473,7 @@ export function useGitPanelController(
 
     return {
       ...data,
+      ...(liveTaskId ? { taskId: liveTaskId } : {}),
       diffStats: storeDiffStats !== undefined ? storeDiffStats : data.diffStats,
       // The presence of a live entry is authoritative even when its PR is
       // undefined: that is the WebSocket representation of confirmed none.
@@ -481,7 +483,7 @@ export function useGitPanelController(
       remoteBranchExists:
         livePr ? livePr.remoteBranchExists : data.remoteBranchExists,
     };
-  }, [data, liveSessionPr, livePrStatus, sessionSnapshot?.diffStats, taskSnapshot]);
+  }, [data, liveSessionPr, livePrStatus, liveTaskId, sessionSnapshot?.diffStats, taskSnapshot]);
 
   useEffect(() => {
     const files = panelData?.changedFiles ?? [];
@@ -724,15 +726,45 @@ export function useGitPanelController(
    * yet. Folding those into "clean tree" is what would make the button flash
    * through Publish Branch on every session switch (ADR 0007).
    */
+  const canArchiveTask = Boolean(
+    target?.kind === 'session'
+      && liveTaskId
+      && taskSnapshot?.id === liveTaskId,
+  );
   const stateSnapshot = useMemo<GitStateSnapshot | null>(
-    () => (!target || loading || error ? null : gitStateSnapshotFromPanel(panelData)),
-    [error, loading, panelData, target],
+    () => (!target || loading || error
+      ? null
+      : gitStateSnapshotFromPanel(panelData, { canArchiveTask })),
+    [canArchiveTask, error, loading, panelData, target],
   );
 
-  const primaryAction = useMemo(
+  const derivedPrimaryAction = useMemo(
     () => derivePrimaryGitAction(stateSnapshot),
     [stateSnapshot],
   );
+  const archiveTask = useCallback(() => {
+    if (!liveTaskId) return;
+    void useTaskStore.getState().toggleTaskArchive(liveTaskId, true);
+  }, [liveTaskId]);
+  const {
+    isConfirmingArchive,
+    handleArchiveClick,
+    resetArchiveConfirm,
+  } = useArchiveConfirm(archiveTask, 3000, liveTaskId);
+  const primaryAction = useMemo(
+    () => derivedPrimaryAction.kind === 'archive_worktree' && isConfirmingArchive
+      ? { ...derivedPrimaryAction, labelKey: 'gitPanel.pr.archiveConfirmButton' as const }
+      : derivedPrimaryAction,
+    [derivedPrimaryAction, isConfirmingArchive],
+  );
+
+  useEffect(() => {
+    resetArchiveConfirm();
+  }, [liveTaskId, resetArchiveConfirm]);
+
+  useEffect(() => {
+    if (derivedPrimaryAction.kind !== 'archive_worktree') resetArchiveConfirm();
+  }, [derivedPrimaryAction.kind, resetArchiveConfirm]);
   const pullRequestUrl =
     panelData?.prStatus?.url ?? panelData?.github.pullRequest?.url ?? null;
   const viewPullRequest = useCallback(() => {
@@ -1031,6 +1063,7 @@ export function useGitPanelController(
     }
     if (primaryAction.action === "commit") return commitSelectedFiles();
     if (primaryAction.action === "view_pr") return viewPullRequest();
+    if (primaryAction.action === "archive_worktree") return handleArchiveClick();
     if (!primaryAction.action) return;
     // §8: a push at the default branch is asked about before anything runs,
     // and the panel is left exactly as it was until the answer comes back.
@@ -1051,7 +1084,14 @@ export function useGitPanelController(
       primaryAction.action,
       primaryAction.kind === "publish" ? "publish" : primaryAction.action,
     );
-  }, [commitSelectedFiles, primaryAction, runBranchAction, stateSnapshot, viewPullRequest]);
+  }, [
+    commitSelectedFiles,
+    handleArchiveClick,
+    primaryAction,
+    runBranchAction,
+    stateSnapshot,
+    viewPullRequest,
+  ]);
 
   /**
    * The menu, derived independently of the ladder over the same snapshot (§4).

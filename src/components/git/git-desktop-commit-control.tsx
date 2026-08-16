@@ -4,6 +4,8 @@ import React, { memo, useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
+  Archive,
+  Check,
   GitCommitHorizontal,
   LoaderCircle,
   TriangleAlert,
@@ -25,7 +27,11 @@ import { GitActionMenu } from "./git-action-menu";
 import { GitActionFailureBanner } from "./git-action-failure-banner";
 import { GIT_FAILURE_TITLE_KEY } from "./git-action-report";
 import { GitCommitForm } from "./git-commit-form";
-import { resolvePendingLabelKey } from "./git-primary-action";
+import {
+  gitPrimaryActionToneClassName,
+  gitPrimaryTelemetryControl,
+  resolvePendingLabelKey,
+} from "./git-primary-action";
 import {
   useSharedGitPanelController,
   type GitPanelController,
@@ -224,6 +230,11 @@ function GitDesktopCommitControlView({
   const accessibleActionLabel = disabledReason
     ? `${actionLabel} — ${disabledReason}`
     : actionLabel;
+  const primaryIcon = controller.primaryAction.kind === 'archive_worktree'
+    ? controller.primaryAction.labelKey === 'gitPanel.pr.archiveConfirmButton'
+      ? <Check className="h-3.5 w-3.5" />
+      : <Archive className="h-3.5 w-3.5" />
+    : <GitCommitHorizontal className="h-3.5 w-3.5" />;
 
   return (
     <div
@@ -232,7 +243,10 @@ function GitDesktopCommitControlView({
       className="electron-no-drag hidden h-full shrink-0 items-center border-l border-(--divider) sm:flex"
     >
       <button
-        {...telemetryClickAttributes('git.commit.open', 'git_panel')}
+        {...telemetryClickAttributes(
+          gitPrimaryTelemetryControl(controller.primaryAction.kind),
+          'git_panel',
+        )}
         ref={triggerRef}
         type="button"
         onClick={composerOpen ? closeComposer : runPrimary}
@@ -246,14 +260,15 @@ function GitDesktopCommitControlView({
         data-testid="desktop-commit-primary"
         data-git-action={controller.primaryAction.kind}
         className={cn(
-          "mx-1 flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-blue-600 px-2.5 text-xs font-semibold text-white shadow-sm ring-1 ring-inset ring-blue-700/40 transition-colors hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60 dark:bg-blue-500 dark:ring-blue-300/30 dark:hover:bg-blue-400",
+          'mx-1 flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold shadow-sm ring-1 ring-inset transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset disabled:cursor-wait disabled:opacity-60',
+          gitPrimaryActionToneClassName(controller.primaryAction.kind),
           composerOpen && "bg-blue-500 dark:bg-blue-400",
         )}
       >
         {pending ? (
           <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
         ) : (
-          <GitCommitHorizontal className="h-3.5 w-3.5" />
+          primaryIcon
         )}
         <span>{actionLabel}</span>
       </button>
