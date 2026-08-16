@@ -49,6 +49,9 @@ import {
 import {
   FILE_STATE_META,
 } from "./git-panel-shared";
+import {
+  useCommitFileSelection,
+} from "./git-commit-selection";
 
 function formatShortCount(value: number): string {
   if (value < 1000) return String(value);
@@ -654,7 +657,8 @@ export function GitPanelContentSection({
     onGenerate: () => void;
     onMessageChange: (value: string) => void;
     onSetAllSelected: (selected: boolean) => void;
-    onToggleFile: (path: string) => void;
+    onSetSelected: (paths: readonly string[], selected: boolean) => void;
+    selectionKey: string | null;
     totals: { files: number; added: number; removed: number };
   };
   conflictHandoff: {
@@ -744,6 +748,14 @@ export function GitPanelContentSection({
   const hasTarget = targetSelected ?? Boolean(sessionId);
   const allCommitFilesSelected = changedFileCount > 0
     && commit.totals.files === changedFileCount;
+  const someCommitFilesSelected = commit.totals.files > 0;
+  const { selectAllCheckboxRef, setFileSelected } = useCommitFileSelection({
+    allSelected: allCommitFilesSelected,
+    files: data?.changedFiles,
+    onSetSelected: commit.onSetSelected,
+    someSelected: someCommitFilesSelected,
+    targetKey: commit.selectionKey,
+  });
 
   const contentBody = (
     <>
@@ -793,26 +805,25 @@ export function GitPanelContentSection({
             ) : (
               <>
                 <div className="flex items-center justify-between gap-2 px-1">
-                  <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
-                    {t("gitPanel.commit.changedFiles")}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
+                  <label className="flex min-w-0 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
+                    <input
+                      ref={selectAllCheckboxRef}
+                      type="checkbox"
                       disabled={primary.pendingVerb !== null}
-                      onClick={() => commit.onSetAllSelected(!allCommitFilesSelected)}
+                      checked={allCommitFilesSelected}
+                      onChange={() => commit.onSetAllSelected(!allCommitFilesSelected)}
                       {...telemetryClickAttributes("git.commit_file.toggle_all", "git_panel")}
-                      className="rounded px-1 py-0.5 text-[10px] font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {t(allCommitFilesSelected
+                      aria-label={t(allCommitFilesSelected
                         ? "gitPanel.commit.deselectAll"
                         : "gitPanel.commit.selectAll")}
-                    </button>
-                    <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
-                      {data.changedFilesTruncated
-                        ? (data.changedFilesTotal ?? `${changedFileCount}+`)
-                        : changedFileCount}
-                    </span>
+                      className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <span className="truncate">{t("gitPanel.commit.changedFiles")}</span>
+                  </label>
+                  <span className="shrink-0 font-mono text-[11px] text-(--text-muted) tabular-nums">
+                    {commit.totals.files}/{data.changedFilesTruncated
+                      ? (data.changedFilesTotal ?? `${changedFileCount}+`)
+                      : changedFileCount}
                   </span>
                 </div>
                 <ScrollArea className={cn(phoneScrollableContent ? "overflow-y-visible" : "flex-1")}>
@@ -857,7 +868,13 @@ export function GitPanelContentSection({
                               // locks with the rest of the form (§7) rather
                               // than only while a commit is what is running.
                               disabled={primary.pendingVerb !== null}
-                              onChange={() => commit.onToggleFile(file.path)}
+                              onChange={(event) => {
+                                setFileSelected(
+                                  file.path,
+                                  event.currentTarget.checked,
+                                  event.nativeEvent,
+                                );
+                              }}
                               {...telemetryClickAttributes("git.commit_file.toggle", "git_panel")}
                               aria-label={t("gitPanel.commit.includeFile", {
                                 path: file.path,

@@ -33,6 +33,9 @@ import {
   resolvePendingLabelKey,
 } from "./git-primary-action";
 import {
+  useCommitFileSelection,
+} from "./git-commit-selection";
+import {
   useSharedGitPanelController,
   type GitPanelController,
 } from "./git-panel-controller-context";
@@ -216,6 +219,14 @@ function GitDesktopCommitControlView({
   const allCommitFilesSelected = data !== null
     && data.changedFiles.length > 0
     && controller.commitTotals.files === data.changedFiles.length;
+  const someCommitFilesSelected = controller.commitTotals.files > 0;
+  const { selectAllCheckboxRef, setFileSelected } = useCommitFileSelection({
+    allSelected: allCommitFilesSelected,
+    files: data?.changedFiles,
+    onSetSelected: controller.setCommitFilesSelected,
+    someSelected: someCommitFilesSelected,
+    targetKey: controller.commitSelectionKey,
+  });
   const actionLabelKey = controller.pendingVerb
     ? resolvePendingLabelKey(controller.primaryAction, controller.pendingVerb)
     : controller.primaryAction.labelKey;
@@ -377,20 +388,24 @@ function GitDesktopCommitControlView({
               >
                 <div className="max-h-40 overflow-y-auto rounded-md border border-(--divider) bg-(--sidebar-bg)">
                   <div className="flex items-center justify-between gap-2 border-b border-(--divider) px-2 py-1">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-(--text-muted)">
-                      {t("gitPanel.commit.changedFiles")}
-                    </p>
-                    <button
-                      {...telemetryClickAttributes('git.commit_file.toggle_all', 'git_panel')}
-                      type="button"
-                      disabled={pending}
-                      onClick={() => controller.setAllCommitFilesSelected(!allCommitFilesSelected)}
-                      className="rounded px-1 py-0.5 text-[10px] font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {t(allCommitFilesSelected
-                        ? "gitPanel.commit.deselectAll"
-                        : "gitPanel.commit.selectAll")}
-                    </button>
+                    <label className="flex min-w-0 items-center gap-2 text-[10px] font-medium uppercase tracking-[0.14em] text-(--text-muted)">
+                      <input
+                        ref={selectAllCheckboxRef}
+                        {...telemetryClickAttributes('git.commit_file.toggle_all', 'git_panel')}
+                        type="checkbox"
+                        checked={allCommitFilesSelected}
+                        disabled={pending}
+                        onChange={() => controller.setAllCommitFilesSelected(!allCommitFilesSelected)}
+                        aria-label={t(allCommitFilesSelected
+                          ? "gitPanel.commit.deselectAll"
+                          : "gitPanel.commit.selectAll")}
+                        className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                      <span className="truncate">{t("gitPanel.commit.changedFiles")}</span>
+                    </label>
+                    <span className="shrink-0 font-mono text-[10px] text-(--text-muted) tabular-nums">
+                      {controller.commitTotals.files}/{data?.changedFiles.length ?? 0}
+                    </span>
                   </div>
                   {(data?.changedFiles ?? []).map((file) => (
                     <label
@@ -402,7 +417,13 @@ function GitDesktopCommitControlView({
                         type="checkbox"
                         checked={controller.isSelectedForCommit(file.path)}
                         disabled={controller.pendingVerb !== null}
-                        onChange={() => controller.toggleCommitFile(file.path)}
+                        onChange={(event) => {
+                          setFileSelected(
+                            file.path,
+                            event.currentTarget.checked,
+                            event.nativeEvent,
+                          );
+                        }}
                         aria-label={t("gitPanel.commit.includeFile", { path: file.path })}
                         data-testid={`desktop-commit-file-checkbox-${file.path}`}
                         className="h-3.5 w-3.5 shrink-0 accent-(--accent)"
