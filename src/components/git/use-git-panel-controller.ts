@@ -179,9 +179,6 @@ export function useGitPanelController(
   const setWorktreeCommitMessage = useGitPanelStore(
     (state) => state.setCommitMessage,
   );
-  const toggleWorktreeCommitFile = useGitPanelStore(
-    (state) => state.toggleCommitFile,
-  );
   const setWorktreeCommitFilesSelected = useGitPanelStore(
     (state) => state.setCommitFilesSelected,
   );
@@ -617,10 +614,13 @@ export function useGitPanelController(
     [deselectedPaths],
   );
 
-  const toggleCommitFile = useCallback((path: string) => {
+  const setCommitFilesSelected = useCallback((
+    paths: readonly string[],
+    selected: boolean,
+  ) => {
     if (!worktreeKey) return;
-    toggleWorktreeCommitFile(worktreeKey, path);
-  }, [toggleWorktreeCommitFile, worktreeKey]);
+    setWorktreeCommitFilesSelected(worktreeKey, paths, selected);
+  }, [setWorktreeCommitFilesSelected, worktreeKey]);
 
   const setAllCommitFilesSelected = useCallback((selected: boolean) => {
     if (!worktreeKey) return;
@@ -1280,6 +1280,7 @@ export function useGitPanelController(
   return {
     hasActiveSession: Boolean(target),
     changedFileCount,
+    commitSelectionKey: worktreeKey,
     commitMessage,
     commitTotals,
     /**
@@ -1327,9 +1328,9 @@ export function useGitPanelController(
     selectedFileIndex,
     selectedPath,
     setAllCommitFilesSelected,
+    setCommitFilesSelected,
     setCommitMessage: changeCommitMessage,
     setSelectedPath,
-    toggleCommitFile,
   };
 }
 
