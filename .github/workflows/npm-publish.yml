@@ -42,12 +42,14 @@ jobs:
         env:
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
 
-      - name: Verify package installs and boots
+      - name: Verify package installs and renders
         if: ${{ github.event.inputs.dist_tag_version == '' }}
         env:
           SMOKE_PORT: '32123'
         run: |
           set -euo pipefail
+
+          npx playwright install --with-deps chromium
 
           # Pack the real tarball — prepack already ran in the Build step.
           tarball="$(npm pack --ignore-scripts | tail -1)"
@@ -76,15 +78,16 @@ jobs:
               cat "$RUNNER_TEMP/server.log"
               exit 1
             fi
-            # An auth redirect is fine, but a rendered 5xx response is not.
+            # Wait until the server accepts HTTP requests, then use a real
+            # browser so redirects, Next.js loading, and React runtime errors
+            # are all exercised before publication.
             status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SMOKE_PORT/" || true)"
             if [ -n "$status" ] && [ "$status" != "000" ]; then
-              if [ "$status" -ge 500 ]; then
-                echo "::error::tessera responded with HTTP $status"
+              if ! node scripts/verify-npm-render.mjs "http://127.0.0.1:$SMOKE_PORT/"; then
+                echo "::error::installed Tessera package did not render successfully"
                 cat "$RUNNER_TEMP/server.log"
                 exit 1
               fi
-              echo "Server responded with HTTP $status"
               exit 0
             fi
             sleep 1

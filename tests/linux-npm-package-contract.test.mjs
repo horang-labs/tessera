@@ -9,6 +9,10 @@ const npmCliSource = fs.readFileSync(
   new URL('../bin/tessera.mjs', import.meta.url),
   'utf8',
 );
+const npmPublishWorkflowSource = fs.readFileSync(
+  new URL('../.github/workflows/npm-publish.yml', import.meta.url),
+  'utf8',
+);
 
 test('npm CLI package keeps Linux-friendly runtime dependencies and executable bin', () => {
   const binPath = new URL('../bin/tessera.mjs', import.meta.url);
@@ -37,4 +41,15 @@ test('npm CLI uses the requested port without scanning for a fallback', () => {
   assert.doesNotMatch(npmCliSource, /PORT_SCAN_LIMIT/);
   assert.doesNotMatch(npmCliSource, /findPort/);
   assert.doesNotMatch(npmCliSource, /isPortAvailable/);
+});
+
+test('npm publish smoke test renders the installed package in a real browser', () => {
+  assert.match(
+    npmPublishWorkflowSource,
+    /npx playwright install --with-deps chromium/,
+  );
+  assert.match(
+    npmPublishWorkflowSource,
+    /node scripts\/verify-npm-render\.mjs/,
+  );
 });
