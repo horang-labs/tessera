@@ -1174,6 +1174,9 @@ export interface I18nMessages {
       createButton: string;
       createButtonPending: string;
       viewButton: string;
+      archiveButton: string;
+      archiveConfirmButton: string;
+      archiveButtonPending: string;
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
