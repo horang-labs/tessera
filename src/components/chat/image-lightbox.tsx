@@ -4,6 +4,7 @@ import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 import { useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -25,16 +26,9 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   const avoidsWindowControls = electronPlatform === 'win32';
   const resolvedAlt = alt || t('chat.imageOriginalView');
 
-  // ESC key to close
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  // The PTY chat view handles Escape during React's capture phase. Claim it at
+  // document capture first so closing the lightbox cannot also interrupt the PTY.
+  useCloseOnEscape(onClose, { capture: true });
 
   // Scroll lock
   useEffect(() => {
