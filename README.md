@@ -35,8 +35,6 @@ Tessera turns a pile of terminals into a visible workflow. Give each task its ow
 - **Keep every session within reach** — move between list, board, tabs, split panes, and your phone without losing the conversation.
 - **Finish where the work happened** — inspect files and diffs, commit, sync, publish branches, and open pull requests from Tessera.
 
-**OpenCode is first-class:** run it in PTY or rich GUI mode, use its discovered commands and model or mode controls, follow permissions, tool calls, and todos, and switch a live PTY into Chat View.
-
 > [!NOTE]
 > Tessera runs locally and uses the provider CLIs already installed and authenticated on your machine.
 
