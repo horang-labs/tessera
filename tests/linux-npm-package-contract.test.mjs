@@ -13,6 +13,10 @@ const npmPublishWorkflowSource = fs.readFileSync(
   new URL('../.github/workflows/npm-publish.yml', import.meta.url),
   'utf8',
 );
+const npmRenderSmokeSource = fs.readFileSync(
+  new URL('../scripts/verify-npm-render.mjs', import.meta.url),
+  'utf8',
+);
 
 test('npm CLI package keeps Linux-friendly runtime dependencies and executable bin', () => {
   const binPath = new URL('../bin/tessera.mjs', import.meta.url);
@@ -52,4 +56,6 @@ test('npm publish smoke test renders the installed package in a real browser', (
     npmPublishWorkflowSource,
     /node scripts\/verify-npm-render\.mjs/,
   );
+  assert.match(npmRenderSmokeSource, /getByTestId\('setup-account-form'\)/);
+  assert.match(npmRenderSmokeSource, /hydrated form submitted wrong state/);
 });
