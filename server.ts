@@ -66,7 +66,7 @@ async function startServer() {
         logger.info({ bootstrap }, 'Canonical Worktree registry bootstrapped');
       }
       if (settings.autoDeleteArchivedWorktrees) {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays);
+        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, userId);
       }
     }
   } catch (error) {
