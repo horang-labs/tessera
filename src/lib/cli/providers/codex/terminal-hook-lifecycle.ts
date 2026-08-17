@@ -1,6 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveAgentReportedPath } from '@/lib/filesystem/path-environment';
+import { resolveCodexAccountTranscriptPath } from '@/lib/codex-home';
+import {
+  isBridgedAgentEnvironment,
+  resolveAgentHomeFilesystemPath,
+  resolveAgentReportedPath,
+} from '@/lib/filesystem/path-environment';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
 export type CodexHookOrigin = 'lead' | 'subagent' | 'unknown';
@@ -33,7 +38,16 @@ export async function classifyCodexHookOrigin(
   if (!reportedPath) return 'unknown';
 
   try {
-    const transcriptPath = await resolveAgentReportedPath(reportedPath, environment);
+    const serverPath = await resolveAgentReportedPath(reportedPath, environment);
+    const transcriptPath = resolveCodexAccountTranscriptPath(serverPath, isBridgedAgentEnvironment(environment)
+      ? {
+          // The overlay marker contains a CLI-side path that the host cannot
+          // interpret directly. Anchor fallback resolution at the CLI's real
+          // account home as a host-readable path instead.
+          env: { NODE_ENV: process.env.NODE_ENV },
+          homeDir: await resolveAgentHomeFilesystemPath(environment),
+        }
+      : undefined);
     if (path.extname(transcriptPath).toLowerCase() !== '.jsonl') return 'unknown';
     const cached = rolloutOriginByPath.get(transcriptPath);
     if (cached) return cached;

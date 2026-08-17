@@ -24,6 +24,53 @@ function writeRollout(threadSource: 'user' | 'subagent'): { dir: string; filePat
   return { dir, filePath };
 }
 
+function writeAccountRolloutBehindMissingOverlay(
+  threadSource: 'user' | 'subagent',
+): { root: string; reportedPath: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-hook-overlay-'));
+  const relativePath = path.join(
+    'sessions',
+    '2026',
+    '08',
+    '17',
+    `rollout-${threadSource}.jsonl`,
+  );
+  const accountPath = path.join(root, '.codex', relativePath);
+  fs.mkdirSync(path.dirname(accountPath), { recursive: true });
+  fs.writeFileSync(accountPath, `${JSON.stringify({
+    type: 'session_meta',
+    payload: {
+      id: `${threadSource}-thread`,
+      session_id: 'lead-thread',
+      thread_source: threadSource,
+    },
+  })}\n`);
+  return {
+    root,
+    // Windows cannot traverse the overlay's Linux-only `sessions` symlink, so
+    // model that host view with a missing overlay spelling while the durable
+    // account rollout remains readable.
+    reportedPath: path.join(
+      root,
+      '.tessera',
+      'codex-overlay',
+      'session-terminal-1',
+      relativePath,
+    ),
+  };
+}
+
+test('Codex hook origin resolves an unreadable overlay path through the durable account home', async (t) => {
+  const lead = writeAccountRolloutBehindMissingOverlay('user');
+  t.after(() => fs.rmSync(lead.root, { recursive: true, force: true }));
+
+  assert.equal(fs.existsSync(lead.reportedPath), false);
+  assert.equal(await classifyCodexHookOrigin({
+    session_id: 'lead-thread',
+    transcript_path: lead.reportedPath,
+  }, 'native'), 'lead');
+});
+
 test('Codex hook origin follows rollout thread_source instead of shared session_id', async (t) => {
   const lead = writeRollout('user');
   const child = writeRollout('subagent');
