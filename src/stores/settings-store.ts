@@ -25,6 +25,12 @@ export interface UpdateSettingsOptions {
   confirmArchivedWorktreePrune?: boolean;
 }
 
+export interface UpdateSettingsResult {
+  ok: boolean;
+  status?: number;
+  code?: string;
+}
+
 function normalizeSidebarWidth(
   width: number | undefined,
   fallback: number,
@@ -197,9 +203,12 @@ interface SettingsState {
 
   open: (options?: OpenSettingsOptions) => void;
   close: () => void;
-  updateSettings: (partial: Partial<UserSettings>, options?: UpdateSettingsOptions) => Promise<void>;
+  updateSettings: (
+    partial: Partial<UserSettings>,
+    options?: UpdateSettingsOptions,
+  ) => Promise<UpdateSettingsResult>;
   reset: () => Promise<void>;
-  load: () => Promise<void>;
+  load: () => Promise<boolean>;
   applyExternalSettings: (settings: UserSettings) => void;
 }
 
@@ -300,7 +309,7 @@ export const useSettingsStore = create<SettingsState>()(
           && partial.kanbanSessionOpenMode !== prior.kanbanSessionOpenMode
           && partial.kanbanSessionOpenMode !== 'peek'
           && !useBoardStore.getState().closeSessionPeek()
-        ) return;
+        ) return { ok: false };
         const updated = normalizeUserSettings({
           ...prior,
           ...partial,
@@ -318,6 +327,8 @@ export const useSettingsStore = create<SettingsState>()(
         }
 
         let saved = false;
+        let failureStatus: number | undefined;
+        let failureCode: string | undefined;
         try {
           const requestBody = options?.confirmArchivedWorktreePrune
             ? { ...updated, confirmArchivedWorktreePrune: true }
@@ -328,6 +339,9 @@ export const useSettingsStore = create<SettingsState>()(
             body: JSON.stringify(requestBody),
           });
           if (!response.ok) {
+            failureStatus = response.status;
+            const body = await response.json().catch(() => ({})) as { code?: unknown };
+            failureCode = typeof body.code === 'string' ? body.code : undefined;
             throw new Error(`Settings save failed with status ${response.status}`);
           }
           saved = true;
@@ -369,6 +383,9 @@ export const useSettingsStore = create<SettingsState>()(
             void captureTelemetryEvent('settings_changed', { setting });
           }
         }
+        return saved
+          ? { ok: true }
+          : { ok: false, status: failureStatus, code: failureCode };
       },
 
       reset: async () => {
@@ -420,12 +437,15 @@ export const useSettingsStore = create<SettingsState>()(
             });
             invalidateSkillCatalogsWhenTesseraCliChanges(prior, settings);
             syncI18nLanguage(settings.language);
+            return true;
           } else {
             set({ isLoading: false });
+            return false;
           }
         } catch (error) {
           console.error('Failed to load settings', error);
           set({ isLoading: false });
+          return false;
         }
       },
     }),
