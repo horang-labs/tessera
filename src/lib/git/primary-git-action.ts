@@ -71,6 +71,11 @@ export interface GitStateSnapshot {
   pullRequest: GitPullRequestReadiness;
   /** State of the PR for this exact revision; historical PRs are null. */
   currentPullRequestState?: TaskPrState | null;
+  /**
+   * Whether GitHub still advertises this branch. A merged PR commonly loses
+   * its remote branch before the local panel can count against its upstream.
+   */
+  remoteBranchExists?: boolean;
   /** True only when this panel can reversibly archive its owning Task. */
   canArchiveTask?: boolean;
   /**
@@ -184,6 +189,7 @@ export function gitStateSnapshotFromPanel(
       panel.prStatusKnown !== false && panel.prStatus && isCurrentTaskPr(panel.prStatus)
         ? panel.prStatus.state
         : null,
+    remoteBranchExists: panel.remoteBranchExists,
     canArchiveTask: capabilities.canArchiveTask ?? false,
     defaultBranch: panel.defaultBranch,
     // A payload from before this field existed — one held in the client store
@@ -237,6 +243,22 @@ export function derivePrimaryGitAction(
   // committing without a branch is ordinary, pushing without one is not.
   if (snapshot.changedFileCount > 0) return commitAction(true, null);
 
+  // GitHub normally deletes a merged PR's source branch. That also removes the
+  // remote-tracking ref, so the local ahead/behind probe below has no object to
+  // compare and correctly returns null. The current-revision PR probe is the
+  // authoritative answer in this one terminal state: it has already confirmed
+  // that this HEAD belongs to the merged PR, and the remote probe confirmed
+  // that there is no delivery destination left. Keep conflict and dirty work
+  // above this branch so neither can be hidden by the terminal PR action.
+  if (
+    isCurrentMergedPullRequest(snapshot)
+    && snapshot.remoteBranchExists === false
+  ) {
+    return snapshot.canArchiveTask
+      ? archiveWorktreeAction()
+      : viewPullRequestAction();
+  }
+
   const blocked = describeRemoteObstacle(snapshot);
   if (blocked) return publishAction(false, blocked);
 
@@ -256,7 +278,7 @@ export function derivePrimaryGitAction(
   // Committed, pushed and tracking: the only step of delivery left is the pull
   // request (§3). A branch that already has one points at that destination.
   if (snapshot.pullRequest === 'exists') {
-    if (snapshot.currentPullRequestState === 'merged' && snapshot.canArchiveTask) {
+    if (isMergedTaskReadyToArchive(snapshot)) {
       return archiveWorktreeAction();
     }
     return viewPullRequestAction();
@@ -270,6 +292,16 @@ export function derivePrimaryGitAction(
   }
 
   return createPullRequestAction(snapshot.pullRequest);
+}
+
+function isMergedTaskReadyToArchive(snapshot: GitStateSnapshot): boolean {
+  return isCurrentMergedPullRequest(snapshot)
+    && snapshot.canArchiveTask === true;
+}
+
+function isCurrentMergedPullRequest(snapshot: GitStateSnapshot): boolean {
+  return snapshot.pullRequest === 'exists'
+    && snapshot.currentPullRequestState === 'merged';
 }
 
 function loadingAction(): GitPrimaryAction {
