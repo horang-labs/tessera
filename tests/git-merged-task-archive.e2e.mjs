@@ -279,17 +279,24 @@ try {
     prState: reconciledOpenTask.prStatus.state,
   });
 
+  // GitHub commonly deletes the source branch as part of merging. Mirror both
+  // sides of that state: the server's ls-remote probe must see it gone, and the
+  // local panel must lose the tracking ref so ahead/behind become uncountable.
+  await git(['update-ref', '-d', 'refs/heads/feature/merged'], remote);
+  await git(['update-ref', '-d', 'refs/remotes/origin/feature/merged']);
   await writeGhState('MERGED', headRefOid);
   await api(`/api/sessions/${taskSessionId}/refresh-git`, { method: 'POST' });
   const mergedTask = await waitForTaskState(task.id, 'done', 'merged');
+  assert.equal(mergedTask.remoteBranchExists, false);
   const doneCard = page.locator(
     `[data-testid="kanban-column"][data-status="done"] [data-testid="kanban-card"][data-task-id="${task.id}"]`,
   );
   await doneCard.waitFor({ timeout: 30_000 });
-  await capture('merged-pr-moves-task-to-done', {
+  await capture('merged-pr-with-deleted-branch-moves-task-to-done', {
     workflowStatus: mergedTask.workflowStatus,
     prState: mergedTask.prStatus.state,
     relation: mergedTask.prStatus.relation,
+    remoteBranchExists: mergedTask.remoteBranchExists,
   });
 
   await page.getByTestId('view-mode-list').click();
@@ -392,6 +399,7 @@ try {
     openPrConvergedToInReview: true,
     unchangedOpenPrCorrectedManualMove: true,
     mergedPrConvergedToDone: true,
+    mergedRemoteBranchDeleted: true,
     mergedTaskPrimaryAction: 'archive_worktree',
     mergedTaskPrimaryBackground: mergedPrimaryColors.actual,
     openPrPrimaryBackground: openPrimaryBackground,

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { resolvePaneToken } from '@/lib/terminal/pane-token-registry';
 import { wsServer } from '@/lib/ws/server';
 import {
+  getSession,
   markCodexTerminalSession,
   markOpenCodeTerminalSession,
 } from '@/lib/db/sessions';
@@ -17,7 +18,10 @@ import {
   mapClaudeHookLifecycle,
 } from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
 import { classifyAskUserQuestionEvent } from '@/lib/cli/providers/claude-code/ask-user-question-status';
-import { extractTerminalProviderSessionIdentity } from '@/lib/terminal/provider-session-identity';
+import {
+  extractTerminalProviderSessionIdentity,
+  readPersistedTerminalProviderSessionId,
+} from '@/lib/terminal/provider-session-identity';
 import { getTerminalProviderSessionForTesseraSession } from '@/lib/db/terminal-provider-sessions';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import { observeTerminalProviderSession } from '@/lib/terminal/provider-session-observation';
@@ -29,6 +33,7 @@ import {
   mapCodexHookLifecycle,
   type CodexHookOrigin,
 } from '@/lib/cli/providers/codex/terminal-hook-lifecycle';
+import { shouldIgnoreForeignCodexHookIdentity } from './providers/codex/terminal-hook-identity';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -205,8 +210,16 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       ? terminalManager.getSessionIdForTerminal(entry.terminalId, entry.userId)
       : null;
     let sessionId = activeSessionId ?? entry.sessionId;
+    // /clear is the one hook-driven identity transition explicitly admitted
+    // by the foreign-identity guard, and older Codex versions omit its rollout
+    // path. Treat that reset boundary as lead-owned without transcript probing.
+    const isCodexClear = isCodex
+      && event === 'SessionStart'
+      && readString(payload.source) === 'clear';
     const codexOrigin = isCodex
-      ? await classifyCodexHookOrigin(payload, await getAgentEnvironment(entry.userId))
+      ? isCodexClear
+        ? 'lead'
+        : await classifyCodexHookOrigin(payload, await getAgentEnvironment(entry.userId))
       : 'lead';
     if (isCodex) {
       logger.debug({ terminalId: entry.terminalId, event, codexOrigin }, 'Classified Codex hook origin');
@@ -217,12 +230,34 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       ? null
       : extractTerminalProviderSessionIdentity(entry.providerId, payload);
     if (activeSessionId && providerIdentity) {
-      const currentProviderSessionId = getTerminalProviderSessionForTesseraSession(activeSessionId)
+      const boundProviderSessionId = getTerminalProviderSessionForTesseraSession(activeSessionId)
         ?.provider_session_id;
-      const backgroundFork = currentProviderSessionId
+      let expectedCodexProviderSessionId = boundProviderSessionId;
+      if (isCodex && !expectedCodexProviderSessionId) {
+        const activeSession = getSession(activeSessionId);
+        expectedCodexProviderSessionId = activeSession
+          ? readPersistedTerminalProviderSessionId(activeSession)
+          : undefined;
+      }
+      if (isCodex && shouldIgnoreForeignCodexHookIdentity({
+        expectedProviderSessionId: expectedCodexProviderSessionId,
+        observedProviderSessionId: providerIdentity.providerSessionId,
+        event,
+        source: readString(payload.source),
+      })) {
+        logger.debug({
+          providerId: entry.providerId,
+          expectedProviderSessionId: expectedCodexProviderSessionId,
+          observedProviderSessionId: providerIdentity.providerSessionId,
+          terminalId: entry.terminalId,
+          event,
+        }, 'Foreign Codex hook identity ignored');
+        return send(204);
+      }
+      const backgroundFork = boundProviderSessionId
         ? await cliProviderRegistry.getProvider(entry.providerId)
           .resolveBackgroundTerminalSessionFork?.({
-            currentProviderSessionId,
+            currentProviderSessionId: boundProviderSessionId,
             observedProviderSessionId: providerIdentity.providerSessionId,
             userId: entry.userId,
           }) ?? null

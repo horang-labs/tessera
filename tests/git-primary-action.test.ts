@@ -176,6 +176,56 @@ test('a current merged PR on an archive-capable Task offers Archive Worktree', (
   assert.equal(action.labelKey, 'gitPanel.pr.archiveButton');
 });
 
+test('a merged Task stays archivable after GitHub deletes its remote branch', () => {
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    // Once GitHub deletes the merged branch, its remote-tracking ref is gone
+    // and the local panel can no longer calculate either side of the upstream.
+    ahead: null,
+    behind: null,
+    remoteBranchExists: false,
+    prStatusKnown: true,
+    prStatus: {
+      number: 376,
+      url: 'https://github.com/horang-labs/tessera/pull/376',
+      state: 'merged',
+      relation: 'current',
+      lastSynced: '2026-08-17T07:47:24.000Z',
+    },
+  }, { canArchiveTask: true });
+  const action = derivePrimaryGitAction(snapshot);
+
+  assert.equal(action.kind, 'archive_worktree');
+  assert.equal(action.action, 'archive_worktree');
+  assert.equal(action.enabled, true);
+});
+
+test('an uncounted merged Task with a surviving remote branch stays unknown', () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    ahead: null,
+    behind: null,
+    remoteBranchExists: true,
+    currentPullRequestState: 'merged',
+    canArchiveTask: true,
+  });
+
+  assert.equal(action.kind, 'loading');
+});
+
+test('a standalone merged PR with a deleted remote branch stays viewable', () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    ahead: null,
+    behind: null,
+    remoteBranchExists: false,
+    currentPullRequestState: 'merged',
+    canArchiveTask: false,
+  });
+
+  assert.equal(action.kind, 'view_pr');
+});
+
 test('open and non-Task pull requests keep View PR', () => {
   const openTask = derivePrimaryGitAction({
     ...SYNCED,
