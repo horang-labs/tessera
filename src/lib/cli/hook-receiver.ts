@@ -22,6 +22,13 @@ import { getTerminalProviderSessionForTesseraSession } from '@/lib/db/terminal-p
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import { observeTerminalProviderSession } from '@/lib/terminal/provider-session-observation';
 import { classifyPermissionRequestEvent } from './permission-request-status';
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import {
+  classifyCodexHookOrigin,
+  CODEX_LIFECYCLE_EVENTS,
+  mapCodexHookLifecycle,
+  type CodexHookOrigin,
+} from '@/lib/cli/providers/codex/terminal-hook-lifecycle';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -155,23 +162,23 @@ function mapClaudeEventToStatus(
  * PermissionRequest 훅은 결정을 반환하지 않으므로 codex 자체 승인 TUI가 xterm에 그대로 뜬다.
  */
 function mapCodexEventToStatus(
+  terminalId: string,
   event: string,
   payload: Record<string, unknown>,
+  origin: CodexHookOrigin,
 ): { status: TerminalSessionStatus; preview?: string } | null {
   const permissionRequest = classifyPermissionRequestEvent(event, payload);
-  if (permissionRequest) return permissionRequest;
-  switch (event) {
-    case 'SessionStart':
-      return { status: 'idle' };
-    case 'UserPromptSubmit':
-    case 'PreToolUse':
-    case 'PostToolUse':
-      return { status: 'running' };
-    case 'Stop':
-      return completedStatus(payload);
-    default:
-      return null;
+  const lifecycle = mapCodexHookLifecycle(terminalId, event, origin);
+  if (lifecycle) {
+    if (lifecycle.status === 'input_required') return permissionRequest;
+    if (event === 'Stop' && lifecycle.status === 'completed') return completedStatus(payload);
+    return lifecycle;
   }
+  // A null from a lifecycle-owned event is an intentional rejection (normally
+  // delayed child traffic after the lead Stop), not a reason to fall back to
+  // the old event→running mapping.
+  if (CODEX_LIFECYCLE_EVENTS.has(event)) return null;
+  return permissionRequest;
 }
 
 /**
@@ -198,7 +205,17 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       ? terminalManager.getSessionIdForTerminal(entry.terminalId, entry.userId)
       : null;
     let sessionId = activeSessionId ?? entry.sessionId;
-    const providerIdentity = extractTerminalProviderSessionIdentity(entry.providerId, payload);
+    const codexOrigin = isCodex
+      ? await classifyCodexHookOrigin(payload, await getAgentEnvironment(entry.userId))
+      : 'lead';
+    if (isCodex) {
+      logger.debug({ terminalId: entry.terminalId, event, codexOrigin }, 'Classified Codex hook origin');
+    }
+    // A collaboration child inherits the lead's session_id. Observing that
+    // child payload as a root identity can replace the pane's resume binding.
+    const providerIdentity = isCodex && codexOrigin !== 'lead'
+      ? null
+      : extractTerminalProviderSessionIdentity(entry.providerId, payload);
     if (activeSessionId && providerIdentity) {
       const currentProviderSessionId = getTerminalProviderSessionForTesseraSession(activeSessionId)
         ?.provider_session_id;
@@ -229,11 +246,11 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       sessionId = observation.sessionId;
     }
     const mapped = isCodex
-      ? mapCodexEventToStatus(event, payload)
+      ? mapCodexEventToStatus(entry.terminalId, event, payload, codexOrigin)
       : isOpenCode
         ? mapEventToStatus(event, payload)
         : mapClaudeEventToStatus(entry.terminalId, event, payload);
-    if (event === 'SessionStart' && sessionId) {
+    if (event === 'SessionStart' && sessionId && (!isCodex || codexOrigin === 'lead')) {
       if (isCodex) {
         // codex rollout id를 provider_state에 캡처(resume용) + launched 마커 + kind.
         markCodexTerminalSession(sessionId, readString(payload.session_id));
@@ -248,7 +265,7 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     }
     // 첫 프롬프트에서 동기 로컬 제목을 즉시 적용한다. 같은 프롬프트를 history에도
     // 기록해 사용자가 AI 개선을 켠 경우 Stop 시점의 선택적 생성 입력으로 활용한다.
-    if (event === 'UserPromptSubmit' && sessionId) {
+    if (event === 'UserPromptSubmit' && sessionId && (!isCodex || codexOrigin === 'lead')) {
       const prompt = readString(payload.prompt);
       if (prompt) {
         sessionHistory.recordUserMessage(sessionId, prompt);
