@@ -2,7 +2,8 @@
 "use client";
 
 import { Image as ImageIcon, RefreshCw, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { formatBytes } from '@/lib/format-bytes';
@@ -12,7 +13,10 @@ import {
   MIN_WORKSPACE_IMAGE_ZOOM,
   WORKSPACE_IMAGE_ZOOM_STEP,
   clampWorkspaceImageZoom,
+  getAnchoredWorkspaceImageScrollOffset,
   getWorkspaceImageLayoutSize,
+  getNextWorkspaceImageWheelZoom,
+  getWorkspaceImagePanScrollOffset,
   type WorkspaceImageSize,
 } from '@/lib/workspace-files/workspace-image-zoom';
 
@@ -25,6 +29,14 @@ function withRetryVersion(rawUrl: string, retryAttempt: number): string {
   return `${rawUrl}&retry=${retryAttempt}`;
 }
 
+interface ImagePanState {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startScrollLeft: number;
+  startScrollTop: number;
+}
+
 export function WorkspaceImageViewer({
   path,
   rawUrl,
@@ -35,7 +47,11 @@ export function WorkspaceImageViewer({
   size: number;
 }) {
   const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const imageLayoutRef = useRef<HTMLDivElement | null>(null);
+  const panStateRef = useRef<ImagePanState | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [isPanning, setIsPanning] = useState(false);
   const [surfaceSize, setSurfaceSize] = useState<WorkspaceImageSize | null>(null);
   const [imageSize, setImageSize] = useState<WorkspaceImageSize | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
@@ -65,9 +81,130 @@ export function WorkspaceImageViewer({
     };
   }, [surfaceElement]);
 
-  function changeZoom(getNextZoom: (current: number) => number): void {
-    setZoom((current) => clampWorkspaceImageZoom(getNextZoom(current)));
-  }
+  const setSurfaceRef = useCallback((element: HTMLDivElement | null) => {
+    surfaceRef.current = element;
+    setSurfaceElement(element);
+  }, []);
+
+  const changeZoom = useCallback(
+    (getNextZoom: (current: number) => number, anchor?: { x: number; y: number } | null): void => {
+      const surface = surfaceRef.current;
+      const resolvedAnchor = surface
+        ? (anchor ?? { x: surface.clientWidth / 2, y: surface.clientHeight / 2 })
+        : null;
+      const scrollLeft = surface?.scrollLeft ?? 0;
+      const scrollTop = surface?.scrollTop ?? 0;
+      const surfaceRect = surface?.getBoundingClientRect();
+      const imageRect = imageLayoutRef.current?.getBoundingClientRect();
+      const contentOrigin = surfaceRect && imageRect
+        ? imageRect.left - surfaceRect.left + scrollLeft
+        : 0;
+      const contentOriginTop = surfaceRect && imageRect
+        ? imageRect.top - surfaceRect.top + scrollTop
+        : 0;
+      let currentZoom = 1;
+      let nextZoom = 1;
+
+      flushSync(() => {
+        setZoom((current) => {
+          currentZoom = current;
+          nextZoom = clampWorkspaceImageZoom(getNextZoom(current));
+          return nextZoom;
+        });
+      });
+
+      if (!surface || !resolvedAnchor || currentZoom === nextZoom) return;
+      const nextSurfaceRect = surface.getBoundingClientRect();
+      const nextImageRect = imageLayoutRef.current?.getBoundingClientRect();
+      const nextContentOrigin = nextSurfaceRect && nextImageRect
+        ? nextImageRect.left - nextSurfaceRect.left + surface.scrollLeft
+        : 0;
+      const nextContentOriginTop = nextSurfaceRect && nextImageRect
+        ? nextImageRect.top - nextSurfaceRect.top + surface.scrollTop
+        : 0;
+      surface.scrollLeft = getAnchoredWorkspaceImageScrollOffset({
+        scrollOffset: scrollLeft,
+        anchorOffset: resolvedAnchor.x,
+        currentZoom,
+        nextZoom,
+        contentOrigin,
+        nextContentOrigin,
+      });
+      surface.scrollTop = getAnchoredWorkspaceImageScrollOffset({
+        scrollOffset: scrollTop,
+        anchorOffset: resolvedAnchor.y,
+        currentZoom,
+        nextZoom,
+        contentOrigin: contentOriginTop,
+        nextContentOrigin: nextContentOriginTop,
+      });
+    },
+    [],
+  );
+
+  const handleImageSurfaceWheel = useCallback((event: WheelEvent) => {
+    if (event.deltaY === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const surface = surfaceRef.current;
+    const rect = surface?.getBoundingClientRect();
+    changeZoom(
+      (current) => getNextWorkspaceImageWheelZoom(current, event.deltaY, event.deltaMode),
+      rect ? { x: event.clientX - rect.left, y: event.clientY - rect.top } : null,
+    );
+  }, [changeZoom]);
+
+  useEffect(function registerImageSurfaceWheel() {
+    const surface = surfaceElement;
+    if (!surface) return;
+    surface.addEventListener('wheel', handleImageSurfaceWheel, { passive: false });
+    return function unregisterImageSurfaceWheel() {
+      surface.removeEventListener('wheel', handleImageSurfaceWheel);
+    };
+  }, [handleImageSurfaceWheel, surfaceElement]);
+
+  const handlePanStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    const surface = event.currentTarget;
+    if (surface.scrollWidth <= surface.clientWidth && surface.scrollHeight <= surface.clientHeight) return;
+    event.preventDefault();
+    surface.setPointerCapture(event.pointerId);
+    panStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startScrollLeft: surface.scrollLeft,
+      startScrollTop: surface.scrollTop,
+    };
+    setIsPanning(true);
+  }, []);
+
+  const handlePanMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = panStateRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const surface = event.currentTarget;
+    surface.scrollLeft = getWorkspaceImagePanScrollOffset({
+      startScrollOffset: pan.startScrollLeft,
+      startPointerOffset: pan.startX,
+      currentPointerOffset: event.clientX,
+    });
+    surface.scrollTop = getWorkspaceImagePanScrollOffset({
+      startScrollOffset: pan.startScrollTop,
+      startPointerOffset: pan.startY,
+      currentPointerOffset: event.clientY,
+    });
+  }, []);
+
+  const handlePanEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = panStateRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    panStateRef.current = null;
+    setIsPanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
 
   if (imageError) {
     return (
@@ -98,17 +235,25 @@ export function WorkspaceImageViewer({
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="workspace-image-viewer">
       <div
-        ref={setSurfaceElement}
-        className="min-h-0 flex-1 overflow-auto bg-(--sidebar-hover)"
+        ref={setSurfaceRef}
+        data-testid="workspace-image-surface"
+        className={`min-h-0 flex-1 select-none overflow-auto bg-(--sidebar-hover) ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+        onPointerDown={handlePanStart}
+        onPointerMove={handlePanMove}
+        onPointerUp={handlePanEnd}
+        onPointerCancel={handlePanEnd}
+        onLostPointerCapture={handlePanEnd}
       >
         <div className="flex h-max min-h-full w-max min-w-full items-center justify-center p-4">
           <div
+            ref={imageLayoutRef}
             className="flex items-center justify-center"
             style={layoutSize ? { width: layoutSize.width, height: layoutSize.height } : undefined}
           >
             <img
               src={previewSrc}
               alt={filename}
+              draggable={false}
               className={layoutSize ? 'block h-full w-full object-contain' : 'block max-h-full max-w-full object-contain'}
               onLoad={(event) => {
                 const image = event.currentTarget;
@@ -143,7 +288,7 @@ export function WorkspaceImageViewer({
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              onClick={() => setZoom(1)}
+              onClick={() => changeZoom(() => 1)}
               disabled={zoom === 1}
               aria-label="Reset image zoom"
             >
