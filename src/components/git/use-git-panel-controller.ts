@@ -940,6 +940,91 @@ export function useGitPanelController(
   }, [markWorktreePending, pendingHere, requestCommit, worktreeKey]);
 
   /**
+   * Reverting the selected changed files: their working trees are restored to
+   * HEAD, or deleted outright when they have no HEAD version (untracked).
+   * The selection is the same list the commit uses (§7), so "these files" means
+   * the same set to both actions. Filters revert-ineligible files out client-side
+   * (conflicted, or only staged) — the server refuses any that slip through.
+   */
+  const requestRevert = useCallback(
+    async (paths: readonly string[]): Promise<boolean> => {
+      if (!target || paths.length === 0) return false;
+
+      const files = [...paths];
+      try {
+        const response = await fetch(
+          `${workspaceTargetApiPath(target)}/git/action`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "revert", files }),
+          },
+        );
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            extractGitPanelErrorMessage(payload, "Failed to revert files."),
+          );
+        }
+
+        const result = payload as GitActionResult;
+        reportAction(describeGitActionToast(result, commitOrigin, "revert"));
+        if (!result.ok && worktreeKey) {
+          setWorktreeActionFailure(
+            worktreeKey,
+            describeGitActionFailure(result.failure, commitOrigin, "revert"),
+          );
+        }
+        void captureTelemetryEvent("git_action_triggered", {
+          source: "git_panel",
+          action: "revert",
+          target: "revert",
+          result: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { failure_kind: result.failure.kind }),
+          file_count: files.length,
+        });
+        void loadPanel({ silent: true });
+        return result.ok;
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error ? nextError.message : "Failed to revert files.";
+        reportAction(
+          describeGitRequestFailureToast(message, commitOrigin, "revert"),
+        );
+        if (worktreeKey) {
+          setWorktreeActionFailure(
+            worktreeKey,
+            describeGitRequestFailure(message, commitOrigin, "revert"),
+          );
+        }
+        return false;
+      }
+    },
+    [
+      commitOrigin,
+      loadPanel,
+      reportAction,
+      setWorktreeActionFailure,
+      target,
+      worktreeKey,
+    ],
+  );
+
+  const revertSelectedFiles = useCallback(async () => {
+    if (!worktreeKey || pendingHere) return false;
+    if (commitFiles.length === 0) return false;
+    const ownerKey = worktreeKey;
+
+    markWorktreePending(ownerKey, "revert");
+    try {
+      return await requestRevert(commitFiles.map((file) => file.path));
+    } finally {
+      markWorktreePending(ownerKey, null);
+    }
+  }, [markWorktreePending, pendingHere, requestRevert, commitFiles, worktreeKey]);
+
+  /**
    * The actions whose whole request is the verb: Push, Publish Branch — the same
    * request, differing only in what the button said before it — Pull, and Create
    * PR. None of them takes a parameter, because which branch moves to or from
@@ -1331,6 +1416,7 @@ export function useGitPanelController(
     setCommitFilesSelected,
     setCommitMessage: changeCommitMessage,
     setSelectedPath,
+    revertSelectedFiles,
   };
 }
 
