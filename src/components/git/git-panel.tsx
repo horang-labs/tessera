@@ -392,6 +392,10 @@ export function GitPanel({
               selectionKey: controller.commitSelectionKey,
               totals: controller.commitTotals,
             }}
+            revert={{
+              onConfirm: () => void controller.revertSelectedFiles(),
+              pending: controller.pendingVerb === "revert",
+            }}
             primary={{
               action: controller.primaryAction,
               pendingVerb: controller.pendingVerb,
