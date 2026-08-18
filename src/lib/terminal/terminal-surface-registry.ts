@@ -39,6 +39,10 @@ import {
   type ElectronTerminalClipboardApi,
 } from './terminal-clipboard-paste';
 import {
+  installTerminalOsc52Handler,
+  type TerminalOsc52Parser,
+} from './terminal-osc52';
+import {
   scheduleTerminalScrollIntentSync,
   TerminalScrollController,
   type TerminalScrollRestorePoint,
@@ -113,6 +117,7 @@ type XtermLike = TerminalScrollTarget & {
   options: { theme?: ITheme; fontSize?: number };
   unicode: IUnicodeHandling;
   modes: { sendFocusMode: boolean };
+  parser: TerminalOsc52Parser;
   textarea?: HTMLTextAreaElement;
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean): void;
@@ -326,6 +331,7 @@ export class TerminalSurface {
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
+  private osc52Disposable: { dispose(): void } | null = null;
   private suppressNextNativePaste = false;
   private pasteSuppressionTimerId: number | null = null;
   private clipboardPasteQueue: Promise<void> = Promise.resolve();
@@ -876,6 +882,8 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
+    this.osc52Disposable?.dispose();
+    this.osc52Disposable = null;
     this.suppressNextNativePaste = false;
     if (this.pasteSuppressionTimerId !== null) {
       window.clearTimeout(this.pasteSuppressionTimerId);
@@ -970,6 +978,9 @@ export class TerminalSurface {
       terminal.loadAddon(new WebLinksAddon(webLinkHandler));
       activateTesseraTerminalUnicodeProvider(terminal);
       attachTerminalMouseWheelMultiplier(terminal);
+      // TUI copy (OpenCode, tmux) arrives as OSC 52; xterm does not handle the
+      // sequence itself, so route it to the desktop clipboard here.
+      this.osc52Disposable = installTerminalOsc52Handler(terminal);
 
       // Renderer choice. WebGL everywhere by default — the postinstall patch
       // (scripts/patch-xterm-webgl-atlas.mjs) fixes the addon's atlas-wipe
