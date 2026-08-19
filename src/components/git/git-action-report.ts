@@ -45,22 +45,25 @@ export type GitActionToastKey =
   | "gitPanel.conflict.mergeAbortedToast"
   | "gitPanel.conflict.rebaseAbortedToast"
   | "gitPanel.conflict.cherryPickAbortedToast"
-  | "gitPanel.conflict.abortFailureToast";
+  | "gitPanel.conflict.abortFailureToast"
+  | "gitPanel.revert.successToast"
+  | "gitPanel.revert.failureToast";
 
 /**
  * Which action was attempted. A failure carries no verb of its own — the same
  * `command_failed` arrives from a commit and from a push — so the caller, which
  * is the only party that knows what it pressed, says.
  */
-export type GitActionVerb = "commit" | "push" | "pull" | "create_pr" | "abort";
+export type GitActionVerb = "commit" | "push" | "pull" | "create_pr" | "abort" | "revert";
 
 export interface GitActionToast {
   tone: "success" | "error";
   messageKey: GitActionToastKey;
   /**
    * `reason` is absent when there is nothing worth quoting, `remoteBranch` when
-   * the action was not a push or Git would not say which branch it wrote, and
-   * `number` / `baseBranch` when the pull request could not be read back.
+   * the action was not a push or Git would not say which branch it wrote,
+   * `number` / `baseBranch` when the pull request could not be read back, and
+   * `count` / `s` when a revert names how many files it restored or deleted.
    */
   params: {
     origin: string;
@@ -68,6 +71,8 @@ export interface GitActionToast {
     remoteBranch?: string;
     number?: number;
     baseBranch?: string;
+    count?: number;
+    s?: string;
   };
   /**
    * Only a completed commit clears the message and the file selection. A
@@ -114,6 +119,11 @@ const FAILURE_KEYS: Record<
   abort: {
     failure: "gitPanel.conflict.abortFailureToast",
   },
+  // A revert runs no hook either, and its only failure is Git or the
+  // filesystem declining to restore or delete the files.
+  revert: {
+    failure: "gitPanel.revert.failureToast",
+  },
 };
 
 /**
@@ -152,6 +162,15 @@ export function describeGitActionToast(
     }
     if (result.outcome.action === "pull") {
       return describePullOutcome(result.outcome, origin);
+    }
+    if (result.outcome.action === "revert") {
+      const count = result.outcome.files.length;
+      return {
+        tone: "success",
+        messageKey: "gitPanel.revert.successToast",
+        params: { origin, count, s: count === 1 ? "" : "s" },
+        clearsDraft: false,
+      };
     }
     if (result.outcome.action === "create_pr") {
       return describeCreatePullRequestOutcome(result.outcome, origin);
@@ -337,7 +356,8 @@ export type GitActionFailureTitleKey =
   | "gitPanel.failure.pushTitle"
   | "gitPanel.failure.pullTitle"
   | "gitPanel.failure.createPrTitle"
-  | "gitPanel.failure.abortTitle";
+  | "gitPanel.failure.abortTitle"
+  | "gitPanel.failure.revertTitle";
 
 /**
  * Which action failed, for the banner's heading. The summary under it leads
@@ -350,6 +370,7 @@ export const GIT_FAILURE_TITLE_KEY: Record<GitActionVerb, GitActionFailureTitleK
   pull: "gitPanel.failure.pullTitle",
   create_pr: "gitPanel.failure.createPrTitle",
   abort: "gitPanel.failure.abortTitle",
+  revert: "gitPanel.failure.revertTitle",
 };
 
 /**

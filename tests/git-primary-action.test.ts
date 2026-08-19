@@ -200,6 +200,46 @@ test('a merged Task stays archivable after GitHub deletes its remote branch', ()
   assert.equal(action.enabled, true);
 });
 
+test("a current merged Task whose remote branch survives still offers Archive, not Publish", () => {
+  // GitHub's delete-on-merge toggle does not always run, so a merged PR branch
+  // can remain on the remote. If that branch also lost its tracking ref (for
+  // example it was created without `--track`), the publish rung would otherwise
+  // masquerade a finished, merged branch as one that was never shared. A merged
+  // PR is delivery-finished regardless of the remote branch surviving.
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    remoteBranchExists: true,
+    prStatusKnown: true,
+    prStatus: {
+      number: 383,
+      url: 'https://github.com/horang-labs/tessera/pull/383',
+      state: 'merged',
+      relation: 'current',
+      lastSynced: '2026-08-19T08:27:16.000Z',
+    },
+  }, { canArchiveTask: true });
+  const action = derivePrimaryGitAction(snapshot);
+
+  assert.equal(action.kind, 'archive_worktree');
+  assert.equal(action.action, 'archive_worktree');
+  assert.equal(action.enabled, true);
+});
+
+test("a standalone merged PR with a surviving branch and no upstream stays viewable", () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    upstream: null,
+    ahead: 0,
+    currentPullRequestState: 'merged',
+    canArchiveTask: false,
+  });
+
+  assert.equal(action.kind, 'view_pr');
+});
+
 test('an uncounted merged Task with a surviving remote branch stays unknown', () => {
   const action = derivePrimaryGitAction({
     ...SYNCED,

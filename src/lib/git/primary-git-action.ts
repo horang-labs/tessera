@@ -262,7 +262,20 @@ export function derivePrimaryGitAction(
   const blocked = describeRemoteObstacle(snapshot);
   if (blocked) return publishAction(false, blocked);
 
-  if (!snapshot.upstream) return publishAction(true, null);
+  if (!snapshot.upstream) {
+    // A current merged PR is delivery-finished even when its remote branch
+    // survives the merge (GitHub's delete-on-merge toggle is not guaranteed to
+    // run). Without a tracking ref there is no ahead/behind to count, so the
+    // publish rung below would otherwise masquerade a merged branch as one that
+    // was never shared. End in the same terminal state the deleted-branch path
+    // above does — archive when the owning Task can, otherwise view the merge.
+    if (isCurrentMergedPullRequest(snapshot)) {
+      return snapshot.canArchiveTask
+        ? archiveWorktreeAction()
+        : viewPullRequestAction();
+    }
+    return publishAction(true, null);
+  }
 
   // A tracking branch whose comparison could not be counted has no safe next
   // rung: it may need Pull, Push, or neither. Hold the disabled unknown frame
