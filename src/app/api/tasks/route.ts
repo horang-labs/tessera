@@ -4,7 +4,7 @@ import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
 import * as dbTasks from '@/lib/db/tasks';
 import { collectionExists } from '@/lib/db/collections';
 import { generateTaskId } from '@/types/task-entity';
-import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastTaskMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 import { pathExists } from '@/lib/filesystem/path-exists';
@@ -42,9 +42,8 @@ export async function GET(req: NextRequest) {
       worktreePresence.map(({ id, missing }) => [id, missing]),
     );
     // Diff badge only applies to tasks bound to a worktree branch.
-    const diffStatsByWorkDir = getCachedOrScheduleBulk(
+    const diffStatsByWorkDir = getCachedBulk(
       rawTasks.map((t) => (t.worktreeBranch ? t.workDir : undefined)),
-      userId,
     );
     const tasks = rawTasks.map((t) => ({
       ...t,

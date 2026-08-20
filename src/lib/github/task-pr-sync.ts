@@ -190,10 +190,18 @@ export function syncTaskPr(
  * concurrency cap to avoid stampeding gh/GitHub.
  */
 export async function syncAllEligibleTaskPrs(
-  options: { agentEnvironment?: AgentEnvironment } = {},
+  options: {
+    agentEnvironment?: AgentEnvironment;
+    taskIds?: ReadonlySet<string>;
+  } = {},
 ): Promise<void> {
-  const rows = dbTasks.getTasksEligibleForPrSync();
-  const CONCURRENCY = 3;
+  const rows = filterEligibleTaskPrRows(
+    dbTasks.getTasksEligibleForPrSync(),
+    options.taskIds,
+  );
+  // A PR probe crosses the Windows->WSL boundary more than once. The safety
+  // sweep is background maintenance, so serial execution is the right bound.
+  const CONCURRENCY = 1;
   let cursor = 0;
 
   const worker = async () => {
@@ -207,4 +215,12 @@ export async function syncAllEligibleTaskPrs(
 
   const workers = Array.from({ length: Math.min(CONCURRENCY, rows.length) }, () => worker());
   await Promise.all(workers);
+}
+
+export function filterEligibleTaskPrRows<T extends { id: string }>(
+  rows: T[],
+  taskIds?: ReadonlySet<string>,
+): T[] {
+  if (!taskIds) return rows;
+  return rows.filter((row) => taskIds.has(row.id));
 }

@@ -14,7 +14,7 @@ import {
 } from '@/lib/projects/current-project';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
-import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedBulk } from '@/lib/git/worktree-diff-stats-bulk';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -70,14 +70,13 @@ export async function GET(req: NextRequest) {
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
       }));
-      // Diff badge for any session whose work dir is a git worktree (standalone
-      // chats included). Cache-miss workDirs schedule a compute + WS push.
-      const diffStatsByWorkDir = getCachedOrScheduleBulk(
+      // Cold list reads must not probe every historical workDir. Active
+      // runtimes and explicit Git views populate this cache via push paths.
+      const diffStatsByWorkDir = getCachedBulk(
         [
           ...mapped.map((s) => s.workDir ?? undefined),
           projectWorktree?.filesystemPath ?? undefined,
         ],
-        userId,
       );
       const sessions = mapped.map((s) => ({
         ...s,

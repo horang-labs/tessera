@@ -1,11 +1,18 @@
 import * as path from 'path';
 import { resolveGitEnvironment } from '@/lib/git/git-environment';
+import {
+  formatWindowsHostedWslDisplayPath,
+  isWindowsHostedWslFilesystemPath,
+} from '@/lib/filesystem/path-environment';
 import { computeWorktreeDiffStats } from './worktree-diff-stats';
 import { isDiffStatsEntryStale } from './worktree-diff-stats-staleness';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
 const DEBOUNCE_MS = 300;
-const MAX_CONCURRENT_COMPUTES = 2;
+// One worktree at a time. A worktree compute may cross the Windows/WSL process
+// boundary; completing wsl.exe does not mean its conhost teardown has drained.
+// Keeping two worktrees active allowed the next wave to outrun that teardown.
+const MAX_CONCURRENT_COMPUTES = 1;
 
 type Listener = (
   workDir: string,
@@ -82,12 +89,20 @@ function runWithComputeLimit<T>(compute: () => Promise<T>): Promise<T> {
   });
 }
 
-function normalize(workDir: string): string {
-  return getPathModule(workDir).resolve(workDir);
+export function normalizeWorktreeDiffStatsCacheKey(workDir: string): string {
+  const trimmed = workDir.trim();
+  // The DB can contain both a CLI-reported `/home/...` path and the Windows
+  // server's `\\wsl.localhost\<distro>\home\...` spelling for the same tree.
+  // Collapse those spellings before cache/in-flight lookup so one invalidation
+  // cannot create two WSL probes. Windows-native drive paths stay untouched.
+  if (isWindowsHostedWslFilesystemPath(trimmed)) {
+    return path.posix.resolve(formatWindowsHostedWslDisplayPath(trimmed, null));
+  }
+  return getPathModule(trimmed).resolve(trimmed);
 }
 
 export function getCachedDiffStats(workDir: string): WorktreeDiffStats | null | undefined {
-  const key = normalize(workDir);
+  const key = normalizeWorktreeDiffStatsCacheKey(workDir);
   const entry = getState().entries.get(key);
   return entry ? entry.stats : undefined;
 }
@@ -98,7 +113,7 @@ export function getCachedDiffStats(workDir: string): WorktreeDiffStats | null | 
  * first compute while a stale hit still has a usable value to return meanwhile.
  */
 export function isDiffStatsStale(workDir: string, now: number = Date.now()): boolean {
-  const entry = getState().entries.get(normalize(workDir));
+  const entry = getState().entries.get(normalizeWorktreeDiffStatsCacheKey(workDir));
   if (!entry) return false;
   return isDiffStatsEntryStale(entry.computedAt, now);
 }
@@ -199,7 +214,7 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
  * a set so the resulting broadcast can reach everyone who triggered it.
  */
 export function scheduleRecompute(workDir: string, userId?: string): void {
-  const key = normalize(workDir);
+  const key = normalizeWorktreeDiffStatsCacheKey(workDir);
   const state = getState();
 
   if (userId) {
@@ -228,7 +243,7 @@ export function scheduleRecompute(workDir: string, userId?: string): void {
  * Used at turn-end so the final state reaches the client without waiting.
  */
 export function flushRecompute(workDir: string, userId?: string): Promise<WorktreeDiffStats | null> {
-  const key = normalize(workDir);
+  const key = normalizeWorktreeDiffStatsCacheKey(workDir);
   const state = getState();
   const timer = state.pendingTimers.get(key);
   if (timer) {
@@ -264,5 +279,5 @@ export async function computeAndCache(
   workDir: string,
   userId: string,
 ): Promise<WorktreeDiffStats | null> {
-  return runCompute(normalize(workDir), [userId]);
+  return runCompute(normalizeWorktreeDiffStatsCacheKey(workDir), [userId]);
 }

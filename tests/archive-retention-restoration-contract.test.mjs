@@ -21,25 +21,28 @@ test('Worktree settings and Archive expose the shared retention controls', () =>
   assert.match(hook, /worktree-retention-confirm-dialog/);
 });
 
-test('settings API enforces confirmation and immediately prunes with the authenticated user', () => {
+test('settings API enforces confirmation and hands cleanup to the paced runner', () => {
   const route = read('src/app/api/settings/route.ts');
 
   assert.match(route, /requiresArchivedWorktreeRetentionConfirmation/);
   assert.match(route, /archived_worktree_retention_confirmation_required/);
   assert.match(route, /shouldPruneArchivedWorktreesForSettingsUpdate/);
-  assert.match(
-    route,
-    /pruneExpiredArchivedWorktrees\(settings\.archivedWorktreeRetentionDays, userId\)/,
-  );
+  assert.match(route, /configureArchivedWorktreeRetention/);
+  assert.match(route, /runImmediately: shouldPruneArchivedWorktreesForSettingsUpdate/);
+  assert.doesNotMatch(route, /await pruneExpiredArchivedWorktrees/);
 });
 
-test('startup retention uses the resolved user environment', () => {
+test('startup retention waits until the server is ready and runs one worktree per pass', () => {
   const server = read('server.ts');
+  const runner = read('src/lib/archive/archive-retention-runner.ts');
 
-  assert.match(
-    server,
-    /pruneExpiredArchivedWorktrees\(settings\.archivedWorktreeRetentionDays, userId\)/,
+  assert.doesNotMatch(server, /await pruneExpiredArchivedWorktrees/);
+  assert.ok(
+    server.indexOf('configureArchivedWorktreeRetention(startupRetentionPolicy)')
+      > server.indexOf('wsServer.start(server)'),
   );
+  assert.match(runner, /maxWorktreeAttempts: 1/);
+  assert.match(runner, /options\.runImmediately \? 0 : IDLE_PASS_DELAY_MS/);
 });
 
 test('retention controls are registered for privacy-safe click telemetry', () => {

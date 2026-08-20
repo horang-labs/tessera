@@ -1,40 +1,28 @@
-import {
-  computeAndCache,
-  getCachedDiffStats,
-  isDiffStatsStale,
-  scheduleRecompute,
-} from './worktree-diff-stats-cache';
+import { getCachedDiffStats } from './worktree-diff-stats-cache';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
 /**
- * Return cached diff stats for each unique workDir. For any workDir without a
- * cache entry, kick off a background compute so the client receives the update
- * via WebSocket push shortly. A cached-but-stale entry is returned as-is and
- * refreshed in the background, so a list load always re-arms counts that a
- * missed push signal left frozen. Never blocks the caller.
+ * Return cached diff stats for each unique workDir without causing filesystem
+ * or Git work. Project/session/task list endpoints call this during cold start
+ * with every row they loaded; treating a cache miss as an eager compute turns
+ * historical data into an unbounded process-spawn queue on Windows + WSL.
+ *
+ * Active runtimes, workspace invalidations, turn completion and an explicitly
+ * opened Git panel own recomputation. A passive list read must stay passive.
  */
-export function getCachedOrScheduleBulk(
+export function getCachedBulk(
   workDirs: Array<string | undefined>,
-  userId: string,
+  readCached: typeof getCachedDiffStats = getCachedDiffStats,
 ): Map<string, WorktreeDiffStats | null> {
   const result = new Map<string, WorktreeDiffStats | null>();
-  const scheduled = new Set<string>();
 
   for (const wd of workDirs) {
     if (!wd) continue;
-    if (result.has(wd) || scheduled.has(wd)) continue;
+    if (result.has(wd)) continue;
 
-    const cached = getCachedDiffStats(wd);
+    const cached = readCached(wd);
     if (cached !== undefined) {
       result.set(wd, cached);
-      if (isDiffStatsStale(wd)) {
-        // Debounced so a burst of list loads collapses into one git invocation.
-        scheduleRecompute(wd, userId);
-      }
-    } else {
-      scheduled.add(wd);
-      // fire-and-forget — broadcast listener will push to the user when ready
-      void computeAndCache(wd, userId);
     }
   }
 

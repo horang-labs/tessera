@@ -15,6 +15,8 @@ process.env.TESSERA_ELECTRON_RUNTIME = '1';
 process.env.PORT = '32124';
 
 test.after(async () => {
+  const { stopArchivedWorktreeRetention } = await import('../src/lib/archive/archive-retention-runner');
+  stopArchivedWorktreeRetention();
   if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
   else process.env.TESSERA_DATA_DIR = previousDataDir;
   if (previousElectronRuntime === undefined) delete process.env.TESSERA_ELECTRON_RUNTIME;
@@ -24,13 +26,14 @@ test.after(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-test('retention settings require confirmation before save and stay committed if cleanup fails', async () => {
+test('retention settings require confirmation and hand cleanup to the background runner', async () => {
   const { NextRequest } = await import('next/server');
   const { PUT } = await import('../src/app/api/settings/route');
   const { ensureAppSecret, APP_SECRET_HEADER } = await import('../src/lib/auth/app-secret');
   const { getElectronAuthUserId } = await import('../src/lib/electron-user');
   const { SettingsManager } = await import('../src/lib/settings/manager');
   const { normalizeUserSettings } = await import('../src/lib/settings/provider-defaults');
+  const { stopArchivedWorktreeRetention } = await import('../src/lib/archive/archive-retention-runner');
   const userId = await getElectronAuthUserId();
   const secret = await ensureAppSecret();
   const headers = {
@@ -54,9 +57,8 @@ test('retention settings require confirmation before save and stay committed if 
   assert.equal((await unconfirmed.json()).code, 'archived_worktree_retention_confirmation_required');
   assert.equal((await SettingsManager.load(userId)).autoDeleteArchivedWorktrees, false);
 
-  // The isolated test deliberately leaves the archive database uninitialized.
-  // Cleanup therefore fails after save, and the API must still report the
-  // already-committed settings as successful.
+  // Cleanup is paced in the background, so the already-committed settings
+  // response never waits for a physical Worktree removal.
   const confirmed = await PUT(new NextRequest('http://localhost:32124/api/settings', {
     method: 'PUT',
     headers,
@@ -65,6 +67,7 @@ test('retention settings require confirmation before save and stay committed if 
       confirmArchivedWorktreePrune: true,
     }),
   }));
+  stopArchivedWorktreeRetention();
   assert.equal(confirmed.status, 200);
   assert.equal((await SettingsManager.load(userId)).autoDeleteArchivedWorktrees, true);
 

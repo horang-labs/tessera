@@ -7,7 +7,7 @@ import {
   requiresArchivedWorktreeRetentionConfirmation,
   shouldPruneArchivedWorktreesForSettingsUpdate,
 } from '@/lib/settings/archived-worktree-retention';
-import { pruneExpiredArchivedWorktrees } from '@/lib/archive/archive-service';
+import { configureArchivedWorktreeRetention } from '@/lib/archive/archive-retention-runner';
 import { invalidateAgentEnvironmentCache } from '@/lib/cli/spawn-cli';
 import { invalidateCliStatusSnapshot } from '@/lib/cli/connection-checker';
 import { invalidateProviderSessionOptionsCache } from '@/lib/cli/provider-session-options';
@@ -134,15 +134,14 @@ export async function PUT(request: NextRequest) {
       // PTY 감지 캐시는 환경(native/wsl)별 PATH 세계라 환경 전환 시 재프로브.
       invalidateTerminalProviderDetection();
     }
-    if (shouldPruneArchivedWorktreesForSettingsUpdate(previousSettings, settings)) {
-      try {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, userId);
-      } catch (error) {
-        // The settings file is already committed. Keep the successful response
-        // aligned with persisted state and retry cleanup during a later startup.
-        logger.warn({ userId, error }, 'Archived worktree retention after settings update failed');
-      }
-    }
+    configureArchivedWorktreeRetention(
+      settings.autoDeleteArchivedWorktrees
+        ? { retentionDays: settings.archivedWorktreeRetentionDays, userId }
+        : null,
+      {
+        runImmediately: shouldPruneArchivedWorktreesForSettingsUpdate(previousSettings, settings),
+      },
+    );
     return NextResponse.json({ success: true, settings, machineSettings });
   } catch (error) {
     if (error instanceof InvalidAdvertisedAddressError) {
