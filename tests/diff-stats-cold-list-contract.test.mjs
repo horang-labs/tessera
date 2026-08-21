@@ -8,10 +8,11 @@ const listRoutes = [
   '../src/app/api/tasks/route.ts',
 ];
 
-test('cold list routes read diff cache without scheduling Git work', () => {
+test('list routes return cached diff stats and schedule missing rows progressively', () => {
   for (const relativePath of listRoutes) {
     const source = fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8');
-    assert.match(source, /getCachedBulk\(/, relativePath);
-    assert.doesNotMatch(source, /getCachedOrScheduleBulk|computeAndCache|scheduleRecompute/, relativePath);
+    assert.match(source, /getCachedOrScheduleBulk\(/, relativePath);
+    assert.match(source, /getCachedOrScheduleBulk\([\s\S]*?userId/, relativePath);
+    assert.doesNotMatch(source, /computeAndCache|scheduleRecompute/, relativePath);
   }
 });

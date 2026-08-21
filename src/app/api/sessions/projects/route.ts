@@ -14,7 +14,7 @@ import {
 } from '@/lib/projects/current-project';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
-import { getCachedBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -70,13 +70,14 @@ export async function GET(req: NextRequest) {
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
       }));
-      // Cold list reads must not probe every historical workDir. Active
-      // runtimes and explicit Git views populate this cache via push paths.
-      const diffStatsByWorkDir = getCachedBulk(
+      // Return cached counts now and let the single-worker queue fill missing
+      // sidebar badges progressively without blocking this list response.
+      const diffStatsByWorkDir = getCachedOrScheduleBulk(
         [
           ...mapped.map((s) => s.workDir ?? undefined),
           projectWorktree?.filesystemPath ?? undefined,
         ],
+        userId,
       );
       const sessions = mapped.map((s) => ({
         ...s,

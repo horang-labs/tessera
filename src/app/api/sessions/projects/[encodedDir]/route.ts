@@ -5,7 +5,7 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { validateEncodedPath } from '@/lib/validation/path';
 import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
-import { getCachedBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
@@ -82,10 +82,11 @@ export async function GET(
       lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
       ...(runtimeConfigs.get(row.id) ?? {}),
     }));
-    // A paginated list is a passive cache read. Runtime/file-watch/Git-panel
-    // paths populate stats for relevant sessions without probing every row.
-    const diffStatsByWorkDir = getCachedBulk(
+    // Cached counts render immediately; the single-worker queue refreshes each
+    // missing or stale row in this page and broadcasts it as it completes.
+    const diffStatsByWorkDir = getCachedOrScheduleBulk(
       mapped.map((s) => s.workDir ?? undefined),
+      userId,
     );
     const sessions = mapped.map((s) => ({
       ...s,

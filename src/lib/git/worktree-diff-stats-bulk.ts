@@ -1,29 +1,47 @@
-import { getCachedDiffStats } from './worktree-diff-stats-cache';
+import {
+  getCachedDiffStats,
+  isDiffStatsStale,
+  scheduleRecompute,
+} from './worktree-diff-stats-cache';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
+interface BulkDiffStatsDependencies {
+  readCached: typeof getCachedDiffStats;
+  isStale: typeof isDiffStatsStale;
+  schedule: typeof scheduleRecompute;
+}
+
+const defaultDependencies: BulkDiffStatsDependencies = {
+  readCached: getCachedDiffStats,
+  isStale: isDiffStatsStale,
+  schedule: scheduleRecompute,
+};
+
 /**
- * Return cached diff stats for each unique workDir without causing filesystem
- * or Git work. Project/session/task list endpoints call this during cold start
- * with every row they loaded; treating a cache miss as an eager compute turns
- * historical data into an unbounded process-spawn queue on Windows + WSL.
- *
- * Active runtimes, workspace invalidations, turn completion and an explicitly
- * opened Git panel own recomputation. A passive list read must stay passive.
+ * Return cached diff stats immediately, then enqueue every unique missing or
+ * stale workDir in list order. The shared cache owns debounce/deduplication and
+ * runs at most one Git computation at a time, so sidebar badges fill in
+ * progressively without list requests blocking on Windows + WSL process work.
  */
-export function getCachedBulk(
+export function getCachedOrScheduleBulk(
   workDirs: Array<string | undefined>,
-  readCached: typeof getCachedDiffStats = getCachedDiffStats,
+  userId: string,
+  dependencies: BulkDiffStatsDependencies = defaultDependencies,
 ): Map<string, WorktreeDiffStats | null> {
   const result = new Map<string, WorktreeDiffStats | null>();
+  const visited = new Set<string>();
 
   for (const wd of workDirs) {
     if (!wd) continue;
-    if (result.has(wd)) continue;
+    if (visited.has(wd)) continue;
+    visited.add(wd);
 
-    const cached = readCached(wd);
+    const cached = dependencies.readCached(wd);
     if (cached !== undefined) {
       result.set(wd, cached);
+      if (!dependencies.isStale(wd)) continue;
     }
+    dependencies.schedule(wd, userId);
   }
 
   return result;
