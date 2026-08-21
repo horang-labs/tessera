@@ -76,23 +76,28 @@ export async function GET(
       ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor })
       : getProjectViewSessions(encodedDir, { limit, cursor });
 
+    const project = dbProjects.getProject(encodedDir);
+    const projectWorktree = dbProjects.getProjectWorktree(encodedDir);
+    const projectDiffWorkDir = projectWorktree?.filesystemPath ?? project?.decoded_path;
+
     const mapped = result.sessions.map((row) => ({
       ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
       projectDir: encodedDir,
       lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
       ...(runtimeConfigs.get(row.id) ?? {}),
     }));
-    // Cached counts render immediately; the single-worker queue refreshes each
-    // missing or stale row in this page and broadcasts it as it completes.
+    // Direct chats share one Project checkout. A focused page schedules that
+    // checkout once, regardless of how many Session rows the page contains.
     const diffStatsByWorkDir = getCachedOrScheduleBulk(
-      mapped.map((s) => s.workDir ?? undefined),
+      [projectDiffWorkDir],
       userId,
     );
+    const projectDiffStats = projectDiffWorkDir
+      ? diffStatsByWorkDir.get(projectDiffWorkDir) ?? undefined
+      : undefined;
     const sessions = mapped.map((s) => ({
       ...s,
-      diffStats: s.workDir
-        ? diffStatsByWorkDir.get(s.workDir) ?? undefined
-        : undefined,
+      diffStats: projectDiffStats,
     }));
 
     const hasMore = result.nextCursor !== null;

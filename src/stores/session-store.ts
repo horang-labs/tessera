@@ -1698,14 +1698,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           projectChanged = true;
           return { ...session, diffStats };
         });
-        const nextProjectWorktree = workDir && project.projectWorktree?.path === workDir
-          && project.projectWorktree.diffStats !== diffStats
-          ? { ...project.projectWorktree, diffStats }
-          : project.projectWorktree;
-        if (nextProjectWorktree !== project.projectWorktree) projectChanged = true;
+        const projectWorktree = project.projectWorktree;
+        const isProjectWorktreeTarget = Boolean(
+          workDir && projectWorktree?.path === workDir,
+        );
+        const nextProjectWorktree = isProjectWorktreeTarget
+          && projectWorktree
+          && projectWorktree.diffStats !== diffStats
+          ? { ...projectWorktree, diffStats }
+          : projectWorktree;
+        // A Project Worktree owns all direct chat badges. Legacy Sessions may
+        // spell the same checkout as /home/... while the canonical server path
+        // is UNC, so a root update must not depend on per-Session path equality.
+        const projectWorktreeChanged = nextProjectWorktree !== projectWorktree;
+        const projectSessions = isProjectWorktreeTarget
+          ? nextSessions.map((session) => session.taskId || session.diffStats === diffStats
+            ? session
+            : { ...session, diffStats })
+          : nextSessions;
+        if (projectWorktreeChanged || projectSessions !== nextSessions) projectChanged = true;
         if (!projectChanged) return project;
         projectsChanged = true;
-        return { ...project, sessions: nextSessions, projectWorktree: nextProjectWorktree };
+        return { ...project, sessions: projectSessions, projectWorktree: nextProjectWorktree };
       });
       const retainedSessions = mapRetainedSessions(
         state.retainedSessions,

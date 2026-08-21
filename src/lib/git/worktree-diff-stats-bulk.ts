@@ -18,6 +18,28 @@ const defaultDependencies: BulkDiffStatsDependencies = {
 };
 
 /**
+ * Read cached stats for each unique checkout without creating background work.
+ * Cold, cross-project list endpoints use this so opening Tessera cannot turn
+ * every persisted row into a Git/WSL job.
+ */
+export function getCachedBulk(
+  workDirs: Array<string | undefined>,
+  readCached: typeof getCachedDiffStats = getCachedDiffStats,
+): Map<string, WorktreeDiffStats | null> {
+  const result = new Map<string, WorktreeDiffStats | null>();
+  const visited = new Set<string>();
+
+  for (const workDir of workDirs) {
+    if (!workDir || visited.has(workDir)) continue;
+    visited.add(workDir);
+    const cached = readCached(workDir);
+    if (cached !== undefined) result.set(workDir, cached);
+  }
+
+  return result;
+}
+
+/**
  * Return cached diff stats immediately, then enqueue every unique missing or
  * stale workDir in list order. The shared cache owns debounce/deduplication and
  * runs at most one Git computation at a time, so sidebar badges fill in

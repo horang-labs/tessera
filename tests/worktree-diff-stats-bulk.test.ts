@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedBulk, getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 
 const cachedStats: WorktreeDiffStats = {
@@ -11,6 +11,20 @@ const cachedStats: WorktreeDiffStats = {
   deletedFiles: 0,
   computedAt: '2026-08-20T00:00:00.000Z',
 };
+
+test('cold bulk reads deduplicate checkout paths without scheduling work', () => {
+  const reads: string[] = [];
+  const result = getCachedBulk(
+    ['/repo/project', '/repo/project', undefined],
+    (workDir) => {
+      reads.push(workDir);
+      return cachedStats;
+    },
+  );
+
+  assert.deepEqual(reads, ['/repo/project']);
+  assert.deepEqual(Array.from(result.entries()), [['/repo/project', cachedStats]]);
+});
 
 test('bulk list reads return cached values and schedule every unique miss in list order', () => {
   const reads: string[] = [];

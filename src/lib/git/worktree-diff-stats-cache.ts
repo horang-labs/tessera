@@ -30,7 +30,9 @@ interface CacheState {
   entries: Map<string, CacheEntry>;
   pendingTimers: Map<string, NodeJS.Timeout>;
   pendingUserIds: Map<string, Set<string>>;
+  pendingBroadcastWorkDirs: Map<string, string>;
   rerunUserIds: Map<string, Set<string>>;
+  rerunBroadcastWorkDirs: Map<string, string>;
   inFlight: Map<string, Promise<WorktreeDiffStats | null>>;
   activeComputeCount: number;
   queuedComputes: Array<() => Promise<void>>;
@@ -46,7 +48,9 @@ function getState(): CacheState {
       entries: new Map(),
       pendingTimers: new Map(),
       pendingUserIds: new Map(),
+      pendingBroadcastWorkDirs: new Map(),
       rerunUserIds: new Map(),
+      rerunBroadcastWorkDirs: new Map(),
       inFlight: new Map(),
       activeComputeCount: 0,
       queuedComputes: [],
@@ -56,6 +60,8 @@ function getState(): CacheState {
   const state = g[GLOBAL_KEY]!;
   // Keep Next.js hot-reload state created by an older module shape usable.
   state.rerunUserIds ??= new Map();
+  state.pendingBroadcastWorkDirs ??= new Map();
+  state.rerunBroadcastWorkDirs ??= new Map();
   state.activeComputeCount ??= 0;
   state.queuedComputes ??= [];
   return state;
@@ -157,7 +163,19 @@ function notifyListeners(
   }
 }
 
-async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeDiffStats | null> {
+export function preferWorktreeDiffStatsBroadcastPath(
+  current: string | undefined,
+  candidate: string,
+): string {
+  if (isWindowsHostedWslFilesystemPath(candidate)) return candidate;
+  return current ?? candidate;
+}
+
+async function runCompute(
+  workDir: string,
+  userIds: string[],
+  broadcastWorkDir: string,
+): Promise<WorktreeDiffStats | null> {
   const state = getState();
   const existing = state.inFlight.get(workDir);
   if (existing) {
@@ -167,12 +185,20 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
       state.rerunUserIds.set(workDir, queuedUserIds);
     }
     for (const userId of userIds) queuedUserIds.add(userId);
+    state.rerunBroadcastWorkDirs.set(
+      workDir,
+      preferWorktreeDiffStatsBroadcastPath(
+        state.rerunBroadcastWorkDirs.get(workDir),
+        broadcastWorkDir,
+      ),
+    );
     return existing;
   }
 
   const promise = (async () => {
     try {
       let nextUserIds = userIds;
+      let nextBroadcastWorkDir = broadcastWorkDir;
       let stats: WorktreeDiffStats | null = null;
 
       // A filesystem event or Stop flush can arrive while git is still being
@@ -191,15 +217,19 @@ async function runCompute(workDir: string, userIds: string[]): Promise<WorktreeD
         });
         const previousStats = state.entries.get(workDir)?.stats;
         state.entries.set(workDir, { stats, computedAt: Date.now() });
-        notifyListeners(workDir, stats, nextUserIds, previousStats);
+        notifyListeners(nextBroadcastWorkDir, stats, nextUserIds, previousStats);
 
         const queuedUserIds = state.rerunUserIds.get(workDir);
         if (!queuedUserIds) return stats;
         state.rerunUserIds.delete(workDir);
         nextUserIds = Array.from(queuedUserIds);
+        nextBroadcastWorkDir = state.rerunBroadcastWorkDirs.get(workDir)
+          ?? nextBroadcastWorkDir;
+        state.rerunBroadcastWorkDirs.delete(workDir);
       }
     } finally {
       state.rerunUserIds.delete(workDir);
+      state.rerunBroadcastWorkDirs.delete(workDir);
       state.inFlight.delete(workDir);
     }
   })();
@@ -225,6 +255,13 @@ export function scheduleRecompute(workDir: string, userId?: string): void {
     }
     set.add(userId);
   }
+  state.pendingBroadcastWorkDirs.set(
+    key,
+    preferWorktreeDiffStatsBroadcastPath(
+      state.pendingBroadcastWorkDirs.get(key),
+      workDir,
+    ),
+  );
 
   const existing = state.pendingTimers.get(key);
   if (existing) clearTimeout(existing);
@@ -233,7 +270,9 @@ export function scheduleRecompute(workDir: string, userId?: string): void {
     state.pendingTimers.delete(key);
     const userIds = Array.from(state.pendingUserIds.get(key) ?? []);
     state.pendingUserIds.delete(key);
-    void runCompute(key, userIds);
+    const broadcastWorkDir = state.pendingBroadcastWorkDirs.get(key) ?? workDir;
+    state.pendingBroadcastWorkDirs.delete(key);
+    void runCompute(key, userIds, broadcastWorkDir);
   }, DEBOUNCE_MS);
   state.pendingTimers.set(key, timer);
 }
@@ -252,9 +291,15 @@ export function flushRecompute(workDir: string, userId?: string): Promise<Worktr
   }
   const accumulated = state.pendingUserIds.get(key);
   state.pendingUserIds.delete(key);
+  const pendingBroadcastWorkDir = state.pendingBroadcastWorkDirs.get(key);
+  state.pendingBroadcastWorkDirs.delete(key);
   const userIds = accumulated ? Array.from(accumulated) : [];
   if (userId && !userIds.includes(userId)) userIds.push(userId);
-  return runCompute(key, userIds);
+  return runCompute(
+    key,
+    userIds,
+    preferWorktreeDiffStatsBroadcastPath(pendingBroadcastWorkDir, workDir),
+  );
 }
 
 function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {
@@ -279,5 +324,5 @@ export async function computeAndCache(
   workDir: string,
   userId: string,
 ): Promise<WorktreeDiffStats | null> {
-  return runCompute(normalizeWorktreeDiffStatsCacheKey(workDir), [userId]);
+  return runCompute(normalizeWorktreeDiffStatsCacheKey(workDir), [userId], workDir);
 }
