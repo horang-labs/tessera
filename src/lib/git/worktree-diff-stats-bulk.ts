@@ -4,6 +4,7 @@ import {
   scheduleRecompute,
 } from './worktree-diff-stats-cache';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
+import { crossEnvironmentFilesystemPathKey } from '@/lib/filesystem/path-equivalence';
 
 interface BulkDiffStatsDependencies {
   readCached: typeof getCachedDiffStats;
@@ -30,8 +31,10 @@ export function getCachedBulk(
   const visited = new Set<string>();
 
   for (const workDir of workDirs) {
-    if (!workDir || visited.has(workDir)) continue;
-    visited.add(workDir);
+    if (!workDir) continue;
+    const key = crossEnvironmentFilesystemPathKey(workDir);
+    if (visited.has(key)) continue;
+    visited.add(key);
     const cached = readCached(workDir);
     if (cached !== undefined) result.set(workDir, cached);
   }
@@ -55,8 +58,9 @@ export function getCachedOrScheduleBulk(
 
   for (const wd of workDirs) {
     if (!wd) continue;
-    if (visited.has(wd)) continue;
-    visited.add(wd);
+    const key = crossEnvironmentFilesystemPathKey(wd);
+    if (visited.has(key)) continue;
+    visited.add(key);
 
     const cached = dependencies.readCached(wd);
     if (cached !== undefined) {

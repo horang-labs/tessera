@@ -9,6 +9,7 @@ import {
   executeGitAction,
   GitActionRejection,
   promoteHookRejection,
+  resolveGitActionFilePath,
   type GitActionTarget,
 } from '@/lib/git/git-actions';
 import { GitCommandError } from '@/lib/worktrees/git-runner';
@@ -23,6 +24,25 @@ const execFileAsync = promisify(execFile);
  */
 const LOCAL_ENVIRONMENT: AgentEnvironment = 'wsl';
 const SKIP_ON_WINDOWS = process.platform === 'win32';
+
+test('untracked revert resolves a CLI-reported path for the host filesystem', async () => {
+  const reportedWorkDir = '/home/work/Source/tessera-dev';
+  const expectedHostRoot = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
+  const expectedHostPath = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev\\fresh.txt';
+  const inputs: string[] = [];
+
+  const resolved = await resolveGitActionFilePath(
+    reportedWorkDir,
+    'fresh.txt',
+    async (candidate) => {
+      inputs.push(candidate);
+      return expectedHostRoot;
+    },
+  );
+
+  assert.deepEqual(inputs, [reportedWorkDir]);
+  assert.equal(resolved, expectedHostPath);
+});
 
 async function withTempRepo(
   run: (target: GitActionTarget, repoDir: string) => Promise<void>,

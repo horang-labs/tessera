@@ -34,6 +34,7 @@ import {
   type SessionRuntimeLiveness,
 } from '@/lib/session/session-runtime-liveness';
 import { resolveStoredSessionAppearance } from '@/lib/projects/stored-session-resolution';
+import { areCrossEnvironmentFilesystemPathsEquivalent } from '@/lib/filesystem/path-equivalence';
 
 const ACTIVE_SESSION_STORAGE_KEY = 'tessera:active-session';
 
@@ -1700,7 +1701,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         });
         const projectWorktree = project.projectWorktree;
         const isProjectWorktreeTarget = Boolean(
-          workDir && projectWorktree?.path === workDir,
+          workDir
+          && projectWorktree
+          && areCrossEnvironmentFilesystemPathsEquivalent(projectWorktree.path, workDir),
         );
         const nextProjectWorktree = isProjectWorktreeTarget
           && projectWorktree

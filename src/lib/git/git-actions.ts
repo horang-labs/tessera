@@ -28,6 +28,10 @@ import {
 } from "@/lib/github/gh-cli";
 import { normalizeGithubOwnerRepo } from "@/lib/github/pr-status-provider";
 import logger from "@/lib/logger";
+import {
+  getFilesystemPathModule,
+  resolvePathForHostFilesystem,
+} from "@/lib/filesystem/host-path";
 import type { AgentEnvironment } from "@/lib/settings/types";
 import type {
   GitActionFailure,
@@ -38,7 +42,6 @@ import type {
 } from "@/types/git";
 import { detectGitConflictOperation } from "./git-conflict-state";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import { parseGitStatus } from "./git-status";
 import { canRevertFile } from "./revert-eligibility";
 import {
@@ -180,6 +183,19 @@ export async function executeGitAction(
   return runCommit(target, action, runGit);
 }
 
+/** Resolve a repository-relative Git path into a path this Node process can open. */
+export async function resolveGitActionFilePath(
+  workDir: string,
+  relativePath: string,
+  resolveHostPath: (filesystemPath: string) => Promise<string> = resolvePathForHostFilesystem,
+): Promise<string> {
+  // Translate the root before joining. On Windows, node:path would otherwise
+  // turn a CLI-reported `/home/...` root into a drive-rooted `C:\\home\\...`
+  // path before the bridge resolver has a chance to see the POSIX spelling.
+  const hostWorkDir = await resolveHostPath(workDir);
+  return getFilesystemPathModule(hostWorkDir).join(hostWorkDir, relativePath);
+}
+
 async function runRevert(
   target: GitActionTarget,
   action: GitRevertAction,
@@ -220,7 +236,7 @@ async function runRevert(
       if (file.state === "untracked") {
         // No HEAD version to restore to; orca discards these by deleting.
         // `git rm` cannot remove an untracked path, so delete it directly.
-        await rm(join(target.workDir, filePath));
+        await rm(await resolveGitActionFilePath(target.workDir, filePath));
       } else {
         await runGit(["restore", "--source=HEAD", "--worktree", "--", filePath], {
           cwd: target.workDir,

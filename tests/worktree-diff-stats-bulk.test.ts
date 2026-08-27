@@ -26,6 +26,19 @@ test('cold bulk reads deduplicate checkout paths without scheduling work', () =>
   assert.deepEqual(Array.from(result.entries()), [['/repo/project', cachedStats]]);
 });
 
+test('cold bulk reads deduplicate WSL display and UNC spellings', () => {
+  const reads: string[] = [];
+  const posix = '/home/work/Source/tessera-dev';
+  const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
+
+  getCachedBulk([posix, unc], (workDir) => {
+    reads.push(workDir);
+    return cachedStats;
+  });
+
+  assert.deepEqual(reads, [posix]);
+});
+
 test('bulk list reads return cached values and schedule every unique miss in list order', () => {
   const reads: string[] = [];
   const scheduled: Array<{ workDir: string; userId: string }> = [];
@@ -63,4 +76,18 @@ test('bulk list reads keep stale values visible while scheduling one refresh', (
 
   assert.deepEqual(Array.from(result.entries()), [['/repo/a', cachedStats]]);
   assert.deepEqual(scheduled, ['/repo/a']);
+});
+
+test('bulk list schedules one refresh for WSL display and UNC spellings', () => {
+  const scheduled: string[] = [];
+  const posix = '/home/work/Source/tessera-dev';
+  const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
+
+  getCachedOrScheduleBulk([posix, unc], 'user-1', {
+    readCached: () => undefined,
+    isStale: () => false,
+    schedule: (workDir) => scheduled.push(workDir),
+  });
+
+  assert.deepEqual(scheduled, [posix]);
 });
