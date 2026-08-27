@@ -19,6 +19,7 @@ import {
   resolveEffectiveWorktreeCheckout,
 } from './worktree-identity';
 import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
+import { areCrossEnvironmentFilesystemPathsEquivalent } from '@/lib/filesystem/path-equivalence';
 
 export interface TaskRow {
   id: string;
@@ -865,13 +866,27 @@ export function getTaskBySessionId(
  * the directory names it unambiguously.
  */
 export function findTaskIdForWorktree(workDir: string): string | null {
-  const row = getDb().prepare(`
+  const db = getDb();
+  const row = db.prepare(`
     SELECT tasks.id AS task_id
     FROM tasks
     WHERE ${PARENT_FIRST_WORKTREE_PATH_SQL} = ?
     LIMIT 1
   `).get(workDir) as { task_id: string } | undefined;
-  return row?.task_id ?? null;
+  if (row) return row.task_id;
+
+  // A Windows server stores canonical Worktree roots as UNC while an existing
+  // WSL Session may still report `/home/...`. Exact SQL remains the hot path;
+  // the fallback only runs when the spellings differ.
+  const candidates = db.prepare(`
+    SELECT tasks.id AS task_id, ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
+    FROM tasks
+    WHERE ${PARENT_FIRST_WORKTREE_PATH_SQL} IS NOT NULL
+    ORDER BY tasks.created_at, tasks.id
+  `).all() as Array<{ task_id: string; work_dir: string }>;
+  return candidates.find((candidate) =>
+    areCrossEnvironmentFilesystemPathsEquivalent(candidate.work_dir, workDir)
+  )?.task_id ?? null;
 }
 
 /**
