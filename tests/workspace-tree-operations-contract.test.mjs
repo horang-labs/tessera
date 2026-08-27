@@ -6,6 +6,7 @@ const read = (relativePath) =>
   fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 
 const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
+const fileViewStoreSource = read('../src/stores/workspace-file-view-store.ts');
 const deleteDialogSource = read('../src/components/workspace/workspace-delete-dialog.tsx');
 const contextMenuSource = read('../src/components/workspace/workspace-file-context-menu.tsx');
 const inlineRowSource = read('../src/components/workspace/workspace-inline-input-row.tsx');
@@ -20,6 +21,14 @@ const worktreeDirectoryRouteSource = read('../src/app/api/worktrees/[id]/directo
 const filesRouteSource = read('../src/app/api/sessions/[id]/files/route.ts');
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const panelContainerSource = read('../src/components/panel/panel-container.tsx');
+
+test('folder expansion is restored per workspace after the file panel remounts', () => {
+  assert.match(filePanelSource, /selectExpandedWorkspacePaths\(targetKey\)/);
+  assert.match(filePanelSource, /toggleStoredPath\(targetKey, path\)/);
+  assert.doesNotMatch(filePanelSource, /useState<Set<string>>/);
+  assert.match(fileViewStoreSource, /expandedPathsByWorkspace/);
+  assert.match(fileViewStoreSource, /createUiJsonStorage<PersistedWorkspaceFileViewState>/);
+});
 
 test('every row action lives on the right-click menu, not on a hover strip', () => {
   // A file explorer is a list of names. Four icons appearing on whichever row
