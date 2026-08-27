@@ -34,7 +34,10 @@ import {
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
-import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
+import {
+  selectExpandedWorkspacePaths,
+  useWorkspaceFileViewStore,
+} from "@/stores/workspace-file-view-store";
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import {
   openWorkspaceTargetFileTab,
@@ -227,10 +230,15 @@ export function WorkspaceFilePanel({
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<WorkspaceDeleteRequest | null>(null);
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
   const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
+  const storedExpandedPaths = useWorkspaceFileViewStore(
+    selectExpandedWorkspacePaths(targetKey),
+  );
+  const expandStoredPath = useWorkspaceFileViewStore((state) => state.expandPath);
+  const toggleStoredPath = useWorkspaceFileViewStore((state) => state.toggleExpandedPath);
+  const expandedPaths = useMemo(() => new Set(storedExpandedPaths), [storedExpandedPaths]);
   // The sessions/[id]/files route scopes Project View references by projectId;
   // resolve it from canonical workspace state so linked Task-only Sessions can
   // list files too.
@@ -272,18 +280,9 @@ export function WorkspaceFilePanel({
   }, [loadFiles, peekTarget, target?.id, target?.kind, targetKey]);
 
   const expandPath = useCallback((path: string) => {
-    if (!path) return;
-    setExpandedPaths((current) => {
-      if (current.has(path)) return current;
-      const next = new Set(current);
-      let walked = "";
-      for (const part of path.split("/")) {
-        walked = walked ? `${walked}/${part}` : part;
-        next.add(walked);
-      }
-      return next;
-    });
-  }, []);
+    if (!targetKey) return;
+    expandStoredPath(targetKey, path);
+  }, [expandStoredPath, targetKey]);
 
   const inlineInput = useWorkspaceInlineInput({
     onCreateFile: createFile,
@@ -474,15 +473,8 @@ export function WorkspaceFilePanel({
   }
 
   function toggleDirectory(path: string) {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
+    if (!targetKey) return;
+    toggleStoredPath(targetKey, path);
   }
 
   /**
