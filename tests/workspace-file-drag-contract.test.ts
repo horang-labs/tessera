@@ -12,6 +12,7 @@ import {
   setWorkspaceFileDragData,
 } from '../src/lib/dnd/panel-session-drag';
 import {
+  PATH_INSERT_DRAG_MIME,
   SESSION_DRAG_MIME,
   WORKSPACE_FILE_DRAG_MIME,
 } from '../src/types/panel';
@@ -95,6 +96,17 @@ test('path insertion drags reject empty and NUL-containing paths', () => {
   const transfer = new FakeDataTransfer();
   assert.equal(setPathInsertDragData(transfer, ['', '/tmp/bad\0name.png']), false);
   assert.equal(hasPathInsertDragData(transfer), false);
+});
+
+test('path insertion falls back to text/plain when Chromium strips the custom MIME value', () => {
+  const transfer = new FakeDataTransfer();
+  transfer.setData('text/plain', '/home/work/generated image.png');
+
+  Object.defineProperty(transfer, 'types', {
+    get: () => [PATH_INSERT_DRAG_MIME, 'text/plain'],
+  });
+
+  assert.deepEqual(getInternalPathDropPaths(transfer), ['/home/work/generated image.png']);
 });
 
 test('workspace file drag parser rejects malformed payloads', () => {
