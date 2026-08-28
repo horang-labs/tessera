@@ -84,7 +84,16 @@ export function isPathInsertOnlyDragData(dataTransfer: Pick<DataTransfer, 'types
 export function getInternalPathDropPaths(
   dataTransfer: Pick<DataTransfer, 'getData' | 'types'>,
 ): string[] {
-  if (hasPathInsertDragData(dataTransfer)) return getPathInsertDragPaths(dataTransfer);
+  if (hasPathInsertDragData(dataTransfer)) {
+    const paths = getPathInsertDragPaths(dataTransfer);
+    if (paths.length > 0) return paths;
+
+    // Chromium can retain a custom MIME type while dropping its value across
+    // a renderer boundary. text/plain is intentionally written alongside it.
+    return dataTransfer.getData('text/plain')
+      .split(/\r?\n/)
+      .filter((path) => path.length > 0 && !path.includes('\0'));
+  }
   const workspacePath = getWorkspaceFileDragAbsolutePath(dataTransfer);
   return workspacePath ? [workspacePath] : [];
 }
