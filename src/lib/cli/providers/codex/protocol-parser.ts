@@ -31,7 +31,7 @@ import type { ParsedMessage } from '../types';
 import { CODEX_THREAD_ID_RE } from '../../../validation/path';
 import logger from '../../../logger';
 import { inferToolCallKindFromToolName, type ToolCallKind } from '@/types/tool-call-kind';
-import type { CommandExecutionToolResult } from '@/types/tool-result';
+import type { CommandExecutionToolResult, FileReadImageToolResult } from '@/types/tool-result';
 import { buildImageToolResult, extractImageToolResult, isImagePath } from '@/lib/tool-results/tool-image';
 import type { AskUserQuestionItem, AskUserQuestionOption } from '@/types/cli-jsonl-schemas';
 import { buildCodexRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
@@ -2055,7 +2055,23 @@ export class CodexProtocolParser {
   ): ParsedMessage {
     const itemId = String(item.id ?? '');
     const { toolName, toolParams } = this.buildGenericCodexItemMetadata(item);
-    const output = status === 'running' ? undefined : this.buildGenericCodexItemOutput(item);
+    // Image generation results can be many megabytes of base64. Keep only its
+    // metadata in chat history; the tracker serves `savedPath` lazily.
+    const isImageGeneration = item.type === 'imageGeneration';
+    const output = status === 'running' || isImageGeneration
+      ? undefined
+      : this.buildGenericCodexItemOutput(item);
+    const generatedImageResult: FileReadImageToolResult | undefined = isImageGeneration
+      && status === 'completed'
+      && typeof item.result === 'string'
+      && item.result.length > 0
+      ? {
+          kind: 'file_read',
+          contentType: 'image',
+          base64: item.result,
+          mimeType: 'image/png',
+        }
+      : undefined;
 
     // `view_image` (imageView) injects a local file into context with no image
     // bytes in the result — render it inline by serving the file at `path`.
@@ -2085,6 +2101,7 @@ export class CodexProtocolParser {
         output: status === 'error' ? undefined : output,
         error: status === 'error' ? output || `${toolName} failed` : undefined,
         ...(imageToolUseResult !== undefined ? { toolUseResult: imageToolUseResult } : {}),
+        ...(generatedImageResult !== undefined ? { toolUseResult: generatedImageResult } : {}),
         timestamp,
       },
       sideEffect: addPending

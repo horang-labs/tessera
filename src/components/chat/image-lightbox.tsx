@@ -1,9 +1,10 @@
 'use client';
 
-import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Minus, Plus, RotateCcw } from 'lucide-react';
 import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
@@ -17,6 +18,7 @@ export interface ImageLightboxProps {
 
 export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   const { t } = useI18n();
+  const [zoom, setZoom] = useState(1);
   const electronPlatform = useElectronPlatform();
   // On Windows the window controls are a native titleBarOverlay the page can
   // never paint above, so a close button in the top-right corner sits *under*
@@ -43,6 +45,15 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
     onClose();
   }, [onClose]);
 
+  const zoomBy = useCallback((amount: number) => {
+    setZoom((current) => Math.min(4, Math.max(0.5, current + amount)));
+  }, []);
+
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    zoomBy(event.deltaY < 0 ? 0.25 : -0.25);
+  }, [zoomBy]);
+
   if (typeof document === 'undefined') {
     return null;
   }
@@ -52,6 +63,7 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       {...telemetryClickAttributes('message.image.close', 'message')}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
       onClick={handleOverlayClick}
+      onWheel={handleWheel}
       role="dialog"
       aria-modal="true"
       aria-label={resolvedAlt}
@@ -77,9 +89,49 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       {/* eslint-disable-next-line @next/next/no-img-element -- dynamic local image, dimensions unknown */}
       <img
         src={src}
-        alt={resolvedAlt}
-        className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+        alt=""
+        className="max-h-[82vh] max-w-[90vw] rounded-lg object-contain shadow-2xl transition-transform duration-150"
+        style={{ transform: `scale(${zoom})` }}
       />
+      <div
+        {...telemetryIgnoreAttributes('event_boundary')}
+        className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-black/70 p-1 text-white shadow-xl backdrop-blur"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          {...telemetryClickAttributes('message.image.zoom_out', 'message')}
+          type="button"
+          onClick={() => zoomBy(-0.25)}
+          disabled={zoom <= 0.5}
+          className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-35"
+          aria-label={t('chat.imageZoomOut')}
+          title={t('chat.imageZoomOut')}
+        >
+          <Minus className="h-4 w-4" />
+        </button>
+        <span className="w-12 text-center text-xs tabular-nums">{Math.round(zoom * 100)}%</span>
+        <button
+          {...telemetryClickAttributes('message.image.zoom_in', 'message')}
+          type="button"
+          onClick={() => zoomBy(0.25)}
+          disabled={zoom >= 4}
+          className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-35"
+          aria-label={t('chat.imageZoomIn')}
+          title={t('chat.imageZoomIn')}
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+        <button
+          {...telemetryClickAttributes('message.image.zoom_reset', 'message')}
+          type="button"
+          onClick={() => setZoom(1)}
+          className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15"
+          aria-label={t('chat.imageZoomReset')}
+          title={t('chat.imageZoomReset')}
+        >
+          <RotateCcw className="h-4 w-4" />
+        </button>
+      </div>
     </div>,
     document.body,
   );

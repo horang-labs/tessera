@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  getInternalPathDropPaths,
+  getPathInsertDragPaths,
   getWorkspaceFileDragPath,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
   isSessionReferenceDragData,
   parseWorkspaceFileDragData,
+  setPathInsertDragData,
   setWorkspaceFileDragData,
 } from '../src/lib/dnd/panel-session-drag';
 import {
@@ -73,6 +77,24 @@ test('workspace file drags preserve the host absolute path when supplied', () =>
     parseWorkspaceFileDragData(transfer)?.absolutePath,
     '/workspace/docs/readme.md',
   );
+});
+
+test('path insertion drags carry agent-readable paths without a panel session payload', () => {
+  const transfer = new FakeDataTransfer();
+  assert.equal(setPathInsertDragData(transfer, ['/home/work/generated image.png']), true);
+
+  assert.equal(hasPathInsertDragData(transfer), true);
+  assert.deepEqual(getPathInsertDragPaths(transfer), ['/home/work/generated image.png']);
+  assert.deepEqual(getInternalPathDropPaths(transfer), ['/home/work/generated image.png']);
+  assert.equal(transfer.getData(SESSION_DRAG_MIME), '');
+  assert.equal(transfer.getData('text/plain'), '/home/work/generated image.png');
+  assert.equal(transfer.effectAllowed, 'copyMove');
+});
+
+test('path insertion drags reject empty and NUL-containing paths', () => {
+  const transfer = new FakeDataTransfer();
+  assert.equal(setPathInsertDragData(transfer, ['', '/tmp/bad\0name.png']), false);
+  assert.equal(hasPathInsertDragData(transfer), false);
 });
 
 test('workspace file drag parser rejects malformed payloads', () => {

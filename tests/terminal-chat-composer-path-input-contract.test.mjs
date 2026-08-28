@@ -8,9 +8,12 @@ const composerSource = fs.readFileSync(
 );
 
 test('terminal Chat View accepts every path drop supported by the direct PTY', () => {
-  assert.match(composerSource, /isNativeFileDrag\(dataTransfer\) \|\| hasWorkspaceFileDragData\(dataTransfer\)/);
+  assert.match(
+    composerSource,
+    /isNativeFileDrag\(dataTransfer\)[\s\S]*hasWorkspaceFileDragData\(dataTransfer\)[\s\S]*hasPathInsertDragData\(dataTransfer\)/,
+  );
   assert.match(composerSource, /getNativeFileDropAbsolutePaths\(event\.dataTransfer\)/);
-  assert.match(composerSource, /getWorkspaceFileDragAbsolutePath\(event\.dataTransfer\)/);
+  assert.match(composerSource, /getInternalPathDropPaths\(event\.dataTransfer\)/);
   assert.match(composerSource, /onDrop=\{handleDrop\}/);
   assert.match(composerSource, /insertTerminalChatPathsAtCursor\(currentValue, cursorPos, paths\)/);
 });
