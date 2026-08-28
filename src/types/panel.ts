@@ -111,6 +111,9 @@ export const SESSION_DRAG_MIME = 'application/x-session-drag' as const;
 // 워크스페이스 파일 드래그 MIME 타입 (composer 파일 참조 삽입용)
 export const WORKSPACE_FILE_DRAG_MIME = 'application/x-workspace-file-drag' as const;
 
+// 파일 뷰어 전환 없이 PTY/PTY Chat View에 경로만 삽입하는 드래그 MIME 타입
+export const PATH_INSERT_DRAG_MIME = 'application/x-tessera-path-insert-drag' as const;
+
 // 패널 헤더 드래그 MIME 타입 (개별 패널 세션 이동/새 탭 생성용)
 export const PANEL_SESSION_DRAG_MIME = 'application/x-panel-session-drag' as const;
 

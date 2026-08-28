@@ -663,6 +663,9 @@ export interface I18nMessages {
     viewAsChat: string;
     viewAsTerminal: string;
     imageOriginalView: string;
+    imageZoomIn: string;
+    imageZoomOut: string;
+    imageZoomReset: string;
     generateTitle: string;
     generatingTitle: string;
     showOriginal: string;
@@ -1083,6 +1086,7 @@ export interface I18nMessages {
       files: string;
       scripts: string;
       context: string;
+      images: string;
     };
     empty: {
       noWorktreeTitle: string;
@@ -1260,6 +1264,38 @@ export interface I18nMessages {
       stdoutLabel: string;
       noOutput: string;
     };
+  };
+  imagePanel: {
+    selectSession: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    empty: string;
+    generation: string;
+    inputs: string;
+    recentImagesCount: string;
+    inputNumber: string;
+    openInput: string;
+    openResult: string;
+    showMore: string;
+    showLess: string;
+    copyPrompt: string;
+    promptCopied: string;
+    copyPromptFailed: string;
+    source: {
+      conversation: string;
+      generated: string;
+      file: string;
+      'explicit-path': string;
+    };
+    unresolved: string;
+    prompt: string;
+    revised: string;
+    codexPrompt: string;
+    showCodexPrompt: string;
+    hideCodexPrompt: string;
+    result: string;
+    status: { running: string; completed: string; error: string };
   };
   memoryPanel: {
     sections: {

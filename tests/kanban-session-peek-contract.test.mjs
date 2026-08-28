@@ -136,7 +136,8 @@ test('PTY sessions use retained Peek ownership without pinning or killing a tab 
 test('PTY Peek accepts every prompt-input drop supported by list-mode terminals', () => {
   assert.match(chatAreaSource, /directInputDrop=\{isPeek\}/);
   assert.match(terminalPanelSource, /directInputDrop\?: boolean/);
-  assert.match(terminalPanelSource, /getWorkspaceFileDragAbsolutePath/);
+  assert.match(terminalPanelSource, /getInternalPathDropPaths/);
+  assert.match(terminalPanelSource, /hasPathInsertDragData/);
   assert.match(terminalPanelSource, /getNativeFileDropAbsolutePaths/);
   assert.match(terminalPanelSource, /insertSessionReferenceIntoTerminal/);
   assert.match(terminalPanelSource, /onDragEnter=\{directInputDrop \? handleInputDragEnter : undefined\}/);

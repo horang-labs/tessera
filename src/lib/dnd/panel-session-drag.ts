@@ -1,6 +1,7 @@
 import {
   PANEL_NODE_DRAG_MIME,
   PANEL_SESSION_DRAG_MIME,
+  PATH_INSERT_DRAG_MIME,
   SESSION_DRAG_MIME,
   WORKSPACE_FILE_DRAG_MIME,
 } from '@/types/panel';
@@ -29,6 +30,42 @@ export interface WorkspaceFileDragPayload {
   absolutePath?: string;
 }
 
+interface PathInsertDragPayload {
+  paths: string[];
+}
+
+export function hasPathInsertDragData(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
+  return dataTransfer.types.includes(PATH_INSERT_DRAG_MIME);
+}
+
+export function setPathInsertDragData(
+  dataTransfer: Pick<DataTransfer, 'setData' | 'effectAllowed'>,
+  paths: string[],
+): boolean {
+  const validPaths = paths.filter((path) => path.length > 0 && !path.includes('\0'));
+  if (validPaths.length === 0) return false;
+  dataTransfer.setData(PATH_INSERT_DRAG_MIME, JSON.stringify({ paths: validPaths } satisfies PathInsertDragPayload));
+  dataTransfer.setData('text/plain', validPaths.join('\n'));
+  dataTransfer.effectAllowed = 'copyMove';
+  return true;
+}
+
+export function getPathInsertDragPaths(
+  dataTransfer: Pick<DataTransfer, 'getData'>,
+): string[] {
+  try {
+    const raw = dataTransfer.getData(PATH_INSERT_DRAG_MIME);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Partial<PathInsertDragPayload>;
+    if (!Array.isArray(parsed.paths)) return [];
+    return parsed.paths.filter((path): path is string => (
+      typeof path === 'string' && path.length > 0 && !path.includes('\0')
+    ));
+  } catch {
+    return [];
+  }
+}
+
 export function hasWorkspaceFileDragData(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
   return dataTransfer.types.includes(WORKSPACE_FILE_DRAG_MIME);
 }
@@ -39,8 +76,17 @@ export function hasWorkspaceFileDragData(dataTransfer: Pick<DataTransfer, 'types
  * split/replace must not apply.
  */
 export function isPathInsertOnlyDragData(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
-  return hasWorkspaceFileDragData(dataTransfer) &&
+  return (hasWorkspaceFileDragData(dataTransfer) || hasPathInsertDragData(dataTransfer)) &&
     !dataTransfer.types.includes(SESSION_DRAG_MIME);
+}
+
+/** Agent-readable paths carried by an internal path drag. */
+export function getInternalPathDropPaths(
+  dataTransfer: Pick<DataTransfer, 'getData' | 'types'>,
+): string[] {
+  if (hasPathInsertDragData(dataTransfer)) return getPathInsertDragPaths(dataTransfer);
+  const workspacePath = getWorkspaceFileDragAbsolutePath(dataTransfer);
+  return workspacePath ? [workspacePath] : [];
 }
 
 export function isSessionReferenceDragData(dataTransfer: Pick<DataTransfer, 'types'>): boolean {

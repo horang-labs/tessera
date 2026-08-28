@@ -20,7 +20,8 @@ import {
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import {
-  getWorkspaceFileDragAbsolutePath,
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
   isPathInsertOnlyDragData,
   isSessionReferenceDragData,
@@ -160,7 +161,8 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   }, [panelId]);
 
   const isTerminalPathInsertTarget = useCallback((e: React.DragEvent) => (
-    hasWorkspaceFileDragData(e.dataTransfer) && resolveInsertTargetTerminalId() !== null
+    (hasWorkspaceFileDragData(e.dataTransfer) || hasPathInsertDragData(e.dataTransfer)) &&
+    resolveInsertTargetTerminalId() !== null
   ), [resolveInsertTargetTerminalId]);
 
   // OS (Finder/Explorer) file drops behave like folder drags: insert-only,
@@ -308,9 +310,15 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     }
 
     if (currentEdge === 'center' && isTerminalPathInsertTarget(e)) {
-      const filePath = getWorkspaceFileDragAbsolutePath(e.dataTransfer);
       const targetTerminalId = resolveInsertTargetTerminalId();
-      if (filePath && targetTerminalId && insertFilePathIntoTerminal(targetTerminalId, filePath)) {
+      const paths = getInternalPathDropPaths(e.dataTransfer);
+      let inserted = false;
+      if (targetTerminalId) {
+        for (const path of paths) {
+          if (insertFilePathIntoTerminal(targetTerminalId, path)) inserted = true;
+        }
+      }
+      if (inserted) {
         usePanelStore.getState().setActivePanelId(panelId);
         focusPanelControl(panelId);
       }
