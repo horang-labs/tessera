@@ -34,8 +34,13 @@ interface PathInsertDragPayload {
   paths: string[];
 }
 
+// Electron/Chromium can advertise a drag MIME type but drop every payload value
+// when the pointer crosses renderer-owned surfaces. Keep the originating paths in
+// this renderer for the lifetime of that drag as a final in-window fallback.
+let activePathInsertDragPaths: string[] = [];
+
 export function hasPathInsertDragData(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
-  return dataTransfer.types.includes(PATH_INSERT_DRAG_MIME);
+  return dataTransfer.types.includes(PATH_INSERT_DRAG_MIME) || activePathInsertDragPaths.length > 0;
 }
 
 export function setPathInsertDragData(
@@ -44,10 +49,15 @@ export function setPathInsertDragData(
 ): boolean {
   const validPaths = paths.filter((path) => path.length > 0 && !path.includes('\0'));
   if (validPaths.length === 0) return false;
+  activePathInsertDragPaths = validPaths;
   dataTransfer.setData(PATH_INSERT_DRAG_MIME, JSON.stringify({ paths: validPaths } satisfies PathInsertDragPayload));
   dataTransfer.setData('text/plain', validPaths.join('\n'));
   dataTransfer.effectAllowed = 'copyMove';
   return true;
+}
+
+export function clearPathInsertDragData(): void {
+  activePathInsertDragPaths = [];
 }
 
 export function getPathInsertDragPaths(
@@ -90,9 +100,12 @@ export function getInternalPathDropPaths(
 
     // Chromium can retain a custom MIME type while dropping its value across
     // a renderer boundary. text/plain is intentionally written alongside it.
-    return dataTransfer.getData('text/plain')
+    const textPaths = dataTransfer.getData('text/plain')
       .split(/\r?\n/)
       .filter((path) => path.length > 0 && !path.includes('\0'));
+    if (textPaths.length > 0) return textPaths;
+
+    return activePathInsertDragPaths;
   }
   const workspacePath = getWorkspaceFileDragAbsolutePath(dataTransfer);
   return workspacePath ? [workspacePath] : [];

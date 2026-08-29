@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  clearPathInsertDragData,
   getInternalPathDropPaths,
   getPathInsertDragPaths,
   getWorkspaceFileDragPath,
@@ -90,6 +91,7 @@ test('path insertion drags carry agent-readable paths without a panel session pa
   assert.equal(transfer.getData(SESSION_DRAG_MIME), '');
   assert.equal(transfer.getData('text/plain'), '/home/work/generated image.png');
   assert.equal(transfer.effectAllowed, 'copyMove');
+  clearPathInsertDragData();
 });
 
 test('path insertion drags reject empty and NUL-containing paths', () => {
@@ -107,6 +109,16 @@ test('path insertion falls back to text/plain when Chromium strips the custom MI
   });
 
   assert.deepEqual(getInternalPathDropPaths(transfer), ['/home/work/generated image.png']);
+});
+
+test('path insertion falls back to the live renderer drag when Chromium strips all transfer values', () => {
+  const path = '/home/work/.tessera/generated image.png';
+  const source = new FakeDataTransfer();
+  setPathInsertDragData(source, [path]);
+
+  const dropped = new FakeDataTransfer();
+  assert.deepEqual(getInternalPathDropPaths(dropped), [path]);
+  clearPathInsertDragData();
 });
 
 test('workspace file drag parser rejects malformed payloads', () => {
