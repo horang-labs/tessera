@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Copy, ImageIcon, LoaderCircle, RefreshCw } from "lucide-react";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
-import { setPathInsertDragData } from "@/lib/dnd/panel-session-drag";
+import { clearPathInsertDragData, setPathInsertDragData } from "@/lib/dnd/panel-session-drag";
 import type { PublicImageGenerationTrace } from "@/lib/image-generation/traces";
 import { useI18n } from "@/lib/i18n";
 import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
@@ -231,6 +231,7 @@ function ResultHeroMedia({
               event.preventDefault();
             }
           }}
+          onDragEnd={clearPathInsertDragData}
           onClick={() => onOpenImage({ src: result.url, alt: t("imagePanel.result") })}
           aria-label={t("imagePanel.openResult")}
         >
