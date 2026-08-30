@@ -151,6 +151,7 @@ interface ProviderLaunchModuleOptions {
   terminalManager: ProviderLaunchTerminalAdapter;
   preparationTimeoutMs?: number;
   resolveAgentEnvironment?: (userId: string) => Promise<AgentEnvironment>;
+  resolveTesseraCliEnabled?: (userId: string) => Promise<boolean>;
   observeProviderSession?: (options: {
     pane: {
       terminalId: string;
@@ -380,6 +381,7 @@ async function buildLaunchDecision(
       launchSpec: {
         program: built.command,
         args: built.args,
+        ...(resume ? { restoresProviderSession: true } : {}),
         ...(request.mode === 'surface' && request.surface.prefillInput
           ? { prefillInput: request.surface.prefillInput }
           : {}),
@@ -407,6 +409,7 @@ async function buildLaunchDecision(
       launchSpec: {
         program: built.command,
         args: built.args,
+        ...(codexResumeId ? { restoresProviderSession: true } : {}),
         ...(request.mode === 'surface' && request.surface.prefillInput
           ? { prefillInput: request.surface.prefillInput }
           : {}),
@@ -430,6 +433,7 @@ async function buildLaunchDecision(
     launchSpec: {
       program: built.command,
       args: built.args,
+      ...(opencodeResumeId ? { restoresProviderSession: true } : {}),
       ...(request.mode === 'surface' && request.surface.prefillInput
         ? { prefillInput: request.surface.prefillInput }
         : {}),
@@ -546,6 +550,9 @@ export function createProviderLaunchModule(
           options.resolveAgentEnvironment?.(request.userId)
           ?? getAgentEnvironment(request.userId)
         );
+        const tesseraCliEnabled = options.resolveTesseraCliEnabled
+          ? await options.resolveTesseraCliEnabled(request.userId)
+          : false;
         const wslTerminalRuntime = getRuntimePlatform() === 'win32'
           && agentEnvironment === 'wsl';
         const hookCommandStyle: HookCommandStyle = getRuntimePlatform() === 'win32'
@@ -553,7 +560,7 @@ export function createProviderLaunchModule(
           ? 'windows-cmd'
           : 'posix';
         let claudePluginDir: string | undefined;
-        if (persisted.providerId === 'claude-code') {
+        if (persisted.providerId === 'claude-code' && tesseraCliEnabled) {
           if (wslTerminalRuntime) {
             claudePluginDir = CLAUDE_PLUGIN_DIR_PLACEHOLDER;
           } else {
@@ -595,6 +602,7 @@ export function createProviderLaunchModule(
         let opencodeOverlayPromise: Promise<string | null> | undefined;
         if (
           decision.providerId === 'claude-code'
+          && tesseraCliEnabled
           && wslTerminalRuntime
           && claudePluginFlagIndex >= 0
         ) {
@@ -619,7 +627,11 @@ export function createProviderLaunchModule(
               if (codexResumeTranscriptPath) {
                 await repairCodexOverlayResumePathInWsl(codexResumeTranscriptPath);
               }
-              return createCodexOverlayInWsl(terminalId, hookCommandStyle);
+              return createCodexOverlayInWsl(
+                terminalId,
+                hookCommandStyle,
+                tesseraCliEnabled,
+              );
             },
           );
           codexOverlayPromise = pending;
@@ -641,7 +653,7 @@ export function createProviderLaunchModule(
           opencodeOverlayPromise = createOverlayWithRetry(
             'OpenCode WSL',
             terminalId,
-            () => createOpenCodeOverlayInWsl(),
+            () => createOpenCodeOverlayInWsl(tesseraCliEnabled),
           );
         }
 
@@ -735,7 +747,11 @@ export function createProviderLaunchModule(
                     if (codexResumeTranscriptPath) {
                       repairCodexOverlayResumePath(codexResumeTranscriptPath);
                     }
-                    return createCodexOverlay(terminalId, hookCommandStyle);
+                    return createCodexOverlay(
+                      terminalId,
+                      hookCommandStyle,
+                      tesseraCliEnabled,
+                    );
                   })();
               if (!overlayHome) {
                 throw new Error('the guest script failed twice');
@@ -766,16 +782,18 @@ export function createProviderLaunchModule(
               }
               return {
                 OPENCODE_CONFIG_DIR: overlayDir,
+                TESSERA_OPENCODE_CONFIG_DIR: overlayDir,
                 ...(opencodeResumeId
                   ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId }
                   : {}),
               };
             };
           } else {
-            const overlay = createOpenCodeOverlay(terminalId);
+            const overlay = createOpenCodeOverlay(terminalId, tesseraCliEnabled);
             resourceDisposers.add(overlay.dispose);
             launchEnv = {
               OPENCODE_CONFIG_DIR: overlay.configDir,
+              TESSERA_OPENCODE_CONFIG_DIR: overlay.configDir,
               ...(opencodeResumeId
                 ? { TESSERA_OPENCODE_RESUME_ID: opencodeResumeId }
                 : {}),
@@ -783,19 +801,23 @@ export function createProviderLaunchModule(
           }
         }
 
-        const completeLaunchEnvFactory = options.prepareControlCliBridge || launchEnvFactory
-          ? async (): Promise<Record<string, string | undefined>> => {
+        const completeLaunchEnvFactory = async (): Promise<Record<string, string | undefined>> => {
               const resolvedEnv: Record<string, string | undefined> = {
-                ...(launchEnv ?? {}),
+                TESSERA_ENV: undefined,
+                TESSERA_CLI_COMMAND: undefined,
+                TESSERA_PROJECT_ID: undefined,
+                TESSERA_WORKTREE_ID: undefined,
                 TESSERA_CONTROL_DESCRIPTOR: undefined,
                 TESSERA_CONTROL_DESCRIPTOR_PATH: undefined,
                 TESSERA_CLI_CWD: undefined,
                 TESSERA_AGENT_ENVIRONMENT: undefined,
+                TESSERA_OPENCODE_CONFIG_DIR: undefined,
+                ...(launchEnv ?? {}),
               };
               if (launchEnvFactory) {
                 Object.assign(resolvedEnv, await launchEnvFactory());
               }
-              if (options.prepareControlCliBridge) {
+              if (tesseraCliEnabled && options.prepareControlCliBridge) {
                 const bridge = await options.prepareControlCliBridge({
                   agentEnvironment,
                   projectId: callerContext.projectId,
@@ -815,8 +837,7 @@ export function createProviderLaunchModule(
                 }
               }
               return resolvedEnv;
-            }
-          : undefined;
+            };
 
         paneToken = mintPaneToken({
           terminalId,
@@ -891,7 +912,7 @@ export function createProviderLaunchModule(
                   dbSessions.getSession(request.sessionId)?.provider_state ?? null,
                 ) ?? false
               : undefined,
-          launchEnv: completeLaunchEnvFactory ? undefined : launchEnv,
+          launchEnv: undefined,
           launchEnvFactory: completeLaunchEnvFactory,
           launchObserverDisposer: resourceDisposers.asDisposer(),
         };

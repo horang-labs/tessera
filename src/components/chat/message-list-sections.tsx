@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { ScrollToBottomButton } from '@/components/ui/scroll-to-bottom-button';
 import { LoadingIndicator } from './loading-indicator';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface MessageListScrollAreaProps {
   children: React.ReactNode;
@@ -90,6 +91,7 @@ export function MessageListLoadMoreButton({
   return (
     <div className="px-2 py-2 mb-2">
       <Button
+        {...telemetryClickAttributes('message.load_more', 'message')}
         variant="outline"
         size="sm"
         onClick={onClick}
@@ -133,5 +135,11 @@ export function MessageListScrollToBottomButton({
   onClick,
   title,
 }: MessageListScrollToBottomButtonProps) {
-  return <ScrollToBottomButton onClick={onClick} title={title} />;
+  return (
+    <ScrollToBottomButton
+      onClick={onClick}
+      title={title}
+      telemetryTarget={{ control: 'message.scroll_bottom', surface: 'message' }}
+    />
+  );
 }

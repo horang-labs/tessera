@@ -10,6 +10,7 @@ import {
 } from "@/hooks/use-workspace-files-live-sync";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
 import { gitPanelDiffPath } from '@/lib/git/git-panel-read';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import { wsClient } from "@/lib/ws/client";
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/stores/panel-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -23,6 +24,7 @@ import {
   clearWorkspaceFileDirty,
   markWorkspaceFileDirty,
 } from "@/lib/workspace-files/workspace-dirty-registry";
+import { isWorkspaceImageMimeType } from '@/lib/workspace-files/workspace-file-preview';
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import {
@@ -30,7 +32,7 @@ import {
   type WorkspaceFileRef,
 } from "@/lib/workspace-tabs/special-session";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
-import type { WorkspaceTarget } from '@/types/worktree';
+import { workspaceTargetKey, type WorkspaceTarget } from '@/types/worktree';
 
 type WorkspaceFilesChangedMessage = Extract<
   ServerTransportMessage,
@@ -56,6 +58,11 @@ function getFileUrl(target: WorkspaceTarget, kind: 'file' | 'diff', filePath: st
   const sessionId = encodeURIComponent(target.id);
   if (kind === "diff") return `/api/sessions/${sessionId}/git/diff?path=${path}`;
   return `/api/sessions/${sessionId}/file?path=${path}`;
+}
+
+function getFileMutationUrl(target: WorkspaceTarget): string {
+  const collection = target.kind === 'worktree' ? 'worktrees' : 'sessions';
+  return `/api/${collection}/${encodeURIComponent(target.id)}/file`;
 }
 
 function getDirectoryName(filePath: string): string {
@@ -130,6 +137,7 @@ export function WorkspaceFileTab({
     () => ({ kind: sourceTargetKind, id: sourceTargetId }),
     [sourceTargetId, sourceTargetKind],
   );
+  const sourceTargetKey = useMemo(() => workspaceTargetKey(sourceTarget), [sourceTarget]);
   const tabId = useContext(TabIdContext);
   const isTabActive = useTabStore((state) => surfaceActive || state.activeTabId === tabId);
   const isDocumentVisible = useDocumentVisibility();
@@ -150,14 +158,15 @@ export function WorkspaceFileTab({
   const requestSeqRef = useRef(0);
   const activeLoadsRef = useRef(0);
   const dirtyRef = useRef(false);
+  const editTelemetryCapturedRef = useRef(false);
 
   const fileData = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
   // A truncated buffer holds only the first 512 KB: saving it back would delete
   // everything past that. A binary file has no text buffer to edit at all.
-  const editable = sourceSessionId !== null
-    && fileData !== null
+  const editable = fileData !== null
     && !fileData.binary
-    && !fileData.truncated;
+    && !fileData.truncated
+    && !isWorkspaceImageMimeType(fileData.mimeType);
   const dirty = editable && draft !== null && draft !== fileData.content;
   dirtyRef.current = dirty;
 
@@ -165,26 +174,20 @@ export function WorkspaceFileTab({
   // file, so the dirty state has to be visible from outside this tab (#320).
   useEffect(() => {
     if (kind !== "file") return;
-    if (!sourceSessionId) return;
     if (dirty) {
-      markWorkspaceFileDirty(sourceSessionId, path);
+      markWorkspaceFileDirty(sourceTargetKey, path);
     } else {
-      clearWorkspaceFileDirty(sourceSessionId, path);
+      clearWorkspaceFileDirty(sourceTargetKey, path);
     }
-    return () => clearWorkspaceFileDirty(sourceSessionId, path);
-  }, [dirty, kind, path, sourceSessionId]);
+    return () => clearWorkspaceFileDirty(sourceTargetKey, path);
+  }, [dirty, kind, path, sourceTargetKey]);
 
   // A preview tab is replaced by the next previewed file without warning; pin
   // it as soon as there are unsaved edits so the draft cannot vanish.
   useEffect(() => {
     if (!dirty) return;
-    if (!sourceSessionId) return;
-    const tabStore = useTabStore.getState();
-    const location = tabStore.findSessionLocation(
-      buildWorkspaceFileSessionId(sourceSessionId, kind, path),
-    );
-    if (location) tabStore.pinTab(location.tabId);
-  }, [dirty, kind, path, sourceSessionId]);
+    if (tabId) useTabStore.getState().pinTab(tabId);
+  }, [dirty, tabId]);
 
   const loadFile = useCallback(async (options?: {
     signal?: AbortSignal;
@@ -297,6 +300,9 @@ export function WorkspaceFileTab({
         onFileRefChange({
           type: "workspace-file",
           sourceSessionId,
+          ...(fileRef.type === 'workspace-file' && fileRef.sourceWorktreeId
+            ? { sourceWorktreeId: fileRef.sourceWorktreeId }
+            : {}),
           kind,
           path: renameTarget,
         });
@@ -304,7 +310,12 @@ export function WorkspaceFileTab({
       }
       assignSession(
         panelId,
-        buildWorkspaceFileSessionId(sourceSessionId, kind, renameTarget),
+        buildWorkspaceFileSessionId(
+          sourceSessionId,
+          kind,
+          renameTarget,
+          fileRef.type === 'workspace-file' ? fileRef.sourceWorktreeId : undefined,
+        ),
       );
       return;
     }
@@ -331,6 +342,7 @@ export function WorkspaceFileTab({
   }, [
     assignSession,
     confirmExternalChange,
+    fileRef,
     kind,
     loadFile,
     onFileRefChange,
@@ -351,9 +363,19 @@ export function WorkspaceFileTab({
 
   useEffect(() => {
     const abortController = new AbortController();
+    editTelemetryCapturedRef.current = false;
     void loadFile({ signal: abortController.signal });
     return () => abortController.abort();
   }, [loadFile]);
+
+  const handleDraftChange = useCallback((nextDraft: string) => {
+    setDraft(nextDraft);
+    if (editTelemetryCapturedRef.current) return;
+    editTelemetryCapturedRef.current = true;
+    void captureTelemetryEvent('workspace_file_edit_started', {
+      entry_kind: 'file',
+    });
+  }, []);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -405,15 +427,14 @@ export function WorkspaceFileTab({
   const saveFile = useCallback(async (options?: { overwrite?: boolean }) => {
     const data = kind === "file" ? (state.data as WorkspaceFileData | null) : null;
     if (!data || data.binary || data.truncated || draft === null || saving) return;
-    if (!sourceSessionId) return;
 
     setSaving(true);
     // Stamped before the request so the watcher event, which can arrive while
     // the PUT is still in flight, is already recognised as our own.
-    markSelfWrite(sourceSessionId, path);
+    if (sourceSessionId) markSelfWrite(sourceSessionId, path);
     try {
       const response = await fetchWithTimeout(
-        `/api/sessions/${encodeURIComponent(sourceSessionId)}/file`,
+        getFileMutationUrl(sourceTarget),
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -431,8 +452,13 @@ export function WorkspaceFileTab({
         | { mtimeMs?: number; size?: number; error?: { code?: string; message?: string } }
         | null;
       if (response.status === 409) {
-        clearSelfWrite(sourceSessionId, path);
+        if (sourceSessionId) clearSelfWrite(sourceSessionId, path);
         setConflict(true);
+        void captureTelemetryEvent('workspace_file_action_result', {
+          file_action: 'save',
+          entry_kind: 'file',
+          result: 'conflict',
+        });
         return;
       }
       if (!response.ok) {
@@ -458,17 +484,28 @@ export function WorkspaceFileTab({
       // may have kept typing while the PUT was in flight.
       setDraft((current) => (current === draft ? null : current));
       setConflict(false);
+      editTelemetryCapturedRef.current = false;
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'save',
+        entry_kind: 'file',
+        result: 'success',
+      });
       toast.success(`Saved ${path}`);
     } catch (error) {
-      clearSelfWrite(sourceSessionId, path);
+      if (sourceSessionId) clearSelfWrite(sourceSessionId, path);
       const message = isTimeoutError(error)
         ? "The file did not save in time. The workspace filesystem may be unresponsive."
         : error instanceof Error ? error.message : "Failed to save file.";
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'save',
+        entry_kind: 'file',
+        result: 'failed',
+      });
       toast.error(message);
     } finally {
       setSaving(false);
     }
-  }, [draft, kind, path, saving, sourceSessionId, state.data]);
+  }, [draft, kind, path, saving, sourceSessionId, sourceTarget, state.data]);
 
   return (
     <WorkspaceCodeView
@@ -481,7 +518,7 @@ export function WorkspaceFileTab({
       loading={state.loading}
       mode={fileRef.kind}
       onCancelConflict={() => setConflict(false)}
-      onDraftChange={setDraft}
+      onDraftChange={handleDraftChange}
       onOverwrite={() => void saveFile({ overwrite: true })}
       onReload={() => void loadFile()}
       onSave={() => void saveFile()}
@@ -499,6 +536,7 @@ export function WorkspaceFileTab({
       }}
       onRetry={() => void loadFile()}
       path={fileRef.path}
+      editorModelKey={tabId || `${sourceTarget.kind}:${sourceTarget.id}:${kind}:${path}`}
       sourceTarget={sourceTarget}
     />
   );

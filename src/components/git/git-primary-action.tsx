@@ -5,7 +5,41 @@ import { LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
+import { cn } from "@/lib/utils";
 import type { GitPendingVerb } from "./use-git-panel-controller";
+import {
+  telemetryClickAttributes,
+  type TelemetryUiControl,
+} from "@/lib/telemetry/ui-click";
+
+const GIT_PRIMARY_TELEMETRY_CONTROLS: Record<GitPrimaryAction["kind"], TelemetryUiControl> = {
+  loading: "git.primary.loading",
+  commit: "git.primary.commit",
+  conflict: "git.primary.conflict",
+  push: "git.primary.push",
+  publish: "git.primary.publish",
+  pull: "git.primary.pull",
+  create_pr: "git.primary.create_pr",
+  view_pr: "git.primary.view_pr",
+  archive_worktree: "git.primary.archive_worktree",
+  up_to_date: "git.primary.up_to_date",
+};
+
+export function gitPrimaryTelemetryControl(
+  kind: GitPrimaryAction['kind'],
+): TelemetryUiControl {
+  return GIT_PRIMARY_TELEMETRY_CONTROLS[kind];
+}
+
+/** Keep delivery verbs blue; a merged PR carries GitHub's merged-purple tone. */
+export function gitPrimaryActionToneClassName(
+  kind: GitPrimaryAction['kind'],
+): string {
+  if (kind === 'archive_worktree') {
+    return 'bg-(--pr-merged-text) text-white ring-[color-mix(in_srgb,var(--pr-merged-text)_68%,black)] hover:bg-[color-mix(in_srgb,var(--pr-merged-text)_88%,white)] focus-visible:ring-[color-mix(in_srgb,var(--pr-merged-text)_55%,white)] dark:text-violet-950 dark:ring-violet-200/30';
+  }
+  return 'bg-blue-600 text-white ring-blue-700/40 hover:bg-blue-500 focus-visible:ring-blue-300 dark:bg-blue-500 dark:ring-blue-300/30 dark:hover:bg-blue-400';
+}
 
 /**
  * What the button says while an action runs. Read off the verb that is actually
@@ -70,11 +104,15 @@ export function GitPrimaryActionButton({
       type="button"
       size="sm"
       onClick={onRun}
+      {...telemetryClickAttributes(gitPrimaryTelemetryControl(action.kind), "git_panel")}
       disabled={disabled}
       title={disabled ? reason : undefined}
       data-testid="git-primary-action-button"
       data-git-action={action.kind}
-      className="h-7 shrink-0 bg-blue-600 px-3 text-[11px] font-semibold text-white shadow-sm ring-1 ring-blue-700/40 hover:bg-blue-500 dark:bg-blue-500 dark:ring-blue-300/30 dark:hover:bg-blue-400"
+      className={cn(
+        'h-7 shrink-0 px-3 text-[11px] font-semibold shadow-sm ring-1',
+        gitPrimaryActionToneClassName(action.kind),
+      )}
     >
       {pendingVerb ? (
         <>

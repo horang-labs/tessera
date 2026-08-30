@@ -6,6 +6,7 @@ import { useWebSocket } from '@/hooks/use-websocket';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
 import { useI18n } from '@/lib/i18n';
 import { PreviewMarkdown } from './preview-markdown';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface PlanApprovalFloatingPanelProps {
   plan?: string;
@@ -91,6 +92,7 @@ export function PlanApprovalFloatingPanel({
         {allowedPrompts && allowedPrompts.length > 0 && (
           <div className="space-y-1.5">
             <button
+              {...telemetryClickAttributes('agent_prompt.plan.expand', 'agent_prompt')}
               onClick={() => setShowTools(!showTools)}
               className="flex items-center gap-1 text-xs text-(--text-muted) hover:text-(--text-secondary) transition-colors"
               tabIndex={-1}
@@ -118,6 +120,7 @@ export function PlanApprovalFloatingPanel({
 
       <div className="px-4 py-2.5 border-t border-blue-500/10 flex items-center justify-end gap-2">
         <button
+          {...telemetryClickAttributes('agent_prompt.plan.deny', 'agent_prompt')}
           onClick={() => handleDecision('deny')}
           tabIndex={-1}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-(--error) text-white hover:opacity-90 transition-opacity"
@@ -127,6 +130,7 @@ export function PlanApprovalFloatingPanel({
           <kbd className="ml-1 text-[10px] opacity-70 font-mono">Esc</kbd>
         </button>
         <button
+          {...telemetryClickAttributes('agent_prompt.plan.allow', 'agent_prompt')}
           onClick={() => handleDecision('allow')}
           tabIndex={-1}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:opacity-90 transition-opacity"

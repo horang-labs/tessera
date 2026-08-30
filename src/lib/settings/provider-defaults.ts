@@ -599,6 +599,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     geminiApiKey: '',
     favoriteSkills: [],
     agentEnvironment: 'native',
+    tesseraCliEnabled: false,
     cliCommandOverrides: {},
     windowsCloseBehavior: 'ask',
     setup: {
@@ -614,6 +615,10 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     shortcutOverrides: {},
     gitConfig: {
       branchPrefix: '',
+      sourceControlAi: {
+        provider: 'claude-code',
+        model: '',
+      },
     },
     version: '1.0.0',
     lastModified: new Date().toISOString(),
@@ -671,6 +676,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     showProviderIcons: raw?.showProviderIcons ?? defaults.showProviderIcons,
     showRecentWork: raw?.showRecentWork ?? defaults.showRecentWork,
     kanbanSessionOpenMode: normalizeKanbanSessionOpenMode(raw?.kanbanSessionOpenMode),
+    tesseraCliEnabled: raw?.tesseraCliEnabled === true,
     cliCommandOverrides: normalizeCliCommandOverrides(raw?.cliCommandOverrides),
     archivedWorktreeRetentionDays: retentionDays ?? defaults.archivedWorktreeRetentionDays,
     managedWorktreePathTemplate: normalizeManagedWorktreePathTemplate(raw?.managedWorktreePathTemplate),
@@ -753,5 +759,16 @@ function normalizeGitConfig(
       typeof rawGitConfig?.branchPrefix === 'string'
         ? rawGitConfig.branchPrefix
         : defaults.branchPrefix,
+    sourceControlAi: {
+      provider:
+        typeof rawGitConfig?.sourceControlAi?.provider === 'string'
+          && rawGitConfig.sourceControlAi.provider.trim()
+          ? rawGitConfig.sourceControlAi.provider.trim()
+          : defaults.sourceControlAi.provider,
+      model:
+        typeof rawGitConfig?.sourceControlAi?.model === 'string'
+          ? rawGitConfig.sourceControlAi.model.trim()
+          : defaults.sourceControlAi.model,
+    },
   };
 }

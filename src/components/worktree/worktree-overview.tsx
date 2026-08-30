@@ -1,11 +1,9 @@
-import { GitBranch, GitFork, MessageSquarePlus } from 'lucide-react';
+import { GitBranch } from 'lucide-react';
 
-export function WorktreeOverview({ branch, displayPath, label, onNewSession, onNewWorktree }: {
+export function WorktreeOverview({ branch, displayPath, label }: {
   branch: string | null;
   displayPath: string;
   label?: string;
-  onNewSession?: () => void;
-  onNewWorktree?: () => void;
 }) {
   return (
     <div className="flex h-full items-center justify-center bg-(--chat-bg) p-8" data-testid="worktree-overview">
@@ -29,22 +27,6 @@ export function WorktreeOverview({ branch, displayPath, label, onNewSession, onN
             <dd className="mt-1 break-all font-mono text-(--text-primary)">{displayPath}</dd>
           </div>
         </dl>
-        {(onNewSession || onNewWorktree) && (
-          <div className="mt-6 flex flex-wrap gap-2">
-            {onNewSession && (
-              <button type="button" onClick={onNewSession} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-(--accent) px-3 py-2 text-sm font-medium text-white">
-                <MessageSquarePlus className="h-4 w-4" />
-                New Session
-              </button>
-            )}
-            {onNewWorktree && (
-              <button type="button" onClick={onNewWorktree} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-(--input-border) px-3 py-2 text-sm font-medium text-(--text-primary) hover:bg-(--sidebar-hover)">
-                <GitFork className="h-4 w-4" />
-                New Worktree
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

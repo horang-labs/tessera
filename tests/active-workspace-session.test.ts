@@ -4,6 +4,7 @@ import {
   resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
+  shouldBridgeActiveSessionToPanel,
 } from '../src/lib/session/active-workspace-session';
 import {
   buildWorkspaceFileSessionId,
@@ -28,6 +29,40 @@ test('active workspace session resolves session-backed file tabs to their source
     }),
     'source-session',
   );
+});
+
+test('session-backed file tabs are not reconciled back to their source chat surface', () => {
+  const fileSessionId = buildWorkspaceFileSessionId(
+    'source-session',
+    'file',
+    'src/app/page.tsx',
+  );
+
+  assert.equal(shouldBridgeActiveSessionToPanel({
+    activePanelSessionId: fileSessionId,
+    activePanelWorkspaceSessionId: 'source-session',
+    renderedActiveSessionId: 'source-session',
+    currentActiveSessionId: 'source-session',
+    projectsLoaded: true,
+  }), false);
+});
+
+test('a stale reverse bridge cannot undo panel navigation from the same commit', () => {
+  assert.equal(shouldBridgeActiveSessionToPanel({
+    activePanelSessionId: 'new-panel-session',
+    activePanelWorkspaceSessionId: 'new-panel-session',
+    renderedActiveSessionId: 'previous-session',
+    currentActiveSessionId: 'new-panel-session',
+    projectsLoaded: true,
+  }), false);
+
+  assert.equal(shouldBridgeActiveSessionToPanel({
+    activePanelSessionId: 'new-panel-session',
+    activePanelWorkspaceSessionId: 'new-panel-session',
+    renderedActiveSessionId: 'new-panel-session',
+    currentActiveSessionId: 'new-panel-session',
+    projectsLoaded: true,
+  }), true);
 });
 
 test('sessionless Worktree file tabs do not invent a canonical Session source', () => {

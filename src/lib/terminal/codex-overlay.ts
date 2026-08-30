@@ -20,7 +20,7 @@ import {
 import type { HookCommandStyle } from './hook-command';
 import {
   CODEX_TRUST_BASELINE_FILE,
-  mergeCodexOverlayTrust,
+  planCodexTrustPromotion,
   writeCodexConfigAtomically,
   writeCodexTrustBaseline,
 } from './codex-trust-state';
@@ -28,6 +28,14 @@ import {
   materializeTesseraControlSkill,
   TESSERA_CONTROL_SKILL_NAME,
 } from './tessera-control-skill';
+
+interface LiveCodexOverlay {
+  overlayDir: string;
+  watcher: fs.FSWatcher | null;
+  promotionTimer: NodeJS.Timeout | null;
+}
+
+const liveCodexOverlays = new Map<string, LiveCodexOverlay>();
 
 /**
  * 실 CODEX_HOME. process.env.CODEX_HOME은 절대 오버레이로 덮어쓰지 않는다
@@ -156,8 +164,14 @@ export function appendTrustedHookState(
 export function createCodexOverlay(
   terminalId: string,
   hookStyle: HookCommandStyle = 'posix',
+  includeControlSkill = true,
 ): string {
   const overlayDir = overlayDirFor(terminalId);
+  // A trust decision belongs to the account, not to the terminal that happened
+  // to ask for it. Flush every live overlay before taking the next snapshot so
+  // a newly-created terminal cannot race the file watcher below.
+  promoteTrustFromLiveCodexOverlays();
+  stopWatchingCodexOverlayTrust(terminalId);
   // stale 재생성: 이전 런치 잔여 제거(심링크는 unlink만 → 타깃 무손상).
   fs.rmSync(overlayDir, { recursive: true, force: true });
   fs.mkdirSync(overlayDir, { recursive: true });
@@ -222,7 +236,7 @@ export function createCodexOverlay(
   }
   const accountSkillsDir = path.join(systemHome, 'skills');
   for (const entry of accountSkillEntries) {
-    if (entry === TESSERA_CONTROL_SKILL_NAME) continue;
+    if (includeControlSkill && entry === TESSERA_CONTROL_SKILL_NAME) continue;
     const source = path.join(accountSkillsDir, entry);
     const target = path.join(overlaySkillsDir, entry);
     try {
@@ -242,7 +256,7 @@ export function createCodexOverlay(
       logger.warn({ error, entry }, 'codex overlay: user skill could not be mirrored');
     }
   }
-  materializeTesseraControlSkill(overlaySkillsDir);
+  if (includeControlSkill) materializeTesseraControlSkill(overlaySkillsDir);
 
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksPath = path.join(overlayDir, 'hooks.json');
@@ -253,12 +267,16 @@ export function createCodexOverlay(
     appendTrustedHookState(configToml, fs.realpathSync.native(hooksPath), hookSettings),
     { mode: 0o600 },
   );
+  watchCodexOverlayTrust(terminalId, overlayDir);
 
   logger.debug({ terminalId, overlayDir, systemHome }, 'codex overlay created');
   return overlayDir;
 }
 
-function promoteCodexOverlayTrust(overlayDir: string): void {
+function promoteCodexOverlayTrust(
+  overlayDir: string,
+  scope: 'all' | 'projects' = 'all',
+): void {
   const accountHome = readCodexOverlayAccountHome(overlayDir);
   if (!accountHome) return;
   const baselinePath = path.join(overlayDir, CODEX_TRUST_BASELINE_FILE);
@@ -270,21 +288,96 @@ function promoteCodexOverlayTrust(overlayDir: string): void {
   const currentAccountConfig = fs.existsSync(accountConfigPath)
     ? fs.readFileSync(accountConfigPath, 'utf8')
     : '';
-  const merged = mergeCodexOverlayTrust({
-    baselineJson: fs.readFileSync(baselinePath, 'utf8'),
-    finalOverlayConfig: fs.readFileSync(overlayConfigPath, 'utf8'),
+  const baselineJson = fs.readFileSync(baselinePath, 'utf8');
+  const finalOverlayConfig = fs.readFileSync(overlayConfigPath, 'utf8');
+  const promotion = planCodexTrustPromotion({
+    baselineJson,
+    finalOverlayConfig,
     currentAccountConfig,
     managedHooksPath: fs.realpathSync.native(overlayHooksPath),
+    scope,
   });
-  if (merged !== currentAccountConfig) {
+  if (promotion.accountConfig !== currentAccountConfig) {
     // Keep dotfile-managed config symlinks intact; atomic rename must target
     // the file behind the link rather than replacing the link itself.
     const writableConfigPath = fs.existsSync(accountConfigPath)
       ? fs.realpathSync.native(accountConfigPath)
       : accountConfigPath;
-    writeCodexConfigAtomically(writableConfigPath, merged);
+    writeCodexConfigAtomically(writableConfigPath, promotion.accountConfig);
     logger.info({ accountHome }, 'codex overlay trust decisions promoted');
   }
+  if (promotion.advancedBaseline) {
+    // The account now either carries this decision or retained a concurrent
+    // account-level edit. In both cases, make the observed overlay state the
+    // base for its next decision so repeated trust changes remain promotable.
+    // Hook decisions keep their original baseline because they remain isolated
+    // until terminal cleanup.
+    fs.writeFileSync(baselinePath, promotion.advancedBaseline, { mode: 0o600 });
+  }
+}
+
+function promoteTrustFromLiveCodexOverlays(): void {
+  for (const [terminalId, overlay] of liveCodexOverlays) {
+    if (overlay.promotionTimer) {
+      clearTimeout(overlay.promotionTimer);
+      overlay.promotionTimer = null;
+    }
+    promoteLiveCodexOverlayTrust(terminalId, overlay.overlayDir);
+  }
+}
+
+function promoteLiveCodexOverlayTrust(terminalId: string, overlayDir: string): void {
+  try {
+    promoteCodexOverlayTrust(overlayDir, 'projects');
+  } catch (err) {
+    logger.warn({ err, terminalId }, 'live codex overlay trust promotion skipped');
+  }
+}
+
+function watchCodexOverlayTrust(terminalId: string, overlayDir: string): void {
+  const liveOverlay: LiveCodexOverlay = {
+    overlayDir,
+    watcher: null,
+    promotionTimer: null,
+  };
+  liveCodexOverlays.set(terminalId, liveOverlay);
+
+  try {
+    liveOverlay.watcher = fs.watch(
+      overlayDir,
+      { persistent: false },
+      (_eventType, filename) => {
+        if (filename !== null && filename.toString() !== 'config.toml') return;
+        const current = liveCodexOverlays.get(terminalId);
+        if (current !== liveOverlay) return;
+        if (liveOverlay.promotionTimer) clearTimeout(liveOverlay.promotionTimer);
+        liveOverlay.promotionTimer = setTimeout(() => {
+          liveOverlay.promotionTimer = null;
+          if (liveCodexOverlays.get(terminalId) !== liveOverlay) return;
+          promoteLiveCodexOverlayTrust(terminalId, overlayDir);
+        }, 25);
+        liveOverlay.promotionTimer.unref();
+      },
+    );
+    liveOverlay.watcher.on('error', (err) => {
+      if (liveCodexOverlays.get(terminalId) !== liveOverlay) return;
+      liveOverlay.watcher?.close();
+      liveOverlay.watcher = null;
+      logger.warn({ err, terminalId }, 'codex overlay trust watcher stopped');
+    });
+  } catch (err) {
+    // Pre-launch flushing still shares trust with the next terminal even on a
+    // filesystem where native watches are unavailable.
+    logger.warn({ err, terminalId }, 'codex overlay trust watcher unavailable');
+  }
+}
+
+function stopWatchingCodexOverlayTrust(terminalId: string): void {
+  const liveOverlay = liveCodexOverlays.get(terminalId);
+  if (!liveOverlay) return;
+  liveCodexOverlays.delete(terminalId);
+  if (liveOverlay.promotionTimer) clearTimeout(liveOverlay.promotionTimer);
+  liveOverlay.watcher?.close();
 }
 
 function preserveCodexOverlaySessionsLink(overlayDir: string, accountHome: string): void {
@@ -311,6 +404,7 @@ export function repairCodexOverlayResumePath(transcriptPath: string): void {
 export function cleanupCodexOverlayForTerminal(terminalId: string): void {
   const overlayDir = overlayDirFor(terminalId);
   const accountHome = readCodexOverlayAccountHome(overlayDir) ?? resolveCodexAccountHome();
+  stopWatchingCodexOverlayTrust(terminalId);
   try {
     promoteCodexOverlayTrust(overlayDir);
   } catch (err) {

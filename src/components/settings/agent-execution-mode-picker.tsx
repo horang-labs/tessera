@@ -5,6 +5,8 @@ import { useId } from 'react';
 import { useI18n } from '@/lib/i18n';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { cn } from '@/lib/utils';
+import { telemetryTargetAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryTarget } from '@/lib/telemetry/ui-click';
 
 const OPTIONS: Array<{ mode: AgentExecutionMode; icon: typeof Terminal }> = [
   { mode: 'pty', icon: Terminal },
@@ -19,6 +21,7 @@ interface AgentExecutionModePickerProps {
   note?: string;
   recommendedMode?: AgentExecutionMode;
   disabled?: boolean;
+  telemetryTarget?: TelemetryTarget;
 }
 
 export function AgentExecutionModePicker({
@@ -29,6 +32,7 @@ export function AgentExecutionModePicker({
   note,
   recommendedMode,
   disabled = false,
+  telemetryTarget,
 }: AgentExecutionModePickerProps) {
   const { t } = useI18n();
   const groupId = useId();
@@ -54,6 +58,7 @@ export function AgentExecutionModePicker({
 
           return (
             <label
+              {...telemetryTargetAttributes(telemetryTarget)}
               key={mode}
               htmlFor={inputId}
               className={cn(
@@ -83,6 +88,7 @@ export function AgentExecutionModePicker({
               </span>
               <span className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                 <input
+                  {...telemetryTargetAttributes(telemetryTarget)}
                   type="radio"
                   id={inputId}
                   name={groupId}

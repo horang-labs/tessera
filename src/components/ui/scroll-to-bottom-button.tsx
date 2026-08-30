@@ -3,12 +3,15 @@
 import { ArrowDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from './button';
+import { telemetryTargetAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryTarget } from '@/lib/telemetry/ui-click';
 
 interface ScrollToBottomButtonProps {
   onClick: () => void;
   title: string;
   className?: string;
   testId?: string;
+  telemetryTarget?: TelemetryTarget;
 }
 
 export function ScrollToBottomButton({
@@ -16,9 +19,11 @@ export function ScrollToBottomButton({
   title,
   className,
   testId = 'scroll-to-bottom-button',
+  telemetryTarget,
 }: ScrollToBottomButtonProps) {
   return (
     <Button
+      {...telemetryTargetAttributes(telemetryTarget)}
       type="button"
       variant="outline"
       size="icon"

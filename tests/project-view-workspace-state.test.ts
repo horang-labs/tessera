@@ -228,6 +228,9 @@ test('retained unread activation keeps Project-local placement and reads every s
   let retained = session({ unreadCount: 1, collectionId: 'collection-c' });
   let taskUnread = 1;
   let notificationUnread = true;
+  let clearSessionUnreadCalls = 0;
+  let clearTaskSessionUnreadCalls = 0;
+  let markNotificationsReadCalls = 0;
   const acknowledgements: string[] = [];
   const taskInA = task('project-a', 'collection-a');
   const taskInC = task('project-c', 'collection-c');
@@ -245,9 +248,18 @@ test('retained unread activation keeps Project-local placement and reads every s
     replaceTasksByProject: () => {},
     materializeSession: () => {},
     hasUnreadNotification: (id) => id === sessionId && notificationUnread,
-    clearSessionUnread: () => { retained = { ...retained, unreadCount: 0 }; },
-    clearTaskSessionUnread: () => { taskUnread = 0; },
-    markNotificationsRead: () => { notificationUnread = false; },
+    clearSessionUnread: () => {
+      clearSessionUnreadCalls += 1;
+      retained = { ...retained, unreadCount: 0 };
+    },
+    clearTaskSessionUnread: () => {
+      clearTaskSessionUnreadCalls += 1;
+      taskUnread = 0;
+    },
+    markNotificationsRead: () => {
+      markNotificationsReadCalls += 1;
+      notificationUnread = false;
+    },
     acknowledgeSessionRead: (id) => { acknowledgements.push(id); },
     stopSession: () => {},
     getOpenSurfaceSessionIds: () => [],
@@ -267,6 +279,9 @@ test('retained unread activation keeps Project-local placement and reads every s
 
   assert.equal(workspace.markSessionRead(sessionId), false);
   assert.deepEqual(acknowledgements, [sessionId]);
+  assert.equal(clearSessionUnreadCalls, 2);
+  assert.equal(clearTaskSessionUnreadCalls, 2);
+  assert.equal(markNotificationsReadCalls, 2);
 });
 
 test('global running actions deduplicate direct, retained, and linked Task Sessions at their origin', () => {

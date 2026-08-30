@@ -50,4 +50,6 @@ export interface ProcessInfo {
   serviceTier?: string | null;
   /** Claude Code high-speed serving toggle. null/false = off. */
   fastMode?: boolean | null;
+  /** Releases session-scoped skill/bridge artifacts when the CLI process ends. */
+  disposeLaunchResources?: () => Promise<void>;
 }

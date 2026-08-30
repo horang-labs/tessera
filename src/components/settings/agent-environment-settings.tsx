@@ -3,6 +3,7 @@
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const ENVIRONMENTS: { value: AgentEnvironment; labelKey: string; descKey: string }[] = [
   { value: 'native', labelKey: 'settings.agentEnv.native', descKey: 'settings.agentEnv.nativeDesc' },
@@ -27,6 +28,7 @@ export default function AgentEnvironmentSettings({ isWindowsServer }: AgentEnvir
       <h3 className="font-medium text-(--text-primary)">{t('settings.agentEnv.label')}</h3>
       <p className="text-xs text-(--text-muted)">{t('settings.agentEnv.desc')}</p>
       <select
+        {...settingsTelemetryClickAttributes('settings.development.agent_environment')}
         value={agentEnvironment}
         onChange={(e) => updateSettings({ agentEnvironment: e.target.value as AgentEnvironment })}
         className="w-full px-3 py-2 border border-(--input-border) rounded-md bg-(--input-bg) text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"

@@ -102,7 +102,7 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-if ($manifest.schemaVersion -ne 2 -or $manifest.sessionId -ne $SessionId) {
+if ($manifest.schemaVersion -notin @(2, 3) -or $manifest.sessionId -ne $SessionId) {
   throw "Session manifest identity mismatch: $manifestPath"
 }
 
@@ -181,25 +181,28 @@ if ($RemoveBuildArtifacts) {
     throw "Refusing to remove a nested build directory: $appDirectory"
   }
 
-  if ($manifest.portableArtifact) {
-    $portableArtifact = [IO.Path]::GetFullPath([string]$manifest.portableArtifact)
-  } else {
-    # Compatibility for manifests written before portableArtifact was recorded.
-    $portableBaseName = $appDirectoryName.Substring(0, $appDirectoryName.Length - ('-unpacked').Length)
-    if (-not $portableBaseName) {
-      throw "Refusing to remove build artifacts without a portable base name: $appDirectory"
+  # Schema v2 sessions may own a portable handoff beside the unpacked directory.
+  # Schema v3 never creates one, so it must not infer or delete an unrelated .exe.
+  if ($manifest.schemaVersion -eq 2) {
+    if ($manifest.portableArtifact) {
+      $portableArtifact = [IO.Path]::GetFullPath([string]$manifest.portableArtifact)
+    } else {
+      $portableBaseName = $appDirectoryName.Substring(0, $appDirectoryName.Length - ('-unpacked').Length)
+      if (-not $portableBaseName) {
+        throw "Refusing to remove build artifacts without a portable base name: $appDirectory"
+      }
+      $portableArtifact = Join-Path $downloads "$portableBaseName.exe"
     }
-    $portableArtifact = Join-Path $downloads "$portableBaseName.exe"
-  }
-  if (-not (Test-PathWithinRoot -Path $portableArtifact -Root $downloads)) {
-    throw "Refusing to remove a portable artifact outside Downloads: $portableArtifact"
-  }
-  if ([IO.Path]::GetFullPath((Split-Path -Parent $portableArtifact)).TrimEnd('\') -ne
-      [IO.Path]::GetFullPath($downloads).TrimEnd('\')) {
-    throw "Refusing to remove a nested portable artifact: $portableArtifact"
-  }
-  if ([IO.Path]::GetExtension($portableArtifact) -ne '.exe') {
-    throw "Refusing to remove a portable artifact without an .exe extension: $portableArtifact"
+    if (-not (Test-PathWithinRoot -Path $portableArtifact -Root $downloads)) {
+      throw "Refusing to remove a portable artifact outside Downloads: $portableArtifact"
+    }
+    if ([IO.Path]::GetFullPath((Split-Path -Parent $portableArtifact)).TrimEnd('\') -ne
+        [IO.Path]::GetFullPath($downloads).TrimEnd('\')) {
+      throw "Refusing to remove a nested portable artifact: $portableArtifact"
+    }
+    if ([IO.Path]::GetExtension($portableArtifact) -ne '.exe') {
+      throw "Refusing to remove a portable artifact without an .exe extension: $portableArtifact"
+    }
   }
 
   # Permanent deletion is intentional here. Linux trash APIs on /mnt/c move
@@ -208,9 +211,11 @@ if ($RemoveBuildArtifacts) {
     Remove-PathWithRetry -Path $appDirectory
     $removedBuildArtifacts += $appDirectory
   }
-  if (Test-Path -LiteralPath $portableArtifact) {
-    Remove-PathWithRetry -Path $portableArtifact
-    $removedBuildArtifacts += $portableArtifact
+  if ($manifest.schemaVersion -eq 2) {
+    if (Test-Path -LiteralPath $portableArtifact) {
+      Remove-PathWithRetry -Path $portableArtifact
+      $removedBuildArtifacts += $portableArtifact
+    }
   }
 }
 

@@ -498,7 +498,11 @@ export class WebSocketServer {
       requestId = message.requestId;
       logReceivedClientTransportMessage(userId, message);
 
-      if (!verifyClientSessionAccess(userId, message, this.sendToUser.bind(this))) {
+      if (!verifyClientSessionAccess(
+        userId,
+        message,
+        (_requestUserId, response) => this.sendToConnectionId(ws.connectionId!, response),
+      )) {
         return;
       }
 

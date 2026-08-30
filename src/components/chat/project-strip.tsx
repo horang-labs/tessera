@@ -21,12 +21,14 @@ import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useI18n } from '@/lib/i18n';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 import { ProviderUsageRail } from './provider-usage-rail';
+import { GitHubStarButton } from '@/components/github/github-star-button';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import {
   useLoadedProjectViews,
   useOriginProjectRepresentation,
 } from '@/hooks/use-project-view-workspace-state';
 import { countOriginProjectRunningSessions } from '@/lib/projects/origin-project-representation';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ProjectStripProps {
   onAddProject: () => void;
@@ -133,6 +135,7 @@ export function ProjectStrip({
       {!hideManagementActions && (
         <Tooltip content={t('projectStrip.addProject')} delay={300}>
           <button
+            {...telemetryClickAttributes('sidebar.project.add', 'sidebar')}
             onClick={onAddProject}
             className={cn(
               'w-11 h-9 flex items-center justify-center shrink-0 text-(--text-muted) hover:text-(--sidebar-text-active) transition-colors',
@@ -156,6 +159,7 @@ export function ProjectStrip({
         delay={300}
       >
         <button
+          {...telemetryClickAttributes('sidebar.all_projects.open', 'sidebar')}
           onClick={() => {
             if (isPopoutActive) return;
             handleProjectSelect(ALL_PROJECTS_SENTINEL);
@@ -208,6 +212,7 @@ export function ProjectStrip({
             return (
               <Tooltip key={p.encodedDir} content={p.displayName} delay={300}>
                 <button
+                  {...telemetryClickAttributes('sidebar.project.select', 'sidebar')}
                   draggable
                   onClick={() => handleProjectSelect(p.encodedDir)}
                   onContextMenu={(e) => handleContextMenu(e, p.encodedDir, p.displayName)}
@@ -257,9 +262,11 @@ export function ProjectStrip({
       {!hideManagementActions && (
       <div className="flex flex-col items-center shrink-0">
         <div className="w-6 border-t border-(--divider)" />
+        <GitHubStarButton />
         <NotificationBell direction="right" />
         <Tooltip content={t('skill.dashboardTitle')} delay={300}>
           <Button
+            {...telemetryClickAttributes('sidebar.skills.open', 'sidebar')}
             variant="ghost"
             size="icon-lg"
             className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0"
@@ -278,6 +285,7 @@ export function ProjectStrip({
         </Tooltip>
         <Tooltip content={t('archive.title')} delay={300}>
           <Button
+            {...telemetryClickAttributes('sidebar.archive.open', 'sidebar')}
             variant="ghost"
             size="icon-lg"
             className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0"
@@ -297,6 +305,7 @@ export function ProjectStrip({
         </Tooltip>
         <Tooltip content={t('feedback.tooltip')} delay={300}>
           <Button
+            {...telemetryClickAttributes('sidebar.feedback.open', 'sidebar')}
             variant="ghost"
             size="icon-lg"
             className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0"
@@ -322,6 +331,7 @@ export function ProjectStrip({
           </div>
           <div className="mx-1.5 border-t border-(--divider)" />
           <button
+            {...telemetryClickAttributes('sidebar.project.remove', 'sidebar')}
             onClick={() => {
               onRemoveProject?.(contextMenu.encodedDir);
               setContextMenu(null);

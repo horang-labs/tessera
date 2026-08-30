@@ -46,6 +46,7 @@ class FakePty {
   readonly resizes: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
   killCount = 0;
+  writeError: Error | null = null;
   private dataListeners: Array<(data: string) => void> = [];
   private exitListeners: Array<(event: { exitCode: number; signal?: number }) => void> = [];
 
@@ -58,6 +59,7 @@ class FakePty {
   }
 
   write(data: string): void {
+    if (this.writeError) throw this.writeError;
     this.writes.push(data);
   }
 
@@ -358,14 +360,27 @@ test('semantic Session prompts use one bracketed paste, synthesize running, and 
     stateAt: 100,
   }, 'user-a');
 
-  const submitted = await manager.submitSessionPrompt(
+  let settled = false;
+  const submission = manager.submitSessionPrompt(
     'session-a',
     'user-a',
     'first line\r\nsecond line\n\x1b[201~\x1b[31mvisible escape',
   );
+  void submission.then(() => { settled = true; });
 
   assert.deepEqual(spawned[0].writes, [
     '\x1b[200~first line\rsecond line\r␛[201~␛[31mvisible escape\x1b[201~',
+  ]);
+  await Promise.resolve();
+  assert.equal(settled, false, 'submission must not resolve before Enter reaches the PTY');
+  assert.notEqual(
+    lifecycle.at(-1)?.type === 'session_state' ? lifecycle.at(-1)?.hookEvent : undefined,
+    'ControlPromptSubmit',
+  );
+  const submitted = await submission;
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b[200~first line\rsecond line\r␛[201~␛[31mvisible escape\x1b[201~',
+    '\r',
   ]);
   assert.equal(submitted.runtimeState, 'running');
   assert.equal(submitted.terminalId, 'terminal-a');
@@ -373,13 +388,184 @@ test('semantic Session prompts use one bracketed paste, synthesize running, and 
     lifecycle.at(-1)?.type === 'session_state' ? lifecycle.at(-1)?.hookEvent : undefined,
     'ControlPromptSubmit',
   );
-  await assert.rejects(
-    manager.waitForSessionState('session-a', 'user-a', 'turn-complete', 5),
-    TerminalSessionWaitTimeoutError,
+});
+
+test('semantic Session prompt rejects when its delayed Enter cannot reach the PTY', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    { semanticPromptSubmitDelayMs: 10 },
   );
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await manager.startDetached(createOptions());
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'completed',
+    hookEvent: 'Stop',
+    stateAt: 100,
+  }, 'user-a');
+
+  const submission = manager.submitSessionPrompt('session-a', 'user-a', 'must submit');
+  assert.deepEqual(spawned[0].writes, ['\x1b[200~must submit\x1b[201~']);
+  assert.equal(
+    manager.rebindSession('terminal-a', 'user-a', 'session-a', 'session-child'),
+    false,
+    'a session cannot rebind between semantic paste and Enter',
+  );
+  await assert.rejects(
+    manager.submitSessionPrompt('session-a', 'user-a', 'must not interleave'),
+    (error: unknown) => error instanceof Error && error.name === 'TerminalSessionInputError',
+  );
+  spawned[0].writeError = new Error('PTY closed during submit');
+
+  await assert.rejects(
+    submission,
+    (error: unknown) => error instanceof Error && error.name === 'TerminalSessionInputError',
+  );
+});
+
+test('semantic Session prompt acceptance does not wait for a wedged headless snapshot', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      semanticPromptSubmitDelayMs: 10,
+      createHeadlessModel: () => ({
+        write: () => {},
+        resize: () => {},
+        snapshot: () => new Promise(() => {}),
+        readVisibleText: () => 'ready',
+        dispose: () => {},
+      }),
+    },
+  );
+  await manager.startDetached(createOptions());
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'completed',
+    hookEvent: 'Stop',
+    stateAt: 100,
+  }, 'user-a');
+
+  const submitted = await Promise.race([
+    manager.submitSessionPrompt('session-a', 'user-a', 'must acknowledge'),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('prompt acceptance waited for snapshot')), 250);
+    }),
+  ]);
+
+  assert.equal(submitted.runtimeState, 'running');
   assert.deepEqual(spawned[0].writes, [
-    '\x1b[200~first line\rsecond line\r␛[201~␛[31mvisible escape\x1b[201~',
+    '\x1b[200~must acknowledge\x1b[201~',
+    '\r',
+  ]);
+});
+
+test('ChatView can submit the first prompt after restoring a live terminal runtime', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    { semanticPromptSubmitDelayMs: 10 },
+  );
+  await manager.startDetached(createOptions({
+    launchSpec: { restoresProviderSession: true },
+  }));
+
+  await manager.submitSessionChatPrompt(
+    'session-a', 'user-a', 'restored follow-up', 'submission-a',
+  );
+
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b[200~restored follow-up\x1b[201~',
+    '\r',
+  ]);
+});
+
+test('ChatView does not type into a fresh provider runtime before its first lifecycle state', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    { semanticPromptSubmitDelayMs: 10 },
+  );
+  await manager.startDetached(createOptions());
+
+  await assert.rejects(
+    manager.submitSessionChatPrompt('session-a', 'user-a', 'too early', 'submission-a'),
+    (error: unknown) => error instanceof Error && error.name === 'TerminalSessionInputError',
+  );
+  assert.deepEqual(spawned[0].writes, []);
+});
+
+test('ChatView retries reuse an accepted submission without writing the prompt twice', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    { semanticPromptSubmitDelayMs: 10 },
+  );
+  await manager.startDetached(createOptions({
+    launchSpec: { restoresProviderSession: true },
+  }));
+
+  const first = await manager.submitSessionChatPrompt(
+    'session-a', 'user-a', 'retry-safe', 'submission-a',
+  );
+  const retried = await manager.submitSessionChatPrompt(
+    'session-a', 'user-a', 'retry-safe', 'submission-a',
+  );
+
+  assert.deepEqual(retried, first);
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b[200~retry-safe\x1b[201~',
+    '\r',
+  ]);
+});
+
+test('post-Enter lifecycle and screen failures cannot reject an accepted prompt', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      semanticPromptSubmitDelayMs: 10,
+      onSessionStateChange: () => { throw new Error('observer failed'); },
+      createHeadlessModel: () => ({
+        write: () => {},
+        resize: () => {},
+        snapshot: async () => { throw new Error('snapshot failed'); },
+        readVisibleText: () => { throw new Error('screen failed'); },
+        dispose: () => {},
+      }),
+    },
+  );
+  await manager.startDetached(createOptions());
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'completed',
+    hookEvent: 'Stop',
+    stateAt: 100,
+  }, 'user-a');
+
+  const submitted = await manager.submitSessionPrompt('session-a', 'user-a', 'accepted once');
+
+  assert.equal(submitted.runtimeState, 'running');
+  assert.deepEqual(spawned[0].writes, [
+    '\x1b[200~accepted once\x1b[201~',
     '\r',
   ]);
 });
@@ -709,6 +895,48 @@ test('a provider-declared single Escape settles a running turn when the stop hoo
   assert.deepEqual(spawned[0].writes, ['\x1b']);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
+  assert.equal(
+    manager.getSessionStateForSession('session-a', 'user-a')?.status,
+    'idle',
+  );
+  assert.deepEqual(inferredStates.map((state) => (
+    state.type === 'session_state' ? [state.status, state.hookEvent] : [state.type]
+  )), [['idle', 'InterruptFallback']]);
+});
+
+test('PTY Escape fallback ignores tool activity that arrives before the settle timer', async () => {
+  const spawned: FakePty[] = [];
+  const inferredStates: ServerTransportMessage[] = [];
+  const manager = new TerminalManager(
+    () => {},
+    async () => createFactory(spawned),
+    undefined,
+    {
+      interruptSettleMs: 10,
+      onSessionStateChange: ({ message }) => inferredStates.push(message),
+    },
+  );
+
+  await manager.create(createOptions({ interruptInputPolicy: 'single-escape' }));
+  manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'PreToolUse',
+  }, 'user-a');
+
+  manager.write('terminal-a', 'user-a', 'connection-a', 'surface-a', '\x1b');
+  const acceptedInterruptedTool = manager.recordSessionState({
+    type: 'session_state',
+    sessionId: 'session-a',
+    terminalId: 'terminal-a',
+    status: 'running',
+    hookEvent: 'PostToolUse',
+  }, 'user-a');
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.equal(acceptedInterruptedTool, false);
   assert.equal(
     manager.getSessionStateForSession('session-a', 'user-a')?.status,
     'idle',

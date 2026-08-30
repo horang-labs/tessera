@@ -3,6 +3,7 @@ import type React from 'react';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import type { TaskSession } from '@/types/task-entity';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 /**
  * Drag-reorder for the sessions listed under a task, shared by the sidebar rows
@@ -74,6 +75,11 @@ export function useSubSessionReorder(taskId: string, sessions: TaskSession[]) {
 
       remaining.splice(position === 'after' ? targetIndex + 1 : targetIndex, 0, draggedId);
       reorderSessionsByIds(remaining);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'session',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
     },
     [taskId, sessions, setDragging, reorderSessionsByIds],
   );

@@ -2,8 +2,10 @@ import path from 'path';
 
 /** @type {import('next').NextConfig} */
 const localTelemetryEnabled = process.env.TESSERA_TELEMETRY_LOCAL === '1';
+const telemetryBuildDisabled = process.env.TESSERA_TELEMETRY_DISABLED === '1';
 const shouldEmbedPosthogToken =
-  process.env.NODE_ENV !== 'development' || localTelemetryEnabled;
+  !telemetryBuildDisabled
+  && (process.env.NODE_ENV !== 'development' || localTelemetryEnabled);
 const posthogProjectToken = shouldEmbedPosthogToken
   ? process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN || ''
   : '';
@@ -39,7 +41,7 @@ const nextConfig = {
     // debug build replays cached modules that still carry the previous build's inlined value:
     // the debug build silently loses its traces, or worse, a release keeps them.
     if (config.cache && typeof config.cache === 'object' && 'version' in config.cache) {
-      config.cache.version = `${config.cache.version}|tesseraLogLevel=${tesseraLogLevel}`;
+      config.cache.version = `${config.cache.version}|tesseraLogLevel=${tesseraLogLevel}|telemetryBuildDisabled=${telemetryBuildDisabled}`;
     }
     return config;
   },

@@ -11,6 +11,8 @@ import {
   buildMemoryFileSessionId,
   buildWorktreeFileSessionId,
   buildWorkspaceFileSessionId,
+  parseWorktreeFileSessionId,
+  parseWorkspaceFileSessionId,
   type WorkspaceFileTabKind,
 } from "./special-session";
 import type { MemoryTargetKind } from "@/types/memory";
@@ -18,9 +20,9 @@ import type { WorkspaceTarget } from '@/types/worktree';
 
 interface FileOpenOptions {
   preferKanbanPeek?: boolean;
-}
-
-interface TargetFileOpenOptions extends FileOpenOptions {
+  /** Owning Worktree identity for a Session-backed workspace surface. */
+  worktreeId?: string | null;
+  /** Project scope retained by the file tab even when the Session is rebound. */
   projectDir?: string | null;
 }
 
@@ -77,7 +79,11 @@ function tryOpenMemoryFileInKanbanPeek(
 
 function focusOrCreateSpecialTab(
   specialSessionId: string,
-  options: { pinExistingPreview?: boolean; insertAfterTabId?: string | null } = {},
+  options: {
+    pinExistingPreview?: boolean;
+    insertAfterTabId?: string | null;
+    worktreeId?: string | null;
+  } = {},
 ): string {
   // #258: a file tab is about to become the active tab, and on a phone the Git
   // panel these are opened from is a full-screen overlay — so the tab would
@@ -88,16 +94,56 @@ function focusOrCreateSpecialTab(
   // no tab and never reaches this at all.
   stepAsidePhoneGitPanel();
   const tabStore = useTabStore.getState();
-  const existing = tabStore.findSessionLocation(specialSessionId);
+  const existing = tabStore.findSessionLocation(specialSessionId)
+    ?? findEquivalentWorktreeFileLocation(specialSessionId);
   if (existing) {
     tabStore.setActiveTab(existing.tabId);
-    usePanelStore.getState().setActivePanelId(existing.panelId);
+    const panelStore = usePanelStore.getState();
+    panelStore.setActivePanelId(existing.panelId);
+    if (options.worktreeId !== undefined) {
+      panelStore.assignSessionInTab(
+        existing.tabId,
+        existing.panelId,
+        specialSessionId,
+        options.worktreeId,
+      );
+    }
     if (options.pinExistingPreview) tabStore.pinTab(existing.tabId);
     return existing.tabId;
   }
-  return tabStore.createTab(specialSessionId, {
+  const tabId = tabStore.createTab(specialSessionId, {
     insertAfterTabId: options.insertAfterTabId ?? tabStore.activeTabId,
   });
+  if (options.worktreeId !== undefined) {
+    const panelStore = usePanelStore.getState();
+    const tabData = panelStore.tabPanels[tabId];
+    if (tabData) {
+      panelStore.assignSessionInTab(
+        tabId,
+        tabData.activePanelId,
+        specialSessionId,
+        options.worktreeId,
+      );
+    }
+  }
+  return tabId;
+}
+
+/**
+ * A file tab belongs to its source Session. If that Session is open in a
+ * preview tab, opening a file would switch the active tab away from it; the
+ * preview-terminal audit then closes that tab and kills the Session's PTY,
+ * which retires the Session — and with it the just-opened file tab.
+ * Promote the Session's own tab to a retained tab before the file tab is
+ * created so the preview terminal survives.
+ */
+function promoteSourceSessionTab(sourceSessionId: string): void {
+  const tabStore = useTabStore.getState();
+  const location = tabStore.findSessionLocation(sourceSessionId);
+  if (!location) return;
+  const tab = tabStore.tabs.find((candidate) => candidate.id === location.tabId);
+  if (!tab?.isPreview) return;
+  tabStore.pinTab(location.tabId);
 }
 
 export function openWorkspaceFileTab(
@@ -111,13 +157,16 @@ export function openWorkspaceFileTab(
     options.preferKanbanPeek
     && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
   ) return;
-  focusOrCreateSpecialTab(
-    buildWorkspaceFileSessionId(sourceSessionId, kind, filePath),
+  promoteSourceSessionTab(sourceSessionId);
+  const tabId = focusOrCreateSpecialTab(
+    buildWorkspaceFileSessionId(sourceSessionId, kind, filePath, options.worktreeId),
     {
       pinExistingPreview: true,
       insertAfterTabId: useTabStore.getState().activeTabId,
+      worktreeId: options.worktreeId,
     },
   );
+  if (options.projectDir) useTabStore.getState().setTabProject(tabId, options.projectDir);
 }
 
 export function previewWorkspaceFileTab(
@@ -131,17 +180,24 @@ export function previewWorkspaceFileTab(
     options.preferKanbanPeek
     && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
   ) return;
-  previewSpecialFileTab(buildWorkspaceFileSessionId(sourceSessionId, kind, filePath));
+  const tabId = previewSpecialFileTab(
+    buildWorkspaceFileSessionId(sourceSessionId, kind, filePath, options.worktreeId),
+    options.worktreeId,
+  );
+  if (options.projectDir) useTabStore.getState().setTabProject(tabId, options.projectDir);
 }
 
 export function openWorkspaceTargetFileTab(
   target: WorkspaceTarget,
   kind: WorkspaceFileTabKind,
   filePath: string,
-  options: TargetFileOpenOptions = {},
+  options: FileOpenOptions = {},
 ): void {
   if (target.kind === 'session') {
-    openWorkspaceFileTab(target.id, kind, filePath, options);
+    openWorkspaceFileTab(target.id, kind, filePath, {
+      ...options,
+      worktreeId: target.worktreeId,
+    });
     return;
   }
   openWorktreeFileTab(
@@ -156,10 +212,13 @@ export function previewWorkspaceTargetFileTab(
   target: WorkspaceTarget,
   kind: WorkspaceFileTabKind,
   filePath: string,
-  options: TargetFileOpenOptions = {},
+  options: FileOpenOptions = {},
 ): void {
   if (target.kind === 'session') {
-    previewWorkspaceFileTab(target.id, kind, filePath, options);
+    previewWorkspaceFileTab(target.id, kind, filePath, {
+      ...options,
+      worktreeId: target.worktreeId,
+    });
     return;
   }
   previewWorktreeFileTab(
@@ -232,17 +291,72 @@ export function previewWorktreeFileTab(
   if (projectDir) useTabStore.getState().setTabProject(tabId, projectDir);
 }
 
-function previewSpecialFileTab(specialSessionId: string): string {
+function previewSpecialFileTab(
+  specialSessionId: string,
+  worktreeId?: string | null,
+): string {
   stepAsidePhoneGitPanel();
   const tabStore = useTabStore.getState();
-  const existing = tabStore.findSessionLocation(specialSessionId);
+  const existing = tabStore.findSessionLocation(specialSessionId)
+    ?? findEquivalentWorktreeFileLocation(specialSessionId);
   if (existing) {
     tabStore.setActiveTab(existing.tabId);
-    usePanelStore.getState().setActivePanelId(existing.panelId);
+    const panelStore = usePanelStore.getState();
+    panelStore.setActivePanelId(existing.panelId);
+    if (worktreeId !== undefined) {
+      panelStore.assignSessionInTab(
+        existing.tabId,
+        existing.panelId,
+        specialSessionId,
+        worktreeId,
+      );
+    }
     return existing.tabId;
   }
   tabStore.openWorkspaceFilePreview(specialSessionId, {
     insertAfterTabId: tabStore.activeTabId,
   });
-  return useTabStore.getState().activeTabId;
+  const tabId = useTabStore.getState().activeTabId;
+  if (worktreeId !== undefined) {
+    const panelStore = usePanelStore.getState();
+    const tabData = panelStore.tabPanels[tabId];
+    if (tabData) {
+      panelStore.assignSessionInTab(
+        tabId,
+        tabData.activePanelId,
+        specialSessionId,
+        worktreeId,
+      );
+    }
+  }
+  return tabId;
+}
+
+function findEquivalentWorktreeFileLocation(
+  specialSessionId: string,
+): { tabId: string; panelId: string } | null {
+  const requested = parseWorkspaceFileSessionId(specialSessionId);
+  if (!requested?.sourceWorktreeId) return null;
+
+  const tabs = useTabStore.getState().tabs;
+  const panelStore = usePanelStore.getState();
+  for (const tab of tabs) {
+    const tabData = panelStore.tabPanels[tab.id];
+    if (!tabData) continue;
+    for (const [panelId, panel] of Object.entries(tabData.panels)) {
+      if (!panel.sessionId) continue;
+      const workspaceFile = parseWorkspaceFileSessionId(panel.sessionId);
+      const worktreeFile = parseWorktreeFileSessionId(panel.sessionId);
+      const sourceWorktreeId = workspaceFile?.sourceWorktreeId
+        ?? worktreeFile?.sourceWorktreeId;
+      const kind = workspaceFile?.kind ?? worktreeFile?.kind;
+      const path = workspaceFile?.path ?? worktreeFile?.path;
+      if (
+        sourceWorktreeId === requested.sourceWorktreeId
+        && kind === requested.kind
+        && path === requested.path
+      ) return { tabId: tab.id, panelId };
+    }
+  }
+  return null;
 }

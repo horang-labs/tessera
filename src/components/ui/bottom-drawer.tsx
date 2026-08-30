@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -107,6 +109,7 @@ export function BottomDrawer({
         </div>
         {headerActions}
         <button
+          {...telemetryClickAttributes('git.diff.close', 'git_panel')}
           onClick={onClose}
           className="shrink-0 rounded p-1.5 text-(--text-muted) transition-colors hover:bg-(--tool-bg) hover:text-(--text-secondary)"
           aria-label="Close drawer"

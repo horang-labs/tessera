@@ -21,6 +21,7 @@ import { PreviewMarkdown } from './preview-markdown';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { ProviderLogoMark, getProviderBrand } from './provider-brand';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /** Sentinel value to signal decline (deny) instead of answering */
 export const DECLINE_SENTINEL = '__DECLINE__';
@@ -276,6 +277,7 @@ export function AskUserQuestionFloatingPanel({
         {/* Density controls — 패널이 채팅 본문을 가릴 때 사용자가 직접 줄인다 */}
         <div className="flex items-center gap-0.5 shrink-0">
           <button
+            {...telemetryClickAttributes('agent_prompt.density.decrease', 'agent_prompt')}
             type="button"
             tabIndex={-1}
             aria-label={t('chat.promptDensityDecrease')}
@@ -288,6 +290,7 @@ export function AskUserQuestionFloatingPanel({
             <Minus className="w-3 h-3" />
           </button>
           <button
+            {...telemetryClickAttributes('agent_prompt.density.increase', 'agent_prompt')}
             type="button"
             tabIndex={-1}
             aria-label={t('chat.promptDensityIncrease')}
@@ -360,6 +363,7 @@ export function AskUserQuestionFloatingPanel({
                         data-first-option={optIdx === 0 ? '' : undefined}
                       >
                         <button
+                          {...telemetryClickAttributes('agent_prompt.option.select', 'agent_prompt')}
                           type="button"
                           aria-pressed={isSelected}
                           tabIndex={-1}
@@ -418,6 +422,7 @@ export function AskUserQuestionFloatingPanel({
                         </button>
                         {opt.isOther && isSelected && (
                           <input
+                            {...telemetryClickAttributes('agent_prompt.other_input', 'agent_prompt')}
                             type={q.isSecret ? 'password' : 'text'}
                             value={state?.otherText ?? ''}
                             onChange={(e) => hook.setOtherText(qIdx, e.target.value)}
@@ -459,6 +464,7 @@ export function AskUserQuestionFloatingPanel({
         </div>
         {hook.submissionState === 'error' ? (
           <button
+            {...telemetryClickAttributes('agent_prompt.retry', 'agent_prompt')}
             onClick={hook.retrySubmit}
             tabIndex={-1}
             className="flex items-center gap-1.5 px-2.5 py-1 text-[length:var(--aqp-label-font)] rounded-md bg-(--accent) text-white hover:bg-(--accent-hover) transition-colors"
@@ -468,6 +474,7 @@ export function AskUserQuestionFloatingPanel({
           </button>
         ) : (
           <button
+            {...telemetryClickAttributes('agent_prompt.submit', 'agent_prompt')}
             onClick={hook.submit}
             disabled={!hook.isAllAnswered || hook.submissionState === 'submitting'}
             tabIndex={-1}

@@ -28,6 +28,7 @@ import { i18n } from '@/lib/i18n';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { v4 as uuidv4 } from 'uuid';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export interface UseKeyboardShortcutsOptions {
   /** Reserved for future use (help toggle). Currently unused. */
@@ -248,7 +249,10 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
       if (!handler) continue;
       const key = getEffectiveShortcut(id, overrides);
       if (!key) continue;
-      manager.register(key, () => { void handler(); }, { ignoreInputFields: false });
+      manager.register(key, () => {
+        void captureTelemetryEvent('keyboard_shortcut_used', { shortcut: id });
+        void handler();
+      }, { ignoreInputFields: false });
       activeKeys.push(key);
     }
     setGlobalShortcutKeys(activeKeys);

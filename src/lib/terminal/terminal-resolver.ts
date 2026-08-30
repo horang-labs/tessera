@@ -11,6 +11,7 @@ import type {
   TerminalResolvedShell,
   TerminalShellKind,
 } from './types';
+import { buildPosixOpenCodeOverlayActivation } from '@/lib/cli/providers/opencode/config-overlay';
 
 export function resolveTerminalCwd(candidate?: string | null): string {
   const requestedCwd = candidate?.trim();
@@ -297,6 +298,7 @@ function buildWslTerminalScript(cwd: string, launchSpec?: TerminalLaunchSpec): s
     // 되돌린다 — orca의 powershell-osc133-bootstrap(ORCA_CODEX_HOME 복원) 미러.
     const inner =
       'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
+      + buildPosixOpenCodeOverlayActivation()
       + `exec ${buildPosixCommand(launch.program, launch.args)}`;
     lines.push('WSL_LAUNCH_SHELL="$shell"; export WSL_LAUNCH_SHELL');
     lines.push(`exec "$shell" -l -i -c ${quoteBashArg(inner)}`);
@@ -427,6 +429,7 @@ export function resolveTerminalShell(options: {
         // CODEX_HOME 재단언은 buildWslTerminalScript의 inner와 같은 이유 —
         // macOS -l 셸도 .zprofile이 CODEX_HOME을 덮으면 오버레이가 무시된다.
         'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
+        + buildPosixOpenCodeOverlayActivation()
         + `exec ${buildPosixCommand(launch.program, launch.args)}`,
       ],
       cwd,

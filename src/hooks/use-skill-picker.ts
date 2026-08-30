@@ -88,6 +88,7 @@ export function useSkillPicker(
   const skillRevision = useCommandStore(
     (s) => (sessionId ? (s.revisions[sessionId] ?? 0) : 0),
   );
+  const catalogRevision = useCommandStore((s) => s.catalogRevision);
   const builtInCommands = useMemo<SkillInfo[]>(
     () => {
       if (providerId === 'codex') {
@@ -182,7 +183,7 @@ export function useSkillPicker(
   const loadPromiseRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const loadTokenRef = useRef<object | null>(null);
   const skillLoadKey = sessionId && providerId
-    ? `${providerId}:${sessionId}:${skillRevision}`
+    ? `${providerId}:${sessionId}:${skillRevision}:${catalogRevision}`
     : null;
 
   useEffect(
@@ -208,6 +209,7 @@ export function useSkillPicker(
     loadTokenRef.current = loadToken;
     const isCurrentLoad = () =>
       loadTokenRef.current === loadToken
+      && useCommandStore.getState().catalogRevision === catalogRevision
       && (useCommandStore.getState().revisions[sessionId] ?? 0) === skillRevision;
     const canApplyLoad = () =>
       isCurrentLoad()
@@ -267,7 +269,7 @@ export function useSkillPicker(
         loadPromiseRef.current = null;
       }
     }
-  }, [isSessionRunning, providerId, sessionId, setCommands, skillLoadKey, skillRevision]);
+  }, [catalogRevision, isSessionRunning, providerId, sessionId, setCommands, skillLoadKey, skillRevision]);
 
   useEffect(
     function loadProviderSkillsWhenReady() {

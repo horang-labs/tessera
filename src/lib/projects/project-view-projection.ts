@@ -74,11 +74,25 @@ function getViewMembership(
   projectId: string,
   projectWorktree = dbProjects.getProjectWorktree(projectId),
 ): ProjectViewMembership {
+  const project = dbProjects.getProject(projectId);
+  const hasProjectRootPathMismatch = Boolean(
+    project
+    && projectWorktree?.filesystemPath
+    && project.decoded_path !== projectWorktree.filesystemPath,
+  );
   return projectWorktree
     ? {
         kind: 'canonical-worktree',
         worktreeId: projectWorktree.id,
         currentBranch: projectWorktree.currentBranch,
+        ...(project && hasProjectRootPathMismatch
+          ? {
+              projectRootFallback: {
+                projectId: project.id,
+                workDir: project.decoded_path,
+              },
+            }
+          : {}),
       }
     : { kind: 'non-git-project', projectId };
 }

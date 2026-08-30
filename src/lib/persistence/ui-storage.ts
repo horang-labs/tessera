@@ -16,7 +16,18 @@ export function readUiStorageItem(key: string): string | null {
   const electronApi = getElectronUiStorageApi();
   if (electronApi?.isElectron && electronApi.uiStorageGetItem) {
     try {
-      return electronApi.uiStorageGetItem(key);
+      const persisted = electronApi.uiStorageGetItem(key);
+      if (persisted !== null) return persisted;
+
+      // One-time migration for UI stores that predate the Electron bridge.
+      // Their values live under the current renderer origin; copy them into
+      // ui-state.json before a future build/port change makes them unreachable.
+      const legacy = window.localStorage.getItem(key);
+      if (legacy !== null) {
+        electronApi.uiStorageSetItem?.(key, legacy);
+        return legacy;
+      }
+      return null;
     } catch {
       // Fall back to browser storage below.
     }

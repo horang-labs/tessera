@@ -7,6 +7,7 @@ import { NotificationCenter } from './notification-center';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface NotificationBellProps {
   /** Dropdown open direction: 'down' (header) or 'right' (vertical strip) */
@@ -30,6 +31,7 @@ export function NotificationBell({ direction = 'down' }: NotificationBellProps) 
   return (
     <div className="relative">
       <Button
+        {...telemetryClickAttributes('notifications.open', 'notifications')}
         ref={buttonRef}
         data-testid="notification-bell"
         variant="ghost"

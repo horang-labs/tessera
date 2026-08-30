@@ -10,7 +10,6 @@ import {
   useMemo,
   useRef,
 } from 'react';
-import { CircleDot } from 'lucide-react';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useCollectionStore } from '@/stores/collection-store';
@@ -719,6 +718,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
       if (movedCount > 0) {
         useBoardStore.getState().flashDrop(sessionId || multiSessionIds[0]);
         useSelectionStore.getState().clearSelection();
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'chat',
+          move_kind: 'workflow_status',
+          item_count: movedCount,
+        });
       }
 
       useBoardStore.getState().setDragging(null);
@@ -734,6 +738,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
         focusedProjectId ?? undefined,
       );
       useBoardStore.getState().flashDrop(sessionId);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'chat',
+        move_kind: 'workflow_status',
+        item_count: 1,
+      });
     } else if (sessionId && session) {
       const ids = filteredChats
         .filter((item) => item.projectDir === session.projectDir)
@@ -755,6 +764,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
         filtered,
       );
       useBoardStore.getState().flashDrop(sessionId);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'chat',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
     }
 
     useBoardStore.getState().setDragging(null);
@@ -934,6 +948,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
         has_task: true,
         has_worktree: Boolean(task.worktreeBranch),
         has_collection: Boolean(task.collectionId),
+        session_kind: data.kind ?? 'chat',
       });
     } catch (err) {
       console.error('Failed to add session to task:', err);
@@ -1058,17 +1073,18 @@ export const KanbanBoard = memo(function KanbanBoard() {
     setTaskMenuAnchor(null);
   }, [taskMenuAnchor]);
 
-  const itemFilter = (
-    <KanbanItemFilter
-      running={isKanbanRunningFilterActive}
-      runningCount={runningProjectionItems.count}
-      onChange={handleKanbanRunningFilterChange}
-    />
+  const headerControls = (
+    <div className="flex shrink-0 items-center gap-2">
+      <KanbanItemFilter
+        running={isKanbanRunningFilterActive}
+        runningCount={runningProjectionItems.count}
+        onChange={handleKanbanRunningFilterChange}
+      />
+    </div>
   );
-  const columnInteractionMode = isKanbanRunningFilterActive ? 'filtered' : 'editable';
-  const showRunningEmptyState =
-    isKanbanRunningFilterActive && runningProjectionItems.count === 0;
-
+  // Running is a visibility filter only. Creation and DnD remain available so
+  // live work can be moved or started without switching back to All.
+  const columnInteractionMode = 'editable' as const;
   return (
     <div
       className="relative flex h-full w-full flex-col overflow-hidden bg-(--board-bg)"
@@ -1079,14 +1095,14 @@ export const KanbanBoard = memo(function KanbanBoard() {
           projects={scopeData.projects}
           activeProjectId={portfolioProjectFilter}
           onProjectFilter={handlePortfolioProjectFilter}
-          trailingControls={itemFilter}
+          trailingControls={headerControls}
         />
       ) : (
         <CollectionFilterBar
           collections={collections}
           activeFilter={activeCollectionFilter}
           onFilter={setCollectionFilter}
-          trailingControls={itemFilter}
+          trailingControls={headerControls}
         />
       )}
 
@@ -1098,25 +1114,10 @@ export const KanbanBoard = memo(function KanbanBoard() {
         data-kanban-scroll-area="true"
         data-testid="kanban-scroll-area"
       >
-        {showRunningEmptyState ? (
-          <div
-            className="flex h-full min-w-full items-center justify-center px-6"
-            data-testid="kanban-running-empty"
-          >
-            <div className="rounded-xl border border-dashed border-(--divider) px-8 py-7 text-center">
-              <div className="mx-auto mb-2.5 flex h-9 w-9 items-center justify-center rounded-lg bg-[color-mix(in_srgb,var(--success)_10%,transparent)] text-(--success)">
-                <CircleDot className="h-4.5 w-4.5" aria-hidden="true" />
-              </div>
-              <p className="text-[0.8125rem] font-medium text-(--text-secondary)">
-                {t('status.noRunningProcesses')}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div
-            className="inline-flex gap-3 h-full px-4 py-4 min-w-max"
-            data-testid="kanban-columns-row"
-          >
+        <div
+          className="inline-flex gap-3 h-full px-4 py-4 min-w-max"
+          data-testid="kanban-columns-row"
+        >
             {/* Workflow columns */}
             {WORKFLOW_STATUS_ORDER.map((status) => (
               <KanbanWorkflowColumn
@@ -1196,8 +1197,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
               onCardMoveToCollection={handleChatMoveToCollection}
               onCardStopProcess={handleCardStopProcess}
             />
-          </div>
-        )}
+        </div>
       </div>
       <KanbanScrollControls scrollAreaId={scrollAreaId} scrollAreaRef={scrollAreaRef} />
 

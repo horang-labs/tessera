@@ -175,6 +175,12 @@ export interface I18nMessages {
       enabled: string;
       disabledByEnv: string;
     };
+    tesseraCli: {
+      title: string;
+      description: string;
+      enabled: string;
+      existingSessions: string;
+    };
     shortcuts: string;
     appearance: string;
     theme: {
@@ -442,6 +448,12 @@ export interface I18nMessages {
       branchPrefix: string;
       branchPrefixPlaceholder: string;
       branchPrefixDesc: string;
+      sourceControlAi: string;
+      sourceControlAiDesc: string;
+      provider: string;
+      model: string;
+      modelDefault: string;
+      opencodeModelNote: string;
     };
   };
   electronClose: {
@@ -503,8 +515,8 @@ export interface I18nMessages {
     executionModeTitle: string;
     executionModeDescription: string;
     executionModeNote: string;
-    telemetryTitle: string;
-    telemetryDescription: string;
+    tesseraCliTitle: string;
+    tesseraCliDescription: string;
     aiCli: string;
     providerReady: string;
     providerNeedsLogin: string;
@@ -593,9 +605,6 @@ export interface I18nMessages {
     dropSessionReference: string;
     closeSession: string;
     branchLabel: string;
-    sessionScopeLabel: string;
-    currentBranchLabel: string;
-    presentationScopeHint: string;
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
@@ -1062,6 +1071,9 @@ export interface I18nMessages {
     allProjects: string;
     allProjectsDisabledPopout: string;
     addProject: string;
+    githubStar: string;
+    githubStarFallback: string;
+    githubStarSuccess: string;
   };
   gitPanel: {
     tabs: {
@@ -1095,6 +1107,8 @@ export interface I18nMessages {
       worktreeFallback: string;
       selectionSummary: string;
       includeFile: string;
+      selectAll: string;
+      deselectAll: string;
       button: string;
       buttonPending: string;
       menuButtonCount: string;
@@ -1160,6 +1174,9 @@ export interface I18nMessages {
       createButton: string;
       createButtonPending: string;
       viewButton: string;
+      archiveButton: string;
+      archiveConfirmButton: string;
+      archiveButtonPending: string;
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
@@ -1201,7 +1218,6 @@ export interface I18nMessages {
     primary: {
       loading: string;
       stateUnknown: string;
-      sessionRequired: string;
       detachedHead: string;
       noRemote: string;
       upToDate: string;
@@ -1211,12 +1227,29 @@ export interface I18nMessages {
       pending: string;
       openSourceControl: string;
     };
+    revert: {
+      fileAction: string;
+      selectAction: string;
+      selectActionPending: string;
+      confirmTitle: string;
+      confirmTitleOne: string;
+      confirmBody: string;
+      confirmBodyUntracked: string;
+      confirmBodyMixed: string;
+      confirm: string;
+      confirmOne: string;
+      successToast: string;
+      failureToast: string;
+      nothingSelected: string;
+      ineligible: string;
+    };
     failure: {
       commitTitle: string;
       pushTitle: string;
       pullTitle: string;
       createPrTitle: string;
       abortTitle: string;
+      revertTitle: string;
       showDetails: string;
       hideDetails: string;
       dismiss: string;
@@ -1362,6 +1395,7 @@ export interface I18nMessages {
     preparation: {
       preparing: string;
       failed: string;
+      failedTooltip: string;
       title: string;
       runningDescription: string;
       failedDescription: string;
@@ -1452,6 +1486,9 @@ export interface I18nMessages {
       continueTaskHint: string;
       continueSubmit: string;
       chatInstantHint: string;
+      chatCreatesHere: string;
+      sessionLocationLabel: string;
+      chatLocationDescription: string;
       taskWorktreeHint: string;
       taskWorktreeDescription: string;
       worktreeSourceLabel: string;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Pin, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -27,7 +27,10 @@ import {
 } from '@/lib/projects/origin-project-representation';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import { selectActiveTab, usePanelStore } from '@/stores/panel-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
+import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const EMPTY_TASKS: TaskEntity[] = [];
 const EMPTY_COLLECTIONS: Collection[] = [];
@@ -37,7 +40,7 @@ interface AllProjectsListProps {
   isRunningFilterActive: boolean;
   onSessionClick: (session: UnifiedSession, event?: React.MouseEvent) => void;
   onSessionDoubleClick: (session: UnifiedSession) => void;
-  onSessionArchive: (sessionId: string) => void;
+  onSessionArchive: (sessionId: string, task?: TaskEntity) => void;
   onSessionRename: (sessionId: string, newTitle: string) => void;
   onSessionDelete: (sessionId: string) => void;
   onSessionOpenInNewTab: (sessionId: string) => void;
@@ -60,6 +63,12 @@ export function AllProjectsList({
   onChatStatusChange,
 }: AllProjectsListProps) {
   const representation = useOriginProjectRepresentation();
+  const activePanelWorktreeId = usePanelStore((state) => {
+    const tab = selectActiveTab(state);
+    return tab?.panels[tab.activePanelId]?.worktreeId ?? null;
+  });
+  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
+  const activeWorktreeId = peekWorktreeId ?? activePanelWorktreeId;
   const visibleProjects = useMemo(() => {
     if (!isRunningFilterActive) return representation.projects;
     return representation.projects.filter((project) => originProjectContainsRunningSession(
@@ -75,6 +84,7 @@ export function AllProjectsList({
           key={project.encodedDir}
           project={project}
           projectTasks={representation.tasksByProject[project.encodedDir] ?? EMPTY_TASKS}
+          activeWorktreeId={activeWorktreeId}
           activeSessionId={activeSessionId}
           isRunningFilterActive={isRunningFilterActive}
           onSessionClick={onSessionClick}
@@ -93,11 +103,13 @@ export function AllProjectsList({
 }
 
 interface AllProjectSectionProps extends AllProjectsListProps {
+  activeWorktreeId: string | null;
   project: ProjectGroup;
   projectTasks: TaskEntity[];
 }
 
 function AllProjectSection({
+  activeWorktreeId,
   project,
   projectTasks,
   activeSessionId,
@@ -114,6 +126,7 @@ function AllProjectSection({
 }: AllProjectSectionProps) {
   const { t } = useI18n();
   const [isProjectQuickCreateOpen, setIsProjectQuickCreateOpen] = useState(false);
+  const projectQuickCreateTriggerRef = useRef<HTMLButtonElement>(null);
 
   const color = getProjectColor(project.displayName);
   const collections = useCollectionStore((state) => state.collectionsByProject[project.encodedDir] ?? EMPTY_COLLECTIONS);
@@ -124,7 +137,6 @@ function AllProjectSection({
   const toggleCollectionCollapse = useBoardStore((state) => state.toggleCollectionCollapse);
   const isExpanded = useBoardStore((state) => state.allProjectsExpandedSections?.[project.encodedDir] ?? false);
   const toggleAllProjectsSection = useBoardStore((state) => state.toggleAllProjectsSection ?? (() => {}));
-  const peekWorktreeId = useWorkspacePeekStore((state) => state.target?.worktreeId ?? null);
 
   const {
     draggingItem,
@@ -237,6 +249,7 @@ function AllProjectSection({
   return (
     <div className="relative mb-3 mt-3 first:mt-1" data-testid={`all-project-section-${project.encodedDir}`}>
       <div
+        {...telemetryClickAttributes('sidebar.section.toggle', 'sidebar')}
         className={cn(
           'flex items-center gap-1 rounded-md py-1.5 pl-0 pr-2 transition-colors',
           'cursor-pointer hover:bg-(--sidebar-hover)',
@@ -265,11 +278,17 @@ function AllProjectSection({
         </span>
         {project.isCurrent ? <Pin className="h-3 w-3 shrink-0 text-(--accent)" /> : null}
         <button
+          ref={projectQuickCreateTriggerRef}
+          {...telemetryClickAttributes('sidebar.project.add', 'sidebar')}
           type="button"
           onClick={handleProjectQuickCreateToggle}
-          className="shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-bg) hover:text-(--accent)"
+          className={cn(
+            'shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-bg) hover:text-(--accent)',
+            PHONE_TOUCH_TARGET,
+          )}
           title={t('sidebar.createNewSession')}
           aria-label={t('sidebar.createNewSession')}
+          data-testid={`all-project-quick-create-toggle-${project.encodedDir}`}
         >
           <Plus className="h-3 w-3" />
         </button>
@@ -282,7 +301,7 @@ function AllProjectSection({
           projectDir={project.decodedPath}
           projectId={project.encodedDir}
           allowCollectionSelection
-          className="left-2 right-2 w-auto"
+          anchorRef={projectQuickCreateTriggerRef}
           scopeId={`project-${project.encodedDir}`}
           onClose={() => setIsProjectQuickCreateOpen(false)}
         />
@@ -292,8 +311,9 @@ function AllProjectSection({
         <div className="ml-2">
           {project.projectWorktree ? (
             <CompactProjectWorktreeRow
-              active={peekWorktreeId === project.projectWorktree.id}
+              active={activeWorktreeId === project.projectWorktree.id}
               branch={project.projectWorktree.currentBranch}
+              diffStats={project.projectWorktree.diffStats}
               displayPath={project.projectWorktree.displayPath}
               onSelect={handleProjectWorktreeSelect}
             />

@@ -37,7 +37,9 @@ export const viewport: Viewport = {
 const themeScript = `
 (function() {
   try {
-    var stored = localStorage.getItem('tessera:settings');
+    var stored = window.electronAPI && window.electronAPI.isElectron && window.electronAPI.uiStorageGetItem
+      ? window.electronAPI.uiStorageGetItem('tessera:settings')
+      : localStorage.getItem('tessera:settings');
     var settings = stored ? JSON.parse(stored).state.settings : {};
     var theme = settings.theme || 'auto';
     var isDark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);

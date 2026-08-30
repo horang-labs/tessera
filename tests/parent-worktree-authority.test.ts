@@ -111,6 +111,40 @@ test('preparation and reverse lookup use the parent path before the legacy child
   assert.equal(tasks.findTaskIdForWorktree(spacedPath), 'spaced-path-task');
 });
 
+test('workDir lookups match Windows-hosted WSL aliases', async () => {
+  const { sessions, tasks } = await modules();
+  const posix = '/home/work/Source/alias-worktree';
+  const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\alias-worktree';
+
+  tasks.createTask({ id: 'alias-task', projectId: dataDir, title: 'Alias task' });
+  tasks.setTaskWorktreeCheckout('alias-task', {
+    branch: 'feature/alias',
+    path: unc,
+  });
+  sessions.createSession('alias-posix-session', dataDir, 'Alias POSIX', 'codex', {
+    workDir: posix,
+  });
+  sessions.createSession('alias-unc-session', dataDir, 'Alias UNC', 'codex', {
+    workDir: unc,
+  });
+
+  assert.equal(tasks.findTaskIdForWorktree(posix), 'alias-task');
+  assert.deepEqual(
+    sessions.getSessionsByWorkDir(posix).map((session) => session.id).sort(),
+    ['alias-posix-session', 'alias-unc-session'],
+  );
+  assert.deepEqual(
+    sessions.getActiveSessionIdsSharingWorkDir(posix).sort(),
+    ['alias-posix-session', 'alias-unc-session'],
+  );
+  assert.equal(sessions.countOtherSessionsByWorkDir(posix, 'alias-posix-session'), 1);
+  assert.equal(sessions.countNonArchivedSessionsByWorkDir(posix), 2);
+
+  sessions.clearWorktreeMetadataByWorkDir(posix);
+  assert.equal(sessions.getSession('alias-posix-session')?.work_dir, null);
+  assert.equal(sessions.getSession('alias-unc-session')?.work_dir, null);
+});
+
 test('PR observation uses parent paths for zero-session Worktrees and legacy fallback only when needed', async () => {
   const { sessions, tasks } = await modules();
   const parentPath = path.join(dataDir, 'pr-parent-owned');
@@ -407,6 +441,51 @@ test('diff-stat broadcasts include a zero-session Worktree resolved by its paren
     await diffStats.computeAndCache(worktreePath, 'diff-user');
     const staleChildMessage = messages[0]?.message as { sessionIds?: string[] };
     assert.deepEqual(staleChildMessage.sessionIds, ['diff-stale-child']);
+  } finally {
+    broadcast.uninstallDiffStatsBroadcast();
+    protocolAdapter.setSendToUser(() => undefined);
+  }
+});
+
+test('diff-stat broadcasts reach a canonical Project Worktree with no Task or Session', async () => {
+  const [{ protocolAdapter }, broadcast, diffStats] = await Promise.all([
+    import('@/lib/cli/protocol-adapter'),
+    import('@/lib/git/worktree-diff-stats-broadcast'),
+    import('@/lib/git/worktree-diff-stats-cache'),
+  ]);
+  const worktreePath = path.join(dataDir, 'diff-project-worktree');
+  fs.mkdirSync(worktreePath, { recursive: true });
+  execFileSync('git', ['init'], { cwd: worktreePath, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: worktreePath });
+  execFileSync('git', ['config', 'user.name', 'Tessera Test'], { cwd: worktreePath });
+  fs.writeFileSync(path.join(worktreePath, 'project.txt'), 'base\n');
+  execFileSync('git', ['add', 'project.txt'], { cwd: worktreePath });
+  execFileSync('git', ['commit', '-m', 'base'], { cwd: worktreePath, stdio: 'ignore' });
+  fs.writeFileSync(path.join(worktreePath, 'project.txt'), 'changed\n');
+
+  const messages: Array<{ userId: string; message: unknown }> = [];
+  protocolAdapter.setSendToUser((userId, message) => {
+    messages.push({ userId, message });
+  });
+  broadcast.installDiffStatsBroadcast();
+  try {
+    await diffStats.computeAndCache(worktreePath, 'project-worktree-user');
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]?.userId, 'project-worktree-user');
+    const message = messages[0]?.message as {
+      type?: string;
+      workDir?: string;
+      sessionIds?: string[];
+      taskIds?: string[];
+      stats?: { added?: number; removed?: number; changedFiles?: number } | null;
+    };
+    assert.equal(message.type, 'worktree_diff_stats');
+    assert.equal(message.workDir, worktreePath);
+    assert.deepEqual(message.sessionIds, []);
+    assert.deepEqual(message.taskIds, []);
+    assert.equal(message.stats?.added, 1);
+    assert.equal(message.stats?.removed, 1);
+    assert.equal(message.stats?.changedFiles, 1);
   } finally {
     broadcast.uninstallDiffStatsBroadcast();
     protocolAdapter.setSendToUser(() => undefined);

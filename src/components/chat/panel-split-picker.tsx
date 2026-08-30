@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { ShortcutId } from '@/lib/keyboard/registry';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const MIN_PANEL_WIDTH = 250;
 const MIN_PANEL_HEIGHT = 150;
@@ -166,6 +167,7 @@ export function PanelSplitPicker({ sessionId, compact = false }: PanelSplitPicke
           }
           setIsOpen((value) => !value);
         }}
+        {...telemetryClickAttributes('panel.split.open', 'composer')}
         className={cn(
           'inline-flex items-center gap-2 rounded-md border text-[11px] transition-colors',
           'composer-quick-access-button',
@@ -208,6 +210,10 @@ export function PanelSplitPicker({ sessionId, compact = false }: PanelSplitPicke
               <button
                 type="button"
                 onClick={() => handleSplit(item.direction)}
+                {...telemetryClickAttributes(
+                  item.direction === 'horizontal' ? 'panel.split.right' : 'panel.split.down',
+                  'composer',
+                )}
                 disabled={disableSplit}
                 className={cn(
                   'rounded-lg border bg-(--input-bg) p-2 text-left transition-colors',

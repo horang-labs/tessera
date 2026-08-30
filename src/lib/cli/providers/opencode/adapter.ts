@@ -38,6 +38,7 @@ import {
   normalizeOpenCodeSessionMode,
   splitOpenCodeModelId,
 } from './session-config';
+import { mirrorOpenCodeConfigIntoOverlay } from './config-overlay';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -215,6 +216,25 @@ export class OpenCodeAdapter implements CliProvider {
     } else {
       delete spawnEnv.OPENCODE_PERMISSION;
     }
+    Object.assign(spawnEnv, options.managedLaunch?.environment ?? {});
+    const managedOverlayRoot = options.managedLaunch?.skillOverlay?.rootDir;
+    if (managedOverlayRoot) {
+      const bridgedWsl = getRuntimePlatform() === 'win32' && agentEnv === 'wsl';
+      if (!bridgedWsl) {
+        mirrorOpenCodeConfigIntoOverlay(spawnEnv.OPENCODE_CONFIG_DIR, managedOverlayRoot);
+      }
+      spawnEnv.OPENCODE_CONFIG_DIR = managedOverlayRoot;
+      spawnEnv.TESSERA_OPENCODE_CONFIG_DIR = managedOverlayRoot;
+    }
+    const guestEnvironment = {
+      ...(options.managedLaunch?.guestEnvironment ?? {}),
+      ...(managedOverlayRoot
+        ? {
+            OPENCODE_CONFIG_DIR: managedOverlayRoot,
+            TESSERA_OPENCODE_CONFIG_DIR: managedOverlayRoot,
+          }
+        : {}),
+    };
 
     const cliProcess = spawnCli(command, args, {
       cwd: cliWorkDir,
@@ -222,7 +242,9 @@ export class OpenCodeAdapter implements CliProvider {
       env: spawnEnv as NodeJS.ProcessEnv,
       detached: getRuntimePlatform() !== 'win32',
       stdio: ['pipe', 'pipe', 'pipe'],
-    }, agentEnv);
+    }, agentEnv, {
+      guestEnvironment,
+    });
     this._attachRawLog(cliProcess, options.rawLog, {
       providerId: PROVIDER_ID,
       command,
@@ -458,7 +480,13 @@ export class OpenCodeAdapter implements CliProvider {
    *
    * Returns null on any error/timeout/empty (fail-open).
    */
-  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+  async generateText(
+    prompt: string,
+    userId?: string,
+    // OpenCode's one-shot run cannot inject a model. The settings UI keeps
+    // this empty and the CLI's own default remains authoritative.
+    _model?: string,
+  ): Promise<GeneratedText | null> {
     try {
       const text = await this._runOneShot(prompt, userId);
       const t = text.trim();

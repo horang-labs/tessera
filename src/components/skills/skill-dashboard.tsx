@@ -21,6 +21,7 @@ import {
   getShortName,
 } from './skill-dashboard-sections';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const EMPTY_FAVORITE_SKILLS: string[] = [];
 const EMPTY_MODELS: ProviderModelOption[] = [];
@@ -196,6 +197,7 @@ export function SkillDashboard() {
                 )}
                 <div className="relative" ref={modelMenuRef}>
                   <button
+                    {...telemetryClickAttributes('skills.model.open', 'skills')}
                     onClick={() => setModelMenuOpen(!modelMenuOpen)}
                     disabled={isAnalyzing}
                     className={cn(
@@ -213,6 +215,7 @@ export function SkillDashboard() {
                     <div className="absolute right-0 top-full mt-1 py-1 rounded-md shadow-lg z-20 min-w-[100px] border border-(--divider)" style={{ backgroundColor: 'var(--chat-header-bg)' }}>
                       {claudeModels.map((m) => (
                         <button
+                          {...telemetryClickAttributes('skills.model.select', 'skills')}
                           key={m.value}
                           onClick={() => { setAnalysisModelChoice(m.value); setModelMenuOpen(false); }}
                           className={cn(
@@ -227,12 +230,12 @@ export function SkillDashboard() {
                   )}
                 </div>
                 {isAnalyzing ? (
-                  <button onClick={handleCancelAnalysis} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border border-(--status-error-border) text-(--status-error-text) hover:bg-(--status-error-bg) transition-colors">
+                  <button {...telemetryClickAttributes('skills.analysis.cancel', 'skills')} onClick={handleCancelAnalysis} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border border-(--status-error-border) text-(--status-error-text) hover:bg-(--status-error-bg) transition-colors">
                     <Square className="w-3 h-3 fill-current" />
                     <span>{t('skill.stopAnalysis')}</span>
                   </button>
                 ) : (
-                  <button onClick={handleRefreshAnalysis} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border border-(--divider) text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors">
+                  <button {...telemetryClickAttributes('skills.analysis.refresh', 'skills')} onClick={handleRefreshAnalysis} className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs border border-(--divider) text-(--text-secondary) hover:text-(--text-primary) hover:bg-(--sidebar-hover) transition-colors">
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>{t('skill.generateAnalysis')}</span>
                   </button>
@@ -249,6 +252,7 @@ export function SkillDashboard() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="inline-flex w-fit rounded-md border border-(--divider) bg-(--bg-secondary) p-0.5">
               <button
+                {...telemetryClickAttributes('skills.tab.select', 'skills')}
                 type="button"
                 onClick={() => setActiveTab('claude')}
                 className={cn(
@@ -261,6 +265,7 @@ export function SkillDashboard() {
                 {t('skill.claudeTab')}
               </button>
               <button
+                {...telemetryClickAttributes('skills.tab.select', 'skills')}
                 type="button"
                 onClick={() => setActiveTab('codex')}
                 className={cn(
@@ -299,6 +304,7 @@ export function SkillDashboard() {
               !canUseClaudeSkills && 'opacity-60',
             )} />
             <input
+              {...telemetryClickAttributes('skills.search', 'skills')}
               type="text"
               value={showClaudeContent ? searchQuery : ''}
               onChange={(e) => setSearchQuery(e.target.value)}

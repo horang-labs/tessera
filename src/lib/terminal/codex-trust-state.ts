@@ -56,6 +56,47 @@ export function writeCodexTrustBaseline(overlayHome: string, configToml: string)
   );
 }
 
+function serializeAdvancedCodexProjectTrustBaseline(
+  baselineJson: string,
+  finalOverlayConfig: string,
+): string | null {
+  const baseline = parseStoredBaseline(baselineJson);
+  if (!baseline) return null;
+  const finalTrust = extractCodexTrustSnapshot(finalOverlayConfig);
+  const advanced: StoredTrustBaseline = {
+    version: 1,
+    trust: {
+      projects: finalTrust.projects,
+      hooks: baseline.hooks,
+    },
+  };
+  return JSON.stringify(advanced) + '\n';
+}
+
+export function planCodexTrustPromotion(options: {
+  baselineJson: string;
+  finalOverlayConfig: string;
+  currentAccountConfig: string;
+  managedHooksPath: string;
+  scope: 'all' | 'projects';
+}): { accountConfig: string; advancedBaseline: string | null } {
+  return {
+    accountConfig: mergeCodexOverlayTrust({
+      baselineJson: options.baselineJson,
+      finalOverlayConfig: options.finalOverlayConfig,
+      currentAccountConfig: options.currentAccountConfig,
+      managedHooksPath: options.managedHooksPath,
+      includeHookTrust: options.scope === 'all',
+    }),
+    advancedBaseline: options.scope === 'projects'
+      ? serializeAdvancedCodexProjectTrustBaseline(
+          options.baselineJson,
+          options.finalOverlayConfig,
+        )
+      : null,
+  };
+}
+
 export function serializeCodexTrustBaseline(configToml: string): string {
   const baseline: StoredTrustBaseline = {
     version: 1,
@@ -73,6 +114,7 @@ export function mergeCodexOverlayTrust(options: {
   finalOverlayConfig: string;
   currentAccountConfig: string;
   managedHooksPath: string;
+  includeHookTrust?: boolean;
 }): string {
   const baseline = parseStoredBaseline(options.baselineJson);
   if (!baseline) return options.currentAccountConfig;
@@ -89,13 +131,15 @@ export function mergeCodexOverlayTrust(options: {
     merged = setProjectTrust(merged, key, after);
   }
 
-  for (const key of changedKeys(baseline.hooks, finalTrust.hooks, hookStateEqual)) {
-    if (hookTrustBelongsToManagedOverlay(key, options.managedHooksPath)) continue;
-    const before = baseline.hooks[key];
-    const after = finalTrust.hooks[key];
-    const current = currentTrust.hooks[key];
-    if (!hookStateEqual(current, before)) continue;
-    merged = setHookTrust(merged, key, after);
+  if (options.includeHookTrust !== false) {
+    for (const key of changedKeys(baseline.hooks, finalTrust.hooks, hookStateEqual)) {
+      if (hookTrustBelongsToManagedOverlay(key, options.managedHooksPath)) continue;
+      const before = baseline.hooks[key];
+      const after = finalTrust.hooks[key];
+      const current = currentTrust.hooks[key];
+      if (!hookStateEqual(current, before)) continue;
+      merged = setHookTrust(merged, key, after);
+    }
   }
 
   return merged;

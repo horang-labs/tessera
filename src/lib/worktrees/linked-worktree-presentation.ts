@@ -15,6 +15,37 @@ export function getLinkedWorktreeDensity(
   return 'expanded';
 }
 
+export function isLinkedWorktreeParentActive({
+  density,
+  primarySessionId,
+  activeSessionId,
+  taskWorktreeId,
+  activePanelSessionId,
+  activePanelWorktreeId,
+  peekWorktreeId,
+}: {
+  density: LinkedWorktreeDensity;
+  primarySessionId: string | null;
+  activeSessionId: string | null;
+  taskWorktreeId: string | null;
+  activePanelSessionId: string | null;
+  activePanelWorktreeId: string | null;
+  peekWorktreeId: string | null;
+}): boolean {
+  if (peekWorktreeId !== null) {
+    return peekWorktreeId === taskWorktreeId && density !== 'composite';
+  }
+  if (density === 'composite') {
+    if (!activePanelSessionId && taskWorktreeId === activePanelWorktreeId) return true;
+    return primarySessionId === activeSessionId;
+  }
+  return Boolean(
+    !activePanelSessionId
+    && taskWorktreeId
+    && taskWorktreeId === activePanelWorktreeId,
+  );
+}
+
 export function findCompositeWorktreeId(
   linkedWorktrees: ReadonlyArray<{
     worktreeId?: string;

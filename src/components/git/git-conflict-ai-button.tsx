@@ -1,5 +1,6 @@
 import { LoaderCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export function GitConflictResolveWithAiButton({
   description,
@@ -17,6 +18,7 @@ export function GitConflictResolveWithAiButton({
   return (
     <div className="border-b border-(--status-warning-border) px-3 py-2.5">
       <Button
+        {...telemetryClickAttributes('git.conflict.ai_prepare', 'git_panel')}
         type="button"
         variant="outline"
         size="sm"

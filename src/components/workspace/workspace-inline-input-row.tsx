@@ -6,6 +6,7 @@ import {
   selectBaseNameRange,
   type WorkspaceInlineInput,
 } from "@/components/workspace/workspace-inline-input-state";
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const ICON_CLASS = "h-3.5 w-3.5 shrink-0 text-(--text-muted)";
 
@@ -107,6 +108,7 @@ export function WorkspaceInlineInputRow({
         <span className="h-3.5 w-3.5 shrink-0" />
         <InlineInputIcon kind={input.kind} />
         <input
+          {...telemetryClickAttributes('files.inline_input', 'files_panel')}
           ref={setInputRef}
           defaultValue={initialValue}
           placeholder={input.kind === "new-folder" ? "drafts" : "todo.md"}

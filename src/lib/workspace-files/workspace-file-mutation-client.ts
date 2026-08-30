@@ -1,5 +1,6 @@
 import { extractGitPanelErrorMessage } from "@/components/git/git-panel-shared";
 import { fetchWithTimeout, isTimeoutError } from "@/lib/api/fetch-with-timeout";
+import { workspaceTargetApiPath, type WorkspaceTarget } from '@/types/worktree';
 
 /**
  * A tree mutation touches the workspace filesystem, which can be a 9P share or
@@ -33,8 +34,8 @@ async function requestMutation<T>(
   return payload;
 }
 
-function sessionUrl(sessionId: string, suffix: string): string {
-  return `/api/sessions/${encodeURIComponent(sessionId)}/${suffix}`;
+function targetUrl(target: WorkspaceTarget, suffix: string): string {
+  return `${workspaceTargetApiPath(target)}/${suffix}`;
 }
 
 /**
@@ -42,11 +43,11 @@ function sessionUrl(sessionId: string, suffix: string): string {
  * already taken comes back as a 409 rather than replacing what is there.
  */
 export async function createWorkspaceFileRequest(
-  sessionId: string,
+  target: WorkspaceTarget,
   path: string,
 ): Promise<{ path: string }> {
   return requestMutation<{ path: string }>(
-    sessionUrl(sessionId, "file"),
+    targetUrl(target, "file"),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -58,11 +59,11 @@ export async function createWorkspaceFileRequest(
 }
 
 export async function createWorkspaceDirectoryRequest(
-  sessionId: string,
+  target: WorkspaceTarget,
   path: string,
 ): Promise<{ path: string }> {
   return requestMutation<{ path: string }>(
-    sessionUrl(sessionId, "directory"),
+    targetUrl(target, "directory"),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -74,12 +75,12 @@ export async function createWorkspaceDirectoryRequest(
 }
 
 export async function renameWorkspaceEntryRequest(
-  sessionId: string,
+  target: WorkspaceTarget,
   path: string,
   newName: string,
 ): Promise<{ path: string; previousPath: string }> {
   return requestMutation<{ path: string; previousPath: string }>(
-    sessionUrl(sessionId, "file"),
+    targetUrl(target, "file"),
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -91,7 +92,7 @@ export async function renameWorkspaceEntryRequest(
 }
 
 export async function deleteWorkspaceEntryRequest(
-  sessionId: string,
+  target: WorkspaceTarget,
   path: string,
   options: { recursive: boolean },
 ): Promise<{ path: string }> {
@@ -100,7 +101,7 @@ export async function deleteWorkspaceEntryRequest(
   // confirmation has said the contents go with it.
   if (options.recursive) search.set("recursive", "1");
   return requestMutation<{ path: string }>(
-    `${sessionUrl(sessionId, "file")}?${search.toString()}`,
+    `${targetUrl(target, "file")}?${search.toString()}`,
     { method: "DELETE" },
     "Failed to delete.",
     "The delete did not finish in time. The workspace filesystem may be unresponsive.",

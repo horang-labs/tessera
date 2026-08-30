@@ -9,6 +9,7 @@ import { useI18n } from '@/lib/i18n';
 import { Button } from '@/components/ui/button';
 import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { getSetupEntryRoute } from '@/lib/setup/setup-routing';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export function LoginForm() {
   const { t } = useI18n();
@@ -77,6 +78,7 @@ export function LoginForm() {
               {t('auth.username')}
             </label>
             <input
+              {...telemetryClickAttributes('auth.username', 'auth')}
               type="text"
               id="username"
               name="username"
@@ -94,6 +96,7 @@ export function LoginForm() {
               {t('auth.password')}
             </label>
             <input
+              {...telemetryClickAttributes('auth.password', 'auth')}
               type="password"
               id="password"
               name="password"
@@ -107,6 +110,7 @@ export function LoginForm() {
           </div>
 
           <Button
+            {...telemetryClickAttributes('auth.login', 'auth')}
             type="submit"
             disabled={isLoading}
             className="w-full h-10"

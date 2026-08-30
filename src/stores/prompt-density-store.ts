@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
 
 /**
  * Display density for interactive prompt panels (AskUserQuestion 등).
@@ -143,6 +144,9 @@ export const usePromptDensityStore = create<PromptDensityState>()(
           return { density: PROMPT_DENSITY_ORDER[next] };
         }),
     }),
-    { name: 'tessera:prompt-density' },
+    {
+      name: 'tessera:prompt-density',
+      storage: createUiJsonStorage<PromptDensityState>(),
+    },
   ),
 );

@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface MessageSearchBarProps {
   query: string;
@@ -54,6 +55,7 @@ export function MessageSearchBar({
     >
       <Search className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" aria-hidden="true" />
       <input
+        {...telemetryClickAttributes('message_search.input', 'message_search')}
         ref={inputRef}
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
@@ -78,6 +80,7 @@ export function MessageSearchBar({
         {counterLabel}
       </span>
       <button
+        {...telemetryClickAttributes('message_search.previous', 'message_search')}
         type="button"
         onClick={onPrevious}
         disabled={!canNavigate}
@@ -88,6 +91,7 @@ export function MessageSearchBar({
         <ChevronUp className="h-3.5 w-3.5" />
       </button>
       <button
+        {...telemetryClickAttributes('message_search.next', 'message_search')}
         type="button"
         onClick={onNext}
         disabled={!canNavigate}
@@ -98,6 +102,7 @@ export function MessageSearchBar({
         <ChevronDown className="h-3.5 w-3.5" />
       </button>
       <button
+        {...telemetryClickAttributes('message_search.close', 'message_search')}
         type="button"
         onClick={onClose}
         title={t('chat.search.close')}

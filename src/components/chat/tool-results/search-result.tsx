@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { useState, memo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { SearchToolResult } from '@/types/tool-result';
@@ -59,6 +61,7 @@ export const SearchResult = memo(function SearchResult({ result, toolName }: Sea
 
       {filenames.length > MAX_FILES && (
         <button
+          {...telemetryClickAttributes('message.result.open', 'message')}
           onClick={(e) => { e.stopPropagation(); setIsExpanded(v => !v); }}
           className="text-[11px] text-(--accent) hover:text-(--accent-light) transition-colors"
         >

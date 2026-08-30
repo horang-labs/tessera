@@ -12,7 +12,10 @@
  */
 
 import type { GitConflictOperation, GitPanelData } from "@/types/git";
-import { isCurrentTaskPr } from '@/types/task-pr-status';
+import {
+  isCurrentTaskPr,
+  type TaskPrState,
+} from '@/types/task-pr-status';
 
 /**
  * What the button says. `publish` and `push` run the same action (§2).
@@ -32,6 +35,7 @@ export type GitPrimaryActionKind =
   | 'pull'
   | 'create_pr'
   | 'view_pr'
+  | 'archive_worktree'
   | 'up_to_date';
 
 /**
@@ -65,6 +69,15 @@ export interface GitStateSnapshot {
   /** False when the repository has no remote to push to at all. */
   hasRemote: boolean;
   pullRequest: GitPullRequestReadiness;
+  /** State of the PR for this exact revision; historical PRs are null. */
+  currentPullRequestState?: TaskPrState | null;
+  /**
+   * Whether GitHub still advertises this branch. A merged PR commonly loses
+   * its remote branch before the local panel can count against its upstream.
+   */
+  remoteBranchExists?: boolean;
+  /** True only when this panel can reversibly archive its owning Task. */
+  canArchiveTask?: boolean;
   /**
    * The repository's default branch, as `origin/HEAD` points at it. Null when
    * that ref is not set — a repository Git was never told the answer for.
@@ -92,6 +105,8 @@ export type GitPrimaryActionLabelKey =
   | 'gitPanel.pull.button'
   | 'gitPanel.pr.createButton'
   | 'gitPanel.pr.viewButton'
+  | 'gitPanel.pr.archiveButton'
+  | 'gitPanel.pr.archiveConfirmButton'
   | 'gitPanel.primary.upToDate';
 
 export type GitPrimaryActionPendingLabelKey =
@@ -99,14 +114,14 @@ export type GitPrimaryActionPendingLabelKey =
   | 'gitPanel.push.buttonPending'
   | 'gitPanel.push.publishButtonPending'
   | 'gitPanel.pull.buttonPending'
-  | 'gitPanel.pr.createButtonPending';
+  | 'gitPanel.pr.createButtonPending'
+  | 'gitPanel.pr.archiveButtonPending';
 
 export type GitPrimaryActionReasonKey =
   | 'gitPanel.conflict.mergeInProgress'
   | 'gitPanel.conflict.rebaseInProgress'
   | 'gitPanel.conflict.cherryPickInProgress'
   | 'gitPanel.primary.stateUnknown'
-  | 'gitPanel.primary.sessionRequired'
   | 'gitPanel.primary.detachedHead'
   | 'gitPanel.primary.noRemote'
   | 'gitPanel.push.nothingToPush'
@@ -123,6 +138,7 @@ export interface GitPrimaryAction {
     | 'pull'
     | 'create_pr'
     | 'view_pr'
+    | 'archive_worktree'
     | 'resolve_conflicts'
     | null;
   enabled: boolean;
@@ -154,6 +170,7 @@ export interface GitPrimaryAction {
  */
 export function gitStateSnapshotFromPanel(
   panel: GitPanelData | null | undefined,
+  capabilities: { canArchiveTask?: boolean } = {},
 ): GitStateSnapshot | null {
   if (!panel) return null;
 
@@ -168,6 +185,12 @@ export function gitStateSnapshotFromPanel(
     changedFileCount: panel.changedFilesTotal ?? panel.changedFiles.length,
     hasRemote: panel.hasRemote,
     pullRequest: readPullRequestReadiness(panel),
+    currentPullRequestState:
+      panel.prStatusKnown !== false && panel.prStatus && isCurrentTaskPr(panel.prStatus)
+        ? panel.prStatus.state
+        : null,
+    remoteBranchExists: panel.remoteBranchExists,
+    canArchiveTask: capabilities.canArchiveTask ?? false,
     defaultBranch: panel.defaultBranch,
     // A payload from before this field existed — one held in the client store
     // across a reload, one still in flight over the socket — is a worktree with
@@ -220,10 +243,39 @@ export function derivePrimaryGitAction(
   // committing without a branch is ordinary, pushing without one is not.
   if (snapshot.changedFileCount > 0) return commitAction(true, null);
 
+  // GitHub normally deletes a merged PR's source branch. That also removes the
+  // remote-tracking ref, so the local ahead/behind probe below has no object to
+  // compare and correctly returns null. The current-revision PR probe is the
+  // authoritative answer in this one terminal state: it has already confirmed
+  // that this HEAD belongs to the merged PR, and the remote probe confirmed
+  // that there is no delivery destination left. Keep conflict and dirty work
+  // above this branch so neither can be hidden by the terminal PR action.
+  if (
+    isCurrentMergedPullRequest(snapshot)
+    && snapshot.remoteBranchExists === false
+  ) {
+    return snapshot.canArchiveTask
+      ? archiveWorktreeAction()
+      : viewPullRequestAction();
+  }
+
   const blocked = describeRemoteObstacle(snapshot);
   if (blocked) return publishAction(false, blocked);
 
-  if (!snapshot.upstream) return publishAction(true, null);
+  if (!snapshot.upstream) {
+    // A current merged PR is delivery-finished even when its remote branch
+    // survives the merge (GitHub's delete-on-merge toggle is not guaranteed to
+    // run). Without a tracking ref there is no ahead/behind to count, so the
+    // publish rung below would otherwise masquerade a merged branch as one that
+    // was never shared. End in the same terminal state the deleted-branch path
+    // above does — archive when the owning Task can, otherwise view the merge.
+    if (isCurrentMergedPullRequest(snapshot)) {
+      return snapshot.canArchiveTask
+        ? archiveWorktreeAction()
+        : viewPullRequestAction();
+    }
+    return publishAction(true, null);
+  }
 
   // A tracking branch whose comparison could not be counted has no safe next
   // rung: it may need Pull, Push, or neither. Hold the disabled unknown frame
@@ -239,6 +291,9 @@ export function derivePrimaryGitAction(
   // Committed, pushed and tracking: the only step of delivery left is the pull
   // request (§3). A branch that already has one points at that destination.
   if (snapshot.pullRequest === 'exists') {
+    if (isMergedTaskReadyToArchive(snapshot)) {
+      return archiveWorktreeAction();
+    }
     return viewPullRequestAction();
   }
 
@@ -250,6 +305,16 @@ export function derivePrimaryGitAction(
   }
 
   return createPullRequestAction(snapshot.pullRequest);
+}
+
+function isMergedTaskReadyToArchive(snapshot: GitStateSnapshot): boolean {
+  return isCurrentMergedPullRequest(snapshot)
+    && snapshot.canArchiveTask === true;
+}
+
+function isCurrentMergedPullRequest(snapshot: GitStateSnapshot): boolean {
+  return snapshot.pullRequest === 'exists'
+    && snapshot.currentPullRequestState === 'merged';
 }
 
 function loadingAction(): GitPrimaryAction {
@@ -283,6 +348,17 @@ function viewPullRequestAction(): GitPrimaryAction {
     // Viewing is local navigation and never enters pending state, but keeping a
     // complete action shape lets every primary surface render one model.
     pendingLabelKey: 'gitPanel.pr.createButtonPending',
+    disabledReasonKey: null,
+  };
+}
+
+function archiveWorktreeAction(): GitPrimaryAction {
+  return {
+    kind: 'archive_worktree',
+    action: 'archive_worktree',
+    enabled: true,
+    labelKey: 'gitPanel.pr.archiveButton',
+    pendingLabelKey: 'gitPanel.pr.archiveButtonPending',
     disabledReasonKey: null,
   };
 }

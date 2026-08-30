@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { memo, useState, useMemo, useCallback } from 'react';
 import { CheckCircle, XCircle, Loader2, ChevronDown, ChevronUp, Wrench } from 'lucide-react';
 import type { ToolCallMessage } from '@/types/chat';
@@ -11,7 +13,7 @@ import { ToolCallDetailPanel } from './tool-call-detail-panel';
 import { MESSAGE_BODY_OFFSET_CLASS } from './message-layout';
 import { MessageRowShell } from './message-row-shell';
 import { ImageLightbox } from './image-lightbox';
-import { buildToolImageUrl, isImagePath } from '@/lib/tool-results/tool-image';
+import { buildToolImageUrl, isImagePath, resolveImageToolResultSrc } from '@/lib/tool-results/tool-image';
 
 // --- Layout threshold ---
 const SUMMARY_BAR_MIN = 4;
@@ -96,6 +98,7 @@ async function prefetchToolOutput(tc: ToolCallMessage): Promise<boolean> {
 /** An image-producing tool call (Codex `view_image`, Claude image `Read`). */
 function isImageToolCall(tc: ToolCallMessage): boolean {
   if (tc.status === 'error') return false;
+  if (resolveImageToolResultSrc(tc.toolUseResult)) return true;
   if (tc.toolKind !== 'file_read' && tc.toolName !== 'ViewImage') return false;
   return isImagePath(tc.toolParams?.file_path ?? tc.toolParams?.path);
 }
@@ -108,9 +111,9 @@ function InlineToolImage({ toolCall, alignWithMessageBody }: {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const toolUseId = extractToolUseId(toolCall);
   const sessionId = toolCall.sessionId;
-  if (!toolUseId || !sessionId) return null;
-
-  const url = buildToolImageUrl(sessionId, toolUseId);
+  const embeddedSrc = resolveImageToolResultSrc(toolCall.toolUseResult);
+  const url = embeddedSrc ?? (toolUseId && sessionId ? buildToolImageUrl(sessionId, toolUseId) : undefined);
+  if (!url) return null;
   const filePath = toolCall.toolParams?.file_path ?? toolCall.toolParams?.path;
   const caption = typeof filePath === 'string' ? filePath : shortenToolName(toolCall.toolName);
 
@@ -121,6 +124,7 @@ function InlineToolImage({ toolCall, alignWithMessageBody }: {
         <span className="truncate font-mono">{caption}</span>
       </div>
       <button
+        {...telemetryClickAttributes('message.image.open', 'message')}
         type="button"
         onClick={() => setLightboxOpen(true)}
         className="inline-block cursor-zoom-in overflow-hidden rounded-lg border border-(--tool-border) hover:border-(--accent) transition-colors"
@@ -180,6 +184,7 @@ function CompactRow({
 
   return (
     <button
+      {...telemetryClickAttributes('message.tool.toggle', 'message')}
       data-testid={`tool-call-row-${toolName}`}
       data-cell-id={toolCall.id}
       onClick={onSelect}
@@ -316,6 +321,7 @@ function SummaryBar({ toolCalls, selectedId, loadingId, onToggle, showInlinePane
       className={cn('my-2 max-w-2xl', alignWithMessageBody && MESSAGE_BODY_OFFSET_CLASS)}
     >
       <button
+        {...telemetryClickAttributes('message.tool.toggle', 'message')}
         onClick={() => setIsExpanded(prev => !prev)}
         className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md border ${
           isExpanded ? 'border-(--accent)/50' : 'border-(--tool-border)'

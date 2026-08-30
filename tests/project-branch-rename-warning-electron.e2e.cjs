@@ -20,7 +20,7 @@ async function main() {
     assert.match(text, /not (moved|changed)/i);
 
     await page.getByTestId('project-worktree-row').click();
-    await page.getByRole('button', { name: 'New Session', exact: true }).waitFor();
+    await page.getByTestId('worktree-peek').waitFor();
     await page.getByTestId('branch-rename-warning-dismiss').click();
     assert.equal(await page.getByTestId('branch-rename-warning').count(), 0);
     await page.reload({ waitUntil: 'domcontentloaded' });

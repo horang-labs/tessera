@@ -121,61 +121,83 @@ try {
   await row.waitFor({ timeout: 30_000 });
   assert.equal(await row.getAttribute('data-linked-worktree-density'), 'composite');
 
-  async function restoreSession() {
-    await api(`/api/sessions/${created.sessionId}/archive`, { archived: false }, 'PATCH');
+  async function restoreTask() {
+    await api(`/api/archive/tasks/${task.id}`, { archived: false }, 'PATCH');
     await page.reload({ waitUntil: 'networkidle' });
     await row.waitFor();
     assert.equal(await row.getAttribute('data-linked-worktree-density'), 'composite');
   }
 
-  async function archiveAndWait(action) {
+  async function archiveTaskAndWait(action) {
     const completed = page.waitForResponse((response) => response.request().method() === 'PATCH'
-      && new URL(response.url()).pathname === `/api/sessions/${created.sessionId}/archive`);
+      && new URL(response.url()).pathname === `/api/archive/tasks/${task.id}`);
     await action();
     assert.equal((await completed).ok(), true);
   }
 
-  async function expectZeroSessionWorktree() {
-    await row.waitFor();
-    await page.waitForFunction((id) => document.querySelector(
-      `[data-worktree-id="${id}"][data-linked-worktree-density="standalone"]`,
-    ), worktree.worktreeId);
-    assert.equal(await row.locator('[data-session-id]').count(), 0);
+  async function expectArchivedWorktree() {
+    await row.waitFor({ state: 'detached' });
+  }
+
+  async function armArchiveButton(button) {
+    await button.click();
+    await page.waitForFunction((testId) => (
+      document.querySelector(`[data-testid="${testId}"]`)?.getAttribute('aria-label') === 'Confirm archive'
+    ), await button.getAttribute('data-testid'));
   }
 
   await row.hover();
-  const quickArchive = page.getByTestId(`collection-session-quick-archive-${created.sessionId}`);
+  const quickArchive = page.getByTestId(`collection-task-quick-archive-${task.id}`);
   await page.screenshot({ path: path.join(evidenceDir, '01-composite-session-action.png') });
-  await quickArchive.click();
-  await archiveAndWait(() => quickArchive.click());
-  await expectZeroSessionWorktree();
-  await restoreSession();
+  await armArchiveButton(quickArchive);
+  await archiveTaskAndWait(() => quickArchive.click());
+  await expectArchivedWorktree();
+  await restoreTask();
 
   await row.click();
   await page.getByTestId('panel-title-drag-handle').click({ button: 'right' });
-  await archiveAndWait(() => page.getByTestId('ctx-archive').click());
-  await expectZeroSessionWorktree();
-  await restoreSession();
+  await archiveTaskAndWait(() => page.getByTestId('ctx-archive').click());
+  await expectArchivedWorktree();
+  await restoreTask();
 
   await row.click();
   const composer = page.locator(`textarea[data-session-input="${created.sessionId}"]`);
   await composer.fill('/archive');
-  await archiveAndWait(() => composer.press('Enter'));
-  await expectZeroSessionWorktree();
-  await page.screenshot({ path: path.join(evidenceDir, '02-zero-session-worktree.png') });
-  await restoreSession();
+  await archiveTaskAndWait(() => composer.press('Enter'));
+  await expectArchivedWorktree();
+  await page.screenshot({ path: path.join(evidenceDir, '02-last-session-archives-worktree.png') });
+  await restoreTask();
+
+  const sibling = await api('/api/sessions', {
+    workDir: worktree.path, parentProjectId: project.encodedDir, taskId: task.id,
+    worktreeBranch: worktree.branch, providerId: 'codex', executionMode: 'gui',
+    title: 'Sibling Session', hasCustomTitle: true,
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await row.waitFor();
+  assert.equal(await row.getAttribute('data-linked-worktree-density'), 'expanded');
+  await api(`/api/sessions/${created.sessionId}/archive`, { archived: true }, 'PATCH');
+  await page.reload({ waitUntil: 'networkidle' });
+  await row.waitFor();
+  assert.equal(await row.getAttribute('data-linked-worktree-density'), 'composite');
+  assert.equal(await row.locator(`[data-session-id="${created.sessionId}"]`).count(), 0);
+  await api(`/api/sessions/${created.sessionId}/archive`, { archived: false }, 'PATCH');
+  assert.ok(sibling.sessionId);
+  await page.reload({ waitUntil: 'networkidle' });
+  await row.waitFor();
+  assert.equal(await row.getAttribute('data-linked-worktree-density'), 'expanded');
 
   await row.click({ button: 'right' });
   const taskArchive = page.getByTestId('ctx-archive-worktree-task');
   await taskArchive.waitFor();
   await page.screenshot({ path: path.join(evidenceDir, '03-explicit-worktree-task-action.png') });
-  await taskArchive.click();
-  await row.waitFor({ state: 'detached' });
+  await archiveTaskAndWait(() => taskArchive.click());
+  await expectArchivedWorktree();
 
   assert.deepEqual(requests, [
-    `/api/sessions/${created.sessionId}/archive`,
-    `/api/sessions/${created.sessionId}/archive`,
-    `/api/sessions/${created.sessionId}/archive`,
+    `/api/archive/tasks/${task.id}`,
+    `/api/archive/tasks/${task.id}`,
+    `/api/archive/tasks/${task.id}`,
     `/api/archive/tasks/${task.id}`,
   ]);
   console.log(`Session/Worktree archive acceptance passed; evidence: ${evidenceDir}`);

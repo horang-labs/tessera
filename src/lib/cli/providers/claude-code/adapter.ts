@@ -344,6 +344,9 @@ export class ClaudeCodeAdapter implements CliProvider {
     if (Object.keys(settings).length > 0) {
       args.push('--settings', JSON.stringify(settings));
     }
+    if (options.managedLaunch?.skillOverlay) {
+      args.push('--plugin-dir', options.managedLaunch.skillOverlay.rootDir);
+    }
 
     return args;
   }
@@ -363,6 +366,7 @@ export class ClaudeCodeAdapter implements CliProvider {
     // Do NOT set MAX_THINKING_TOKENS — it forces legacy budget_tokens mode
     // and disables adaptive thinking, which breaks --effort on Opus/Sonnet 4.6.
     delete spawnEnv.MAX_THINKING_TOKENS;
+    Object.assign(spawnEnv, options.managedLaunch?.environment ?? {});
     const agentEnv = await getAgentEnvironment(options.userId);
     const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, agentEnv, options.userId);
 
@@ -371,7 +375,9 @@ export class ClaudeCodeAdapter implements CliProvider {
       shell: false,
       env: spawnEnv as NodeJS.ProcessEnv,
       detached: getRuntimePlatform() !== 'win32',
-    }, agentEnv);
+    }, agentEnv, {
+      guestEnvironment: options.managedLaunch?.guestEnvironment,
+    });
     this._attachRawLog(cliProcess, options.rawLog, {
       providerId: PROVIDER_ID,
       command,
@@ -476,9 +482,13 @@ export class ClaudeCodeAdapter implements CliProvider {
    *
    * Returns null on any error/timeout/empty (fail-open).
    */
-  async generateText(prompt: string, userId?: string): Promise<GeneratedText | null> {
+  async generateText(
+    prompt: string,
+    userId?: string,
+    model?: string,
+  ): Promise<GeneratedText | null> {
     try {
-      const text = await this._callCliRaw(prompt, userId);
+      const text = await this._callCliRaw(prompt, userId, model ? ['--model', model] : []);
       return text.trim() ? { text: text.trim() } : null;
     } catch (err) {
       logger.warn({

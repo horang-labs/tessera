@@ -4,6 +4,8 @@ import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import logger from '@/lib/logger';
 import { buildOpenCodeHookPluginSource } from './opencode-hook-plugin';
 import { materializeTesseraControlSkill } from './tessera-control-skill';
+import { mirrorOpenCodeConfigIntoOverlay } from '@/lib/cli/providers/opencode/config-overlay';
+import { removeOverlayTreeSafely } from '@/lib/filesystem/overlay-filesystem';
 
 const SAFE_TERMINAL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -17,7 +19,11 @@ export interface OpenCodeOverlay {
  * OPENCODE_CONFIG_DIR is additive, so the user's global config, project config,
  * .opencode directory, and their plugins continue to load unchanged.
  */
-export function createOpenCodeOverlay(terminalId: string): OpenCodeOverlay {
+export function createOpenCodeOverlay(
+  terminalId: string,
+  includeControlSkill = true,
+  existingConfigDir = process.env.OPENCODE_CONFIG_DIR,
+): OpenCodeOverlay {
   if (!SAFE_TERMINAL_ID.test(terminalId)) {
     throw new Error('Invalid terminal id for OpenCode overlay');
   }
@@ -33,9 +39,12 @@ export function createOpenCodeOverlay(terminalId: string): OpenCodeOverlay {
       buildOpenCodeHookPluginSource(),
       { mode: 0o600 },
     );
-    materializeTesseraControlSkill(path.join(configDir, 'skills'));
+    if (includeControlSkill) {
+      materializeTesseraControlSkill(path.join(configDir, 'skills'));
+    }
+    mirrorOpenCodeConfigIntoOverlay(existingConfigDir, configDir);
   } catch (error) {
-    fs.rmSync(configDir, { recursive: true, force: true });
+    removeOverlayTreeSafely(configDir);
     throw error;
   }
 
@@ -45,7 +54,7 @@ export function createOpenCodeOverlay(terminalId: string): OpenCodeOverlay {
     dispose: () => {
       if (disposed) return;
       try {
-        fs.rmSync(configDir, { recursive: true, force: true });
+        removeOverlayTreeSafely(configDir);
         disposed = true;
       } catch (error) {
         logger.debug({ error, configDir }, 'OpenCode overlay cleanup skipped');

@@ -13,6 +13,7 @@ import {
 import { getProviderSessionRuntimeConfig } from '@/lib/settings/provider-defaults';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import { useBoardStore } from '@/stores/board-store';
 import { useAnySessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
 import { useAnyProjectViewSessionUnread } from '@/hooks/use-project-view-session-unread';
@@ -174,7 +175,7 @@ export interface CollectionGroupProps {
   onTaskDelete?: (taskId: string) => void;
   onSessionRename?: (sessionId: string, newTitle: string) => void;
   onSessionDelete?: (sessionId: string) => void;
-  onSessionArchive?: (sessionId: string) => void;
+  onSessionArchive?: (sessionId: string, task?: TaskEntity) => void;
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
@@ -529,6 +530,7 @@ export const CollectionGroup = memo(function CollectionGroup({
     >
       {!hideHeader && (
         <div
+          {...telemetryClickAttributes('collection.section.toggle', 'workspace_list')}
           draggable={!disableDnd && !isUncategorized}
           onDragStart={
             !disableDnd && !isUncategorized
@@ -579,6 +581,7 @@ export const CollectionGroup = memo(function CollectionGroup({
 
           {isEditingCollection ? (
             <input
+              {...telemetryClickAttributes('collection.rename_input', 'workspace_list')}
               ref={editInputRef}
               value={editingLabel}
               onChange={(event) => setEditingLabel(event.target.value)}
@@ -605,6 +608,7 @@ export const CollectionGroup = memo(function CollectionGroup({
 
           {!hideHeaderActions && (
             <div
+              {...telemetryIgnoreAttributes('event_boundary')}
               className={cn(
                 'flex items-center gap-0.5 transition-opacity duration-150',
                 // Below the Phone viewport step these stay visible: a phone has
@@ -618,6 +622,7 @@ export const CollectionGroup = memo(function CollectionGroup({
               onClick={(event) => event.stopPropagation()}
             >
               <button
+                {...telemetryClickAttributes('collection.quick_create.open', 'workspace_list')}
                 ref={quickCreateTriggerRef}
                 type="button"
                 onClick={() => setIsQuickCreateOpen((prev) => !prev)}

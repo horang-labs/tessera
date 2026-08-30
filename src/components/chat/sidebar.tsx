@@ -51,7 +51,10 @@ import {
   buildProjectViewRecentWorkItems,
   buildRecentWorkItems,
 } from '@/lib/chat/recent-work';
-import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
+import {
+  getProjectIdsMissingTaskProjection,
+  loadProjectTaskProjectionsSequentially,
+} from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
@@ -66,6 +69,7 @@ import {
   useProjectViewRepresentation,
 } from '@/hooks/use-project-view-workspace-state';
 import { getOriginProjectOrderedSessionIds } from '@/lib/projects/origin-project-representation';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const EMPTY_COLLECTIONS: Collection[] = [];
 
@@ -186,6 +190,7 @@ function ProjectListContextHeader({
           data-testid="sidebar-filter-bar"
         >
           <button
+            {...telemetryClickAttributes('sidebar.filter.all', 'sidebar')}
             type="button"
             onClick={handleShowAll}
             aria-pressed={!isRunningFilterActive}
@@ -201,6 +206,7 @@ function ProjectListContextHeader({
             <span className="block truncate">{allLabel}</span>
           </button>
           <button
+            {...telemetryClickAttributes('sidebar.filter.running', 'sidebar')}
             type="button"
             onClick={onShowRunning}
             aria-pressed={isRunningFilterActive}
@@ -234,6 +240,7 @@ function ProjectListContextHeader({
         {isRunningFilterActive ? (
           <Tooltip content={isStopAllConfirmationActive ? confirmStopAllLabel : stopAllLabel} delay={300}>
             <button
+              {...telemetryClickAttributes('sidebar.running.stop_all', 'sidebar')}
               type="button"
               onClick={handleStopAllClick}
               disabled={!canStopAllRunning}
@@ -256,6 +263,7 @@ function ProjectListContextHeader({
         ) : (
           <Tooltip content={projectActionLabel} delay={300}>
             <button
+              {...telemetryClickAttributes('sidebar.groups.toggle_all', 'sidebar')}
               type="button"
               onClick={handleProjectAction}
               disabled={!hasExpandableGroups}
@@ -361,15 +369,22 @@ export function Sidebar() {
       allProjectsTaskLoadAttemptsRef.current.clear();
       return;
     }
-    for (const projectId of getProjectIdsMissingTaskProjection(
+    const projectIds = getProjectIdsMissingTaskProjection(
       projects,
       loadedTaskProjects,
       loadingTaskProjects,
       allProjectsTaskLoadAttemptsRef.current,
-    )) {
+    );
+    for (const projectId of projectIds) {
       allProjectsTaskLoadAttemptsRef.current.add(projectId);
-      void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
     }
+    let active = true;
+    void loadProjectTaskProjectionsSequentially(
+      projectIds,
+      (projectId) => useTaskStore.getState().loadTasks(projectId, { setCurrent: false }),
+      () => active,
+    );
+    return () => { active = false; };
   }, [loadedTaskProjects, loadingTaskProjects, projects, selectedProjectDir]);
 
   // Collection DnD (item moves between collections + group reorder)
@@ -414,8 +429,8 @@ export function Sidebar() {
     void useTaskStore.getState().deleteWorktree(taskId);
   }, []);
 
-  const handleSessionArchive = useCallback((sessionId: string) => {
-    requestSessionArchive(sessionId);
+  const handleSessionArchive = useCallback((sessionId: string, task?: TaskEntity) => {
+    requestSessionArchive(sessionId, true, task);
   }, []);
 
   const handleTaskRename = useCallback(async (taskId: string, newTitle: string) => {
@@ -803,6 +818,7 @@ export function Sidebar() {
                   active={(peekWorktreeId ?? activePanelWorktreeId)
                     === selectedProject.projectWorktree.id}
                   branch={selectedProject.projectWorktree.currentBranch}
+                  diffStats={selectedProject.projectWorktree.diffStats}
                   name={selectedProject.displayName}
                   displayPath={selectedProject.projectWorktree.displayPath}
                   onSelect={handleProjectWorktreeSelect}

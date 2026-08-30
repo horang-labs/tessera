@@ -6,6 +6,7 @@ import { isUpdateVisible, useUpdateStore } from '@/stores/update-store';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface SettingsButtonProps {
   className?: string;
@@ -23,6 +24,7 @@ export default function SettingsButton({ className, iconSize = 'default' }: Sett
 
   return (
     <Button
+      {...settingsTelemetryClickAttributes('settings.open')}
       variant="ghost"
       size={iconSize === 'lg' ? 'icon-lg' : 'icon'}
       className={cn('relative', className)}

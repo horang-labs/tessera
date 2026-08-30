@@ -309,9 +309,9 @@ export interface PersistedTabStoreV3 {
   /** 마지막 활성 탭. 현재 스코프에서 보이지 않으면 복원 시 대체됨. */
   activeTabId: string | null;
   /** 프로젝트별 탭 상태. 키 = projectDir (encodedDir) */
-  projects: Record<string, { tabs: PersistedTab[]; activeTabId: string }>;
+  projects: Record<string, { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] }>;
   /** 전역 탭 상태. 전역 탭이 없으면 null. */
-  global: { tabs: PersistedTab[]; activeTabId: string } | null;
+  global: { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] } | null;
 }
 
 /** localStorage에 저장되는 탭 스토어 DTO (v1 | v2 | v3) */

@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { Trash2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const CUSTOM_MODEL_PROVIDERS = [
   { id: 'claude-code', label: 'Claude Code' },
@@ -50,6 +51,7 @@ function ProviderCustomModelEditor({
       </label>
       <form className="mt-2 flex gap-2" onSubmit={handleSubmit}>
         <input
+          {...settingsTelemetryClickAttributes('settings.models.custom_input')}
           id={`custom-model-${providerId}`}
           type="text"
           value={draft}
@@ -61,6 +63,7 @@ function ProviderCustomModelEditor({
           data-testid={`custom-model-input-${providerId}`}
         />
         <button
+          {...settingsTelemetryClickAttributes('settings.models.custom_add')}
           type="submit"
           disabled={!canAdd}
           className="h-10 shrink-0 rounded-lg border border-(--divider) px-4 text-sm font-medium text-(--text-secondary) transition-colors hover:border-(--accent)/40 hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-45"
@@ -81,6 +84,7 @@ function ProviderCustomModelEditor({
                 {model}
               </code>
               <button
+                {...settingsTelemetryClickAttributes('settings.models.custom_remove')}
                 type="button"
                 onClick={() => onRemove(providerId, model)}
                 aria-label={`${t('settings.model.customRemove')}: ${model}`}

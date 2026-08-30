@@ -12,6 +12,7 @@
 
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useGitStore } from '@/stores/git-store';
 import {
   resolvePreparationBadge,
@@ -37,6 +38,7 @@ export function TaskPreparationBadge({
 
   const isRunning = badge === 'running';
   const label = isRunning ? t('task.preparation.preparing') : t('task.preparation.failed');
+  const tooltip = isRunning ? label : t('task.preparation.failedTooltip');
   const icon = isRunning
     ? <Loader2 className="h-3 w-3 animate-spin" />
     : <AlertTriangle className="h-3 w-3" />;
@@ -46,6 +48,7 @@ export function TaskPreparationBadge({
 
   return (
     <button
+      {...telemetryClickAttributes('task.preparation.open', 'workspace_list')}
       type="button"
       onClick={() => {
         // The click is left to bubble on purpose: the row it sits in opens the
@@ -53,7 +56,7 @@ export function TaskPreparationBadge({
         // than whichever worktree happened to be open before.
         openTab('scripts');
       }}
-      title={label}
+      title={tooltip}
       aria-label={label}
       className={`${tone} ${isRunning ? 'hover:text-(--text-primary)' : 'hover:opacity-80'}`}
       data-testid="task-preparation-badge"

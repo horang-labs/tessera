@@ -9,6 +9,7 @@ import {
   type ProviderExecutionCapabilities,
 } from '@/lib/session/agent-execution-mode';
 import { cn } from '@/lib/utils';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /** `mini` keeps only the PTY/GUI token, for popovers too narrow for the full label. */
 export type ExecutionModeSelectorDensity = 'regular' | 'compact' | 'mini';
@@ -96,6 +97,7 @@ export function ExecutionModeSelector({
               data-testid={`execution-mode-${mode}`}
             >
               <input
+                {...telemetryClickAttributes('creation.execution_mode', 'new_session')}
                 type="radio"
                 name={name ?? generatedName}
                 value={mode}

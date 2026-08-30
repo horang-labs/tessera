@@ -7,6 +7,7 @@ import type {
 } from '@/hooks/use-worktree-base-refs';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface WorktreeStartFromControlProps {
   id: string;
@@ -64,6 +65,7 @@ export function WorktreeStartFromControl({
         {t('task.creation.worktreeSourceLabel')}
       </label>
       <select
+        {...telemetryClickAttributes('creation.worktree.source', 'new_session')}
         id={sourceModeId}
         value={creationMode}
         onChange={(event) => onCreationModeChange(event.target.value as WorktreeCreationMode)}
@@ -86,6 +88,7 @@ export function WorktreeStartFromControl({
           : t('task.creation.baseRefLabel')}
       </label>
       <select
+        {...telemetryClickAttributes('creation.worktree.base_ref', 'new_session')}
         id={id}
         value={selectedBaseRef}
         onChange={(event) => onSelectedBaseRefChange(event.target.value)}

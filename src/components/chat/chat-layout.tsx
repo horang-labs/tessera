@@ -53,6 +53,7 @@ import {
   resolveCanonicalGitTargetSessionId,
   resolveActiveWorkspaceSessionId,
   resolveVisibleWorkspaceSessionId,
+  shouldBridgeActiveSessionToPanel,
 } from "@/lib/session/active-workspace-session";
 import { activateSessionPanel } from "@/lib/session/focus-session-panel";
 import { reconcileActiveSessionSurface } from "@/lib/session/reconcile-active-session-surface";
@@ -65,6 +66,8 @@ import { useWorkspacePeekStore } from "@/stores/workspace-peek-store";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
 import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
 import { PHONE_VIEWPORT_BREAKPOINT } from "@/lib/viewport/phone-viewport";
+import { readUiStorageItem } from "@/lib/persistence/ui-storage";
+import { TAB_STORE_KEY } from "@/types/tab";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -119,6 +122,9 @@ export function ChatLayout() {
   const viewMode = useBoardStore((state) => state.viewMode);
   const renderedViewMode = useEffectiveViewMode();
   const peekSessionId = useBoardStore((state) => state.peekSessionId);
+  const peekFileSourceSessionId = useBoardStore(
+    (state) => state.peekFileRef?.sourceSessionId ?? null,
+  );
   const selectedBoardSessionId = useBoardStore((state) => state.selectedBoardSessionId);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
   const selectedBoardSession = useProjectViewSession(
@@ -158,15 +164,20 @@ export function ChatLayout() {
     )
   );
   const isKanbanPeekMode = renderedViewMode === 'board' && kanbanSessionOpenMode === 'peek';
-  const activeGitSessionId = isKanbanPeekMode && selectedBoardSessionId
-    ? selectedBoardSessionId
+  const openBoardGitSessionId = peekSessionId ?? peekFileSourceSessionId;
+  const activeGitSessionId = isKanbanPeekMode
+    ? openBoardGitSessionId
     : resolveActiveWorkspaceSessionId({
         activePanelSessionId,
         activeSessionId,
       });
+  const activePanelWorkspaceSessionId = resolveActiveWorkspaceSessionId({
+    activePanelSessionId,
+    activeSessionId: null,
+  });
   const activeGitWorktreeId = peekWorktreeId
-    ?? (isKanbanPeekMode && selectedBoardSessionId
-      ? selectedBoardWorktreeId
+    ?? (isKanbanPeekMode
+      ? openBoardGitSessionId ? selectedBoardWorktreeId : null
       : activePanelWorktreeId ?? compositeWorktreeId);
   const activeGitTargetSessionId = resolveCanonicalGitTargetSessionId({
     activeSessionId: activeGitSessionId,
@@ -356,11 +367,31 @@ export function ChatLayout() {
     }
   }, []);
 
+  // The visible tab/panel is the focus source of truth. In particular, opening
+  // an empty tab must clear the previously selected Session before shutdown;
+  // otherwise a background PTY resume steals focus on the next cold start.
+  useEffect(function syncActivePanelToSessionSelection() {
+    if (useSessionStore.getState().activeSessionId === activePanelWorkspaceSessionId) return;
+    useSessionStore.getState().setActiveSession(activePanelWorkspaceSessionId);
+  }, [activePanelWorkspaceSessionId, activeSessionId, activeWorkspaceIdentity]);
+
   // Load projects on mount (viewMode-agnostic — ensures board view has data too)
   useEffect(function loadProjects() {
     let cancelled = false;
 
-    void Promise.resolve(useSessionStore.getState().loadProjects()).finally(() => {
+    const activeTabData = selectActiveTab(usePanelStore.getState());
+    const restoredActiveSessionId = activeTabData
+      ?.panels[activeTabData.activePanelId]?.sessionId ?? null;
+    const hasPersistedWorkspace = readUiStorageItem(TAB_STORE_KEY) !== null;
+
+    void Promise.resolve(useSessionStore.getState().loadProjects(
+      hasPersistedWorkspace
+        ? {
+            restoredActiveSessionId,
+            restoredActiveTabId: useTabStore.getState().activeTabId,
+          }
+        : undefined,
+    )).finally(() => {
       if (!cancelled && !projectsLoadedRef.current) {
         projectsLoadedRef.current = true;
         setProjectsLoaded(true);
@@ -476,9 +507,25 @@ export function ChatLayout() {
   useEffect(
     function bridgeActiveSessionToPanel() {
       if (!activeSessionId) return;
+      // Once the restored workspace is visible, an intentionally empty active
+      // panel outranks background runtime bookkeeping. User navigation opens or
+      // assigns its target panel before selecting the Session.
+      if (!shouldBridgeActiveSessionToPanel({
+        activePanelSessionId,
+        activePanelWorkspaceSessionId,
+        renderedActiveSessionId: activeSessionId,
+        currentActiveSessionId: useSessionStore.getState().activeSessionId,
+        projectsLoaded,
+      })) return;
       reconcileActiveSessionSurface(activeSessionId);
     },
-    [activeSessionId, selectedProjectDir],
+    [
+      activePanelSessionId,
+      activePanelWorkspaceSessionId,
+      activeSessionId,
+      projectsLoaded,
+      selectedProjectDir,
+    ],
   );
 
   // When the last popout board window closes, refresh tasks/collections in the

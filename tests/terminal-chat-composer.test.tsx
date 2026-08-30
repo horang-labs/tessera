@@ -18,6 +18,9 @@ test('working terminal chat view visibly advertises Escape cancellation', async 
     assert.match(html, /data-testid="terminal-chat-cancel"/);
     assert.match(html, /Cancel \(ESC\)/);
     assert.match(html, />ESC<\/span>/);
+    assert.match(html, /border-\(--status-error-border\)/);
+    assert.match(html, /bg-\(--status-error-bg\)/);
+    assert.doesNotMatch(html, /bg-red-(?:500|600)/);
   } finally {
     await i18n.changeLanguage(previousLanguage);
   }

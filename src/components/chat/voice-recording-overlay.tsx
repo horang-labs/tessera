@@ -3,6 +3,7 @@
 import { Square } from 'lucide-react';
 import type { VoiceInputState } from '@/hooks/use-voice-input';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface VoiceRecordingOverlayProps {
   state: VoiceInputState;
@@ -53,6 +54,7 @@ export function VoiceRecordingOverlay({
         </div>
 
         <button
+          {...telemetryClickAttributes('message.voice.cancel', 'message')}
           onClick={onStop}
           className="p-2 rounded-md transition-all duration-150 bg-(--error) text-white hover:bg-(--destructive-hover)"
           aria-label={t('voice.stop')}

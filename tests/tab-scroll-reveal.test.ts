@@ -15,24 +15,7 @@ const TAB_WIDTH = 160;
 const LAST_TAB_START = TAB_WIDTH * 5;
 const LAST_TAB_END = TAB_WIDTH * 6;
 
-test('마지막 탭을 열면 오른쪽 화살표 밖까지 스크롤한다', () => {
-  const contentWidth = LAST_TAB_END + TAB_SCROLL_GUTTER; // 끝 여백이 반영된 상태
-  const result = resolveTabScrollReveal({
-    tabStart: LAST_TAB_START,
-    tabEnd: LAST_TAB_END,
-    scrollLeft: 0,
-    viewportWidth: VIEWPORT_WIDTH,
-    maxScrollLeft: contentWidth - VIEWPORT_WIDTH,
-  });
-
-  assert.equal(result.settled, true);
-  assert.equal(result.scrollLeft, LAST_TAB_END + TAB_SCROLL_GUTTER - VIEWPORT_WIDTH);
-  // 탭 오른쪽 끝이 화살표가 덮는 영역 밖에 있어야 닫기 버튼을 누를 수 있다.
-  assert.ok(LAST_TAB_END <= result.scrollLeft + VIEWPORT_WIDTH - TAB_SCROLL_GUTTER);
-});
-
-test('끝 여백이 아직 0이면 여백이 모자란다고 보고한다', () => {
-  // 오버플로가 막 시작된 커밋: 끝 여백(end zone)이 아직 펼쳐지지 않았다.
+test('마지막 탭을 열면 별도 끝 여백 없이 스크롤 끝까지 이동한다', () => {
   const contentWidth = LAST_TAB_END;
   const result = resolveTabScrollReveal({
     tabStart: LAST_TAB_START,
@@ -42,44 +25,23 @@ test('끝 여백이 아직 0이면 여백이 모자란다고 보고한다', () =
     maxScrollLeft: contentWidth - VIEWPORT_WIDTH,
   });
 
-  // 갈 수 있는 데까지는 가되, 아직 화살표에 32px 물려 있다고 알린다.
+  assert.equal(result.settled, true);
+  assert.equal(result.scrollLeft, LAST_TAB_END - VIEWPORT_WIDTH);
+  // 스크롤 끝에서는 오른쪽 화살표가 사라지므로 탭이 끝에 붙어도 가려지지 않는다.
   assert.equal(result.scrollLeft, contentWidth - VIEWPORT_WIDTH);
-  assert.equal(result.settled, false);
 });
 
-test('여백이 반영된 뒤 재시도하면 화살표 밖으로 빠져나온다', () => {
-  const withoutEndZone = resolveTabScrollReveal({
+test('오른쪽에 탭이 더 있으면 활성 탭을 화살표 여백 밖까지 이동한다', () => {
+  const contentWidth = LAST_TAB_END + TAB_WIDTH;
+  const result = resolveTabScrollReveal({
     tabStart: LAST_TAB_START,
     tabEnd: LAST_TAB_END,
     scrollLeft: 0,
     viewportWidth: VIEWPORT_WIDTH,
-    maxScrollLeft: LAST_TAB_END - VIEWPORT_WIDTH,
-  });
-  assert.equal(withoutEndZone.settled, false);
-
-  const retry = resolveTabScrollReveal({
-    tabStart: LAST_TAB_START,
-    tabEnd: LAST_TAB_END,
-    scrollLeft: withoutEndZone.scrollLeft,
-    viewportWidth: VIEWPORT_WIDTH,
-    maxScrollLeft: LAST_TAB_END + TAB_SCROLL_GUTTER - VIEWPORT_WIDTH,
+    maxScrollLeft: contentWidth - VIEWPORT_WIDTH,
   });
 
-  assert.equal(retry.settled, true);
-  assert.equal(retry.scrollLeft, withoutEndZone.scrollLeft + TAB_SCROLL_GUTTER);
-});
-
-test('끝 여백까지 스크롤한 상태는 그대로 유지한다', () => {
-  const maxScrollLeft = LAST_TAB_END + TAB_SCROLL_GUTTER - VIEWPORT_WIDTH;
-  const result = resolveTabScrollReveal({
-    tabStart: LAST_TAB_START,
-    tabEnd: LAST_TAB_END,
-    scrollLeft: maxScrollLeft,
-    viewportWidth: VIEWPORT_WIDTH,
-    maxScrollLeft,
-  });
-
-  assert.equal(result.scrollLeft, maxScrollLeft);
+  assert.equal(result.scrollLeft, LAST_TAB_END + TAB_SCROLL_GUTTER - VIEWPORT_WIDTH);
   assert.equal(result.settled, true);
 });
 

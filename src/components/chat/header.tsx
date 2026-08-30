@@ -18,10 +18,7 @@ import { useTaskStore } from '@/stores/task-store';
 import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from '@/stores/panel-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useIsSessionAwaitingUser } from '@/hooks/use-session-awaiting-user';
-import {
-  useLoadedProjectViews,
-  useProjectViewSession,
-} from '@/hooks/use-project-view-workspace-state';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
@@ -42,6 +39,7 @@ import { useTerminalViewMode } from '@/hooks/use-terminal-view-mode';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { resolveSessionBranchPresentation } from '@/lib/session/session-branch-presentation';
 import { requestSessionArchive } from '@/lib/session/session-archive-client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface HeaderProps {
   sessionId: string;
@@ -66,12 +64,6 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
   const session = useProjectViewSession(sessionId, projectViewDir);
-  const projects = useLoadedProjectViews();
-  const liveWorktreeBranch = session?.worktreeId
-    ? projects
-      .map((project) => project.projectWorktree)
-      .find((worktree) => worktree?.id === session.worktreeId)?.currentBranch ?? null
-    : null;
   const dragSessionId = session?.id ?? null;
   const taskId = session?.taskId;
   const linkedTask = useTaskStore((state) =>
@@ -228,14 +220,9 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
   const branchPresentation = resolveSessionBranchPresentation({
     worktreeBranch: session?.worktreeBranch,
     scopeBranch: session?.scopeBranch,
-    liveBranch: liveWorktreeBranch,
   });
   const branchTitle = branchPresentation
-    ? `${t(branchPresentation.labelKind === 'scope' ? 'chat.sessionScopeLabel' : 'chat.branchLabel')}: ${branchPresentation.branch}${
-        branchPresentation.liveBranch
-          ? ` · ${t('chat.currentBranchLabel')}: ${branchPresentation.liveBranch}`
-          : ''
-      }${branchPresentation.labelKind === 'scope' ? ` · ${t('chat.presentationScopeHint')}` : ''}${
+    ? `${t('chat.branchLabel')}: ${branchPresentation.branch}${
         session?.worktreeDeletedAt ? ` · ${t('chat.worktreeDeleted')}` : ''
       }`
     : undefined;
@@ -310,6 +297,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
         {isEditingTitle ? (
           <div className="flex items-center gap-1.5">
             <input
+              {...telemetryClickAttributes('chat_header.title_input', 'chat_header')}
               type="text"
               value={titleInput}
               onChange={(e) => setTitleInput(e.target.value)}
@@ -319,16 +307,17 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
               className="h-6 rounded border border-(--input-border) bg-(--input-bg) px-2 py-0 text-[15px] font-semibold leading-none text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
               autoFocus
             />
-            <button onClick={handleTitleSave} className="rounded p-0.5 text-(--success) hover:bg-(--sidebar-hover)">
+            <button {...telemetryClickAttributes('chat_header.title_save', 'chat_header')} onClick={handleTitleSave} className="rounded p-0.5 text-(--success) hover:bg-(--sidebar-hover)">
               <Check className="h-3.5 w-3.5" />
             </button>
-            <button onClick={() => { setTitleInput(session.title); setIsEditingTitle(false); }} className="rounded p-0.5 text-(--text-muted) hover:bg-(--sidebar-hover)">
+            <button {...telemetryClickAttributes('chat_header.title_cancel', 'chat_header')} onClick={() => { setTitleInput(session.title); setIsEditingTitle(false); }} className="rounded p-0.5 text-(--text-muted) hover:bg-(--sidebar-hover)">
               <XIcon className="h-3.5 w-3.5" />
             </button>
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:gap-1">
             <button
+              {...telemetryClickAttributes('chat_header.title_action', 'chat_header')}
               type="button"
               draggable
               onClick={handleTitleButtonClick}
@@ -378,25 +367,14 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                       'inline-flex min-w-0 max-w-[min(18rem,35vw)] shrink items-center gap-1',
                       'text-[11px] font-normal leading-none text-(--text-secondary)',
                       'max-sm:hidden',
-                      (session.worktreeDeletedAt || branchPresentation.mismatch)
-                        && 'text-(--status-error-text)'
+                      session.worktreeDeletedAt && 'text-(--status-error-text)'
                     )}
                     title={branchTitle}
                     aria-label={branchTitle}
                     data-testid="header-branch-chip"
                   >
                     <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="min-w-0 truncate">
-                      {branchPresentation.labelKind === 'scope'
-                        ? `${t('chat.sessionScopeLabel')}: `
-                        : ''}
-                      {branchPresentation.branch}
-                    </span>
-                    {branchPresentation.mismatch && branchPresentation.liveBranch ? (
-                      <span className="min-w-0 truncate">
-                        · {t('chat.currentBranchLabel')}: {branchPresentation.liveBranch}
-                      </span>
-                    ) : null}
+                    <span className="min-w-0 truncate">{branchPresentation.branch}</span>
                   </span>
                 </>
               )}
@@ -440,6 +418,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
               <button
                 type="button"
                 onClick={() => toggleTerminalViewMode(sessionId)}
+                {...telemetryClickAttributes('chat_header.terminal_toggle', 'chat_header')}
                 title={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
                 aria-label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
                 aria-pressed={isTerminalChatView}
@@ -460,6 +439,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
             <button
               type="button"
               onClick={search?.onOpen}
+              {...telemetryClickAttributes('chat_header.search', 'chat_header')}
               title={t('chat.search.open')}
               aria-label={t('chat.search.open')}
               className={cn(
@@ -480,6 +460,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
           <button
             ref={moreButtonRef}
             onClick={handleMoreClick}
+            {...telemetryClickAttributes('chat_header.more', 'chat_header')}
             className={cn(
               'rounded p-0.5 transition-all duration-150',
               'text-(--text-muted) hover:text-(--sidebar-text-active)',
@@ -506,6 +487,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                   closePanel(panelId);
                 }
               }}
+              {...telemetryClickAttributes('chat_header.close_panel', 'chat_header')}
               title={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               aria-label={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
               data-testid="panel-close-button"

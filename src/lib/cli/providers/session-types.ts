@@ -1,6 +1,15 @@
 import type { ChildProcess } from 'child_process';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 
+export interface ManagedCliLaunch {
+  environment: Record<string, string | undefined>;
+  guestEnvironment: Record<string, string | undefined>;
+  skillOverlay?: {
+    rootDir: string;
+    skillsDir: string;
+  };
+}
+
 export type CliRawLogDirection = 'stdin' | 'stdout' | 'stderr' | 'event';
 
 export interface CliRawLogEvent {
@@ -15,6 +24,8 @@ export type CliRawLogSink = (event: CliRawLogEvent) => void;
  * Options passed to the provider when creating or resuming a CLI session.
  */
 export interface SpawnOptions extends ProviderRuntimeControls {
+  /** Session-scoped Tessera skill/bridge resources prepared by ProcessManager. */
+  managedLaunch?: ManagedCliLaunch;
   /** Optional user id for settings-aware spawn behavior such as WSL/native selection. */
   userId?: string;
   /** Permission mode for tool execution (CLI-specific interpretation). */

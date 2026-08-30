@@ -35,6 +35,7 @@ import {
 } from "@/stores/terminal-session-store";
 import { sendTerminalChatInterrupt } from '@/lib/terminal/terminal-chat-send';
 import { toast } from '@/stores/notification-store';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ChatAreaProps {
   sessionId: string;
@@ -221,6 +222,7 @@ export const ChatArea = memo(function ChatArea({
           <AlertCircle className="w-12 h-12 text-(--status-error-text) mx-auto" />
           <p className="text-(--text-muted)">{error}</p>
           <Button
+            {...telemetryClickAttributes('chat.retry', 'message')}
             onClick={() => {
               clearError(sessionId);
               viewSession(session, { activate: false });
@@ -302,6 +304,7 @@ export const ChatArea = memo(function ChatArea({
                   ? 'session-preview'
                   : 'session-retained'}
               surfaceActive={isPeek}
+              directInputDrop={isPeek}
               startupOverlay={shouldShowPeekLoading ? <SessionPeekLoading /> : undefined}
               launch={{ providerId: sessionProvider, sessionId }}
             />
@@ -439,6 +442,7 @@ function SessionNotFound({ sessionId }: { sessionId: string }) {
   return (
     <div className="relative flex-1 flex items-center justify-center bg-(--chat-bg)">
       <button
+        {...telemetryClickAttributes('chat.panel.release', 'message')}
         onClick={handleClose}
         title={
           panelCount >= 2 ? t("chat.removePanel") : t("chat.releaseSession")

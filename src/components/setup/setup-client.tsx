@@ -22,7 +22,6 @@ import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import {
   captureTelemetryEvent,
-  captureTelemetryOptOut,
   normalizeTelemetryProviderSetupIssueStatus,
 } from '@/lib/telemetry/client';
 import { cn } from '@/lib/utils';
@@ -40,6 +39,7 @@ import type {
 } from '@/lib/setup/setup-status';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const TOOL_ORDER = ['git', 'gh'] as const;
 
@@ -94,6 +94,9 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   const [selectedExecutionMode, setSelectedExecutionMode] = useState<AgentExecutionMode>(
     settings.agentExecutionMode,
   );
+  const [selectedTesseraCliEnabled, setSelectedTesseraCliEnabled] = useState(
+    settings.tesseraCliEnabled,
+  );
   const [isProceeding, setIsProceeding] = useState(false);
   const [needsAccountSetup, setNeedsAccountSetup] = useState<boolean | null>(initialNeedsAccountSetup);
   const [accountUsername, setAccountUsername] = useState('');
@@ -106,7 +109,8 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
 
   useEffect(() => {
     setSelectedExecutionMode(settings.agentExecutionMode);
-  }, [settings.agentExecutionMode]);
+    setSelectedTesseraCliEnabled(settings.tesseraCliEnabled);
+  }, [settings.agentExecutionMode, settings.tesseraCliEnabled]);
 
   const startSetupDiagnostics = useCallback((
     trigger: SetupTelemetryTrigger,
@@ -261,6 +265,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
       const completionSettings = buildSetupCompletionSettings({
         setup: settings.setup,
         agentExecutionMode: selectedExecutionMode,
+        tesseraCliEnabled: selectedTesseraCliEnabled,
         isFullyReady: status?.isFullyReady ?? false,
         now: new Date().toISOString(),
       });
@@ -274,6 +279,12 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
         return;
       }
 
+      await captureTelemetryEvent('setup_completed', {
+        readiness: status?.isFullyReady ? 'ready' : 'limited',
+        environment: status?.activeEnvironment ?? settings.agentEnvironment,
+        execution_mode: selectedExecutionMode,
+      });
+
       router.push('/chat');
     } finally {
       setIsProceeding(false);
@@ -283,7 +294,10 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
     pendingSaveCount,
     router,
     selectedExecutionMode,
+    selectedTesseraCliEnabled,
+    settings.agentEnvironment,
     settings.setup,
+    status?.activeEnvironment,
     status?.isFullyReady,
     t,
     updateSettings,
@@ -344,19 +358,6 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
       }
     },
     [refreshStatus, status?.activeEnvironment, switchingEnvironment, updateSettings],
-  );
-
-  const handleTelemetryChange = useCallback(
-    async (enabled: boolean) => {
-      if (!enabled && settings.telemetry.enabled && !telemetryDisabledByEnv) {
-        await captureTelemetryOptOut('setup');
-      }
-
-      await updateSettings({
-        telemetry: { ...settings.telemetry, enabled },
-      });
-    },
-    [settings.telemetry, telemetryDisabledByEnv, updateSettings],
   );
 
   return (
@@ -426,6 +427,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
               </div>
 
               <AgentExecutionModePicker
+                telemetryTarget={{ control: 'setup.execution_mode', surface: 'setup' }}
                 value={selectedExecutionMode}
                 onChange={(mode) => {
                   if (mode === selectedExecutionMode) return;
@@ -438,6 +440,12 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                 description={t('setup.executionModeDescription')}
                 note={t('setup.executionModeNote')}
                 recommendedMode="pty"
+              />
+
+              <SetupTesseraCliConsent
+                enabled={selectedTesseraCliEnabled}
+                disabled={isProceeding}
+                onChange={setSelectedTesseraCliEnabled}
               />
 
               <div className="divide-y divide-(--divider) border-y border-(--divider)">
@@ -472,14 +480,9 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                 </p>
               ) : null}
 
-              <SetupTelemetryConsent
-                enabled={settings.telemetry.enabled && !telemetryDisabledByEnv}
-                disabled={telemetryDisabledByEnv}
-                onChange={handleTelemetryChange}
-              />
-
               <div className="pt-2">
                 <button
+                  {...telemetryClickAttributes('setup.advanced.toggle', 'setup')}
                   type="button"
                   onClick={() => setShowAdvanced((value) => !value)}
                   aria-expanded={showAdvanced}
@@ -504,6 +507,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
 
               <div className="flex flex-wrap items-center gap-2 border-t border-(--divider) pt-4">
                 <Button
+                  {...telemetryClickAttributes('setup.continue', 'setup')}
                   type="button"
                   onClick={handleProceed}
                   disabled={isProceeding || pendingSaveCount > 0}
@@ -514,6 +518,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
                   {status.isFullyReady ? t('setup.start') : t('setup.continue')}
                 </Button>
                 <Button
+                  {...telemetryClickAttributes('setup.status.refresh', 'setup')}
                   type="button"
                   variant="outline"
                   onClick={() => void refreshStatus('manual_refresh')}
@@ -532,7 +537,7 @@ export function SetupClient({ initialNeedsAccountSetup = null }: SetupClientProp
   );
 }
 
-function SetupTelemetryConsent({
+function SetupTesseraCliConsent({
   enabled,
   disabled,
   onChange,
@@ -546,15 +551,13 @@ function SetupTelemetryConsent({
   return (
     <div
       className="rounded-lg border border-(--divider) bg-(--sidebar-bg) px-4 py-3"
-      data-testid="setup-telemetry-consent"
+      data-testid="setup-tessera-cli-consent"
     >
-      <label
-        htmlFor="setup-telemetry-enabled"
-        className="flex cursor-pointer items-start gap-3"
-      >
+      <label htmlFor="setup-tessera-cli-enabled" className="flex cursor-pointer items-start gap-3">
         <input
+          {...telemetryClickAttributes('setup.tessera_cli_enabled', 'setup')}
+          id="setup-tessera-cli-enabled"
           type="checkbox"
-          id="setup-telemetry-enabled"
           checked={enabled}
           disabled={disabled}
           onChange={(event) => onChange(event.target.checked)}
@@ -562,16 +565,11 @@ function SetupTelemetryConsent({
         />
         <span className="min-w-0">
           <span className="block text-sm font-medium text-(--text-primary)">
-            {t('setup.telemetryTitle')}
+            {t('setup.tesseraCliTitle')}
           </span>
           <span className="mt-1 block text-xs leading-5 text-(--text-muted)">
-            {t('setup.telemetryDescription')}
+            {t('setup.tesseraCliDescription')}
           </span>
-          {disabled ? (
-            <span className="mt-2 block text-xs leading-5 text-(--text-muted)">
-              {t('settings.telemetry.disabledByEnv')}
-            </span>
-          ) : null}
         </span>
       </label>
     </div>
@@ -596,6 +594,10 @@ function EnvironmentSwitch({
 
   return (
     <Button
+      {...telemetryClickAttributes(
+        target === 'native' ? 'setup.environment.native' : 'setup.environment.wsl',
+        'setup',
+      )}
       type="button"
       variant="outline"
       size="sm"
@@ -678,6 +680,7 @@ function AccountSetupForm({
             {t('auth.username')}
           </span>
           <input
+            {...telemetryClickAttributes('setup.account.username', 'setup')}
             name="username"
             value={username}
             onChange={(event) => onUsernameChange(event.target.value)}
@@ -692,6 +695,7 @@ function AccountSetupForm({
             {t('auth.password')}
           </span>
           <input
+            {...telemetryClickAttributes('setup.account.password', 'setup')}
             name="password"
             type="password"
             value={password}
@@ -704,7 +708,11 @@ function AccountSetupForm({
         </label>
       </div>
 
-      <Button type="submit" disabled={isSubmitting}>
+      <Button
+        {...telemetryClickAttributes('setup.account.create', 'setup')}
+        type="submit"
+        disabled={isSubmitting}
+      >
         {isSubmitting ? t('setup.creatingAccount') : t('setup.createAccount')}
       </Button>
     </form>

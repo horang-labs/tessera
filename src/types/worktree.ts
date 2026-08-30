@@ -3,18 +3,20 @@ export interface ProjectWorktreeSummary {
   path: string;
   displayPath: string;
   currentBranch: string | null;
+  /** Cached working-tree change totals for the canonical checkout. */
+  diffStats?: import('./worktree-diff-stats').WorktreeDiffStats | null;
 }
 
 export type WorkspaceTarget =
-  | { kind: 'session'; id: string }
+  | { kind: 'session'; id: string; worktreeId?: string | null }
   | { kind: 'worktree'; id: string };
 
-/** A live Session owns capabilities; a bare Worktree is the read-only fallback. */
+/** Select the most specific Git-capable workspace target. */
 export function resolveWorkspaceTarget(
   sessionId: string | null | undefined,
   worktreeId: string | null | undefined,
 ): WorkspaceTarget | null {
-  if (sessionId) return { kind: 'session', id: sessionId };
+  if (sessionId) return { kind: 'session', id: sessionId, worktreeId: worktreeId ?? null };
   if (worktreeId) return { kind: 'worktree', id: worktreeId };
   return null;
 }

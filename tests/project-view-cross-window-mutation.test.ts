@@ -160,6 +160,32 @@ test('initial Project hydration restores a saved active Session before fallback'
   assert.equal(useSessionStore.getState().didHydrateActiveSession, true);
 });
 
+test('initial Project hydration preserves an explicitly restored empty active panel', async () => {
+  const restoredTabId = 'restored-empty-tab';
+  const autoActivatedTabId = 'auto-activated-terminal-tab';
+  useTabStore.setState({
+    tabs: [
+      { id: restoredTabId, projectDir: null, title: null, isPreview: false },
+      { id: autoActivatedTabId, projectDir: null, title: null, isPreview: false },
+    ],
+    activeTabId: autoActivatedTabId,
+    lruTabIds: [autoActivatedTabId, restoredTabId],
+  });
+  useSessionStore.setState({ activeSessionId: 'background-runtime-race' });
+  globalThis.fetch = async () => Response.json({
+    projects: [project('project-c')],
+  });
+
+  await useSessionStore.getState().loadProjects({
+    restoredActiveSessionId: null,
+    restoredActiveTabId: restoredTabId,
+  });
+
+  assert.equal(useSessionStore.getState().activeSessionId, null);
+  assert.equal(useTabStore.getState().activeTabId, restoredTabId);
+  assert.equal(useSessionStore.getState().didHydrateActiveSession, true);
+});
+
 test('a passive Task reload preserves a manually selected board-only Project', async (t) => {
   const oldProjectId = 'project-c';
   const fixtureProjectId = 'fixture-project';
@@ -356,6 +382,51 @@ test('a remote Task workflow transition updates a Session-only alternate Project
 
   assert.equal(useSessionStore.getState().projects[0].sessions[0]?.workflowStatus, 'in_progress');
   assert.equal(useSessionStore.getState().retainedSessions['session-c']?.workflowStatus, 'in_progress');
+});
+
+test('a PR sync update moves every Task and Session projection with its PR state', () => {
+  seedAppearances();
+  useSessionStore.setState((state) => ({
+    projects: state.projects.map((entry) => ({
+      ...entry,
+      countByStatus: { todo: 1, in_progress: 0, in_review: 0, done: 0 },
+    })),
+  }));
+
+  receive({
+    type: 'task_pr_status_update',
+    taskId: 'shared-worktree',
+    prStatusKnown: true,
+    prUnsupported: false,
+    remoteBranchExists: true,
+    workflowStatus: 'done',
+    prStatus: {
+      number: 816,
+      url: 'https://github.com/horang-labs/tessera/pull/816',
+      state: 'merged',
+      relation: 'current',
+      mergedAt: '2026-08-16T00:00:00.000Z',
+      lastSynced: '2026-08-16T00:00:00.000Z',
+    },
+  });
+
+  for (const appearance of Object.values(useTaskStore.getState().tasksByProject).flat()) {
+    assert.equal(appearance.prStatus?.state, 'merged');
+    assert.equal(appearance.workflowStatus, 'done');
+  }
+  for (const entry of useSessionStore.getState().projects) {
+    assert.equal(entry.sessions[0]?.workflowStatus, 'done');
+    assert.equal(entry.countByStatus?.todo, 0);
+    assert.equal(entry.countByStatus?.done, 1);
+  }
+  assert.equal(
+    useSessionStore.getState().retainedSessions['session-c']?.workflowStatus,
+    'done',
+  );
+  assert.equal(
+    useTaskStore.getState().prStatusByTaskId['shared-worktree']?.prStatus?.state,
+    'merged',
+  );
 });
 
 test('an older Project refresh cannot overwrite a newer workflow projection', async () => {

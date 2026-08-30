@@ -96,6 +96,22 @@ test('WSL OpenCode overlay script rejects malformed plugin payloads', () => {
   assert.throws(() => buildWslOpenCodeOverlayCreateScript("'; rm -rf /"));
 });
 
+test('WSL OpenCode keeps lifecycle reporting but omits Tessera CLI when injection is off', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-opencode-off-'));
+  try {
+    const stdout = runScript(
+      buildWslOpenCodeOverlayCreateScript(b64('export default {}\n'), process.env, false),
+      home,
+    );
+    const overlay = readWslOpenCodeOverlayReport(stdout);
+    assert.equal(overlay, path.join(home, '.tessera/opencode-overlay/shared-lifecycle'));
+    assert.equal(fs.existsSync(path.join(overlay!, 'plugins/tessera-lifecycle.js')), true);
+    assert.equal(fs.existsSync(path.join(overlay!, 'skills/tessera-cli')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('WSL OpenCode overlay is namespaced for a parallel Electron test instance', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-opencode-instance-'));
   try {

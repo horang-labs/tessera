@@ -8,6 +8,7 @@ import {
   type ChecklistEntry,
 } from '@/lib/projects/ignored-file-checklist';
 import { rewriteCopyBlock } from '@/lib/projects/preparation-copy-block';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /** How far the checklist has got with the project's ignored files. */
 type ScanStatus = 'idle' | 'scanning' | 'ready' | 'failed';
@@ -154,6 +155,7 @@ export default function IgnoredFileChecklist({
   return (
     <div className="space-y-2" data-testid="ignored-file-checklist">
       <button
+        {...settingsTelemetryClickAttributes('settings.project.ignored_files_expand')}
         type="button"
         onClick={toggleOpen}
         disabled={disabled}
@@ -197,8 +199,12 @@ export default function IgnoredFileChecklist({
               <ul className="max-h-64 space-y-0.5 overflow-y-auto">
                 {entries.map((entry) => (
                   <li key={entry.path}>
-                    <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-(--sidebar-hover)">
+                    <label
+                      {...settingsTelemetryClickAttributes('settings.project.ignored_file_toggle')}
+                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-(--sidebar-hover)"
+                    >
                       <input
+                        {...settingsTelemetryClickAttributes('settings.project.ignored_file_toggle')}
                         type="checkbox"
                         checked={tickedPaths.has(entry.path)}
                         onChange={() => toggleTick(entry.path)}

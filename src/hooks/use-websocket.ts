@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { wsClient } from '@/lib/ws/client';
+import { wsClient, type SendMessageOptions } from '@/lib/ws/client';
 import { useAuthStore } from '@/stores/auth-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -29,7 +29,7 @@ export function useWebSocket() {
       skillName?: string,
       displayContent?: string | ContentBlock[],
       spawnConfig?: SessionSpawnConfig,
-      options?: { forceTranslateInput?: boolean },
+      options?: SendMessageOptions,
     ) => {
       wsClient.sendMessage(sessionId, content, skillName, displayContent, spawnConfig, options);
     },

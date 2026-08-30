@@ -24,6 +24,9 @@ import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { useSessionProcessingSummary } from '@/hooks/use-session-processing';
 import { ItemStatusIndicator } from '@/components/chat/work-item-primitives';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
+import { transitionTabClickSuppression } from '@/lib/tab/tab-drag-click-guard';
+import { captureTelemetryUiControl } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /** Delay before activating a tab when a session drag hovers over it. */
 const TAB_HOVER_ACTIVATE_DELAY = 500;
@@ -128,7 +131,7 @@ export function shouldDragTabPanelTree(tabData: TabPanelData | null | undefined)
 
 const tabItemVariants = cva(
   // base: always applied
-  'electron-no-drag relative flex h-[calc(100%+1px)] items-center select-none cursor-pointer' +
+  'relative flex h-[calc(100%+1px)] items-center select-none cursor-pointer' +
     ' px-3 py-1.5 text-sm font-medium border-b-2 transition-colors duration-100' +
     ' border-r border-r-(--divider)',
   {
@@ -340,11 +343,24 @@ export const TabItem = memo(function TabItem({
 
   const handleClick = useCallback(
     function handleClick() {
-      if (suppressClickAfterDragRef.current || isEditingTitle) return;
+      const transition = transitionTabClickSuppression(
+        suppressClickAfterDragRef.current,
+        'click',
+      );
+      suppressClickAfterDragRef.current = transition.suppressed;
+      if (!transition.shouldActivate || isEditingTitle) return;
+      void captureTelemetryUiControl('tab.select', 'tab_bar');
       onActivate(tab.id);
     },
     [isEditingTitle, onActivate, tab.id],
   );
+
+  const handlePointerDown = useCallback(function handlePointerDown() {
+    suppressClickAfterDragRef.current = transitionTabClickSuppression(
+      suppressClickAfterDragRef.current,
+      'pointer-down',
+    ).suppressed;
+  }, []);
 
   const handleDoubleClick = useCallback(
     function handleDoubleClick(e: React.MouseEvent) {
@@ -397,6 +413,7 @@ export const TabItem = memo(function TabItem({
   const handleCloseMouseDown = useCallback(
     function handleCloseMouseDown(e: React.MouseEvent) {
       e.stopPropagation();
+      void captureTelemetryUiControl('tab.close', 'tab_bar');
       onClose(tab.id);
     },
     [onClose, tab.id],
@@ -412,7 +429,10 @@ export const TabItem = memo(function TabItem({
 
   const handleDragStart = useCallback(
     function handleDragStart(e: React.DragEvent) {
-      suppressClickAfterDragRef.current = true;
+      suppressClickAfterDragRef.current = transitionTabClickSuppression(
+        suppressClickAfterDragRef.current,
+        'drag-start',
+      ).suppressed;
       e.dataTransfer.effectAllowed = 'move';
       onDragStart(tab.id, e);
 
@@ -507,7 +527,10 @@ export const TabItem = memo(function TabItem({
       clearHoverTimer();
       onDragEnd();
       window.setTimeout(() => {
-        suppressClickAfterDragRef.current = false;
+        suppressClickAfterDragRef.current = transitionTabClickSuppression(
+          suppressClickAfterDragRef.current,
+          'reset',
+        ).suppressed;
       }, 150);
     },
     [onDragEnd, clearHoverTimer],
@@ -523,6 +546,7 @@ export const TabItem = memo(function TabItem({
 
   return (
     <div
+      data-telemetry-ignore="manual_capture"
       draggable={!isEditingTitle}
       role="tab"
       aria-selected={isActive}
@@ -544,6 +568,7 @@ export const TabItem = memo(function TabItem({
         isSessionDragHover && !isDragOver && 'border-b-(--accent) bg-(--accent)/10',
       )}
       onClick={handleClick}
+      onPointerDown={handlePointerDown}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
@@ -583,6 +608,7 @@ export const TabItem = memo(function TabItem({
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
       {isEditingTitle ? (
         <input
+          {...telemetryClickAttributes('tab.rename', 'tab_bar')}
           type="text"
           value={titleInput}
           onChange={(e) => setTitleInput(e.target.value)}
@@ -607,6 +633,7 @@ export const TabItem = memo(function TabItem({
       {/* Close button — always visible (BR-UI-024) */}
       <ShortcutTooltip id="close-tab" label={t('shortcut.closeTab')}>
         <button
+          data-telemetry-ignore="manual_capture"
           className="ml-1.5 shrink-0 rounded hover:bg-(--sidebar-hover) p-0.5"
           onMouseDown={handleCloseMouseDown}
           aria-label={t('chat.closeTab', { title: displayTitle })}

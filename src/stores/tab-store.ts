@@ -62,6 +62,11 @@ function getTabActiveSessionId(
   return tabData?.panels[tabData.activePanelId]?.sessionId ?? null;
 }
 
+function markTabActiveSessionRead(tabId: string): void {
+  const sessionId = getTabActiveSessionId(tabId, usePanelStore.getState());
+  if (sessionId) projectViewWorkspaceState.markSessionRead(sessionId);
+}
+
 function isFileLikeSessionId(sessionId: string | null): boolean {
   if (!sessionId) return false;
   return parseWorkspaceFileSessionId(sessionId) !== null
@@ -73,7 +78,20 @@ function inferSessionWorktreeId(
   sessionId: string | null | undefined,
   projectViewId?: string | null,
 ): string | null {
-  if (!sessionId || isSpecialSession(sessionId)) return null;
+  if (!sessionId) return null;
+  const worktreeFile = parseWorktreeFileSessionId(sessionId);
+  if (worktreeFile) return worktreeFile.sourceWorktreeId;
+  const workspaceFile = parseWorkspaceFileSessionId(sessionId);
+  if (workspaceFile?.sourceWorktreeId) return workspaceFile.sourceWorktreeId;
+  const sourceSessionId = getSpecialSessionSourceSessionId(sessionId);
+  if (sourceSessionId) {
+    const requestedProjectViewId = projectViewId && !isAllProjectsScope(projectViewId)
+      ? projectViewId
+      : undefined;
+    return projectViewWorkspaceState.resolveSession(sourceSessionId, requestedProjectViewId)
+      ?.worktreeId ?? null;
+  }
+  if (isSpecialSession(sessionId)) return null;
   const requestedProjectViewId = projectViewId && !isAllProjectsScope(projectViewId)
     ? projectViewId
     : undefined;
@@ -212,6 +230,24 @@ function getVisibleTabs(
   return [
     ...globalTabs,
     ...(projectDir ? getStateTabs(projectStates[projectDir]) : []),
+  ];
+}
+
+function getVisibleLruTabIds(
+  projectStates: Record<string, ProjectTabState>,
+  globalState: ProjectTabState | null,
+  projectDir: string | null,
+): string[] {
+  const globalLru = globalState?.lruTabIds ?? [];
+  if (isAllProjectsScope(projectDir)) {
+    return [
+      ...globalLru,
+      ...Object.values(projectStates).flatMap((projectState) => projectState.lruTabIds),
+    ];
+  }
+  return [
+    ...globalLru,
+    ...(projectDir ? projectStates[projectDir]?.lruTabIds ?? [] : []),
   ];
 }
 
@@ -430,6 +466,7 @@ function buildStateFromTabs(
   tabs: Tab[],
   panelStore: ReturnType<typeof usePanelStore.getState>,
   preferredActiveTabId?: string,
+  preferredLruTabIds?: string[],
 ): ProjectTabState | null {
   if (tabs.length === 0) return null;
 
@@ -447,7 +484,7 @@ function buildStateFromTabs(
   return {
     tabs,
     activeTabId,
-    lruTabIds: normalizeLruForTabs([activeTabId], tabs, activeTabId),
+    lruTabIds: normalizeLruForTabs(preferredLruTabIds, tabs, activeTabId),
     tabPanelSnapshots,
   };
 }
@@ -482,14 +519,19 @@ function saveVisibleTabsToScopedStates(
     const activeTabId = state.activeTabId && tabs.some((tab) => tab.id === state.activeTabId)
       ? state.activeTabId
       : state.projectTabStates[projectDir]?.activeTabId;
-    const nextState = buildStateFromTabs(tabs, panelStore, activeTabId);
+    const nextState = buildStateFromTabs(tabs, panelStore, activeTabId, state.lruTabIds);
     if (nextState) projectTabStates[projectDir] = nextState;
   }
 
   const globalActiveTabId = state.activeTabId && globalTabs.some((tab) => tab.id === state.activeTabId)
     ? state.activeTabId
     : state.globalTabState?.activeTabId;
-  const globalTabState = buildStateFromTabs(globalTabs, panelStore, globalActiveTabId);
+  const globalTabState = buildStateFromTabs(
+    globalTabs,
+    panelStore,
+    globalActiveTabId,
+    state.lruTabIds,
+  );
 
   return {
     projectTabStates,
@@ -837,8 +879,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   setActiveTab: (tabId: string): void => {
     const state = get();
 
-    // Step 1: 이미 활성 탭이면 no-op
-    if (tabId === state.activeTabId) return;
+    // Step 1: 이미 활성 탭이어도 사용자가 다시 누른 visible Session은 읽음 처리한다.
+    if (tabId === state.activeTabId) {
+      markTabActiveSessionRead(tabId);
+      return;
+    }
 
     // Step 2: 탭이 존재해야 함
     const newTabIdx = state.tabs.findIndex(t => t.id === tabId);
@@ -857,6 +902,9 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
     // Step 5: panel-store에 활성 탭 전환 (포인터만 변경, 데이터 복사 불필요)
     usePanelStore.getState().setActiveTabId(tabId);
+    // PanelWrapper가 비활성 탭에서도 mounted 상태를 유지할 수 있으므로 탭 전환
+    // 자체가 visible Session의 읽음 경계다. effect 재실행에만 의존하지 않는다.
+    markTabActiveSessionRead(tabId);
   },
 
   reorderTab: (dragTabId: string, dropTabId: string): void => {
@@ -993,7 +1041,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       }
       const tabData = panelStore.tabPanels[panelStore.activeTabId];
       if (tabData) {
-        panelStore.assignSession(tabData.activePanelId, sessionId);
+        panelStore.assignSession(
+          tabData.activePanelId,
+          sessionId,
+          inferSessionWorktreeId(sessionId, existingPreview.projectDir),
+        );
         get().syncTabProjectFromSession(panelStore.activeTabId, sessionId);
         set({ tabs: [...get().tabs] });
       }
@@ -1003,7 +1055,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const tabData = panelStore.tabPanels[state.activeTabId];
     const activePanel = tabData?.panels[tabData?.activePanelId ?? ''];
     if (activePanel?.sessionId === null) {
-      panelStore.assignSession(tabData!.activePanelId, sessionId);
+      panelStore.assignSession(
+        tabData!.activePanelId,
+        sessionId,
+        inferSessionWorktreeId(sessionId, state.currentProjectDir),
+      );
       get().syncTabProjectFromSession(state.activeTabId, sessionId);
       set({
         tabs: get().tabs.map((tab): Tab =>
@@ -1242,6 +1298,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       projects[dir] = {
         tabs: pState.tabs.map((tab) => toPersistedTab(tab, pState.tabPanelSnapshots?.[tab.id])),
         activeTabId: pState.activeTabId,
+        lruTabIds: pState.lruTabIds,
       };
     }
 
@@ -1251,6 +1308,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
             toPersistedTab(tab, scopedStates.globalTabState?.tabPanelSnapshots?.[tab.id])
           ),
           activeTabId: scopedStates.globalTabState.activeTabId,
+          lruTabIds: scopedStates.globalTabState.lruTabIds,
         }
       : null;
 
@@ -1337,7 +1395,11 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       set({
         tabs: visibleTabs,
         activeTabId,
-        lruTabIds: normalizeLruForTabs([activeTabId], visibleTabs, activeTabId),
+        lruTabIds: normalizeLruForTabs(
+          getVisibleLruTabIds(nextProjectTabStates, nextGlobalTabState, currentProjectDir),
+          visibleTabs,
+          activeTabId,
+        ),
         projectTabStates: nextProjectTabStates,
         globalTabState: nextGlobalTabState,
         currentProjectDir,
@@ -1394,7 +1456,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
           projectTabStates[dir] = {
             tabs,
             activeTabId,
-            lruTabIds: [activeTabId],
+            lruTabIds: normalizeLruForTabs(pData.lruTabIds, tabs, activeTabId),
             tabPanelSnapshots,
           };
         }
@@ -1413,7 +1475,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
           globalTabState = {
             tabs,
             activeTabId,
-            lruTabIds: [activeTabId],
+            lruTabIds: normalizeLruForTabs(v3.global.lruTabIds, tabs, activeTabId),
             tabPanelSnapshots,
           };
         }

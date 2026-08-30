@@ -6,6 +6,7 @@ import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { PROJECT_DND_MIME } from '@/lib/constants/project-strip';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 /**
  * useProjectStripDnd
@@ -74,6 +75,11 @@ export function useProjectStripDnd(): UseProjectStripDndReturn {
     }
 
     useSessionStore.getState().reorderProjects(fromIndex, targetIndex);
+    void captureTelemetryEvent('workspace_item_moved', {
+      item_type: 'project',
+      move_kind: 'reorder',
+      item_count: 1,
+    });
     useBoardStore.getState().setDraggingProject(null);
     useBoardStore.getState().setProjectDragOverIndex(null);
   }, []);

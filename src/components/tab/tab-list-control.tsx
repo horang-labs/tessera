@@ -17,6 +17,7 @@ import {
 } from '@/lib/ui/anchored-viewport';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import type { Tab } from '@/types/tab';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /** Widest the list is allowed to get; a phone gets whatever the viewport leaves. */
 const TAB_LIST_MAX_WIDTH = 320;
@@ -132,6 +133,7 @@ export const TabListControl = memo(function TabListControl({
           isOpen && 'bg-(--sidebar-hover)',
         )}
         onClick={handleToggle}
+        {...telemetryClickAttributes('tab.list.open', 'tab_bar')}
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label={t('chat.tabList')}
@@ -238,6 +240,7 @@ const TabListItem = memo(function TabListItem({
             : 'text-(--sidebar-text-active) hover:bg-(--sidebar-hover) focus:bg-(--sidebar-hover)',
         )}
         onClick={() => onSelect(tab.id)}
+        {...telemetryClickAttributes('tab.list.select', 'tab_bar')}
         title={title}
         data-testid="tab-list-item"
         data-tab-id={tab.id}
@@ -281,6 +284,7 @@ const TabListItem = memo(function TabListItem({
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)',
         )}
         onClick={() => onClose(tab.id)}
+        {...telemetryClickAttributes('tab.list.close', 'tab_bar')}
         aria-label={t('chat.closeTab', { title })}
         data-testid="tab-list-item-close"
         data-tab-id={tab.id}

@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { stat } from 'node:fs/promises';
+import path from 'node:path';
 import logger from '@/lib/logger';
 import {
   buildCodexOverlayMarkerJson,
@@ -6,11 +8,12 @@ import {
   extractCodexOverlayTerminalId,
 } from '@/lib/codex-home';
 import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
+import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
 import { buildCodexHookSettings } from './codex-hook-settings';
 import { appendTrustedHookState } from './codex-overlay';
 import {
   CODEX_TRUST_BASELINE_FILE,
-  mergeCodexOverlayTrust,
+  planCodexTrustPromotion,
   serializeCodexTrustBaseline,
 } from './codex-trust-state';
 import type { HookCommandStyle } from './hook-command';
@@ -55,6 +58,15 @@ interface GuestCodexOverlay {
   overlayPath: string;
   accountHome: string;
   canonicalHooksPath: string;
+  trustWatchPath: string | null;
+  trustWatchSnapshot: GuestCodexTrustSnapshot | null;
+  trustPromotionTimer: NodeJS.Timeout | null;
+}
+
+interface GuestCodexTrustSnapshot {
+  ctimeMs: number;
+  mtimeMs: number;
+  size: number;
 }
 
 const guestOverlayTerminals = new Map<string, GuestCodexOverlay>();
@@ -68,6 +80,12 @@ const guestOverlayTerminals = new Map<string, GuestCodexOverlay>();
  */
 const guestOpsByTerminal = new Map<string, Promise<unknown>>();
 let guestTrustPromotionTail: Promise<void> = Promise.resolve();
+let guestTrustPollTimer: NodeJS.Timeout | null = null;
+let guestTrustPollRunning = false;
+
+const TRUST_WRITE_RESULT = 'TESSERA_TRUST_WRITE_RESULT';
+const TRUST_WATCH_INTERVAL_MS = 1_000;
+const TRUST_PROMOTION_MAX_ATTEMPTS = 3;
 
 function chainGuestOp<T>(terminalId: string, op: () => Promise<T>): Promise<T> {
   const previous = guestOpsByTerminal.get(terminalId) ?? Promise.resolve();
@@ -87,6 +105,10 @@ function chainGuestTrustPromotion<T>(op: () => Promise<T>): Promise<T> {
   return next;
 }
 
+function waitForGuestTrustPromotions(): Promise<void> {
+  return chainGuestTrustPromotion(async () => undefined);
+}
+
 function assertSafeTerminalId(terminalId: string): void {
   if (!SAFE_TERMINAL_ID.test(terminalId)) {
     throw new Error('Invalid terminal id for Codex overlay');
@@ -104,6 +126,7 @@ export function buildWslCodexOverlayCreateScript(
   terminalId: string,
   hooksJsonB64: string,
   env: NodeJS.ProcessEnv = process.env,
+  includeControlSkill = true,
 ): string {
   assertSafeTerminalId(terminalId);
   assertBase64(hooksJsonB64, 'hooks.json');
@@ -132,12 +155,14 @@ export function buildWslCodexOverlayCreateScript(
     'if [ -d "$src/skills" ]; then',
     '  for entry in "$src"/skills/* "$src"/skills/.*; do',
     '    name="${entry##*/}"',
-    `    case "$name" in .|..|${TESSERA_CONTROL_SKILL_NAME}) continue ;; esac`,
+    `    case "$name" in .|..${includeControlSkill ? `|${TESSERA_CONTROL_SKILL_NAME}` : ''}) continue ;; esac`,
     '    [ -e "$entry" ] || continue',
     '    ln -s "$src/skills/$name" "$skills/$name" 2>/dev/null || true',
     '  done',
     'fi',
-    ...buildPosixTesseraControlSkillMaterialization('skills', env),
+    ...(includeControlSkill
+      ? buildPosixTesseraControlSkillMaterialization('skills', env)
+      : []),
     `printf '%s' '${hooksJsonB64}' | base64 -d > "$overlay/hooks.json"`,
     'chmod 600 "$overlay/hooks.json"',
     // 호스트가 파싱하는 보고 라인들. --exec sh는 non-login이라 rc 노이즈가 없다.
@@ -176,6 +201,22 @@ export function buildWslCodexOverlayFinalizeScript(
   ].join('\n');
 }
 
+export function buildWslCodexTrustBaselineWriteScript(
+  terminalId: string,
+  trustBaselineB64: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  assertSafeTerminalId(terminalId);
+  assertBase64(trustBaselineB64, 'trust baseline');
+  const stateRoot = getWslGuestTesseraStateRoot(env);
+  return [
+    'set -eu',
+    `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
+    `printf '%s' '${trustBaselineB64}' | base64 -d > "$overlay/${CODEX_TRUST_BASELINE_FILE}"`,
+    `chmod 600 "$overlay/${CODEX_TRUST_BASELINE_FILE}"`,
+  ].join('\n');
+}
+
 export function buildWslCodexTrustReportScript(
   terminalId: string,
   accountHomeB64: string,
@@ -202,9 +243,11 @@ export function buildWslCodexTrustReportScript(
 
 export function buildWslCodexTrustPromotionScript(
   accountHomeB64: string,
+  expectedConfigTomlB64: string,
   configTomlB64: string,
 ): string {
   assertBase64(accountHomeB64, 'account home');
+  assertBase64(expectedConfigTomlB64, 'expected config.toml');
   assertBase64(configTomlB64, 'promoted config.toml');
   return [
     'set -eu',
@@ -218,7 +261,14 @@ export function buildWslCodexTrustPromotionScript(
     'trap \'rm -f "$tmp"\' 0 1 2 15',
     `printf '%s' '${configTomlB64}' | base64 -d > "$tmp"`,
     'chmod 600 "$tmp"',
+    'actual_config_b64=""',
+    'if [ -f "$config" ]; then actual_config_b64="$(base64 < "$config" | tr -d \'\\n\')"; fi',
+    `if [ "$actual_config_b64" != '${expectedConfigTomlB64}' ]; then`,
+    `  printf '${TRUST_WRITE_RESULT}:stale\\n'`,
+    '  exit 0',
+    'fi',
     'mv -f "$tmp" "$config"',
+    `printf '${TRUST_WRITE_RESULT}:applied\\n'`,
   ].join('\n');
 }
 
@@ -322,20 +372,37 @@ function toBase64(value: string): string {
 export async function createCodexOverlayInWsl(
   terminalId: string,
   hookStyle: HookCommandStyle = 'posix',
+  includeControlSkill = true,
 ): Promise<string> {
   assertSafeTerminalId(terminalId);
-  return chainGuestOp(terminalId, () => createOverlayScripts(terminalId, hookStyle));
+  return chainGuestOp(
+    terminalId,
+    () => createOverlayScripts(terminalId, hookStyle, includeControlSkill),
+  );
 }
 
 async function createOverlayScripts(
   terminalId: string,
   hookStyle: HookCommandStyle,
+  includeControlSkill: boolean,
 ): Promise<string> {
+  await waitForGuestTrustPromotions();
+  await promoteTrustFromLiveGuestOverlays();
+  const replacedOverlay = guestOverlayTerminals.get(terminalId);
+  if (replacedOverlay) {
+    guestOverlayTerminals.delete(terminalId);
+    stopGuestCodexTrustWatcher(replacedOverlay);
+  }
   const hookSettings = buildCodexHookSettings(hookStyle);
   const hooksJson = JSON.stringify(hookSettings, null, 2) + '\n';
 
   const createdStdout = await runWslScript(
-    buildWslCodexOverlayCreateScript(terminalId, toBase64(hooksJson)),
+    buildWslCodexOverlayCreateScript(
+      terminalId,
+      toBase64(hooksJson),
+      process.env,
+      includeControlSkill,
+    ),
     CREATE_TIMEOUT_MS,
   );
   const overlayPath = readWslOverlayReport(createdStdout, 'TESSERA_OVERLAY');
@@ -359,13 +426,184 @@ async function createOverlayScripts(
     FINALIZE_TIMEOUT_MS,
   );
 
-  guestOverlayTerminals.set(terminalId, {
+  const overlay: GuestCodexOverlay = {
     overlayPath,
     accountHome,
     canonicalHooksPath,
-  });
+    trustWatchPath: null,
+    trustWatchSnapshot: null,
+    trustPromotionTimer: null,
+  };
+  guestOverlayTerminals.set(terminalId, overlay);
+  await startGuestCodexTrustWatcher(terminalId, overlay);
   logger.debug({ terminalId, overlayPath, accountHome }, 'codex WSL overlay created');
   return overlayPath;
+}
+
+async function startGuestCodexTrustWatcher(
+  terminalId: string,
+  overlay: GuestCodexOverlay,
+): Promise<void> {
+  const configPath = await resolvePathForHostFilesystem(
+    path.posix.join(overlay.overlayPath, 'config.toml'),
+  );
+  if (guestOverlayTerminals.get(terminalId) !== overlay) return;
+  overlay.trustWatchPath = configPath;
+  overlay.trustWatchSnapshot = await readGuestCodexTrustSnapshot(configPath);
+  if (guestOverlayTerminals.get(terminalId) !== overlay) return;
+  ensureGuestCodexTrustPoller();
+}
+
+async function readGuestCodexTrustSnapshot(
+  configPath: string,
+): Promise<GuestCodexTrustSnapshot | null> {
+  try {
+    const stats = await stat(configPath);
+    return { ctimeMs: stats.ctimeMs, mtimeMs: stats.mtimeMs, size: stats.size };
+  } catch {
+    return null;
+  }
+}
+
+function ensureGuestCodexTrustPoller(): void {
+  if (guestTrustPollTimer) return;
+  guestTrustPollTimer = setInterval(() => {
+    void pollGuestCodexTrustFiles();
+  }, TRUST_WATCH_INTERVAL_MS);
+  guestTrustPollTimer.unref();
+}
+
+async function pollGuestCodexTrustFiles(): Promise<void> {
+  if (guestTrustPollRunning) return;
+  guestTrustPollRunning = true;
+  try {
+    // One server-wide poller checks overlays sequentially. WSL UNC stat calls
+    // therefore cannot fan out into one burst per retained terminal.
+    for (const [terminalId, overlay] of guestOverlayTerminals) {
+      const configPath = overlay.trustWatchPath;
+      if (!configPath) continue;
+      const previous = overlay.trustWatchSnapshot;
+      const current = await readGuestCodexTrustSnapshot(configPath);
+      if (guestOverlayTerminals.get(terminalId) !== overlay) continue;
+      overlay.trustWatchSnapshot = current;
+      if (!current) continue;
+      if (
+        previous
+        && current.mtimeMs === previous.mtimeMs
+        && current.ctimeMs === previous.ctimeMs
+        && current.size === previous.size
+      ) continue;
+      scheduleGuestCodexTrustPromotion(terminalId, overlay);
+    }
+  } finally {
+    guestTrustPollRunning = false;
+  }
+}
+
+function scheduleGuestCodexTrustPromotion(
+  terminalId: string,
+  overlay: GuestCodexOverlay,
+): void {
+  if (guestOverlayTerminals.get(terminalId) !== overlay) return;
+  if (overlay.trustPromotionTimer) clearTimeout(overlay.trustPromotionTimer);
+  overlay.trustPromotionTimer = setTimeout(() => {
+    overlay.trustPromotionTimer = null;
+    if (guestOverlayTerminals.get(terminalId) !== overlay) return;
+    void promoteGuestCodexOverlayTrust(terminalId, overlay, 'projects')
+      .catch((err) => {
+        logger.warn({ err, terminalId }, 'live codex WSL overlay trust promotion skipped');
+      });
+  }, 25);
+  overlay.trustPromotionTimer.unref();
+}
+
+function stopGuestCodexTrustWatcher(overlay: GuestCodexOverlay): void {
+  if (overlay.trustPromotionTimer) {
+    clearTimeout(overlay.trustPromotionTimer);
+    overlay.trustPromotionTimer = null;
+  }
+  overlay.trustWatchPath = null;
+  overlay.trustWatchSnapshot = null;
+  if (
+    guestTrustPollTimer
+    && !Array.from(guestOverlayTerminals.values()).some((candidate) => candidate.trustWatchPath)
+  ) {
+    clearInterval(guestTrustPollTimer);
+    guestTrustPollTimer = null;
+  }
+}
+
+async function promoteTrustFromLiveGuestOverlays(): Promise<void> {
+  for (const [terminalId, overlay] of guestOverlayTerminals) {
+    try {
+      await promoteGuestCodexOverlayTrust(terminalId, overlay, 'projects');
+    } catch (err) {
+      logger.warn({ err, terminalId }, 'live codex WSL overlay trust promotion skipped');
+    }
+  }
+}
+
+async function promoteGuestCodexOverlayTrust(
+  terminalId: string,
+  overlay: GuestCodexOverlay,
+  scope: 'all' | 'projects',
+): Promise<void> {
+  await chainGuestTrustPromotion(async () => {
+    const accountHomeB64 = toBase64(overlay.accountHome);
+    for (let attempt = 0; attempt < TRUST_PROMOTION_MAX_ATTEMPTS; attempt += 1) {
+      const report = await runWslScript(
+        buildWslCodexTrustReportScript(terminalId, accountHomeB64),
+        FINALIZE_TIMEOUT_MS,
+      );
+      const baselineB64 = readWslOverlayReport(report, 'TESSERA_TRUST_BASELINE_B64');
+      const finalConfigB64 = readWslOverlayReport(report, 'TESSERA_FINAL_CONFIG_B64');
+      const accountConfigB64 = readWslOverlayReport(report, 'TESSERA_ACCOUNT_CONFIG_B64');
+      if (!baselineB64 || !finalConfigB64) return;
+
+      const baselineJson = Buffer.from(baselineB64, 'base64').toString('utf8');
+      const finalOverlayConfig = Buffer.from(finalConfigB64, 'base64').toString('utf8');
+      const currentAccountConfig = accountConfigB64
+        ? Buffer.from(accountConfigB64, 'base64').toString('utf8')
+        : '';
+      const promotion = planCodexTrustPromotion({
+        baselineJson,
+        finalOverlayConfig,
+        currentAccountConfig,
+        managedHooksPath: overlay.canonicalHooksPath,
+        scope,
+      });
+      if (promotion.accountConfig !== currentAccountConfig) {
+        const writeReport = await runWslScript(
+          buildWslCodexTrustPromotionScript(
+            accountHomeB64,
+            toBase64(currentAccountConfig),
+            toBase64(promotion.accountConfig),
+          ),
+          FINALIZE_TIMEOUT_MS,
+        );
+        const writeResult = readWslOverlayReport(writeReport, TRUST_WRITE_RESULT);
+        if (writeResult === 'stale') continue;
+        if (writeResult !== 'applied') {
+          throw new Error('Codex WSL trust promotion did not report its write result');
+        }
+        logger.info(
+          { accountHome: overlay.accountHome },
+          'codex WSL overlay trust decisions promoted',
+        );
+      }
+      if (promotion.advancedBaseline) {
+        await runWslScript(
+          buildWslCodexTrustBaselineWriteScript(
+            terminalId,
+            toBase64(promotion.advancedBaseline),
+          ),
+          FINALIZE_TIMEOUT_MS,
+        );
+      }
+      return;
+    }
+    throw new Error('Codex WSL trust promotion could not obtain a stable account config');
+  });
 }
 
 export async function repairCodexOverlayResumePathInWsl(
@@ -386,37 +624,11 @@ export function cleanupCodexOverlayInWsl(terminalId: string): void {
   const overlay = guestOverlayTerminals.get(terminalId);
   if (!overlay) return;
   guestOverlayTerminals.delete(terminalId);
+  stopGuestCodexTrustWatcher(overlay);
   try {
     chainGuestOp(terminalId, async () => {
       try {
-        await chainGuestTrustPromotion(async () => {
-          const accountHomeB64 = toBase64(overlay.accountHome);
-          const report = await runWslScript(
-            buildWslCodexTrustReportScript(terminalId, accountHomeB64),
-            FINALIZE_TIMEOUT_MS,
-          );
-          const baselineB64 = readWslOverlayReport(report, 'TESSERA_TRUST_BASELINE_B64');
-          const finalConfigB64 = readWslOverlayReport(report, 'TESSERA_FINAL_CONFIG_B64');
-          const accountConfigB64 = readWslOverlayReport(report, 'TESSERA_ACCOUNT_CONFIG_B64');
-          if (baselineB64 && finalConfigB64) {
-            const currentAccountConfig = accountConfigB64
-              ? Buffer.from(accountConfigB64, 'base64').toString('utf8')
-              : '';
-            const merged = mergeCodexOverlayTrust({
-              baselineJson: Buffer.from(baselineB64, 'base64').toString('utf8'),
-              finalOverlayConfig: Buffer.from(finalConfigB64, 'base64').toString('utf8'),
-              currentAccountConfig,
-              managedHooksPath: overlay.canonicalHooksPath,
-            });
-            if (merged !== currentAccountConfig) {
-              await runWslScript(
-                buildWslCodexTrustPromotionScript(accountHomeB64, toBase64(merged)),
-                FINALIZE_TIMEOUT_MS,
-              );
-              logger.info({ accountHome: overlay.accountHome }, 'codex WSL overlay trust decisions promoted');
-            }
-          }
-        });
+        await promoteGuestCodexOverlayTrust(terminalId, overlay, 'all');
       } catch (err) {
         logger.warn({ err, terminalId }, 'codex WSL overlay trust promotion skipped');
       } finally {

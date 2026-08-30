@@ -34,13 +34,15 @@ import {
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
-import { useWorkspaceFileViewStore } from "@/stores/workspace-file-view-store";
 import {
-  openWorkspaceFileTab,
+  selectExpandedWorkspacePaths,
+  useWorkspaceFileViewStore,
+} from "@/stores/workspace-file-view-store";
+import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
+import {
   openWorkspaceTargetFileTab,
-  previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
-import { resolveWorkspaceTarget } from '@/types/worktree';
+import { resolveWorkspaceTarget, workspaceTargetKey } from '@/types/worktree';
 import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
@@ -51,12 +53,10 @@ import {
 import { WorkspaceInlineInputRow } from "@/components/workspace/workspace-inline-input-row";
 import { useWorkspaceInlineInput } from "@/components/workspace/use-workspace-inline-input";
 import {
-  DIR_TOGGLE_DOUBLE_CLICK_MS,
-  isRenameHotspotTarget,
-  RENAME_HOTSPOT_ATTR,
-  resolveDirToggleTiming,
   shouldOpenOnRowClick,
+  shouldToggleDirectoryOnClick,
 } from "@/components/workspace/workspace-inline-input-state";
+import { shouldReloadReselectedWorktree } from "@/components/workspace/workspace-file-panel-refresh";
 import {
   createWorkspaceDirectoryRequest,
   createWorkspaceFileRequest,
@@ -70,6 +70,8 @@ import {
   repointWorkspaceFileTabs,
 } from "@/lib/workspace-tabs/workspace-tab-sync";
 import { cn } from "@/lib/utils";
+import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 import {
   buildWorkspacePathContextMenuState,
   type WorkspacePathContextMenuState,
@@ -214,20 +216,29 @@ export function WorkspaceFilePanel({
   sessionId: string | null;
   worktreeId?: string | null;
 }) {
-  const canMutate = Boolean(sessionId);
   const target = useMemo(
     () => resolveWorkspaceTarget(sessionId, worktreeId),
     [sessionId, worktreeId],
   );
+  const targetKey = target ? workspaceTargetKey(target) : null;
+  const canMutate = target !== null;
   const isDocumentVisible = useDocumentVisibility();
+  const peekTarget = useWorkspacePeekStore((state) => state.target);
+  const previousPeekTargetRef = useRef(peekTarget);
+  const previousFileListTargetKeyRef = useRef(targetKey);
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<WorkspaceDeleteRequest | null>(null);
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
   const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
+  const storedExpandedPaths = useWorkspaceFileViewStore(
+    selectExpandedWorkspacePaths(targetKey),
+  );
+  const expandStoredPath = useWorkspaceFileViewStore((state) => state.expandPath);
+  const toggleStoredPath = useWorkspaceFileViewStore((state) => state.toggleExpandedPath);
+  const expandedPaths = useMemo(() => new Set(storedExpandedPaths), [storedExpandedPaths]);
   // The sessions/[id]/files route scopes Project View references by projectId;
   // resolve it from canonical workspace state so linked Task-only Sessions can
   // list files too.
@@ -236,6 +247,7 @@ export function WorkspaceFilePanel({
     directories,
     error,
     files,
+    loadFiles,
     loading,
     refreshFiles,
     symlinks,
@@ -246,24 +258,31 @@ export function WorkspaceFilePanel({
     sessionProjectDir,
   );
 
-  const deferredToggleRef = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (deferredToggleRef.current !== null) window.clearTimeout(deferredToggleRef.current);
-  }, []);
+  // A Worktree panel has no Session watcher. Re-selecting its Peek is the
+  // explicit signal that the explorer is visible again, so reload instead of
+  // carrying a tree snapshot from before a file-tab mutation. Subscribe to the
+  // target object, not just its ID: clicking the already-selected Worktree is
+  // still a new open event and must refresh this panel.
+  useEffect(function reloadReselectedWorktree() {
+    const previousTargetKey = previousFileListTargetKeyRef.current;
+    const peekChanged = previousPeekTargetRef.current !== peekTarget;
+    previousFileListTargetKeyRef.current = targetKey;
+    previousPeekTargetRef.current = peekTarget;
+    if (!shouldReloadReselectedWorktree({
+      currentTargetKey: targetKey,
+      isWorktreeTarget: target?.kind === 'worktree',
+      peekChanged,
+      peekWorktreeId: peekTarget?.worktreeId ?? null,
+      previousTargetKey,
+      targetId: target?.id ?? null,
+    })) return;
+    void loadFiles({ silent: true });
+  }, [loadFiles, peekTarget, target?.id, target?.kind, targetKey]);
 
   const expandPath = useCallback((path: string) => {
-    if (!path) return;
-    setExpandedPaths((current) => {
-      if (current.has(path)) return current;
-      const next = new Set(current);
-      let walked = "";
-      for (const part of path.split("/")) {
-        walked = walked ? `${walked}/${part}` : part;
-        next.add(walked);
-      }
-      return next;
-    });
-  }, []);
+    if (!targetKey) return;
+    expandStoredPath(targetKey, path);
+  }, [expandStoredPath, targetKey]);
 
   const inlineInput = useWorkspaceInlineInput({
     onCreateFile: createFile,
@@ -271,7 +290,7 @@ export function WorkspaceFilePanel({
     onExpandParent: expandPath,
     onRefreshFiles: refreshFiles,
     onRename: renameEntry,
-    sessionId,
+    workspaceKey: targetKey,
   });
 
   useWorkspaceFilesLiveSync({
@@ -335,93 +354,141 @@ export function WorkspaceFilePanel({
   }
 
   async function createFolder(path: string) {
-    if (!sessionId) return;
-    const created = await createWorkspaceDirectoryRequest(sessionId, path);
-    expandParentOf(created.path);
-    refreshFiles();
+    if (!target) return;
+    try {
+      const created = await createWorkspaceDirectoryRequest(target, path);
+      expandParentOf(created.path);
+      await loadFiles({
+        silent: true,
+        mutation: { kind: "directory", path: created.path, type: "create" },
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'directory',
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'directory',
+        result: 'failed',
+      });
+      throw error;
+    }
   }
 
   async function createFile(path: string) {
-    if (!sessionId) return;
-    const created = await createWorkspaceFileRequest(sessionId, path);
-    expandParentOf(created.path);
-    refreshFiles();
-    setSelectedPath(created.path);
-    openWorkspaceFileTab(sessionId, "file", created.path);
+    if (!target) return;
+    try {
+      const created = await createWorkspaceFileRequest(target, path);
+      expandParentOf(created.path);
+      // Creation immediately navigates away to the new file tab. Finish the
+      // list reload first so a Worktree panel without a Session watcher does not
+      // show a stale tree when the user comes back.
+      await loadFiles({
+        silent: true,
+        mutation: { kind: "file", path: created.path, type: "create" },
+      });
+      setSelectedPath(created.path);
+      openWorkspaceTargetFileTab(target, "file", created.path, {
+        projectDir: sessionProjectDir,
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'file',
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'create',
+        entry_kind: 'file',
+        result: 'failed',
+      });
+      throw error;
+    }
   }
 
   async function renameEntry(path: string, newName: string) {
-    if (!sessionId) return;
-    const renamed = await renameWorkspaceEntryRequest(sessionId, path, newName);
-    repointWorkspaceFileTabs(sessionId, renamed.previousPath, renamed.path);
-    if (selectedPath && isPathUnderMutation(selectedPath, renamed.previousPath)) {
-      setSelectedPath(renamed.path + selectedPath.slice(renamed.previousPath.length));
+    if (!target) return;
+    const kind = directories.includes(path) ? "directory" : "file";
+    try {
+      const renamed = await renameWorkspaceEntryRequest(target, path, newName);
+      repointWorkspaceFileTabs(target, renamed.previousPath, renamed.path);
+      if (selectedPath && isPathUnderMutation(selectedPath, renamed.previousPath)) {
+        setSelectedPath(renamed.path + selectedPath.slice(renamed.previousPath.length));
+      }
+      await loadFiles({
+        silent: true,
+        mutation: {
+          kind,
+          path: renamed.path,
+          previousPath: renamed.previousPath,
+          type: "rename",
+        },
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'rename',
+        entry_kind: kind,
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'rename',
+        entry_kind: kind,
+        result: 'failed',
+      });
+      throw error;
     }
-    refreshFiles();
   }
 
   async function deleteEntry(request: WorkspaceDeleteRequest) {
-    if (!sessionId) return;
-    await deleteWorkspaceEntryRequest(sessionId, request.path, {
-      recursive: request.kind === "directory",
-    });
-    // The tab has to go with the file: leaving it open shows an editable buffer
-    // for a path that no longer exists.
-    closeWorkspaceFileTabsFor(sessionId, request.path);
-    if (selectedPath && isPathUnderMutation(selectedPath, request.path)) {
-      setSelectedPath(null);
+    if (!target) return;
+    try {
+      await deleteWorkspaceEntryRequest(target, request.path, {
+        recursive: request.kind === "directory",
+      });
+      // The tab has to go with the file: leaving it open shows an editable buffer
+      // for a path that no longer exists.
+      closeWorkspaceFileTabsFor(target, request.path);
+      if (selectedPath && isPathUnderMutation(selectedPath, request.path)) {
+        setSelectedPath(null);
+      }
+      await loadFiles({
+        silent: true,
+        mutation: { kind: request.kind, path: request.path, type: "delete" },
+      });
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'delete',
+        entry_kind: request.kind,
+        result: 'success',
+      });
+    } catch (error) {
+      void captureTelemetryEvent('workspace_file_action_result', {
+        file_action: 'delete',
+        entry_kind: request.kind,
+        result: 'failed',
+      });
+      throw error;
     }
-    refreshFiles();
   }
 
   function toggleDirectory(path: string) {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }
-
-  function clearDeferredToggle() {
-    if (deferredToggleRef.current === null) return;
-    window.clearTimeout(deferredToggleRef.current);
-    deferredToggleRef.current = null;
+    if (!targetKey) return;
+    toggleStoredPath(targetKey, path);
   }
 
   /**
-   * A click on the folder's name may be the first half of a double-click that
-   * means rename, and toggling on both halves collapses and re-expands the row
-   * under the input. Clicks on the name wait the double-click window out.
-   */
+   * Toggle on the first click with no double-click delay. Chromium marks the
+   * second click with detail > 1, so it is dropped instead of toggling back.
+  */
   function handleDirectoryClick(event: MouseEvent, path: string) {
-    const timing = resolveDirToggleTiming({
-      clickCount: event.detail,
-      fromRenameHotspot: isRenameHotspotTarget(event.target),
-    });
-    clearDeferredToggle();
-    if (timing === "skip") return;
-    if (timing === "immediate") {
-      toggleDirectory(path);
-      return;
-    }
-    deferredToggleRef.current = window.setTimeout(() => {
-      deferredToggleRef.current = null;
-      toggleDirectory(path);
-    }, DIR_TOGGLE_DOUBLE_CLICK_MS);
+    if (!shouldToggleDirectoryOnClick(event.detail)) return;
+    toggleDirectory(path);
   }
 
-  /**
-   * Named apart from the hook's `startRename` because it does more: the first
-   * click of the gesture armed a deferred toggle, and it must not fire under
-   * the input that is about to open.
-   */
+  /** Named apart from the hook's `startRename` to keep row event handling local. */
   function beginRename(node: WorkspaceTreeNode) {
     if (!canMutate) return;
-    clearDeferredToggle();
     inlineInput.startRename({
       isDirectory: node.type === "directory",
       name: node.name,
@@ -473,7 +540,7 @@ export function WorkspaceFilePanel({
     return {
       kind: "file",
       path: node.path,
-      dirty: hasUnsavedWorkspaceFileEdits(sessionId, node.path),
+      dirty: hasUnsavedWorkspaceFileEdits(targetKey, node.path),
     };
   }
 
@@ -484,14 +551,8 @@ export function WorkspaceFilePanel({
     return node.path.split("/").slice(0, -1).join("/");
   }
 
-  /**
-   * Like `beginRename`, this disarms a toggle left over from a click on a
-   * folder's name: it would fire under the placeholder and collapse the folder
-   * the row is sitting in, taking the half-typed name with it.
-   */
   function beginNewEntry(kind: "file" | "folder", parentPath: string) {
     if (!canMutate) return;
-    clearDeferredToggle();
     inlineInput.startNew(kind, parentPath);
   }
 
@@ -501,7 +562,7 @@ export function WorkspaceFilePanel({
     // Re-pointing a tab remounts it on the new path, so the draft goes with the
     // old one. The delete confirmation says so; the rename has to as well.
     const hint = input.kind === "rename"
-      && hasUnsavedWorkspaceFileEdits(sessionId, input.path)
+      && hasUnsavedWorkspaceFileEdits(targetKey, input.path)
       ? "This file has unsaved edits, and they are discarded by the rename."
       : null;
     return (
@@ -548,6 +609,7 @@ export function WorkspaceFilePanel({
           <div className="group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)">
           <button
             type="button"
+            {...telemetryClickAttributes("files.directory.toggle", "files_panel")}
             onClick={(event) => handleDirectoryClick(event, node.path)}
             onKeyDown={(event) => {
               if (!canMutate || event.key !== "F2") return;
@@ -573,10 +635,7 @@ export function WorkspaceFilePanel({
             />
             <FolderIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
             <span
-              // The double-click-to-rename target is the name text alone, so the
-              // disclosure stays reachable on the chevron, the icon and the
-              // empty part of the row.
-              {...{ [RENAME_HOTSPOT_ATTR]: "" }}
+              // The double-click-to-rename target is the name text alone.
               onDoubleClick={(event) => {
                 if (!canMutate) return;
                 event.stopPropagation();
@@ -620,25 +679,17 @@ export function WorkspaceFilePanel({
       >
         <button
           type="button"
+          {...telemetryClickAttributes("files.file.open", "files_panel")}
           onClick={(event) => {
             setSelectedPath(node.path);
             if (!target) return;
-            // The second click of a double-click on the name means rename, and
-            // re-previewing the same file under the input it just opened is
-            // nothing anyone asked for.
-            if (target.kind === 'session' && !shouldOpenOnRowClick({
-              clickCount: event.detail,
-              fromRenameHotspot: isRenameHotspotTarget(event.target),
-            })) return;
-            previewWorkspaceTargetFileTab(target, 'file', node.path, {
-              preferKanbanPeek: true,
-            });
-          }}
-          onDoubleClick={() => {
-            setSelectedPath(node.path);
-            if (!target) return;
+            // A browser double-click also dispatches two click events. Only the
+            // first creates a tab; the double-click itself may still rename the
+            // name hotspot without creating extra duplicate tabs.
+            if (!shouldOpenOnRowClick(event.detail)) return;
             openWorkspaceTargetFileTab(target, 'file', node.path, {
               preferKanbanPeek: true,
+              projectDir: sessionProjectDir,
             });
           }}
           onKeyDown={(event) => {
@@ -670,7 +721,6 @@ export function WorkspaceFilePanel({
           <span
             // Renaming is scoped to the name text, so the icon and the rest of
             // the row keep opening the file the way they always have.
-            {...{ [RENAME_HOTSPOT_ATTR]: "" }}
             onDoubleClick={(event) => {
               if (!canMutate) return;
               event.stopPropagation();
@@ -714,9 +764,10 @@ export function WorkspaceFilePanel({
           {/* Two buttons for the whole panel, always in the same place. What was
               removed is the strip that followed the pointer down the tree — a
               row's own actions are on its right-click menu. */}
-          <Tooltip content={canMutate ? "New file" : "Start a session to edit files"}>
+          <Tooltip content={canMutate ? "New file" : "Select a workspace to edit files"}>
             <button
               type="button"
+              {...telemetryClickAttributes("files.new_file", "files_panel")}
               onClick={() => beginNewEntry("file", "")}
               disabled={!canMutate}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
@@ -726,9 +777,10 @@ export function WorkspaceFilePanel({
               <FilePlus2 className="h-3.5 w-3.5" />
             </button>
           </Tooltip>
-          <Tooltip content={canMutate ? "New folder" : "Start a session to edit files"}>
+          <Tooltip content={canMutate ? "New folder" : "Select a workspace to edit files"}>
             <button
               type="button"
+              {...telemetryClickAttributes("files.new_folder", "files_panel")}
               onClick={() => beginNewEntry("folder", "")}
               disabled={!canMutate}
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
@@ -741,6 +793,7 @@ export function WorkspaceFilePanel({
           <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
             <button
               type="button"
+              {...telemetryClickAttributes("files.hidden.toggle", "files_panel")}
               onClick={toggleShowHiddenFiles}
               className={cn(
                 "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors",
@@ -759,6 +812,7 @@ export function WorkspaceFilePanel({
         <label className="mt-3 flex h-8 items-center gap-2 rounded-md border border-(--input-border) bg-(--chat-bg) px-2.5 focus-within:border-(--accent)">
           <Search className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
           <input
+            {...telemetryClickAttributes('files.search', 'files_panel')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search files"

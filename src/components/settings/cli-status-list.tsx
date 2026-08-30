@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { wsClient } from '@/lib/ws/client';
 import { useI18n } from '@/lib/i18n';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useSettingsStore } from '@/stores/settings-store';
 import {
   captureTelemetryEvent,
@@ -193,6 +194,7 @@ export default function CliStatusList() {
 
       <div className="flex justify-end pt-1">
         <button
+          {...settingsTelemetryClickAttributes('settings.development.cli_status_refresh')}
           type="button"
           data-testid="cli-status-refresh"
           onClick={() => { beginStatusCheck(); }}

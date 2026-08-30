@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Maximize2, Minimize2, Minus, X } from 'lucide-react';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { cn } from '@/lib/utils';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ElectronWindowState {
   isMaximized: boolean;
@@ -56,6 +57,7 @@ export function ElectronWindowControls({ className }: ElectronWindowControlsProp
       data-testid="electron-window-controls"
     >
       <button
+        {...telemetryClickAttributes('app_window.minimize', 'app_window')}
         type="button"
         className="flex w-11 items-center justify-center text-(--electron-titlebar-muted) transition-colors hover:bg-(--electron-titlebar-hover) hover:text-(--electron-titlebar-text)"
         title="Minimize"
@@ -66,6 +68,7 @@ export function ElectronWindowControls({ className }: ElectronWindowControlsProp
         <Minus className="h-4 w-4" strokeWidth={1.75} />
       </button>
       <button
+        {...telemetryClickAttributes('app_window.maximize', 'app_window')}
         type="button"
         className="flex w-11 items-center justify-center text-(--electron-titlebar-muted) transition-colors hover:bg-(--electron-titlebar-hover) hover:text-(--electron-titlebar-text)"
         title={maximizeLabel}
@@ -76,6 +79,7 @@ export function ElectronWindowControls({ className }: ElectronWindowControlsProp
         <MaximizeIcon className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
       <button
+        {...telemetryClickAttributes('app_window.close', 'app_window')}
         type="button"
         className="flex w-11 items-center justify-center text-(--electron-titlebar-muted) transition-colors hover:bg-[#d92d20] hover:text-white"
         title="Close"

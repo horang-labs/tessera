@@ -30,6 +30,8 @@ import { useSharedGitPanelController } from '@/components/git/git-panel-controll
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
 import { moveTerminalPanelToNewTab } from '@/lib/tab/terminal-panel-to-new-tab';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 const TAB_SCROLL_MIN_STEP = 180;
 
@@ -65,6 +67,7 @@ function GitPhonePanelToggle({
           : 'bg-[color-mix(in_srgb,var(--chat-header-bg)_78%,var(--sidebar-hover))]',
       )}
       onClick={onToggle}
+      {...telemetryClickAttributes('right_panel.toggle', 'tab_bar')}
       aria-label={accessibleLabel}
       aria-pressed={open}
       aria-busy={pending}
@@ -127,11 +130,9 @@ export const TabBar = memo(function TabBar() {
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);
-  const endZoneRef = useRef<HTMLDivElement>(null);
   const [scrollState, setScrollState] = useState({
     canScrollLeft: false,
     canScrollRight: false,
-    hasOverflow: false,
   });
 
   // DnD state (BR-UI-020)
@@ -152,65 +153,49 @@ export const TabBar = memo(function TabBar() {
   const prevTabCountRef = useRef(tabs.length);
   const prevActiveTabIdRef = useRef<string | null>(null);
 
-  // A reveal that could not finish because the end zone had not widened yet —
-  // retried once the overflow state (and with it the end zone) has been applied.
-  const pendingRevealRef = useRef<{ tabId: string; behavior: ScrollBehavior } | null>(null);
-  const prevHasOverflowRef = useRef(false);
-
   const updateScrollState = useCallback(function updateScrollState() {
     const container = containerRef.current;
     if (!container) {
       setScrollState((prev) =>
-        prev.canScrollLeft || prev.canScrollRight || prev.hasOverflow
-          ? { canScrollLeft: false, canScrollRight: false, hasOverflow: false }
+        prev.canScrollLeft || prev.canScrollRight
+          ? { canScrollLeft: false, canScrollRight: false }
           : prev,
       );
       return;
     }
 
     const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
-    // The end zone lives inside the scroller, so its own width has to come out
-    // before judging overflow — otherwise the zone would keep the "overflowing"
-    // verdict latched on and could never collapse back to zero.
-    const tabsWidth = container.scrollWidth - (endZoneRef.current?.offsetWidth ?? 0);
     const next = {
       canScrollLeft: container.scrollLeft > TAB_SCROLL_EDGE_EPSILON,
       canScrollRight: container.scrollLeft < maxScrollLeft - TAB_SCROLL_EDGE_EPSILON,
-      hasOverflow: tabsWidth > container.clientWidth + TAB_SCROLL_EDGE_EPSILON,
     };
 
     setScrollState((prev) =>
       prev.canScrollLeft === next.canScrollLeft &&
-      prev.canScrollRight === next.canScrollRight &&
-      prev.hasOverflow === next.hasOverflow
+      prev.canScrollRight === next.canScrollRight
         ? prev
         : next,
     );
   }, []);
 
-  /**
-   * Scrolls the given tab clear of the overlaid scroll arrows.
-   *
-   * Returns false when the scroller ran out of room before the tab was clear —
-   * the caller retries after the end zone has widened.
-   */
+  /** Scrolls the given tab clear of the overlaid scroll arrows. */
   const revealTab = useCallback(function revealTab(
     tabId: string,
     behavior: ScrollBehavior,
-  ): boolean {
+  ): void {
     const container = containerRef.current;
-    if (!container) return false;
+    if (!container) return;
 
     const tabElement = Array.from(
       container.querySelectorAll<HTMLElement>('[data-tab-id]'),
     ).find((element) => element.dataset.tabId === tabId);
-    if (!tabElement) return true;
+    if (!tabElement) return;
 
     const containerRect = container.getBoundingClientRect();
     const tabRect = tabElement.getBoundingClientRect();
     const tabStart = tabRect.left - containerRect.left + container.scrollLeft;
 
-    const { scrollLeft, settled } = resolveTabScrollReveal({
+    const { scrollLeft } = resolveTabScrollReveal({
       tabStart,
       tabEnd: tabStart + tabRect.width,
       scrollLeft: container.scrollLeft,
@@ -222,7 +207,6 @@ export const TabBar = memo(function TabBar() {
     if (Math.abs(scrollLeft - container.scrollLeft) > TAB_SCROLL_EDGE_EPSILON) {
       container.scrollTo({ left: scrollLeft, behavior });
     }
-    return settled;
   }, []);
 
   useEffect(
@@ -274,32 +258,12 @@ export const TabBar = memo(function TabBar() {
 
       if (tabAdded || activeTabChanged) {
         const behavior: ScrollBehavior = isInitialSync ? 'instant' : 'smooth';
-        // On the commit that first overflows the strip the end zone is still
-        // collapsed, so there is no room to push the last tab out from under
-        // the arrow. That case is finished off by retryPendingReveal.
-        pendingRevealRef.current = revealTab(activeTabId, behavior)
-          ? null
-          : { tabId: activeTabId, behavior };
+        revealTab(activeTabId, behavior);
       }
       const frameId = requestAnimationFrame(updateScrollState);
       return () => cancelAnimationFrame(frameId);
     },
     [activeTabId, revealTab, tabs.length, updateScrollState],
-  );
-
-  // The end zone's width follows scrollState.hasOverflow, so a reveal that ran
-  // out of room gets its scroll room exactly one commit later.
-  useEffect(
-    function retryPendingReveal() {
-      const overflowChanged = prevHasOverflowRef.current !== scrollState.hasOverflow;
-      prevHasOverflowRef.current = scrollState.hasOverflow;
-
-      const pending = pendingRevealRef.current;
-      if (!overflowChanged || !pending) return;
-      pendingRevealRef.current = null;
-      revealTab(pending.tabId, pending.behavior);
-    },
-    [revealTab, scrollState.hasOverflow],
   );
 
   // ---------------------------------------------------------------------------
@@ -467,6 +431,11 @@ export const TabBar = memo(function TabBar() {
     const dragTabId = dragTabIdRef.current;
     if (dragTabId && dragTabId !== dropTabId) {
       useTabStore.getState().reorderTab(dragTabId, dropTabId);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
     }
     dragTabIdRef.current = null;
     setDraggingTabId(null);
@@ -507,6 +476,9 @@ export const TabBar = memo(function TabBar() {
 
     const dragTabId = dragTabIdRef.current;
     if (!dragTabId) return;
+    const tabState = useTabStore.getState();
+    const dragIndex = tabState.tabs.findIndex((tab) => tab.id === dragTabId);
+    const didMove = dragIndex !== -1 && dragIndex !== tabState.tabs.length - 1;
     clearTabDragState();
 
     // Move dragged tab to end (direct splice, not reorderTab which inserts "before")
@@ -518,6 +490,13 @@ export const TabBar = memo(function TabBar() {
       newTabs.push(draggedTab);
       return { tabs: newTabs };
     });
+    if (didMove) {
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'tab',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
+    }
   }, [clearTabDragState, handlePanelNodeDropToNewTab, handlePanelTitleDropToNewTab]);
 
   // ---------------------------------------------------------------------------
@@ -553,6 +532,7 @@ export const TabBar = memo(function TabBar() {
             isMacElectron && 'electron-no-drag w-10 h-10'
           )}
           onClick={toggleSidebar}
+          {...telemetryClickAttributes('sidebar.toggle', 'tab_bar')}
           aria-label={t('sidebar.expand')}
           data-testid="tab-bar-sidebar-toggle"
         >
@@ -584,7 +564,11 @@ export const TabBar = memo(function TabBar() {
           */}
           <div
             ref={containerRef}
-            className="flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
+            // Keep the native no-drag rectangle on the clipped viewport, not on
+            // each tab. Chromium does not clip child app-region rectangles to a
+            // horizontal scroller, so scrolled-off tabs otherwise subtract the
+            // adjacent AppHeader drag region.
+            className="electron-no-drag flex min-w-0 items-stretch overflow-x-auto scroll-px-8 scrollbar-none"
             data-testid="tab-bar-items"
           >
             {tabs.map((tab) => (
@@ -606,25 +590,6 @@ export const TabBar = memo(function TabBar() {
                 onContextMenu={handleContextMenu}
               />
             ))}
-            {/* End drop zone — gives the last tab enough trailing scroll room to
-                satisfy scroll-px-8, and doubles as a "move to last position" target.
-                Only earns its width while the tabs overflow: otherwise it would push
-                the "+" button away from the last tab for no reason. When collapsed,
-                the trailing spacer past "+" takes over the drop target. */}
-            <div
-              ref={endZoneRef}
-              className={cn(
-                'electron-no-drag shrink-0 transition-colors',
-                scrollState.hasOverflow ? 'w-8' : 'w-0',
-                isWindowsElectron && 'h-[39px]',
-                isLinuxElectron && 'h-[39px]',
-                isEndZoneDragOver && 'border-l-2 border-l-(--accent)',
-              )}
-              onDragOver={handleEndZoneDragOver}
-              onDragLeave={handleEndZoneDragLeave}
-              onDrop={handleEndZoneDrop}
-              data-testid="tab-bar-end-zone"
-            />
           </div>
 
           <div
@@ -646,6 +611,7 @@ export const TabBar = memo(function TabBar() {
 
           {scrollState.canScrollLeft && (
             <button
+              {...telemetryClickAttributes('tab.scroll.previous', 'tab_bar')}
               type="button"
               className="electron-no-drag absolute left-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               onClick={() => handleScrollTabs('left')}
@@ -658,6 +624,7 @@ export const TabBar = memo(function TabBar() {
 
           {scrollState.canScrollRight && (
             <button
+              {...telemetryClickAttributes('tab.scroll.next', 'tab_bar')}
               type="button"
               className="electron-no-drag absolute right-1 top-1/2 z-20 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md border border-(--divider) bg-(--chat-header-bg) text-(--text-secondary) shadow-sm transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
               onClick={() => handleScrollTabs('right')}
@@ -682,6 +649,7 @@ export const TabBar = memo(function TabBar() {
             isCreateTabDragOver && 'bg-(--accent)/14 text-(--accent) shadow-[inset_0_-2px_0_var(--accent)]'
           )}
           onClick={handleAddTab}
+          {...telemetryClickAttributes('tab.new', 'tab_bar')}
           onDragOver={handleCreateTabDragOver}
           onDragLeave={handleCreateTabDragLeave}
           onDrop={handleCreateTabDrop}
@@ -693,8 +661,8 @@ export const TabBar = memo(function TabBar() {
       </ShortcutTooltip>
 
       {/* Spacer — keep this area draggable for frameless Electron windows.
-          Shares the end zone's handlers so a tab dragged here still lands last,
-          which keeps that drop reachable once the end zone collapses to zero.
+          It is also the end-drop target, letting the scroll content stay tight
+          so the "+" button sits directly beside the last tab.
           It claims no width on a phone: it and the tab list control are both
           flex-1, so leaving it there would split the ~204px the control was
           given in two and cut the tab name to about six characters — against a
@@ -706,6 +674,10 @@ export const TabBar = memo(function TabBar() {
         className={cn(
           'electron-drag transition-colors',
           isPhoneViewport && !electronPlatform ? 'w-0 shrink-0' : 'flex-1',
+          // A flex-1 item has a zero flex basis, so a crowded intrinsic-width tab
+          // strip can otherwise consume every remaining pixel. Keep a stable
+          // native hit target even when the tab list overflows.
+          electronPlatform && 'min-w-12',
           (isCreateTabDragOver || isEndZoneDragOver) && 'bg-(--accent)/10',
         )}
         onDragOver={handleEndZoneDragOver}
@@ -734,6 +706,7 @@ export const TabBar = memo(function TabBar() {
             : 'bg-[color-mix(in_srgb,var(--chat-header-bg)_78%,var(--sidebar-hover))]'
         )}
         onClick={toggleGitPanel}
+        {...telemetryClickAttributes('right_panel.toggle', 'tab_bar')}
         aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
         aria-pressed={gitPanelOpen}
         title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}

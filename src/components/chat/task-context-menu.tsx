@@ -11,6 +11,7 @@ import type { Collection } from '@/types/collection';
 import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
 import { useMenuNavigation } from '@/hooks/use-menu-navigation';
 import { CollectionMoveSubmenu } from './collection-move-submenu';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export interface TaskContextMenuProps {
   anchorRect: DOMRect;
@@ -218,6 +219,7 @@ export function TaskContextMenu({
 
   return createPortal(
     <div
+      data-telemetry-ignore="event_boundary"
       ref={menuRef}
       role="menu"
       aria-label="Task options"
@@ -246,6 +248,7 @@ export function TaskContextMenu({
               'cursor-default'
             )}
             onClick={handleStopProcess}
+            {...telemetryClickAttributes('task.stop', 'task_menu')}
             data-testid="ctx-stop-process"
           >
             <CircleStop className="w-3.5 h-3.5 shrink-0" />
@@ -271,6 +274,7 @@ export function TaskContextMenu({
                 role="menuitem"
                 className={menuItemClass}
                 onClick={() => handleStatusChange(status)}
+                {...telemetryClickAttributes('task.status.change', 'task_menu')}
                 data-testid={`ctx-status-${status}`}
               >
                 <span
@@ -291,6 +295,7 @@ export function TaskContextMenu({
           role="menuitem"
           className={menuItemClass}
           onClick={handleGenerateTitle}
+          {...telemetryClickAttributes('task.generate_title', 'task_menu')}
           data-testid="ctx-generate-title"
         >
           <Sparkles className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
@@ -303,6 +308,7 @@ export function TaskContextMenu({
           role="menuitem"
           className={menuItemClass}
           onClick={handleRunPreparation}
+          {...telemetryClickAttributes('task.run_preparation', 'task_menu')}
           data-testid="ctx-run-preparation"
         >
           <RefreshCw className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
@@ -329,6 +335,7 @@ export function TaskContextMenu({
           role="menuitem"
           className={menuItemClass}
           onClick={handleArchiveToggle}
+          {...telemetryClickAttributes('task.archive_toggle', 'task_menu')}
           data-testid="ctx-archive"
         >
           {isArchived ? (
@@ -349,6 +356,7 @@ export function TaskContextMenu({
         role="menuitem"
         className={menuItemClass}
         onClick={handleRename}
+        {...telemetryClickAttributes('task.rename', 'task_menu')}
         data-testid="ctx-rename"
       >
         <Pencil className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
@@ -360,6 +368,7 @@ export function TaskContextMenu({
           role="menuitem"
           className={menuItemClass}
           onClick={handleOpenInNewTab}
+          {...telemetryClickAttributes('task.open_new_tab', 'task_menu')}
           data-testid="ctx-open-new-tab"
         >
           <ExternalLink className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
@@ -373,6 +382,7 @@ export function TaskContextMenu({
         role="menuitem"
         className={destructiveItemClass}
         onClick={handleDelete}
+        {...telemetryClickAttributes('task.delete', 'task_menu')}
         data-testid="ctx-delete"
       >
         <Trash2 className="w-3.5 h-3.5 shrink-0" />

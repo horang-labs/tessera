@@ -30,6 +30,7 @@ import { i18n } from '@/lib/i18n';
 import type { ServerTransportMessage } from './message-types';
 import { getClientId } from './client-id';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
+import { captureTelemetryPromptTurnFinished } from '@/lib/telemetry/client';
 import { invalidateProviderSessionOptionsClientCache } from '@/hooks/use-provider-session-options';
 import { resolveVisibleWorkspaceSessionId } from '@/lib/session/active-workspace-session';
 import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
@@ -53,8 +54,17 @@ interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
   providersListCallbacks: Map<string, (providers: ProviderMeta[] | null) => void>;
   cliStatusCallbacks: Map<string, (results: CliStatusEntry[] | null | undefined) => void>;
+  terminalPromptCallbacks?: Map<string, (result: TerminalPromptSubmitResult) => void>;
   wasReconnect: boolean;
 }
+
+export type TerminalPromptSubmitResult =
+  | { accepted: true }
+  | {
+      accepted: false;
+      reason: 'server' | 'connection' | 'timeout';
+      message?: string;
+    };
 
 /**
  * Server rejections of a manual /compact. Each one means no compaction started,
@@ -86,6 +96,7 @@ export function handleIncomingServerMessage({
   msg,
   providersListCallbacks,
   cliStatusCallbacks,
+  terminalPromptCallbacks = new Map(),
   wasReconnect,
 }: HandleIncomingServerMessageOptions): { wasReconnect: boolean } {
   const chatStore = useChatStore.getState();
@@ -125,6 +136,7 @@ export function handleIncomingServerMessage({
       sessionStore.markSessionStopped(msg.sessionId);
       useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, false);
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      void captureTelemetryPromptTurnFinished(msg.sessionId, 'stopped');
       // The session was stopped, so any workflow still flagged running can no
       // longer emit its terminal task_notification — settle it instead of
       // leaving the card spinning forever.
@@ -167,9 +179,11 @@ export function handleIncomingServerMessage({
       handleNotificationMessage(msg, getVisibleWorkspaceSessionId(sessionStore.activeSessionId));
       if (msg.event === 'completed') {
         finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'success');
         sessionStore.updateSessionStatus(msg.sessionId, 'completed');
       } else if (msg.event === 'input_required') {
         stopTurnInFlight(msg.sessionId);
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'input_required');
         sessionStore.updateSessionStatus(msg.sessionId, 'running');
       }
       applySessionReplayEventsToStores(
@@ -193,6 +207,9 @@ export function handleIncomingServerMessage({
         if (location) useTabStore.getState().pinTab(location.tabId);
       }
       if (changed && (msg.status === 'completed' || msg.status === 'input_required')) {
+        const result = msg.status === 'completed' ? 'success' : 'input_required';
+        void captureTelemetryPromptTurnFinished(msg.sessionId, result);
+        void captureTelemetryPromptTurnFinished(msg.terminalId, result);
         handleTerminalSessionStateMessage(
           msg,
           getVisibleWorkspaceSessionId(sessionStore.activeSessionId),
@@ -261,7 +278,10 @@ export function handleIncomingServerMessage({
         if (isActive) continue;
         useTerminalSessionStore.getState().markRuntimeStopped(session.id);
         if (isPendingTerminalReboundSource(session.id)) continue;
-        retireStoppedTerminalSessionSurface(session.id);
+        // This is also the first snapshot after an Electron/server cold start.
+        // Keep persisted PTY surfaces so their retained TerminalPanel can
+        // recreate and resume the runtime. A live exit still retires through
+        // terminal_session_runtime.
       }
       return { wasReconnect };
     }
@@ -286,6 +306,16 @@ export function handleIncomingServerMessage({
 
     case 'error': {
       const errRequestId = 'requestId' in msg ? (msg as { requestId?: string }).requestId : undefined;
+      if (errRequestId && terminalPromptCallbacks.has(errRequestId)) {
+        const callback = terminalPromptCallbacks.get(errRequestId);
+        terminalPromptCallbacks.delete(errRequestId);
+        callback?.({
+          accepted: false,
+          reason: 'server',
+          message: msg.message,
+        });
+        return { wasReconnect };
+      }
       if (errRequestId && providersListCallbacks.has(errRequestId)) {
         providersListCallbacks.get(errRequestId)?.(null);
         providersListCallbacks.delete(errRequestId);
@@ -304,6 +334,7 @@ export function handleIncomingServerMessage({
       );
       if (msg.sessionId) {
         stopTurnInFlight(msg.sessionId);
+        void captureTelemetryPromptTurnFinished(msg.sessionId, 'failed');
         // The compacting bar is opened optimistically for providers that only
         // report a finished compaction (Codex). If the server refused the
         // request there is no completion event coming, so close it here rather
@@ -318,6 +349,7 @@ export function handleIncomingServerMessage({
     case 'cli_down':
       applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      void captureTelemetryPromptTurnFinished(msg.sessionId, 'failed');
       // The CLI parser now synthesizes a failed workflow_event on exit
       // (protocol-parser.handleProcessExit), which is the durable fix. This
       // in-memory settle is a belt-and-suspenders backup covering the rare case
@@ -392,6 +424,14 @@ export function handleIncomingServerMessage({
       cliStatusCallbacks.delete(msg.requestId);
       return { wasReconnect };
 
+    case 'terminal_prompt_accepted': {
+      const callback = terminalPromptCallbacks.get(msg.requestId);
+      if (!callback) return { wasReconnect };
+      terminalPromptCallbacks.delete(msg.requestId);
+      callback({ accepted: true });
+      return { wasReconnect };
+    }
+
     case 'skill_analysis_progress':
       useSkillAnalysisStore.getState().handleProgress(msg);
       return { wasReconnect };
@@ -405,7 +445,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'worktree_diff_stats':
-      sessionStore.applyDiffStatsUpdate(msg.sessionIds, msg.stats ?? null);
+      sessionStore.applyDiffStatsUpdate(msg.sessionIds, msg.stats ?? null, msg.workDir);
       useTaskStore.getState().applyDiffStatsUpdate(msg.taskIds, msg.stats ?? null);
       if (msg.autoPromotedTaskIds?.length) {
         useTaskStore.getState().applyWorkflowStatusPromotions(msg.autoPromotedTaskIds);
@@ -419,6 +459,7 @@ export function handleIncomingServerMessage({
         msg.prStatusKnown,
         msg.prUnsupported,
         msg.remoteBranchExists,
+        msg.workflowStatus,
       );
       return { wasReconnect };
 
@@ -619,6 +660,9 @@ function addCreatedSession(
   sessionStore: ReturnType<typeof useSessionStore.getState>,
 ): void {
   const totalSessions = projectViewWorkspaceState.getCanonicalSessions().length;
+  const isRestoringExistingSurface = Boolean(
+    useTabStore.getState().findSessionSurface(msg.sessionId),
+  );
   // Session exists in DB but has no backing runtime yet. GUI sessions start on
   // first input; PTY sessions start when their terminal view is first opened.
   sessionStore.addSession({
@@ -642,7 +686,7 @@ function addCreatedSession(
     sessionMode: msg.sessionMode,
     accessMode: msg.accessMode,
     sortOrder: 0,
-  });
+  }, { activate: !isRestoringExistingSurface });
 }
 
 function handleNotificationMessage(

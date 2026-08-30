@@ -17,61 +17,22 @@ export type WorkspaceInlineSubmitIntent =
   /** Nothing to ask the server for: close the input and touch no network. */
   | { kind: "cancel" };
 
-/** Marks the row's name text, which doubles as the double-click-to-rename hotspot. */
-export const RENAME_HOTSPOT_ATTR = "data-workspace-row-name";
-
 /**
- * Duck-typed on `closest` rather than `instanceof Element`: this module carries
- * the rules, and the rules are the same whether a real DOM is present or not.
+ * The first click toggles immediately. Chromium reports the second click of a
+ * double-click with detail > 1; dropping that duplicate prevents a folder from
+ * toggling straight back before the rename handler runs.
  */
-export function isRenameHotspotTarget(target: unknown): boolean {
-  const candidate = target as { closest?: (selector: string) => unknown } | null;
-  if (!candidate || typeof candidate.closest !== "function") return false;
-  return candidate.closest(`[${RENAME_HOTSPOT_ATTR}]`) != null;
-}
-
-/** Whether the folder's disclosure should run now, wait, or step aside. */
-export type WorkspaceDirToggleTiming = "immediate" | "deferred" | "skip";
-
-/**
- * Chromium's own double-click window, so a deferred toggle cannot fire before
- * the second click of a slow double-click arrives and turns the gesture into a
- * rename.
- */
-export const DIR_TOGGLE_DOUBLE_CLICK_MS = 500;
-
-/**
- * A double-click on a folder's name means rename, but each of its two clicks
- * also reaches the row and toggles the disclosure, so the folder collapses and
- * re-expands before the input appears. A click that starts on the name waits
- * out the double-click window; the second click drops the toggle and lets the
- * rename take over. Ported from Orca's `resolveDirToggleTiming`.
- */
-export function resolveDirToggleTiming({
-  clickCount,
-  fromRenameHotspot,
-}: {
-  clickCount: number;
-  fromRenameHotspot: boolean;
-}): WorkspaceDirToggleTiming {
-  if (!fromRenameHotspot) return "immediate";
-  return clickCount > 1 ? "skip" : "deferred";
+export function shouldToggleDirectoryOnClick(clickCount: number): boolean {
+  return clickCount <= 1;
 }
 
 /**
- * Whether a click on a file row should open the file. A file row has nothing
- * to defer — the first click opens a preview, as it always has — so only the
- * second click of a double-click on the name is dropped, leaving that gesture
- * meaning rename and nothing else.
+ * Whether a click on a file row should open the file. Chromium dispatches two
+ * click events before `dblclick`; only the first may create a tab, regardless
+ * of whether the pointer was over the rename hotspot.
  */
-export function shouldOpenOnRowClick({
-  clickCount,
-  fromRenameHotspot,
-}: {
-  clickCount: number;
-  fromRenameHotspot: boolean;
-}): boolean {
-  return !(fromRenameHotspot && clickCount > 1);
+export function shouldOpenOnRowClick(clickCount: number): boolean {
+  return clickCount === 1;
 }
 
 /**

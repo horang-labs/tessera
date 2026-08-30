@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuthenticatedUserId } from "@/lib/auth/api-auth";
-import { cliProviderRegistry } from "@/lib/cli/providers/registry";
-import * as dbSessions from "@/lib/db/sessions";
+import * as dbSessions from '@/lib/db/sessions';
 import {
   CommitMessageGenerationError,
-  generateCommitMessage,
-  type OneShotCommitMessageGenerator,
 } from "@/lib/git/commit-message-generator";
+import {
+  generateConfiguredCommitMessage,
+  parseSelectedFiles,
+} from '@/lib/git/git-commit-message-service';
 import { GitActionRejection } from "@/lib/git/git-actions";
 import { GitPanelError, resolveSessionGitTarget } from "@/lib/git/git-panel";
 import { jsonError } from "@/lib/http/json-error";
@@ -39,10 +40,11 @@ export async function POST(
     }
 
     const target = await resolveSessionGitTarget(id, auth.userId);
-    const message = await generateCommitMessage(
+    const message = await generateConfiguredCommitMessage(
       target,
+      auth.userId,
       files.files,
-      resolveOneShotGenerator(id, auth.userId),
+      dbSessions.getSession(id)?.provider?.trim(),
     );
 
     return NextResponse.json({ message });
@@ -69,53 +71,4 @@ export async function POST(
     logger.error({ error, sessionId: id }, "Failed to generate a commit message");
     return jsonError("internal_error", "Failed to generate a commit message", 500);
   }
-}
-
-/**
- * The session's own provider runs the call, so the message is written by the
- * same agent family the user picked for the work — but as a separate headless
- * invocation, never through the running session.
- *
- * `generateText`, not `generateTitle`: the title path carries a title-shaped
- * system prompt and clamps its answer to 30 characters on the Claude provider,
- * which would cut a commit subject off mid-word. Both run on the same one-shot
- * spawn primitive, which is what ADR 0005 asks for.
- */
-function resolveOneShotGenerator(
-  sessionId: string,
-  userId: string,
-): OneShotCommitMessageGenerator {
-  return async (prompt) => {
-    const providerId = dbSessions.getSession(sessionId)?.provider?.trim();
-    if (!providerId) {
-      throw new CommitMessageGenerationError(
-        `Cannot generate a commit message for session '${sessionId}' without a provider`,
-      );
-    }
-
-    const provider = cliProviderRegistry.getProvider(providerId);
-    if (typeof provider.generateText !== 'function') {
-      throw new CommitMessageGenerationError(
-        `Provider '${providerId}' cannot generate a commit message`,
-      );
-    }
-
-    const result = await provider.generateText(prompt, userId);
-    return result?.text ?? null;
-  };
-}
-
-function parseSelectedFiles(
-  body: unknown,
-): { files: string[] } | { message: string } {
-  if (typeof body !== "object" || body === null) {
-    return { message: "A list of file paths is required" };
-  }
-
-  const { files } = body as { files?: unknown };
-  if (!Array.isArray(files) || files.some((file) => typeof file !== "string")) {
-    return { message: "A list of file paths is required" };
-  }
-
-  return { files: files as string[] };
 }

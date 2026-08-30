@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { FolderGit2, MessageSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SessionRefItem } from '@/types/session-ref';
@@ -46,6 +48,7 @@ export function SessionRefChip({ item, onRemove, onRetry }: SessionRefChipProps)
       )}
       {isError && (
         <button
+          {...telemetryClickAttributes('composer.reference.retry', 'composer')}
           type="button"
           onClick={(e) => {
             e.stopPropagation();
@@ -61,6 +64,7 @@ export function SessionRefChip({ item, onRemove, onRetry }: SessionRefChipProps)
         </button>
       )}
       <button
+        {...telemetryClickAttributes('composer.reference.remove', 'composer')}
         type="button"
         onClick={(e) => {
           e.stopPropagation();

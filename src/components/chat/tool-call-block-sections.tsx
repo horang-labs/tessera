@@ -1,5 +1,7 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+
 import { CheckCircle, Loader2, XCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
@@ -32,6 +34,7 @@ export function ToolCallBlockHeader({
 }) {
   return (
     <button
+      {...telemetryClickAttributes('message.tool.toggle', 'message')}
       onClick={onToggle}
       data-testid={`tool-call-${toolName.toLowerCase()}-header`}
       className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-(--tool-header-hover)"
@@ -112,6 +115,7 @@ export function ToolCallBlockContent({
         <div className="px-2.5 py-2">
           <ErrorBlock message={loadError} title="Failed to load output" />
           <button
+            {...telemetryClickAttributes('message.result.open', 'message')}
             data-testid="tool-output-retry"
             onClick={(event) => {
               event.stopPropagation();
@@ -142,6 +146,7 @@ export function ToolCallBlockContent({
             </pre>
             {isLong && !isOutputExpanded && (
               <button
+                {...telemetryClickAttributes('message.result.open', 'message')}
                 onClick={(event) => {
                   event.stopPropagation();
                   onToggleOutput();
@@ -153,6 +158,7 @@ export function ToolCallBlockContent({
             )}
             {isOutputExpanded && isLong && (
               <button
+                {...telemetryClickAttributes('message.result.open', 'message')}
                 onClick={(event) => {
                   event.stopPropagation();
                   onToggleOutput();

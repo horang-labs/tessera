@@ -5,6 +5,7 @@ import { MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ModalShell } from '@/components/chat/modal-shell';
 import { useI18n } from '@/lib/i18n';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export type FeedbackSource = 'project_strip' | 'cli_error' | 'setup' | 'settings' | 'project_import';
 
@@ -69,15 +70,15 @@ export function FeedbackDialog({ source, onClose }: FeedbackDialogProps) {
       closeTestId="feedback-close"
       footer={
         sent ? (
-          <Button type="button" onClick={onClose}>
+          <Button {...telemetryClickAttributes('feedback.close', 'feedback')} type="button" onClick={onClose}>
             {t('common.close')}
           </Button>
         ) : (
           <>
-            <Button type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>
+            <Button {...telemetryClickAttributes('feedback.cancel', 'feedback')} type="button" variant="ghost" onClick={onClose} disabled={isSubmitting}>
               {t('common.cancel')}
             </Button>
-            <Button type="submit" form="feedback-form" disabled={isSubmitting || !message.trim()}>
+            <Button {...telemetryClickAttributes('feedback.submit', 'feedback')} type="submit" form="feedback-form" disabled={isSubmitting || !message.trim()}>
               {isSubmitting ? t('feedback.sending') : t('feedback.send')}
             </Button>
           </>
@@ -93,6 +94,7 @@ export function FeedbackDialog({ source, onClose }: FeedbackDialogProps) {
           <label className="block">
             <span className="text-xs font-medium text-(--text-secondary)">{t('feedback.messageLabel')}</span>
             <textarea
+              {...telemetryClickAttributes('feedback.message', 'feedback')}
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               placeholder={t('feedback.messagePlaceholder')}
@@ -104,6 +106,7 @@ export function FeedbackDialog({ source, onClose }: FeedbackDialogProps) {
           <label className="block">
             <span className="text-xs font-medium text-(--text-secondary)">{t('feedback.emailLabel')}</span>
             <input
+              {...telemetryClickAttributes('feedback.email', 'feedback')}
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}

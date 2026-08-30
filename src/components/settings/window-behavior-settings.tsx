@@ -4,6 +4,7 @@ import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { WindowsCloseBehavior } from '@/lib/settings/types';
 import { useI18n } from '@/lib/i18n';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export default function WindowBehaviorSettings() {
   const { t } = useI18n();
@@ -25,6 +26,7 @@ export default function WindowBehaviorSettings() {
       </div>
 
       <select
+        {...settingsTelemetryClickAttributes('settings.window.close_behavior')}
         value={windowsCloseBehavior}
         onChange={(event) =>
           void updateSettings({

@@ -7,6 +7,7 @@ import {
   dialog,
   Menu,
   nativeTheme,
+  screen,
   type ContextMenuParams,
   type MenuItemConstructorOptions,
 } from 'electron';
@@ -42,6 +43,13 @@ import { registerAppSecretHeader } from './app-secret-header';
 import { configureTailscaleFirewall } from './windows-firewall';
 import { supportsTailscaleFirewallConfiguration } from './tailscale-firewall-capability';
 import { buildRemoteAccessAddressCandidates } from './network-addresses';
+import {
+  parseElectronWindowLayoutState,
+  resolveVisibleWindowBounds,
+  type RestorablePopoutWindowState,
+  type RestorableWindowState,
+  type WindowBounds,
+} from './window-layout-state';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -77,6 +85,8 @@ const TESSERA_HOMEPAGE = 'https://github.com/horang-labs/tessera';
 const MAX_SHELL_PATH_LENGTH = 32768;
 const ELECTRON_DEFAULT_PORT = 32123;
 const UI_STORAGE_PATH = getTesseraDataPath('ui-state.json');
+const WINDOW_LAYOUT_STORAGE_KEY = 'tessera:electron-window-layout';
+const WINDOW_LAYOUT_WRITE_DELAY_MS = 200;
 
 function readUiStorage(): Record<string, string> {
   try {
@@ -363,15 +373,29 @@ function normalizeElectronLogLevel(value: string | undefined): ElectronLogLevel 
  * debug build logs everything on a plain double-click — no environment variable to set,
  * which a user launching the portable exe from Explorer has no way to do.
  */
-function readBuildStampedLogLevel(): string | undefined {
+interface TesseraBuildMetadata {
+  tesseraLogLevel?: unknown;
+  tesseraTelemetryDisabled?: unknown;
+}
+
+function readBuildMetadata(): TesseraBuildMetadata {
   try {
     const manifest = fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8');
-    const parsed = JSON.parse(manifest) as { tesseraLogLevel?: unknown };
-    return typeof parsed.tesseraLogLevel === 'string' ? parsed.tesseraLogLevel : undefined;
+    return JSON.parse(manifest) as TesseraBuildMetadata;
   } catch {
-    return undefined;
+    return {};
   }
 }
+
+const BUILD_METADATA = readBuildMetadata();
+
+function readBuildStampedLogLevel(): string | undefined {
+  return typeof BUILD_METADATA.tesseraLogLevel === 'string'
+    ? BUILD_METADATA.tesseraLogLevel
+    : undefined;
+}
+
+const BUILD_STAMPED_TELEMETRY_DISABLED = BUILD_METADATA.tesseraTelemetryDisabled === true;
 
 type LogLevelSource = 'TESSERA_ELECTRON_LOG_LEVEL' | 'LOG_LEVEL' | 'build' | 'default';
 
@@ -684,6 +708,8 @@ app.commandLine.appendSwitch('host-resolver-rules', 'MAP localhost 127.0.0.1');
 
 let mainWindow: BrowserWindow | null = null;
 const popoutWindows = new Set<BrowserWindow>();
+const popoutRoutes = new Map<BrowserWindow, string>();
+let windowLayoutWriteTimer: NodeJS.Timeout | null = null;
 let serverProcess: ChildProcess | null = null;
 let serverPort = 0;
 let isQuitting = false;
@@ -697,6 +723,90 @@ let pairingPresentationSequence = 0;
 let electronAppSecret = '';
 let remoteAccessStatus: RemoteAccessStatus | null = null;
 let remoteAccessStatusTimer: NodeJS.Timeout | null = null;
+
+function currentDisplayWorkAreas(): WindowBounds[] {
+  return screen.getAllDisplays().map((display) => ({
+    x: display.workArea.x,
+    y: display.workArea.y,
+    width: display.workArea.width,
+    height: display.workArea.height,
+  }));
+}
+
+function restoredBounds(state?: RestorableWindowState): WindowBounds | undefined {
+  return resolveVisibleWindowBounds(state?.bounds, currentDisplayWorkAreas());
+}
+
+function captureWindowState(win: BrowserWindow): RestorableWindowState {
+  const bounds = win.getNormalBounds();
+  return {
+    bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+    isMaximized: win.isMaximized(),
+    isFullScreen: win.isFullScreen(),
+  };
+}
+
+function persistWindowLayoutNow(): void {
+  if (windowLayoutWriteTimer) {
+    clearTimeout(windowLayoutWriteTimer);
+    windowLayoutWriteTimer = null;
+  }
+
+  const main = mainWindow && !mainWindow.isDestroyed()
+    ? captureWindowState(mainWindow)
+    : null;
+  const popouts: RestorablePopoutWindowState[] = [];
+  for (const win of popoutWindows) {
+    const route = popoutRoutes.get(win);
+    if (win.isDestroyed() || !route) continue;
+    popouts.push({ ...captureWindowState(win), route });
+  }
+  setUiStorageItem({
+    key: WINDOW_LAYOUT_STORAGE_KEY,
+    value: JSON.stringify({ version: 1, main, popouts }),
+  });
+}
+
+function scheduleWindowLayoutPersist(): void {
+  if (windowLayoutWriteTimer) clearTimeout(windowLayoutWriteTimer);
+  windowLayoutWriteTimer = setTimeout(persistWindowLayoutNow, WINDOW_LAYOUT_WRITE_DELAY_MS);
+  windowLayoutWriteTimer.unref?.();
+}
+
+function bindWindowLayoutPersistence(win: BrowserWindow): void {
+  win.on('move', scheduleWindowLayoutPersist);
+  win.on('resize', scheduleWindowLayoutPersist);
+  win.on('maximize', scheduleWindowLayoutPersist);
+  win.on('unmaximize', scheduleWindowLayoutPersist);
+  win.on('enter-full-screen', scheduleWindowLayoutPersist);
+  win.on('leave-full-screen', scheduleWindowLayoutPersist);
+}
+
+function applyRestoredWindowMode(win: BrowserWindow, state?: RestorableWindowState): void {
+  if (!state) return;
+  if (state.isFullScreen) {
+    win.setFullScreen(true);
+  } else if (state.isMaximized) {
+    win.maximize();
+  }
+}
+
+function updatePopoutRouteParam(
+  key: 'projectDir' | 'collectionFilter' | 'runningFilter',
+  value: string | boolean | null,
+): void {
+  for (const [win, route] of popoutRoutes) {
+    if (win.isDestroyed()) continue;
+    const url = new URL(route, 'http://localhost');
+    if (value === null || value === '') {
+      url.searchParams.delete(key);
+    } else {
+      url.searchParams.set(key, String(value));
+    }
+    popoutRoutes.set(win, `${url.pathname}${url.search}`);
+  }
+  scheduleWindowLayoutPersist();
+}
 
 type WindowCloseAction = 'quit' | 'tray' | 'cancel';
 type WindowsCloseBehavior = 'ask' | 'tray' | 'quit';
@@ -1039,6 +1149,9 @@ async function beginAppQuit(): Promise<void> {
   ]);
   if (!(await confirmAppQuit(summary.activeCount))) return;
 
+  // Capture normal bounds and the still-open popout set before app.quit()
+  // starts destroying BrowserWindows.
+  persistWindowLayoutNow();
   isQuitRequested = true;
   isQuitting = true;
   activeCloseRequest = null;
@@ -1194,6 +1307,7 @@ async function startServer(): Promise<number> {
       TESSERA_PRODUCTION_DB: '1',
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
+      ...(BUILD_STAMPED_TELEMETRY_DISABLED ? { TESSERA_TELEMETRY_DISABLED: '1' } : {}),
       // Carry a requested level down so the child's own startup log and pino agree with the
       // main process. Without this a build-stamped debug level would stop at this boundary,
       // since the child only ever reads the environment.
@@ -1357,16 +1471,18 @@ function bindStableTestWindowTitle(win: BrowserWindow, title: string): void {
   });
 }
 
-function createWindow(port: number): BrowserWindow {
+function createWindow(port: number, restoredState?: RestorableWindowState): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
   const windowTitle = resolveElectronWindowTitle('Tessera', electronTestInstance);
 
+  const bounds = restoredBounds(restoredState);
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
+    ...(bounds ?? {}),
     minWidth: 800,
     minHeight: 600,
     title: windowTitle,
@@ -1388,6 +1504,7 @@ function createWindow(port: number): BrowserWindow {
   bindStableTestWindowTitle(win, windowTitle);
 
   bindWindowStateEvents(win);
+  bindWindowLayoutPersistence(win);
 
   if (!isMac) {
     win.removeMenu();
@@ -1399,6 +1516,7 @@ function createWindow(port: number): BrowserWindow {
   win.loadURL(url);
 
   win.once('ready-to-show', () => {
+    applyRestoredWindowMode(win, restoredState);
     win.show();
   });
 
@@ -1479,16 +1597,22 @@ function createWindow(port: number): BrowserWindow {
 }
 
 // ── Popout window ──────────────────────────────────────────────────────────
-function createPopoutWindow(port: number, route: string): BrowserWindow {
+function createPopoutWindow(
+  port: number,
+  route: string,
+  restoredState?: RestorablePopoutWindowState,
+): BrowserWindow {
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
   const isLinux = process.platform === 'linux';
   const initialTitlebarTheme: TitlebarTheme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
   const windowTitle = resolveElectronWindowTitle('Tessera Board', electronTestInstance);
 
+  const bounds = restoredBounds(restoredState);
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    ...(bounds ?? {}),
     minWidth: 600,
     minHeight: 400,
     title: windowTitle,
@@ -1510,6 +1634,7 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
   bindStableTestWindowTitle(win, windowTitle);
 
   bindWindowStateEvents(win);
+  bindWindowLayoutPersistence(win);
 
   if (!isMac) {
     win.removeMenu();
@@ -1520,7 +1645,10 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
   const url = `http://localhost:${port}${route}`;
   win.loadURL(url);
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    applyRestoredWindowMode(win, restoredState);
+    win.show();
+  });
 
   win.webContents.setWindowOpenHandler(({ url: openUrl }) => {
     if (openUrl.startsWith('https://') || openUrl.startsWith('http://')) {
@@ -1537,10 +1665,14 @@ function createPopoutWindow(port: number, route: string): BrowserWindow {
   });
 
   popoutWindows.add(win);
+  popoutRoutes.set(win, route);
   broadcastPopoutState();
+  scheduleWindowLayoutPersist();
   win.on('closed', () => {
     popoutWindows.delete(win);
+    popoutRoutes.delete(win);
     broadcastPopoutState();
+    if (!isQuitting) scheduleWindowLayoutPersist();
   });
 
   return win;
@@ -1720,6 +1852,7 @@ ipcMain.on('ui-selected-project-changed', (event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return;
   const { projectDir } = payload as { projectDir?: unknown };
   if (projectDir !== null && typeof projectDir !== 'string') return;
+  updatePopoutRouteParam('projectDir', projectDir);
   const senderId = event.sender.id;
   const targets: BrowserWindow[] = [];
   if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
@@ -1734,6 +1867,7 @@ ipcMain.on('ui-collection-filter-changed', (event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return;
   const { collectionId } = payload as { collectionId?: unknown };
   if (collectionId !== null && typeof collectionId !== 'string') return;
+  updatePopoutRouteParam('collectionFilter', collectionId);
   const senderId = event.sender.id;
   const targets: BrowserWindow[] = [];
   if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
@@ -1748,6 +1882,7 @@ ipcMain.on('ui-kanban-running-filter-changed', (event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return;
   const { active } = payload as { active?: unknown };
   if (typeof active !== 'boolean') return;
+  updatePopoutRouteParam('runningFilter', active);
   const senderId = event.sender.id;
   const targets: BrowserWindow[] = [];
   if (mainWindow && !mainWindow.isDestroyed()) targets.push(mainWindow);
@@ -1830,7 +1965,13 @@ app.whenReady().then(async () => {
   try {
     const port = await startServer();
     electronAppSecret = await registerAppSecretHeader(port);
-    mainWindow = createWindow(port);
+    const restoredLayout = parseElectronWindowLayoutState(
+      getUiStorageItem(WINDOW_LAYOUT_STORAGE_KEY),
+    );
+    mainWindow = createWindow(port, restoredLayout.main ?? undefined);
+    for (const popout of restoredLayout.popouts) {
+      createPopoutWindow(port, popout.route, popout);
+    }
     createTray(mainWindow, requestAppQuit, {
       closeBehavior: windowsCloseBehavior,
       onCloseBehaviorChange: handleTrayCloseBehaviorChange,

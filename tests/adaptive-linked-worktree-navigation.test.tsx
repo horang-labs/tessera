@@ -5,12 +5,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   findCompositeWorktreeId,
   getLinkedWorktreeDensity,
+  isLinkedWorktreeParentActive,
   toLinkedWorktreeSession,
 } from '../src/lib/worktrees/linked-worktree-presentation';
 import { WorktreeOverview } from '../src/components/worktree/worktree-overview';
 import { ChatItemRow, TaskItemRow } from '../src/components/chat/collection-group-sections';
 import { buildCollectionGroups } from '../src/lib/chat/build-collection-groups';
 import { useSettingsStore } from '../src/stores/settings-store';
+import { isSpecialSession } from '../src/lib/constants/special-sessions';
+import { buildWorktreeFileSessionId } from '../src/lib/workspace-tabs/special-session';
 import type { TaskEntity, TaskSession } from '../src/types/task-entity';
 import type { UnifiedSession } from '../src/types/chat';
 
@@ -155,6 +158,52 @@ test('linked Worktree rows render standalone, composite, and expanded identities
   assert.match(expanded, /collection-subsession-two/);
 });
 
+test('selecting an expanded child Session does not also select its parent Worktree', () => {
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'expanded',
+    primarySessionId: 'one',
+    activeSessionId: 'two',
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId: 'two',
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), false);
+
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'expanded',
+    primarySessionId: 'one',
+    activeSessionId: null,
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId: null,
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), true);
+});
+
+test('a Worktree file tab is special content, not an active child Session', () => {
+  const fileTabId = buildWorktreeFileSessionId('wt-2', 'shared.txt');
+  const activePanelSessionId = isSpecialSession(fileTabId) ? null : fileTabId;
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'standalone',
+    primarySessionId: null,
+    activeSessionId: null,
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId,
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), true);
+
+  assert.equal(isLinkedWorktreeParentActive({
+    density: 'composite',
+    primarySessionId: 'one',
+    activeSessionId: null,
+    taskWorktreeId: 'wt-2',
+    activePanelSessionId,
+    activePanelWorktreeId: 'wt-2',
+    peekWorktreeId: null,
+  }), true);
+});
+
 test('provider-enabled composite rows keep both agent and Worktree identity', () => {
   useSettingsStore.setState((state) => ({
     settings: { ...state.settings, showProviderIcons: true },
@@ -165,15 +214,15 @@ test('provider-enabled composite rows keep both agent and Worktree identity', ()
   assert.match(composite, /collection-task-worktree-icon-task-1/);
 });
 
-test('adaptive Worktree rows distinguish Session archive from Worktree Task archive', () => {
+test('adaptive Worktree rows expose parent Worktree archive and independent child archives', () => {
   const standalone = renderLinkedWorktree([]);
   assert.match(standalone, /data-testid="collection-task-quick-archive-task-0"/);
   assert.match(standalone, /title="Archive worktree task"/);
 
   const composite = renderLinkedWorktree(['one']);
-  assert.match(composite, /data-testid="collection-session-quick-archive-one"/);
-  assert.match(composite, /title="Archive session"/);
-  assert.doesNotMatch(composite, /collection-task-quick-archive-task-1/);
+  assert.match(composite, /data-testid="collection-task-quick-archive-task-1"/);
+  assert.match(composite, /title="Archive worktree task"/);
+  assert.doesNotMatch(composite, /collection-session-quick-archive-one/);
 
   const expanded = renderLinkedWorktree(['one', 'two']);
   assert.match(expanded, /data-testid="collection-task-quick-archive-task-2"/);
@@ -181,9 +230,9 @@ test('adaptive Worktree rows distinguish Session archive from Worktree Task arch
   assert.match(expanded, /data-testid="collection-subsession-quick-archive-one"/);
 });
 
-test('direct Project Worktree Sessions keep their chat identity', () => {
+test('direct Project Worktree Sessions keep their chat identity and desktop diff stats', () => {
   useSettingsStore.setState((state) => ({
-    settings: { ...state.settings, showProviderIcons: false },
+    settings: { ...state.settings, showProviderIcons: true },
   }));
   const session = {
     id: 'direct-session',
@@ -195,6 +244,14 @@ test('direct Project Worktree Sessions keep their chat identity', () => {
     createdAt: '2026-08-09T00:00:00.000Z',
     archived: false,
     sortOrder: 0,
+    diffStats: {
+      added: 1400,
+      removed: 63,
+      changedFiles: 12,
+      newFiles: 0,
+      deletedFiles: 0,
+      computedAt: '2026-08-14T00:00:00.000Z',
+    },
   } satisfies UnifiedSession;
   const markup = renderToStaticMarkup(createElement(ChatItemRow, {
     session,
@@ -207,6 +264,9 @@ test('direct Project Worktree Sessions keep their chat identity', () => {
     onDragOverItem: () => {},
   }));
 
-  assert.match(markup, /collection-chat-(?:status-)?bubble-direct-session/);
+  assert.match(markup, /collection-chat-status-bubble-direct-session/);
+  assert.match(markup, /aria-label="More options"/);
+  assert.match(markup, /<span class="[^"]*max-sm:hidden" title="\+1,400 −63\n12 files changed">/);
+  assert.match(markup, /\+1\.4k/);
   assert.doesNotMatch(markup, /collection-task-worktree-icon/);
 });

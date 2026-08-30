@@ -12,6 +12,7 @@
  */
 
 import logger from "@/lib/logger";
+import { crossEnvironmentFilesystemPathKey } from "@/lib/filesystem/path-equivalence";
 import { fetchGitRemote, getGitCommonDir } from "./git-panel";
 import { scheduleGitPanelRecompute } from "./git-panel-cache";
 
@@ -56,6 +57,8 @@ export interface GitRemoteRefreshRequest {
   sessionId: string;
   workDir: string;
   userId: string;
+  /** Target-specific invalidation for callers that do not own a Session. */
+  onFetched?: () => void;
 }
 
 export interface GitRemoteRefreshDeps {
@@ -116,7 +119,8 @@ async function resolveRefsKeyCached(
   deps: GitRemoteRefreshDeps,
 ): Promise<string> {
   const state = getState();
-  const cached = state.refsKeyByWorkDir.get(workDir);
+  const workDirKey = crossEnvironmentFilesystemPathKey(workDir);
+  const cached = state.refsKeyByWorkDir.get(workDirKey);
   if (cached !== undefined) return cached;
 
   let resolved: string | null = null;
@@ -140,9 +144,9 @@ async function resolveRefsKeyCached(
   // the repository, which the interval already bounds. It is never a wrong
   // answer, only a less shared one. Not cached, so a momentary failure does not
   // decide the key for the rest of the process's life.
-  if (resolved === null) return workDir;
+  if (resolved === null) return workDirKey;
 
-  state.refsKeyByWorkDir.set(workDir, resolved);
+  state.refsKeyByWorkDir.set(workDirKey, resolved);
   return resolved;
 }
 
@@ -168,7 +172,7 @@ export async function scheduleGitRemoteRefresh(
   request: GitRemoteRefreshRequest,
   deps: GitRemoteRefreshDeps = defaultDeps,
 ): Promise<void> {
-  const { sessionId, workDir, userId } = request;
+  const { sessionId, workDir, userId, onFetched } = request;
   const state = getState();
   const key = await resolveRefsKeyCached(workDir, userId, deps);
 
@@ -190,7 +194,8 @@ export async function scheduleGitRemoteRefresh(
       // the same refs on its own 5s poll, so what this adds is speed for the
       // one panel a user is looking at — including one whose poll has backed
       // off after a slow scan.
-      deps.onFetched(sessionId, userId);
+      if (onFetched) onFetched();
+      else deps.onFetched(sessionId, userId);
     } catch (error) {
       logger.debug(
         { error, sessionId, workDir },

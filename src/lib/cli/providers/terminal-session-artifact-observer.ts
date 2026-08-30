@@ -4,7 +4,7 @@ import { getFilesystemPathModule } from '@/lib/filesystem/host-path';
 import logger from '@/lib/logger';
 import {
   parseWslUncRoot,
-  WslInotifyBridge,
+  sharedWslInotifyBridgePool,
 } from '@/lib/workspace-files/wsl-inotify-bridge';
 import type {
   ProviderTerminalSessionObservation,
@@ -51,7 +51,7 @@ export function createTerminalSessionArtifactObserver(options: {
   const retryTimers = new Set<ReturnType<typeof setTimeout>>();
   let disposed = false;
   let watcher: ReturnType<typeof chokidar.watch> | null = null;
-  let wslBridge: WslInotifyBridge | null = null;
+  let wslBridge: { stop(): void } | null = null;
   let resolvedRoot: string | null = null;
   let resolveReady!: () => void;
   const readyPromise = new Promise<void>((resolve) => { resolveReady = resolve; });
@@ -194,7 +194,7 @@ export function createTerminalSessionArtifactObserver(options: {
     };
     const wslRoot = parseWslUncRoot(root);
     if (wslRoot) {
-      const started = new WslInotifyBridge({
+      const started = sharedWslInotifyBridgePool.acquire({
         root: wslRoot,
         // A provider fork always creates or moves in a new artifact. Ignoring
         // append traffic avoids every active PTY rereading ordinary rollouts.
@@ -211,7 +211,6 @@ export function createTerminalSessionArtifactObserver(options: {
         started.stop();
         return;
       }
-      started.start();
       return;
     }
 

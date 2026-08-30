@@ -146,61 +146,123 @@ try {
   assert.ok((await allProjectsWorktreeRow.innerText()).includes(process.cwd()));
   await allProjectsWorktreeRow.click();
   await page.getByTestId('worktree-peek').waitFor();
+  const projectWorktreeId = await page.getByTestId('worktree-peek').getAttribute('data-worktree-id');
+  assert.ok(projectWorktreeId);
   await page.keyboard.press('Escape');
   await page.getByTestId(`project-strip-${process.cwd()}`).click();
   await projectWorktree.waitFor();
   await projectWorktree.click();
 
-  await page.getByRole("button", { name: "New Session", exact: true }).waitFor();
-  await page.getByRole("button", { name: "New Worktree", exact: true }).waitFor();
+  await page.getByTestId('worktree-peek').waitFor();
+  assert.equal(await page.getByRole("button", { name: "New Session", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "New Worktree", exact: true }).count(), 0);
   const bodyText = await page.locator("body").innerText();
   assert.ok(bodyText.includes(currentBranch));
   assert.ok(bodyText.includes(process.cwd()));
 
   await page.getByTestId("tab-bar-git-toggle").click();
-  await page.getByRole("tab", { name: "Git" }).click();
-  await page.getByText("Changed files", { exact: true }).waitFor({ timeout: 30_000 });
-  await page.getByText(gitFixtureName, { exact: true }).waitFor();
-  assert.equal(await page.getByText("No worktree selected", { exact: true }).count(), 0);
-  assert.equal(await page.getByTestId("git-commit-generate-button").isDisabled(), true);
-  const gitMenu = page.getByTestId("git-panel").getByTestId("git-action-menu");
-  await page.getByTestId("git-panel").getByTestId("git-action-menu-trigger").click();
-  await gitMenu.waitFor();
-  assert.doesNotMatch(await gitMenu.innerText(), /Reading git state/i);
-  assert.match(
-    await page.getByTestId(`git-action-menu-item-commit`).innerText(),
-    /Start a session/i,
-  );
-  await page.keyboard.press("Escape");
-  await gitMenu.waitFor({ state: "detached" });
-  const diffResponse = page.waitForResponse((response) =>
-    response.url().includes('/api/worktrees/')
-      && response.url().includes('/git/diff?path=')
-  );
-  await page
-    .getByTestId(`git-panel-file-row-${gitFixtureName}`)
-    .locator(':scope > div > button')
-    .click();
-  assert.equal((await diffResponse).status(), 200);
-  await page.getByRole('tab', { name: new RegExp(`^${gitFixtureName} Diff`) }).waitFor();
-  await projectWorktree.click();
-  await page.getByTestId('worktree-peek').waitFor();
+  if (process.env.TESSERA_FILE_EDIT_REPRO !== '1') {
+    await page.getByRole("tab", { name: "Git" }).click();
+    await page.getByText("Changed files", { exact: true }).waitFor({ timeout: 30_000 });
+    await page.getByText(gitFixtureName, { exact: true }).waitFor();
+    assert.equal(await page.getByText("No worktree selected", { exact: true }).count(), 0);
+    assert.equal(await page.getByTestId("git-commit-generate-button").isDisabled(), false);
+    const gitMenu = page.getByTestId("git-panel").getByTestId("git-action-menu");
+    await page.getByTestId("git-panel").getByTestId("git-action-menu-trigger").click();
+    await gitMenu.waitFor();
+    assert.doesNotMatch(await gitMenu.innerText(), /Reading git state/i);
+    assert.equal(
+      await page.getByTestId(`git-action-menu-item-commit`).isDisabled(),
+      false,
+    );
+    await page.keyboard.press("Escape");
+    await gitMenu.waitFor({ state: "detached" });
+    const diffResponse = page.waitForResponse((response) =>
+      response.url().includes('/api/worktrees/')
+        && response.url().includes('/git/diff?path=')
+    );
+    await page
+      .getByTestId(`git-panel-file-row-${gitFixtureName}`)
+      .locator(':scope > div > button')
+      .click();
+    assert.equal((await diffResponse).status(), 200);
+    await page.getByRole('tab', { name: new RegExp(`^${gitFixtureName} Diff`) }).waitFor();
+    await projectWorktree.click();
+    await page.getByTestId('worktree-peek').waitFor();
+  }
 
   await page.getByRole("tab", { name: "Files" }).click();
   await page.getByText("Workspace files", { exact: true }).waitFor({ timeout: 30_000 });
-  assert.equal(await page.getByTestId("workspace-new-file").isDisabled(), true);
-  assert.equal(await page.getByTestId("workspace-new-folder").isDisabled(), true);
-  const readmeRow = page.getByRole("button", { name: "README.md", exact: true });
-  await readmeRow.waitFor();
+  assert.equal(await page.getByTestId("workspace-new-file").isDisabled(), false);
+  assert.equal(await page.getByTestId("workspace-new-folder").isDisabled(), false);
+  const editableFileRow = page.getByRole("button", { name: gitFixtureName, exact: true });
+  await editableFileRow.waitFor();
+  // Compile and verify the PUT handler before exercising the UI's deliberately
+  // short filesystem timeout; Next dev may otherwise spend that budget lazily
+  // compiling a method the earlier GET did not execute.
+  const warmSave = await page.evaluate(async ({ worktreeId, fileName }) => {
+    const response = await fetch(`/api/worktrees/${encodeURIComponent(worktreeId)}/file`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: fileName, content: 'Project Worktree e2e Git fixture.\n' }),
+    });
+    return { ok: response.ok, text: await response.text() };
+  }, { worktreeId: projectWorktreeId, fileName: gitFixtureName });
+  assert.equal(warmSave.ok, true, warmSave.text);
   const fileResponse = page.waitForResponse((response) =>
     response.url().includes('/api/worktrees/')
-      && response.url().includes('/file?path=README.md')
+      && response.url().includes(`/file?path=${encodeURIComponent(gitFixtureName)}`)
   );
-  await readmeRow.click();
+  await editableFileRow.click();
   assert.equal((await fileResponse).status(), 200);
   await page.getByTestId('worktree-peek').waitFor({ state: 'detached' });
+  await page.getByRole('tab', { name: new RegExp(`^${gitFixtureName}`) }).waitFor();
+  const saveButton = page.getByTestId('workspace-file-save');
+  await saveButton.waitFor();
+  const editor = page.locator('.monaco-editor');
+  await editor.waitFor();
+  await editor.click();
+  await page.keyboard.press('Control+A');
+  await page.keyboard.insertText('Edited from the project Files tab.\n');
+  await page.getByTestId('workspace-file-dirty').waitFor();
+  assert.equal(await saveButton.isEnabled(), true);
+  const putUrls = [];
+  const capturePut = (request) => {
+    if (request.method() === 'PUT') putUrls.push(request.url());
+  };
+  page.on('request', capturePut);
+  await saveButton.click({ force: true });
+  await page.waitForTimeout(1_000);
+  page.off('request', capturePut);
+  assert.ok(putUrls.length > 0, await page.locator('body').innerText());
+  const savedUrl = putUrls.at(-1);
+  assert.ok(savedUrl.includes('/api/worktrees/'), savedUrl);
+  assert.ok(savedUrl.includes('/file'), savedUrl);
+  await page.getByTestId('workspace-file-dirty').waitFor({ state: 'detached', timeout: 10_000 });
+  assert.equal(await fs.readFile(gitFixturePath, 'utf8'), 'Edited from the project Files tab.\n');
+  assert.equal(await projectWorktree.getAttribute('aria-current'), 'true');
+
+  await projectWorktree.click();
+  await page.getByTestId('worktree-peek').waitFor();
+  await page.getByRole('tab', { name: 'Files' }).click();
+  const readmeRow = page.getByRole('button', { name: 'README.md', exact: true });
+  await readmeRow.waitFor();
+  await readmeRow.click();
+  await page.getByTestId('worktree-peek').waitFor({ state: 'detached' });
   await page.getByRole('tab', { name: /^README\.md/ }).waitFor();
-  assert.equal(await page.getByTestId('workspace-file-save').count(), 0);
+  assert.equal(await page.getByRole('tab', { name: new RegExp(`^${gitFixtureName}`) }).count(), 1);
+  assert.equal(await projectWorktree.getAttribute('aria-current'), 'true');
+
+  await projectWorktree.click();
+  await page.getByTestId('worktree-peek').waitFor();
+  await page.getByRole('tab', { name: 'Files' }).click();
+  await page.getByRole('button', { name: gitFixtureName, exact: true }).click();
+  await page.getByTestId('worktree-peek').waitFor({ state: 'detached' });
+  const reopenedFileTab = page.getByRole('tab', { name: new RegExp(`^${gitFixtureName}`) });
+  assert.equal(await reopenedFileTab.count(), 1);
+  assert.equal(await reopenedFileTab.getAttribute('aria-selected'), 'true');
+  assert.equal(await page.getByRole('tab', { name: /^README\.md/ }).count(), 1);
+  assert.equal(await projectWorktree.getAttribute('aria-current'), 'true');
   await projectWorktree.click();
   await page.getByTestId('worktree-peek').waitFor();
 
@@ -209,7 +271,7 @@ try {
   assert.equal(await page.getByTestId("worktree-peek").count(), 0);
   await projectWorktree.click();
   await page.getByTestId("worktree-peek").waitFor();
-  await page.getByRole("button", { name: "New Session", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "New Session", exact: true }).count(), 0);
   assert.equal(await projectWorktree.count(), 1);
   console.log("Project Worktree Peek, direct Git/Files routing, and transient reload behavior passed.");
 } finally {

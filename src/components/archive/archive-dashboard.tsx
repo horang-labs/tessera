@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
+import { useWorktreeRetentionSettingsUpdate } from '@/hooks/use-worktree-retention-settings-update';
 import { useSessionStore } from '@/stores/session-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import {
@@ -24,6 +25,9 @@ import {
 import type { UnifiedSession } from '@/types/chat';
 import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entity';
 import type { ArchiveItem, ArchiveProjectOption } from '@/lib/archive/archive-service';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
+import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 
@@ -240,6 +244,18 @@ export function ArchiveDashboard() {
     void loadArchive();
   }, [loadArchive]);
 
+  const {
+    settings,
+    updateSettings,
+    retentionDaysInputValue,
+    setRetentionDaysDraft,
+    commitRetentionDays,
+    retentionConfirmDialog,
+  } = useWorktreeRetentionSettingsUpdate({
+    surface: 'archive',
+    onApplied: loadArchive,
+  });
+
   const chatItems = chatState.items;
   const taskItems = taskState.items;
 
@@ -439,6 +455,7 @@ export function ArchiveDashboard() {
               <p className="text-xs text-(--text-muted)">{t('archive.description')}</p>
             </div>
             <button
+              {...telemetryClickAttributes('archive.retry', 'archive')}
               onClick={loadArchive}
               className="inline-flex items-center gap-1.5 rounded-lg border border-(--divider) px-3 py-1.5 text-xs text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
             >
@@ -451,6 +468,7 @@ export function ArchiveDashboard() {
             <div className="relative w-full max-w-[360px] sm:w-[360px]">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--text-muted)" />
               <input
+                {...telemetryClickAttributes('archive.search', 'archive')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={t('archive.searchPlaceholder')}
@@ -458,6 +476,7 @@ export function ArchiveDashboard() {
               />
             </div>
             <select
+              {...telemetryClickAttributes('archive.project_filter', 'archive')}
               value={projectFilter}
               onChange={(event) => setProjectFilter(event.target.value)}
               className="ml-auto h-8 rounded-lg border border-(--input-border) bg-(--input-bg) px-2.5 text-xs text-(--text-primary) outline-none focus:border-(--accent)"
@@ -476,13 +495,44 @@ export function ArchiveDashboard() {
       <main className="mx-auto max-w-[1320px] space-y-4 px-6 py-5">
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-(--divider) bg-(--board-card-bg) p-3">
           <div className="flex flex-wrap items-center gap-3 text-xs text-(--text-muted)">
+            <span>{settings.autoDeleteArchivedWorktrees ? t('archive.autoDeleteOn') : t('archive.autoDeleteOff')}</span>
+            <span>{t('archive.retentionInfo', { days: settings.archivedWorktreeRetentionDays })}</span>
             <span>{t('archive.loadedCount', { loaded: visibleItemCount, total: summary?.total ?? 0 })}</span>
             <span>{t('archive.worktreesPresent', { count: loadedWorktreesPresent })}</span>
             <span>{t('archive.worktreesDeleted', { count: loadedWorktreesDeleted })}</span>
             <span>{t('archive.worktreesMissing', { count: loadedWorktreesMissing })}</span>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className={cn('flex items-center gap-1.5 text-xs text-(--text-muted)', PHONE_TOUCH_TARGET)}>
+              <input
+                {...telemetryClickAttributes('archive.auto_delete', 'archive')}
+                type="checkbox"
+                checked={settings.autoDeleteArchivedWorktrees}
+                onChange={(event) => void updateSettings({ autoDeleteArchivedWorktrees: event.target.checked })}
+                className="accent-(--accent)"
+              />
+              {t('archive.autoLabel')}
+            </label>
+            <input
+              {...telemetryClickAttributes('archive.retention_days', 'archive')}
+              aria-label={t('settings.worktree.retentionDays')}
+              type="number"
+              min={1}
+              max={365}
+              value={retentionDaysInputValue}
+              onFocus={(event) => setRetentionDaysDraft(event.currentTarget.value)}
+              onChange={(event) => setRetentionDaysDraft(event.target.value)}
+              onBlur={() => void commitRetentionDays()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+              className={cn(
+                'h-7 w-16 rounded-md border border-(--input-border) bg-(--input-bg) px-2 text-xs text-(--text-primary) outline-none',
+                PHONE_TOUCH_TARGET_HEIGHT,
+              )}
+            />
             <button
+              {...telemetryClickAttributes('archive.bulk_delete', 'archive')}
               onClick={() => setBulkWorktreeDeleteOpen(true)}
               disabled={isLoading || visibleItemCount === 0}
               className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[color-mix(in_srgb,var(--status-error-text)_32%,var(--divider))] bg-[color-mix(in_srgb,var(--status-error-text)_8%,transparent)] px-2.5 text-xs font-medium text-(--status-error-text) transition-colors hover:bg-(--status-error-bg) disabled:cursor-not-allowed disabled:opacity-50"
@@ -546,6 +596,8 @@ export function ArchiveDashboard() {
       </main>
 
       <AsyncConfirmDialog
+        cancelTelemetry={{ control: 'archive.dialog.cancel', surface: 'archive' }}
+        confirmTelemetry={{ control: 'archive.dialog.confirm', surface: 'archive' }}
         open={deleteTarget !== null}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={confirmDeleteItem}
@@ -575,6 +627,8 @@ export function ArchiveDashboard() {
       />
 
       <AsyncConfirmDialog
+        cancelTelemetry={{ control: 'archive.dialog.cancel', surface: 'archive' }}
+        confirmTelemetry={{ control: 'archive.dialog.confirm', surface: 'archive' }}
         open={worktreeDeleteTarget !== null}
         onCancel={() => setWorktreeDeleteTarget(null)}
         onConfirm={confirmDeleteWorktree}
@@ -609,6 +663,8 @@ export function ArchiveDashboard() {
       />
 
       <AsyncConfirmDialog
+        cancelTelemetry={{ control: 'archive.dialog.cancel', surface: 'archive' }}
+        confirmTelemetry={{ control: 'archive.dialog.confirm', surface: 'archive' }}
         open={bulkWorktreeDeleteOpen}
         onCancel={() => setBulkWorktreeDeleteOpen(false)}
         onConfirm={confirmDeleteAllWorktrees}
@@ -638,6 +694,7 @@ export function ArchiveDashboard() {
           </>
         )}
       />
+      {retentionConfirmDialog}
     </div>
   );
 }
@@ -681,6 +738,7 @@ function ArchiveLoadMore({
   return (
     <div className="flex items-center justify-center border-x border-b border-(--divider) bg-(--board-card-bg) px-3 py-2">
       <button
+        {...telemetryClickAttributes('archive.load_more', 'archive')}
         onClick={onClick}
         disabled={isLoading}
         className="rounded-lg border border-(--divider) px-3 py-1.5 text-xs text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:opacity-50"
@@ -774,12 +832,12 @@ function ChatRowActions({
   return (
     <RowActions stacked={stacked}>
       {item.canRestore && (
-        <ActionButton tone="primary" onClick={() => onRestore(item)}>
+        <ActionButton telemetryControl="archive.item.restore" tone="primary" onClick={() => onRestore(item)}>
           <RotateCcw className="h-3 w-3" />
           {t('archive.actions.restore')}
         </ActionButton>
       )}
-      <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
+      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)}>
         <Trash2 className="h-3 w-3" />
         {t('archive.actions.delete')}
       </ActionButton>
@@ -810,18 +868,18 @@ function TaskRowActions({
   return (
     <RowActions stacked={stacked}>
       {item.canRestore && (
-        <ActionButton tone="primary" onClick={() => onRestore(item)}>
+        <ActionButton telemetryControl="archive.item.restore" tone="primary" onClick={() => onRestore(item)}>
           <RotateCcw className="h-3 w-3" />
           {t('archive.actions.restore')}
         </ActionButton>
       )}
       {item.worktreeStatus === 'present' && item.worktreeManaged && !item.sharedWorktree && (
-        <ActionButton tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
+        <ActionButton telemetryControl="archive.item.delete_worktree" tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')}>
           <FolderX className="h-3 w-3" />
           {t('archive.actions.deleteWorktree')}
         </ActionButton>
       )}
-      <ActionButton tone="dangerOutline" onClick={() => onDelete(item)}>
+      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)}>
         <Trash2 className="h-3 w-3" />
         {t('archive.actions.delete')}
       </ActionButton>
@@ -854,6 +912,7 @@ function TaskTitleBlock({
   if (singleSession) {
     return (
       <button
+        {...telemetryClickAttributes('archive.session.open', 'archive')}
         onClick={() => onOpenSession(item, singleSession.id)}
         className={cn('block max-w-full text-left font-medium text-(--text-primary) hover:underline', fit)}
         title={item.title}
@@ -875,6 +934,7 @@ function TaskTitleBlock({
         {item.sessions.map((session) => (
           <li key={session.id} data-testid={`archive-task-session-row-${session.id}`}>
             <button
+              {...telemetryClickAttributes('archive.session.open', 'archive')}
               onClick={() => onOpenSession(item, session.id)}
               className={cn(
                 'block w-full max-w-full text-left text-[0.6875rem] text-(--text-secondary) hover:text-(--text-primary) hover:underline',
@@ -893,17 +953,20 @@ function TaskTitleBlock({
 
 function ActionButton({
   children,
+  telemetryControl,
   tone = 'neutral',
   onClick,
   title,
 }: {
   children: React.ReactNode;
+  telemetryControl: TelemetryUiControl;
   tone?: 'neutral' | 'primary' | 'danger' | 'dangerOutline';
   onClick: React.MouseEventHandler<HTMLButtonElement>;
   title?: string;
 }) {
   return (
     <button
+      {...telemetryClickAttributes(telemetryControl, 'archive')}
       onClick={onClick}
       title={title}
       className={cn(
@@ -955,6 +1018,7 @@ function ChatArchiveTable({
               >
                 <td className="px-3 py-2.5">
                   <button
+                    {...telemetryClickAttributes('archive.session.open', 'archive')}
                     onClick={() => onOpen(item)}
                     className="block w-full break-words text-left font-medium text-(--text-primary)"
                     title={item.title}
@@ -1004,6 +1068,7 @@ function ChatArchiveTable({
             >
               <td className="h-10 min-w-0 px-3">
                 <button
+                  {...telemetryClickAttributes('archive.session.open', 'archive')}
                   onClick={() => onOpen(item)}
                   className="block max-w-full truncate text-left font-medium text-(--text-primary) hover:underline"
                   title={item.title}

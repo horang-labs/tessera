@@ -25,25 +25,70 @@ test('conversation comes from event_msg', () => {
   );
 });
 
-test('response_item messages are skipped — they duplicate event_msg', () => {
-  // Measured on a real rollout: every event_msg turn reappears here, alongside
-  // developer instructions and injected context nobody typed.
+test('Codex 0.145 conversation remains event-msg-only', () => {
   const events = decodeCodexTranscript([
-    line('event_msg', { type: 'user_message', message: 'hello' }),
+    line('session_meta', { cli_version: '0.145.0' }),
     line('response_item', {
       type: 'message',
       role: 'user',
-      content: [{ type: 'input_text', text: 'hello' }],
+      content: [{
+        type: 'input_text',
+        text: '<image name=[Image #1] path="/tmp/screenshot.png">\n</image>\nvisible prompt',
+      }],
+    }),
+    line('event_msg', { type: 'user_message', message: '[Image #1] visible prompt' }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: '<skill>injected instructions</skill>' }],
     }),
     line('response_item', {
       type: 'message',
       role: 'developer',
-      content: [{ type: 'input_text', text: '<permissions instructions>' }],
+      content: [{ type: 'input_text', text: 'developer instructions' }],
     }),
   ]);
 
-  assert.equal(events.length, 1);
-  assert.equal((events[0] as any).content, 'hello');
+  assert.deepEqual(
+    events.map((event) => [event.type, (event as any).content]),
+    [['user_message', '[Image #1] visible prompt']],
+  );
+});
+
+test('Codex 0.147 conversation comes from response items without injected context', () => {
+  const events = decodeCodexTranscript([
+    line('session_meta', { cli_version: '0.147.0' }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: '<environment_context>injected</environment_context>' }],
+    }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: '<skill>injected instructions</skill>' }],
+    }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'new-format prompt' }],
+    }),
+    line('event_msg', { type: 'user_message', message: 'new-format prompt' }),
+    line('event_msg', { type: 'agent_message', message: 'new-format reply' }),
+    line('response_item', {
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text: 'new-format reply' }],
+    }),
+  ]);
+
+  assert.deepEqual(
+    events.map((event) => [event.type, (event as any).content]),
+    [
+      ['user_message', 'new-format prompt'],
+      ['assistant_message', 'new-format reply'],
+    ],
+  );
 });
 
 test('a function_call pairs with the output that arrives later', () => {
@@ -93,6 +138,34 @@ test('custom_tool_call (apply_patch) pairs the same way', () => {
   assert.equal(started.toolKind, 'file_write');
   assert.ok(started.toolParams.patch.startsWith('*** Begin Patch'));
   assert.equal(finished.status, 'completed');
+});
+
+test('custom tool image output preserves text and an inline image result', () => {
+  const events = decodeCodexTranscript([
+    line('response_item', {
+      type: 'custom_tool_call',
+      name: 'exec',
+      call_id: 'call_image',
+      input: 'nested view_image call',
+    }),
+    line('response_item', {
+      type: 'custom_tool_call_output',
+      call_id: 'call_image',
+      output: [
+        { type: 'input_text', text: 'loaded image' },
+        { type: 'input_image', image_url: 'data:image/png;base64,QUJDRA==' },
+      ],
+    }),
+  ]);
+
+  const finished = events[1] as any;
+  assert.equal(finished.output, 'loaded image');
+  assert.deepEqual(finished.toolUseResult, {
+    kind: 'file_read',
+    contentType: 'image',
+    base64: 'QUJDRA==',
+    mimeType: 'image/png',
+  });
 });
 
 test('codex tool names normalize to the ones the chat UI renders', () => {

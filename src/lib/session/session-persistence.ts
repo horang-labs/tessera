@@ -53,6 +53,18 @@ export function persistCreatedSessionRecord(
   const project = resolveSessionProject(options);
 
   dbProjects.registerProject(project.projectId, project.decodedPath, project.displayName);
+  const storedProject = dbProjects.getProject(project.projectId);
+  // A bridged Project can retain the agent's /home/... spelling while its
+  // canonical Worktree uses the Windows-hosted UNC spelling. The Project has
+  // already established that identity, so an exact root Session should reuse
+  // it instead of asking the server filesystem to reinterpret the agent path.
+  // A different workDir may be a taskless linked checkout and must not inherit
+  // the Project root's membership.
+  const projectRootWorktreeId = !options.taskId
+    && storedProject?.project_worktree_id
+    && options.resolvedWorkDir === storedProject.decoded_path
+    ? storedProject.project_worktree_id
+    : undefined;
 
   dbSessions.createSession(
     options.sessionId,
@@ -63,6 +75,7 @@ export function persistCreatedSessionRecord(
       workDir: options.resolvedWorkDir,
       worktreeBranch: options.worktreeBranch,
       worktreeManaged: options.worktreeManaged,
+      worktreeId: projectRootWorktreeId,
       taskId: options.taskId,
       collectionId: options.collectionId,
       model: options.model,

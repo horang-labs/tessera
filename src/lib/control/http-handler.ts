@@ -22,6 +22,29 @@ export const CONTROL_APP_VERSION_HEADER = 'x-tessera-app-version';
 const MAX_CALLER_ID_LENGTH = 2_048;
 const MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
+export type ControlTelemetryOperation =
+  | 'status'
+  | 'project_list'
+  | 'project_show'
+  | 'worktree_list'
+  | 'worktree_show'
+  | 'worktree_create'
+  | 'session_list'
+  | 'session_show'
+  | 'session_create'
+  | 'session_launch'
+  | 'session_start'
+  | 'session_read'
+  | 'session_wait'
+  | 'session_prompt'
+  | 'session_send_keys'
+  | 'session_stop';
+
+export interface ControlTelemetryRecord {
+  operation: ControlTelemetryOperation;
+  result: 'success' | 'failed';
+}
+
 interface ControlFailureEnvelope {
   ok: false;
   apiVersion: 1;
@@ -35,6 +58,7 @@ interface ControlFailureEnvelope {
 export function createControlHttpHandler(options: {
   descriptor: RuntimeDescriptor;
   service: ControlService;
+  captureTelemetry?: (record: ControlTelemetryRecord) => void | Promise<void>;
 }): (request: IncomingMessage, response: ServerResponse) => Promise<boolean> {
   const { descriptor, service } = options;
 
@@ -86,6 +110,22 @@ export function createControlHttpHandler(options: {
         },
       ));
       return true;
+    }
+
+    const telemetryOperation = classifyControlTelemetryOperation(request.method, pathname);
+    if (telemetryOperation && options.captureTelemetry) {
+      response.once('finish', () => {
+        try {
+          void Promise.resolve(options.captureTelemetry?.({
+            operation: telemetryOperation,
+            result: response.statusCode >= 200 && response.statusCode < 400
+              ? 'success'
+              : 'failed',
+          })).catch(() => undefined);
+        } catch {
+          // Product telemetry must never affect a Control CLI response.
+        }
+      });
     }
 
     const context = callerContext(request);
@@ -285,6 +325,54 @@ export function createControlHttpHandler(options: {
       return true;
     }
   };
+}
+
+export function classifyControlTelemetryOperation(
+  method: string | undefined,
+  pathname: string,
+): ControlTelemetryOperation | null {
+  if (pathname === `${CONTROL_ROUTE_PREFIX}/status` && method === 'GET') return 'status';
+  if (pathname === `${CONTROL_ROUTE_PREFIX}/projects` && method === 'GET') return 'project_list';
+  if (pathname === `${CONTROL_ROUTE_PREFIX}/worktrees`) {
+    if (method === 'GET') return 'worktree_list';
+    if (method === 'POST') return 'worktree_create';
+    return null;
+  }
+  if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions` && method === 'POST') return 'session_create';
+  if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions/launch` && method === 'POST') {
+    return 'session_launch';
+  }
+  if (
+    new RegExp(`^${CONTROL_ROUTE_PREFIX}/worktrees/[^/]+/sessions$`).test(pathname)
+    && method === 'GET'
+  ) return 'session_list';
+
+  const sessionOperation = new RegExp(
+    `^${CONTROL_ROUTE_PREFIX}/sessions/[^/]+/(start|read|wait|prompt|keys|stop)$`,
+  ).exec(pathname)?.[1];
+  if (sessionOperation) {
+    const expectedMethod = sessionOperation === 'read' ? 'GET' : 'POST';
+    if (method !== expectedMethod) return null;
+    return {
+      start: 'session_start',
+      read: 'session_read',
+      wait: 'session_wait',
+      prompt: 'session_prompt',
+      keys: 'session_send_keys',
+      stop: 'session_stop',
+    }[sessionOperation] as ControlTelemetryOperation;
+  }
+
+  if (new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/[^/]+$`).test(pathname) && method === 'GET') {
+    return 'session_show';
+  }
+  if (new RegExp(`^${CONTROL_ROUTE_PREFIX}/worktrees/[^/]+$`).test(pathname) && method === 'GET') {
+    return 'worktree_show';
+  }
+  if (new RegExp(`^${CONTROL_ROUTE_PREFIX}/projects/[^/]+$`).test(pathname) && method === 'GET') {
+    return 'project_show';
+  }
+  return null;
 }
 
 function requireMethod(request: IncomingMessage, expected: 'GET' | 'POST'): void {

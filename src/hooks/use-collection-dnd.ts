@@ -11,6 +11,7 @@ import { COLLECTION_ITEM_DND_MIME, COLLECTION_GROUP_DND_MIME, TASK_MULTI_DND_MIM
 import { setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 /**
  * useCollectionDnd
@@ -369,6 +370,8 @@ export function useCollectionDnd(): UseCollectionDndReturn {
     if (isMulti && sourceCollectionId !== targetCollectionId) {
       // Multi-select: move all selected items to target collection (optimistic)
       const taskStore = useTaskStore.getState();
+      let movedTaskCount = 0;
+      let movedChatCount = 0;
 
       for (const sessionId of multiSessionIds) {
         const session = projectViewWorkspaceState.resolveSession(sessionId, targetProjectId);
@@ -378,16 +381,32 @@ export function useCollectionDnd(): UseCollectionDndReturn {
         );
         if (task) {
           taskStore.updateTask(task.id, { collectionId: targetCollectionId }, targetProjectId);
+          movedTaskCount += 1;
         } else if (session) {
           useSessionStore.getState().updateSessionCollection(
             sessionId,
             targetCollectionId,
             targetProjectId,
           );
+          movedChatCount += 1;
         }
       }
       useSelectionStore.getState().clearSelection();
       useBoardStore.getState().flashDrop(id);
+      if (movedTaskCount > 0) {
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'task',
+          move_kind: 'collection',
+          item_count: movedTaskCount,
+        });
+      }
+      if (movedChatCount > 0) {
+        void captureTelemetryEvent('workspace_item_moved', {
+          item_type: 'chat',
+          move_kind: 'collection',
+          item_count: movedChatCount,
+        });
+      }
     } else if (sourceCollectionId !== targetCollectionId) {
       // Single-item move to different collection (optimistic)
       if (type === 'task') {
@@ -396,6 +415,11 @@ export function useCollectionDnd(): UseCollectionDndReturn {
         useSessionStore.getState().updateSessionCollection(id, targetCollectionId, targetProjectId);
       }
       useBoardStore.getState().flashDrop(id);
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: type,
+        move_kind: 'collection',
+        item_count: 1,
+      });
     } else if (indicator) {
       // Same collection — reorder within collection
       if (type === 'task') {
@@ -420,6 +444,11 @@ export function useCollectionDnd(): UseCollectionDndReturn {
           filtered.splice(insertIdx, 0, id);
           taskStore.reorderTasks(filtered, targetProjectId);
           useBoardStore.getState().flashDrop(id);
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'task',
+            move_kind: 'reorder',
+            item_count: 1,
+          });
         }
       } else {
         // Chat session reorder
@@ -439,6 +468,11 @@ export function useCollectionDnd(): UseCollectionDndReturn {
           filtered.splice(insertIdx, 0, id);
           sessionStore.reorderProjectSessions(targetProjectId, filtered);
           useBoardStore.getState().flashDrop(id);
+          void captureTelemetryEvent('workspace_item_moved', {
+            item_type: 'chat',
+            move_kind: 'reorder',
+            item_count: 1,
+          });
         }
       }
     }
@@ -546,6 +580,11 @@ export function useCollectionDnd(): UseCollectionDndReturn {
           body: JSON.stringify({ sortOrder: u.sortOrder }),
         });
       }
+      void captureTelemetryEvent('workspace_item_moved', {
+        item_type: 'collection',
+        move_kind: 'reorder',
+        item_count: 1,
+      });
     }
 
     useBoardStore.getState().setDraggingCollectionGroup(null);

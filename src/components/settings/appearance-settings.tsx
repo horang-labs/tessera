@@ -16,6 +16,7 @@ import {
   type TerminalThemePresetId,
   type TerminalThemePresetMode,
 } from '@/lib/terminal/terminal-theme';
+import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 const PRESET_LABEL_KEYS = ['small', 'medium', 'large', 'xlarge'] as const;
 const KANBAN_SESSION_OPEN_MODES: KanbanSessionOpenMode[] = ['split', 'peek'];
@@ -44,6 +45,7 @@ function KanbanSessionOpenModePicker({
           const inputId = `${groupId}-${mode}`;
           return (
             <label
+              {...settingsTelemetryClickAttributes('settings.appearance.kanban_open_mode')}
               key={mode}
               htmlFor={inputId}
               className={cn(
@@ -64,6 +66,7 @@ function KanbanSessionOpenModePicker({
               </span>
               <span className="relative mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
                 <input
+                  {...settingsTelemetryClickAttributes('settings.appearance.kanban_open_mode')}
                   type="radio"
                   id={inputId}
                   name={groupId}
@@ -110,6 +113,7 @@ function TerminalThemePresetPicker({
           const name = t(nameKey);
           return (
             <button
+              {...settingsTelemetryClickAttributes('settings.appearance.terminal_theme')}
               key={id}
               type="button"
               aria-pressed={selected}
@@ -187,6 +191,7 @@ export default function AppearanceSettings() {
       <div className="space-y-2">
         <label className="block text-sm font-medium text-(--text-secondary)">{t('settings.theme.label')}</label>
         <select
+          {...settingsTelemetryClickAttributes('settings.appearance.theme')}
           value={theme}
           onChange={(e) => updateSettings({ theme: e.target.value as 'light' | 'dark' | 'auto' })}
           className="w-full px-3 py-2 border border-(--input-border) rounded-md bg-(--input-bg) text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)"
@@ -232,6 +237,7 @@ export default function AppearanceSettings() {
           {t('settings.fontSize')} ({activeLabel})
         </label>
         <input
+          {...settingsTelemetryClickAttributes('settings.appearance.font_size')}
           type="range"
           min={0}
           max={FONT_SCALE_OPTIONS.length - 1}
@@ -252,6 +258,7 @@ export default function AppearanceSettings() {
           {t('settings.inactivePanelDimming')} ({inactivePanelDimming}%)
         </label>
         <input
+          {...settingsTelemetryClickAttributes('settings.appearance.inactive_panel_dimming')}
           type="range"
           min="0"
           max="100"
@@ -262,8 +269,12 @@ export default function AppearanceSettings() {
         />
       </div>
 
-      <label className="flex items-start gap-3 rounded-md border border-(--divider) bg-(--sidebar-bg) px-3 py-2.5">
+      <label
+        {...settingsTelemetryClickAttributes('settings.appearance.provider_icons')}
+        className="flex items-start gap-3 rounded-md border border-(--divider) bg-(--sidebar-bg) px-3 py-2.5"
+      >
         <input
+          {...settingsTelemetryClickAttributes('settings.appearance.provider_icons')}
           type="checkbox"
           checked={showProviderIcons}
           onChange={(e) => updateSettings({ showProviderIcons: e.target.checked })}
@@ -279,8 +290,12 @@ export default function AppearanceSettings() {
         </span>
       </label>
 
-      <label className="flex items-start gap-3 rounded-md border border-(--divider) bg-(--sidebar-bg) px-3 py-2.5">
+      <label
+        {...settingsTelemetryClickAttributes('settings.appearance.recent_work')}
+        className="flex items-start gap-3 rounded-md border border-(--divider) bg-(--sidebar-bg) px-3 py-2.5"
+      >
         <input
+          {...settingsTelemetryClickAttributes('settings.appearance.recent_work')}
           type="checkbox"
           checked={showRecentWork}
           onChange={(e) => updateSettings({ showRecentWork: e.target.checked })}

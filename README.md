@@ -1,78 +1,89 @@
-# Tessera
-
-> Keep parallel AI coding work organized.
-
-[![Node.js](https://img.shields.io/badge/node-20.9%2B%20or%2022--26-brightgreen)](https://nodejs.org/)
-[![npm](https://img.shields.io/npm/v/@horang-labs/tessera?label=npm)](https://www.npmjs.com/package/@horang-labs/tessera)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](#license)
-[![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/7557zmY8x)
-
-Tessera helps you run Claude Code, Codex, and OpenCode side by side in terminal or rich GUI modes—without losing track of sessions, files, branches, diffs, or pull requests.
-
-<table>
-  <tr>
-    <td width="50%"><img src="https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/list-view.png" alt="Tessera list view"></td>
-    <td width="50%"><img src="https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/kanban-board.png" alt="Tessera Kanban board"></td>
-  </tr>
-</table>
-
-## Product Demos
-
-### Projects, collections, sessions, tabs, and panes
-
-Organize AI coding work by project and collection, then open sessions across persistent tabs and split panes.
-
-![Drag-and-drop multi-panel workspace](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/dnd-multipanel.gif)
-
-### Terminal mode, with GUI when you need it
-
-Run coding agents in terminal (PTY) sessions, rich GUI conversations, or both side by side in the same workspace.
-
-![Claude Code in GUI mode alongside Codex in terminal mode](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/pty-gui-side-by-side.png)
-
-### Kanban board workflow
-
-Move implementation work through Todo, Doing, Review, and Done while keeping each task tied to sessions, collections, and worktrees.
-
-![Kanban board drag-and-drop workflow](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/kanban-board-dnd.gif)
-
-See every active task across Todo, Doing, Review, Done, and Chat, grouped by project and tied to its agent session and worktree.
-
-![Tessera Kanban board showing active work across workflow stages](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/kanban-overview.png)
-
-Open any task directly from the board and continue working in its terminal session without losing context.
-
-![A terminal opened from a task on the Tessera Kanban board](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/kanban-task-terminal.png)
-
-### Terminal and file tabs
-
-Open agent sessions, terminals, and files as movable tabs so you can reshape the workspace around the work instead of switching tools.
-
-![Terminal and file tabs](https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/terminal-agent-tabs.png)
-
-### Rich composer controls
-
-Open new panels, continue an existing conversation, tune reasoning, select models, choose permissions, use voice input (browser runtime only), add `@` references, attach images, and send context-rich prompts from one composer.
-
 <p align="center">
-  <img src="https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/composer-controls.gif" alt="Composer controls and rich context input" width="25%">
+  <img src="assets/icon.png" alt="Tessera" width="72">
 </p>
 
-### Agent state, tool logs, and diffs
+<h1 align="center">Tessera</h1>
 
-Keep each agent session tied to its task and worktree while tracking tool calls, failures, file changes, diffs, and branch state in real time.
-
-<p align="center">
-  <img src="https://unpkg.com/@horang-labs/tessera@latest/docs/assets/readme/agent-panel.png" alt="Agent state, tool logs, and diffs" width="25%">
-</p>
-
-### Session instructions and memory
-
-See and edit the active instructions and memory for the session at a glance, including user and project scopes, global memory, and past work summaries.
+<p align="center"><strong>Run more agents. Lose less context.</strong></p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/readme/session-context-panel.png" alt="Session instructions and memory in the Tessera Context panel" width="25%">
+  The local control room for Claude Code, Codex, and OpenCode—parallel sessions, isolated worktrees, Kanban, Git, and mobile access in one place.
 </p>
+
+<p align="center">
+  <a href="https://github.com/horang-labs/tessera/stargazers"><img src="https://img.shields.io/github/stars/horang-labs/tessera?style=flat&logo=github" alt="GitHub stars"></a>
+  <a href="https://www.npmjs.com/package/@horang-labs/tessera"><img src="https://img.shields.io/npm/v/@horang-labs/tessera?label=npm" alt="npm"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen" alt="Node.js 20 or later"></a>
+  <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
+</p>
+
+<p align="center">
+  <strong><a href="https://github.com/horang-labs/tessera/releases">Download Tessera</a></strong>
+  · <a href="#browser-runtime">Run with npm</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/readme/multi-model-workspace.gif" alt="Claude Code, Codex, and OpenCode sessions running together in Tessera" width="100%">
+</p>
+
+## One workspace for the entire agent loop
+
+Tessera turns a pile of terminals into a visible workflow. Give each task its own session and isolated worktree, follow every agent without hunting through windows, and take the result all the way to a pull request.
+
+- **Delegate in parallel** — run independent tasks without agents stepping on the same branch.
+- **Use the right agent and model** — mix Claude Code, Codex, and OpenCode in PTY or GUI mode, including custom model IDs.
+- **Keep every session within reach** — move between list, board, tabs, split panes, and your phone without losing the conversation.
+- **Finish where the work happened** — inspect files and diffs, commit, sync, publish branches, and open pull requests from Tessera.
+
+> [!NOTE]
+> Tessera runs locally and uses the provider CLIs already installed and authenticated on your machine.
+
+## Let the lead agent run the workspace
+
+Invoke `/tessera-cli` inside a managed Claude Code, Codex, or OpenCode session. A lead agent can create isolated worktrees, launch parallel sessions, wait for results, inspect their output, and send follow-up prompts—while every worker stays visible in Tessera.
+
+Representative operations: `status` · `worktree create` · `session launch` · `session wait` / `session read` · `session prompt`
+
+![A lead agent creating and coordinating parallel Tessera sessions](docs/assets/readme/tessera-cli-orchestration.gif)
+
+## Turn parallel sessions into a delivery pipeline
+
+The Kanban board tracks direct chats and worktree-backed tasks across **Chat, Todo, Doing, Review, and Done**. Move cards as work progresses, see live agent and diff state, and open the linked PTY or GUI session without leaving the board.
+
+![Moving agent tasks through the Tessera Kanban workflow](docs/assets/readme/kanban-board-dnd.gif)
+
+## Keep coding from your phone
+
+Pair a device from **Settings → Remote access**. Continue PTY and GUI sessions, switch a PTY into Chat View, and open the session or Files/Git panels from mobile.
+
+<p align="center">
+  <img src="docs/assets/readme/mobile-remote.gif" alt="Continuing PTY and GUI sessions from Tessera mobile" width="390">
+</p>
+
+## PTY speed, chat readability
+
+Open a Codex or OpenCode PTY and press the chat icon in its header. Chat View turns the live terminal conversation into a focused, readable thread without stopping the PTY underneath.
+
+![Switching between a PTY session and PTY Chat View](docs/assets/readme/pty-chatview.gif)
+
+## Finish the Git workflow without switching apps
+
+Edit project files, review diffs, select changes, commit, sync, publish branches, and open pull requests without leaving the session.
+
+![Editing files and completing a Git workflow in Tessera](docs/assets/readme/file-git-workflow.gif)
+
+## Built for real-world agent work
+
+| Built for | What you get |
+|---|---|
+| **Claude Code, Codex, and OpenCode** | Start any supported provider in PTY or rich GUI mode and keep its conversation, tools, and state visible. |
+| **Projects and sessions** | Collections, persistent tabs, split panes, list view, and a task-aware Kanban board. |
+| **Terminal and GUI** | Run PTY sessions and rich conversations side by side in the same workspace. |
+| **Custom models** | Add custom model IDs in Settings and select them when starting a session. |
+| **Live context** | Follow tool calls, failures, instructions, memory, file changes, diffs, and branch state. |
+| **Task-aware Git** | Keep tasks, sessions, worktrees, and pull requests connected from start to finish. |
+
+![Rearranging persistent sessions across tabs and split panes](docs/assets/readme/dnd-multipanel.gif)
 
 ## Install
 
@@ -165,7 +176,7 @@ Electron build outputs are written under `release/`.
 
 Tessera runs locally, stores app data under `~/.tessera/` by default, and sends provider requests through the Claude Code, Codex, or OpenCode CLI installed on your machine.
 
-Published builds include minimal anonymous usage telemetry that you can disable during onboarding or in Settings. Tessera does not collect prompts, messages, file paths, command output, repository names, or account details.
+Published builds include anonymous product-interaction telemetry that you can disable during onboarding or in Settings. This includes which named controls and features are used, anonymous Tessera CLI operation names, and a coarse mobile-or-desktop classification computed locally, but never visible UI text, prompts, messages, CLI arguments, file paths, command output, repository names, raw device details, or account details.
 
 ## Teams And Design Partners
 

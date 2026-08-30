@@ -88,6 +88,7 @@ test('Project View Projection scopes direct Sessions without destroying hidden h
     projection.getProjectViewProjection('project-view').sessions.map((session) => session.id).sort(),
     ['legacy-session', 'main-session'],
   );
+  assert.equal(sessions.getSession('ownership-only-session')?.worktree_id, null);
 
   execFileSync('git', ['checkout', '-b', 'feature/session-scope'], {
     cwd: repository,
@@ -120,6 +121,99 @@ test('Project View Projection scopes direct Sessions without destroying hidden h
     ['legacy-session', 'main-session', 'ownership-only-session'],
   );
   assert.equal(sessions.getSession('feature-session')?.scope_branch, 'feature/session-scope');
+});
+
+test('direct Sessions reuse canonical Project membership when the stored root uses agent path spelling', async () => {
+  const { database, persistence, projects, projection, sessions } = await modules();
+  const repository = createRepository('bridged-root-repository');
+  projects.registerProject('host-canonical-project', repository, 'Host canonical project');
+  const projectWorktree = projects.getProjectWorktree('host-canonical-project');
+  assert.ok(projectWorktree);
+
+  const reportedProjectId = '/home/work/bridged-root-that-does-not-exist';
+  const now = new Date().toISOString();
+  database.getDb().prepare(`
+    INSERT INTO projects (
+      id, decoded_path, display_name, provider, visible, sort_order,
+      project_worktree_id, registered_at, updated_at
+    ) VALUES (?, ?, ?, NULL, 1, 0, ?, ?, ?)
+  `).run(
+    reportedProjectId,
+    reportedProjectId,
+    'Bridged root project',
+    projectWorktree.id,
+    now,
+    now,
+  );
+
+  database.getDb().prepare(`
+    INSERT INTO sessions (
+      id, project_id, title, provider, work_dir, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'legacy-bridged-root-session',
+    reportedProjectId,
+    'Legacy bridged root conversation',
+    'codex',
+    reportedProjectId,
+    now,
+    now,
+  );
+
+  assert.equal(sessions.getSession('legacy-bridged-root-session')?.worktree_id, null);
+  const fallbackWhere = sessions.buildProjectViewWhere({
+    kind: 'canonical-worktree',
+    worktreeId: projectWorktree.id,
+    currentBranch: 'main',
+    projectRootFallback: {
+      projectId: reportedProjectId,
+      workDir: reportedProjectId,
+    },
+  });
+  const queryPlan = database.getDb().prepare(`
+    EXPLAIN QUERY PLAN
+    SELECT s.id FROM sessions s WHERE ${fallbackWhere.sql}
+  `).all(...fallbackWhere.params) as Array<{ detail: string }>;
+  const queryPlanDetails = queryPlan.map((row) => row.detail).join('\n');
+  assert.match(queryPlanDetails, /idx_sessions_worktree_scope/);
+  assert.match(queryPlanDetails, /idx_sessions_project_updated/);
+  assert.doesNotMatch(queryPlanDetails, /SCAN (canonical|project_root)/);
+  assert.deepEqual(
+    projection.getProjectViewProjection(reportedProjectId).sessions.map((session) => session.id),
+    ['legacy-bridged-root-session'],
+  );
+
+  persistence.persistCreatedSessionRecord({
+    sessionId: 'bridged-root-session',
+    resolvedWorkDir: reportedProjectId,
+    parentProjectId: reportedProjectId,
+    title: 'Bridged root conversation',
+    providerId: 'codex',
+    executionMode: 'gui',
+  });
+
+  const stored = sessions.getSession('bridged-root-session');
+  assert.equal(stored?.worktree_id, projectWorktree.id);
+  assert.equal(stored?.scope_branch, 'main');
+  assert.deepEqual(
+    projection.getProjectViewProjection(reportedProjectId).sessions.map((session) => session.id).sort(),
+    ['bridged-root-session', 'legacy-bridged-root-session'],
+  );
+
+  persistence.persistCreatedSessionRecord({
+    sessionId: 'taskless-linked-session',
+    resolvedWorkDir: '/home/work/different-linked-checkout',
+    parentProjectId: reportedProjectId,
+    title: 'Taskless linked conversation',
+    providerId: 'codex',
+    executionMode: 'gui',
+  });
+
+  assert.equal(sessions.getSession('taskless-linked-session')?.worktree_id, null);
+  assert.deepEqual(
+    projection.getProjectViewProjection(reportedProjectId).sessions.map((session) => session.id).sort(),
+    ['bridged-root-session', 'legacy-bridged-root-session'],
+  );
 });
 
 test('Project View pagination does not skip equal project-local sort orders', async () => {

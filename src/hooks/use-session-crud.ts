@@ -23,6 +23,7 @@ import { restoreSessionReplay } from '@/lib/chat/restore-session-replay';
 import type { UnifiedSession } from '@/types/chat';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { resolveSessionWorktreeLifecycleTarget } from '@/lib/session/session-worktree-lifecycle';
 
 interface SessionCreateOptions {
   workDir?: string;
@@ -261,6 +262,7 @@ export function useSessionCrud() {
           has_task: Boolean(options.taskId),
           has_worktree: Boolean(worktreeBranch),
           has_collection: Boolean(options.collectionId),
+          session_kind: result.kind,
         });
 
         return result.sessionId;
@@ -309,6 +311,16 @@ export function useSessionCrud() {
   const deleteSession = useCallback(
     async (sessionId: string): Promise<boolean> => {
       try {
+        const task = projectViewWorkspaceState.resolveTaskBySessionId(sessionId);
+        const target = resolveSessionWorktreeLifecycleTarget(sessionId, task);
+        if (target.kind === 'worktree') {
+          const deleted = await useTaskStore.getState().deleteWorktree(target.taskId);
+          if (!deleted) return false;
+          removeSessionFromStores(sessionId);
+          toast.success(t('notifications.sessionDeleted'));
+          return true;
+        }
+
         const response = await requestSessionDelete(sessionId);
 
         if (!response.ok) {
@@ -496,6 +508,10 @@ export function useSessionCrud() {
         if (!response.ok) {
           const body = await response.json();
           if (body.code === 'no_conversation') {
+            void captureTelemetryEvent('ai_title_generation_result', {
+              source: 'manual',
+              result: 'no_conversation',
+            });
             toast.warning(t('notifications.noConversationYet'));
             return;
           }
@@ -507,8 +523,17 @@ export function useSessionCrud() {
         sessionStore.updateSessionTitle(sessionId, result.title, true);
         useTaskStore.getState().syncLinkedTaskTitle(sessionId, result.title);
 
+        void captureTelemetryEvent('ai_title_generation_result', {
+          source: 'manual',
+          result: 'success',
+        });
+
         toast.success(t('notifications.titleGenerated'));
       } catch (err) {
+        void captureTelemetryEvent('ai_title_generation_result', {
+          source: 'manual',
+          result: 'failed',
+        });
         toast.error(t('errors.generateTitleFailed'));
         console.error('Generate title error:', err);
       } finally {

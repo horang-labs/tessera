@@ -42,12 +42,14 @@ jobs:
         env:
           NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN: ${{ secrets.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN }}
 
-      - name: Verify package installs and boots
+      - name: Verify package installs and renders
         if: ${{ github.event.inputs.dist_tag_version == '' }}
         env:
           SMOKE_PORT: '32123'
         run: |
           set -euo pipefail
+
+          npx playwright install --with-deps chromium
 
           # Pack the real tarball — prepack already ran in the Build step.
           tarball="$(npm pack --ignore-scripts | tail -1)"
@@ -76,10 +78,16 @@ jobs:
               cat "$RUNNER_TEMP/server.log"
               exit 1
             fi
-            # Any HTTP status means the server is up — an auth redirect is fine.
+            # Wait until the server accepts HTTP requests, then use a real
+            # browser so redirects, Next.js loading, and React runtime errors
+            # are all exercised before publication.
             status="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SMOKE_PORT/" || true)"
             if [ -n "$status" ] && [ "$status" != "000" ]; then
-              echo "Server responded with HTTP $status"
+              if ! node scripts/verify-npm-render.mjs "http://127.0.0.1:$SMOKE_PORT/"; then
+                echo "::error::installed Tessera package did not render successfully"
+                cat "$RUNNER_TEMP/server.log"
+                exit 1
+              fi
               exit 0
             fi
             sleep 1
@@ -96,9 +104,9 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Mark package as latest
+        if: ${{ github.event.inputs.dist_tag_version != '' }}
         run: |
-          version="${DIST_TAG_VERSION:-$PACKAGE_VERSION}"
-          npm dist-tag add "$PACKAGE_NAME@$version" latest
+          npm dist-tag add "$PACKAGE_NAME@$DIST_TAG_VERSION" latest
         env:
           DIST_TAG_VERSION: ${{ github.event.inputs.dist_tag_version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

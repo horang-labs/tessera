@@ -31,6 +31,8 @@
  *      on top. This one is about the file rather than about the product.
  *  10. Phone over plain HTTP: opening an overlay still works when the browser
  *      does not expose the secure-context-only `crypto.randomUUID` API.
+ *  11. Phone, All Projects header `+`: a delayed compatibility `mousedown`
+ *      from the opening tap still belongs to the trigger and keeps the sheet open.
  *
  * The server runs from the repository itself rather than a copied app root, so
  * Tailwind's utility layer exists and every box measured is a styled box (#252).
@@ -1037,6 +1039,42 @@ async function phasePhoneOverlayWorksWithoutCryptoRandomUUID() {
   );
 }
 
+async function phaseAllProjectsPlusKeepsQuickCreateOpen() {
+  await openApp({ viewport: PHONE_VIEWPORT, touch: true });
+  await expandSidebar();
+
+  await page.getByTestId('project-strip-all').tap();
+  const projectSection = page.locator('[data-testid^="all-project-section-"]').first();
+  await projectSection.waitFor({ state: 'visible', timeout: 30_000 });
+
+  const projectPlus = projectSection.locator('[data-testid^="all-project-quick-create-toggle-"]');
+  await projectPlus.tap();
+  const sheet = page.locator('[data-testid^="collection-quick-create-project-"]');
+  await sheet.waitFor({ state: 'visible', timeout: 30_000 });
+
+  // Android Chrome can deliver the tap's compatibility mousedown after the
+  // sheet has mounted and installed its outside-click watcher. It may retarget
+  // that delayed mouse event to the body rather than the original touch target,
+  // so replay that exact tail instead of the easier anchor-targeted case.
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  });
+  await page.waitForTimeout(100);
+
+  assert.equal(
+    await sheet.count(),
+    1,
+    'the All Projects header + keeps its quick-create sheet open after the phone tap settles',
+  );
+
+  // A later physical interaction outside still dismisses the sheet. The fix
+  // must reject only the opening tap's compatibility tail, not outside dismiss.
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  });
+  await sheet.waitFor({ state: 'detached', timeout: 5_000 });
+}
+
 // -------------------------------------------------------------------- main ---
 
 const phases = [
@@ -1050,6 +1088,7 @@ const phases = [
   ['8 the largest font scale agrees', phaseTheLargestFontScaleAgrees],
   ['9 the git panel closes while it covers its own toggle', phaseTheGitPanelClosesWhileItCoversItsOwnToggle],
   ['10 phone overlay works without crypto.randomUUID', phasePhoneOverlayWorksWithoutCryptoRandomUUID],
+  ['11 All Projects + keeps quick create open', phaseAllProjectsPlusKeepsQuickCreateOpen],
 ];
 
 let failure = null;

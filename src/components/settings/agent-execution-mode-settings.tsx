@@ -13,6 +13,10 @@ export default function AgentExecutionModeSettings() {
 
   return (
     <AgentExecutionModePicker
+      telemetryTarget={{
+        control: 'settings.general.execution_mode',
+        surface: 'settings',
+      }}
       value={mode}
       onChange={(nextMode) => void (async () => {
         if (mode === nextMode) return;

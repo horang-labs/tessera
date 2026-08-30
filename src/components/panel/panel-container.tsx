@@ -104,8 +104,6 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
         <WorktreeOverview
           branch={worktree.currentBranch}
           displayPath={worktree.displayPath}
-          onNewSession={() => usePanelStore.getState().startWorktreeCreation(panelId, 'chat')}
-          onNewWorktree={() => usePanelStore.getState().startWorktreeCreation(panelId, 'task')}
         />
       );
     }

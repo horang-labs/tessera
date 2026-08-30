@@ -151,6 +151,7 @@ try {
   const taskRow = page.getByTestId('collection-group-__uncategorized')
     .getByTestId(`collection-task-${createdTask.task.id}`);
   await taskRow.waitFor();
+  await taskRow.dblclick();
   await page.getByTestId('collection-group-__uncategorized')
     .getByTestId(`collection-chat-${directSession.sessionId}`).click();
   await page.locator('[data-testid="tab-item"][data-active="true"]', {
@@ -165,7 +166,8 @@ try {
     preview: 'Task-only linked Session completed',
   }));
   const taskUnread = taskRow.locator('[data-testid="item-status-indicator"][data-status="unread"]');
-  const tabUnread = page.locator('[data-testid="tab-item"]', { hasText: 'Task-only unread Session' })
+  const taskTab = page.locator('[data-testid="tab-item"]', { hasText: 'Task-only unread Session' });
+  const tabUnread = taskTab
     .locator('[data-testid="tab-item-status"][data-status="unread"]');
   await taskUnread.waitFor();
   await tabUnread.waitFor();
@@ -173,6 +175,22 @@ try {
   assert.equal(await tabUnread.locator('[data-testid="item-status-indicator"]').evaluate(
     (element) => getComputedStyle(element).backgroundColor,
   ), 'rgb(250, 204, 21)');
+
+  await taskTab.click();
+  await page.locator('[data-testid="tab-item"][data-active="true"]', {
+    hasText: 'Task-only unread Session',
+  }).waitFor();
+  await taskUnread.waitFor({ state: 'detached' });
+  await tabUnread.waitFor({ state: 'detached' });
+
+  await page.getByTestId('collection-group-__uncategorized')
+    .getByTestId(`collection-chat-${directSession.sessionId}`).click();
+  await page.locator('[data-testid="tab-item"][data-active="true"]', {
+    hasText: 'Direct comparison Session',
+  }).waitFor();
+  assert.equal(await taskUnread.count(), 0, 'sidebar unread must not return after switching tabs');
+  assert.equal(await tabUnread.count(), 0, 'tab unread must not return after switching tabs');
+
   await page.screenshot({ path: path.join(evidenceDir, 'unread-tab-sidebar-consistency.png'), fullPage: true });
   console.log(`Issue 337 unread consistency passed; evidence: ${evidenceDir}`);
 } catch (error) {

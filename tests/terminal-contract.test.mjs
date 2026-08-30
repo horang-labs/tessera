@@ -265,6 +265,8 @@ test('terminal websocket protocol covers process lifecycle', () => {
     'terminal_detach',
     'terminal_release_preview',
     'terminal_input',
+    'terminal_prompt',
+    'terminal_prompt_accepted',
     'terminal_resize',
     'terminal_close',
     'terminal_started',
@@ -296,6 +298,9 @@ test('terminal messages route through the connection-scoped server terminal mana
   assert.match(routingSource, /case 'terminal_create':/);
   assert.match(routingSource, /case 'terminal_release_preview':/);
   assert.match(routingSource, /case 'terminal_input':/);
+  assert.match(routingSource, /case 'terminal_prompt':/);
+  assert.match(routingSource, /await .*\.submitSessionChatPrompt\(/);
+  assert.match(routingSource, /type: 'terminal_prompt_accepted'/);
   assert.match(routingSource, /case 'terminal_resize':/);
   assert.match(routingSource, /case 'terminal_close':/);
   assert.match(routingSource, /await providerLaunchModule\.launch\(\{/);
@@ -599,6 +604,13 @@ test('WSL terminals cross hook coordinates and overlay homes via WSLENV', () => 
   // Windows 경로일 때만 경로 변환(orca endpointFlag 미러).
   assert.match(terminalManagerSource, /\{ name: 'CODEX_HOME', path: !terminalEnv\.CODEX_HOME\?\.startsWith\('\/'\) \}/);
   assert.match(terminalManagerSource, /\{ name: 'OPENCODE_CONFIG_DIR', path: !terminalEnv\.OPENCODE_CONFIG_DIR\?\.startsWith\('\/'\) \}/);
+  assert.match(terminalManagerSource, /\{ name: 'TESSERA_OPENCODE_CONFIG_DIR', path: !terminalEnv\.TESSERA_OPENCODE_CONFIG_DIR\?\.startsWith\('\/'\) \}/);
+});
+
+test('login-shell profiles preserve custom OpenCode config before restoring the overlay', () => {
+  assert.match(terminalResolverSource, /buildPosixOpenCodeOverlayActivation\(\)/);
+  assert.match(providerLaunchModuleSource, /TESSERA_OPENCODE_CONFIG_DIR: overlayDir/);
+  assert.match(providerLaunchModuleSource, /TESSERA_OPENCODE_CONFIG_DIR: overlay\.configDir/);
 });
 
 test('login-shell profiles cannot silently displace the injected CODEX_HOME overlay', () => {

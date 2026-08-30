@@ -1,7 +1,7 @@
 'use client';
 
 import { memo } from 'react';
-import { PanelLeftClose, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { PanelLeftClose } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
@@ -13,6 +13,8 @@ import { useGitStore } from '@/stores/git-store';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { ProjectViewModeToggle } from '@/components/tab/project-view-mode-toggle';
+import { GitBoardHeaderControl } from '@/components/git/git-board-header-control';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 /**
  * AppHeader — project context header for the left panel.
@@ -33,7 +35,6 @@ export const AppHeader = memo(function AppHeader() {
     (state) => state.settings.kanbanSessionOpenMode,
   );
   const gitPanelOpen = useGitStore((state) => state.isOpen);
-  const toggleGitPanel = useGitStore((state) => state.toggle);
   const isPhoneViewport = usePhoneViewport();
   // The list is what a phone renders, so the header's board chrome goes with it.
   const viewMode = useEffectiveViewMode();
@@ -43,7 +44,7 @@ export const AppHeader = memo(function AppHeader() {
     <>
       <header
         className={cn(
-          'shrink-0 flex h-9 items-center border-b border-(--divider) bg-(--sidebar-bg)',
+          'relative shrink-0 flex h-9 items-center border-b border-(--divider) bg-(--sidebar-bg)',
           // The collapse control is 44px tall at Phone viewport, which a fixed
           // 36px bar would clip (#259). Electron's own titlebar heights below
           // are desktop-only and untouched.
@@ -54,9 +55,17 @@ export const AppHeader = memo(function AppHeader() {
         )}
         data-testid="app-header"
       >
+        {isElectronTitlebar ? (
+          <div
+            aria-hidden="true"
+            className="electron-drag absolute inset-0"
+            data-testid="app-header-drag-surface"
+          />
+        ) : null}
         <div
           className={cn(
-            'flex min-w-0 flex-1 items-center gap-2 px-3',
+            'relative z-10 flex min-w-0 flex-1 items-center gap-2 px-3',
+            isElectronTitlebar && 'pointer-events-none self-stretch',
             isMacElectron && 'pl-10',
             // Peek mode stretches the header across the window, so it has to
             // clear the native window controls the tab bar normally clears.
@@ -67,7 +76,7 @@ export const AppHeader = memo(function AppHeader() {
               Keep this titlebar focused on switching the current Project view. */}
           {!isPhoneViewport ? (
             <ProjectViewModeToggle
-              className={isElectronTitlebar ? 'electron-no-drag' : undefined}
+              className={isElectronTitlebar ? 'electron-no-drag pointer-events-auto' : undefined}
               labelMode="short"
             />
           ) : null}
@@ -77,41 +86,30 @@ export const AppHeader = memo(function AppHeader() {
           <div
             className={cn(
               'min-w-0 flex-1',
-              isElectronTitlebar && 'electron-drag pointer-events-none',
+              // The content row ignores pointer hits in Electron, so this gap
+              // exposes the independent drag surface rendered behind it.
+              isElectronTitlebar && 'min-w-12 self-stretch',
             )}
+            data-testid="app-header-drag-lane"
           />
 
           {isKanbanPeekMode ? (
-            <button
-              type="button"
-              onClick={toggleGitPanel}
-              className={cn(
-                // Lift above the Session Peek backdrop (z-50) so the panel
-                // toggle stays clickable while a peek is open — otherwise the
-                // backdrop swallows the click and light-dismisses the peek.
-                'relative z-[60] electron-no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--divider) transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
-                gitPanelOpen
-                  ? 'bg-(--accent)/14 text-(--accent)'
-                  : 'bg-(--chat-bg) text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
-              )}
-              aria-label={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-              aria-pressed={gitPanelOpen}
-              title={gitPanelOpen ? t('chat.closeGitPanel') : t('chat.openGitPanel')}
-              data-testid="kanban-git-panel-toggle"
-            >
-              {gitPanelOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-            </button>
+            // Lift above the Session Peek backdrop (z-50) so Git controls stay
+            // clickable while a peek is open.
+            <div className="relative z-[60] electron-no-drag pointer-events-auto">
+              <GitBoardHeaderControl />
+            </div>
           ) : null}
 
           {!isKanbanPeekMode ? (
             <ShortcutTooltip id="toggle-sidebar" label={t('shortcut.toggleSidebar')}>
               <button
+                {...telemetryClickAttributes('sidebar.toggle', 'workspace_header')}
                 onClick={toggleSidebar}
                 className={cn(
                   'shrink-0 rounded p-1 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
                   PHONE_TOUCH_TARGET,
-                  isElectronTitlebar && 'electron-no-drag',
+                  isElectronTitlebar && 'electron-no-drag pointer-events-auto',
                 )}
                 aria-label={t('sidebar.collapse')}
                 data-testid="sidebar-collapse-btn"

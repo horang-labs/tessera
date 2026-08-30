@@ -15,6 +15,7 @@ type Modules = {
   sessions: typeof import('@/lib/db/sessions');
   tasks: typeof import('@/lib/db/tasks');
   taskPreparation: typeof import('@/lib/db/task-preparation');
+  codexDiscovery: typeof import('@/lib/cli/providers/codex/skill-discovery-client');
   openCodeDiscovery: typeof import('@/lib/cli/providers/opencode/command-discovery-client');
   processManager: typeof import('@/lib/cli/process-manager')['processManager'];
   appSecret: string;
@@ -29,6 +30,7 @@ function modules(): Promise<Modules> {
       sessions,
       tasks,
       taskPreparation,
+      codexDiscovery,
       openCodeDiscovery,
       { processManager },
       { ensureAppSecret },
@@ -38,6 +40,7 @@ function modules(): Promise<Modules> {
       import('@/lib/db/sessions'),
       import('@/lib/db/tasks'),
       import('@/lib/db/task-preparation'),
+      import('@/lib/cli/providers/codex/skill-discovery-client'),
       import('@/lib/cli/providers/opencode/command-discovery-client'),
       import('@/lib/cli/process-manager'),
       import('@/lib/auth/app-secret'),
@@ -49,6 +52,7 @@ function modules(): Promise<Modules> {
       sessions,
       tasks,
       taskPreparation,
+      codexDiscovery,
       openCodeDiscovery,
       processManager,
       appSecret,
@@ -58,10 +62,75 @@ function modules(): Promise<Modules> {
 }
 
 test.after(async () => {
-  const { openCodeDiscovery, processManager } = await modules();
+  const { codexDiscovery, openCodeDiscovery, processManager } = await modules();
+  codexDiscovery.setCodexSkillDiscoveryRequestExecutorForTests(null);
   openCodeDiscovery.setOpenCodeCommandDiscoveryExecutorForTests(null);
   await processManager.cleanup();
   fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+test('an enabled Tessera CLI is discoverable before the deferred Codex process starts', async () => {
+  const {
+    route,
+    sessions,
+    codexDiscovery,
+    processManager,
+    appSecret,
+  } = await modules();
+  const [{ SettingsManager }, { DEFAULT_SETTINGS }] = await Promise.all([
+    import('@/lib/settings/manager'),
+    import('@/lib/settings/defaults'),
+  ]);
+  const sessionId = 'pre-session-managed-codex-skill';
+  const workDir = path.join(dataDir, 'codex-worktree');
+  fs.mkdirSync(workDir, { recursive: true });
+  sessions.createSession(sessionId, dataDir, 'pre-session Codex skill', 'codex', {
+    workDir,
+  });
+  await SettingsManager.save('electron-local-user', {
+    ...DEFAULT_SETTINGS,
+    tesseraCliEnabled: true,
+  });
+  codexDiscovery.setCodexSkillDiscoveryRequestExecutorForTests(async () => ({
+    data: [{
+      cwd: workDir,
+      errors: [],
+      skills: [{
+        name: 'repo-skill',
+        description: 'Repository skill',
+        path: path.join(workDir, '.codex/skills/repo-skill/SKILL.md'),
+        enabled: true,
+      }],
+    }],
+  }));
+
+  try {
+    assert.equal(processManager.getProcess(sessionId), undefined);
+    const response = await route.GET(
+      new NextRequest(`http://localhost/api/sessions/${sessionId}/skills`, {
+        headers: {
+          host: 'localhost',
+          'x-tessera-app-secret': appSecret,
+        },
+      }),
+      { params: Promise.resolve({ id: sessionId }) },
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      skills: Array<{ name: string; description: string }>;
+    };
+    assert.equal(payload.skills[0]?.name, 'tessera-cli');
+    assert.match(payload.skills[0]?.description ?? '', /Tessera-managed Projects/);
+    assert.equal(payload.skills.filter((skill) => skill.name === 'tessera-cli').length, 1);
+    assert.equal(payload.skills.some((skill) => skill.name === 'repo-skill'), true);
+  } finally {
+    codexDiscovery.setCodexSkillDiscoveryRequestExecutorForTests(null);
+    await SettingsManager.save('electron-local-user', {
+      ...DEFAULT_SETTINGS,
+      tesseraCliEnabled: false,
+    });
+  }
 });
 
 test('pre-session skill discovery waits until blocking preparation finishes', async () => {

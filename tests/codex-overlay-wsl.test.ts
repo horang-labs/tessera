@@ -9,14 +9,19 @@ import {
   buildWslCodexOverlayCreateScript,
   buildWslCodexOverlayFinalizeScript,
   buildWslCodexOverlayResumeRepairScript,
+  buildWslCodexTrustBaselineWriteScript,
   buildWslCodexTrustPromotionScript,
   buildWslCodexTrustReportScript,
+  cleanupCodexOverlayInWsl,
+  createCodexOverlayInWsl,
   readWslOverlayReport,
 } from '@/lib/terminal/codex-overlay-wsl';
 import {
   mergeCodexOverlayTrust,
   serializeCodexTrustBaseline,
 } from '@/lib/terminal/codex-trust-state';
+
+const WSL_LIFECYCLE_TEST_TIMEOUT_MS = 15_000;
 
 /**
  * 게스트 스크립트는 순수 POSIX sh다 — 서버가 win32에서 wsl.exe로 흘려보내는 것과
@@ -37,6 +42,185 @@ function runScript(
 function b64(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64');
 }
+
+function installFakeWsl(
+  prefix: string,
+  options: {
+    concurrentConfigBeforeFirstPromotion?: string;
+  } = {},
+): {
+  accountConfigPath: string;
+  trustWatcherLaunchCount: () => number;
+  restore: () => void;
+} {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const guestHome = path.join(root, 'guest-home');
+  const fakeBin = path.join(root, 'bin');
+  const accountConfigPath = path.join(guestHome, '.codex', 'config.toml');
+  fs.mkdirSync(path.dirname(accountConfigPath), { recursive: true });
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(accountConfigPath, 'model = "gpt-5.4"\n');
+  fs.writeFileSync(
+    path.join(fakeBin, 'wsl.exe'),
+    [
+      '#!/bin/sh',
+      'HOME="$TESSERA_TEST_WSL_HOME"',
+      'export HOME',
+      'if [ "$1" = "--exec" ]; then',
+      '  shift',
+      '  if [ "$1" = "sh" ] && [ "$2" = "-s" ]; then',
+      '    script="$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-script-$$"',
+      '    cat > "$script"',
+      '    if grep -q TESSERA_TRUST_WATCH_READY "$script"; then echo 1 >> "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watcher-launches"; fi',
+      '    if [ -n "${TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64:-}" ] && grep -q "config.toml.tessera" "$script" && [ ! -f "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-injected" ]; then',
+      '      printf "%s" "$TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64" | base64 -d > "$TESSERA_TEST_WSL_HOME/.codex/config.toml"',
+      '      : > "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-injected"',
+      '    fi',
+      '    exec sh "$script"',
+      '  fi',
+      '  exec "$@"',
+      'fi',
+      'exit 2',
+      '',
+    ].join('\n'),
+    { mode: 0o700 },
+  );
+
+  const previousPath = process.env.PATH;
+  const previousGuestHome = process.env.TESSERA_TEST_WSL_HOME;
+  const previousConcurrentConfig = process.env.TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64;
+  process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ''}`;
+  process.env.TESSERA_TEST_WSL_HOME = guestHome;
+  if (options.concurrentConfigBeforeFirstPromotion) {
+    process.env.TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64 = b64(
+      options.concurrentConfigBeforeFirstPromotion,
+    );
+  }
+
+  return {
+    accountConfigPath,
+    trustWatcherLaunchCount: () => {
+      const countPath = path.join(guestHome, '.tessera-test-wsl-watcher-launches');
+      if (!fs.existsSync(countPath)) return 0;
+      return fs.readFileSync(countPath, 'utf8').trim().split('\n').filter(Boolean).length;
+    },
+    restore: () => {
+      restoreEnv('PATH', previousPath);
+      restoreEnv('TESSERA_TEST_WSL_HOME', previousGuestHome);
+      restoreEnv('TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64', previousConcurrentConfig);
+      fs.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+test('live WSL Codex overlays do not retain one wsl.exe trust watcher per terminal', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-no-per-terminal-watch-');
+  const terminalIds = ['terminal-wsl-watch-a', 'terminal-wsl-watch-b'];
+  try {
+    await Promise.all(terminalIds.map((terminalId) => (
+      createCodexOverlayInWsl(terminalId, 'posix', false)
+    )));
+    assert.equal(fakeWsl.trustWatcherLaunchCount(), 0);
+  } finally {
+    for (const terminalId of terminalIds) cleanupCodexOverlayInWsl(terminalId);
+    fakeWsl.restore();
+  }
+});
+
+test('a running WSL Codex overlay promotes project trust without cleanup', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-live-trust-');
+
+  const terminalId = 'terminal-wsl-live-trust';
+  let overlayPath: string | undefined;
+  try {
+    overlayPath = await createCodexOverlayInWsl(terminalId, 'posix', false);
+    fs.appendFileSync(
+      path.join(overlayPath, 'config.toml'),
+      '\n[projects."/tmp/wsl-live-project"]\ntrust_level = "trusted"\n',
+    );
+
+    await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-live-project/);
+
+    assert.equal(fs.existsSync(path.join(overlayPath, 'config.toml')), true);
+  } finally {
+    cleanupCodexOverlayInWsl(terminalId);
+    if (overlayPath) await waitForPathMissing(overlayPath);
+    fakeWsl.restore();
+  }
+});
+
+test('WSL trust promotion retries instead of overwriting a concurrent account edit', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-concurrent-account-', {
+    concurrentConfigBeforeFirstPromotion: 'model = "gpt-concurrent"\n',
+  });
+  const terminalId = 'terminal-wsl-concurrent-account';
+  let overlayPath: string | undefined;
+  try {
+    overlayPath = await createCodexOverlayInWsl(terminalId, 'posix', false);
+    fs.appendFileSync(
+      path.join(overlayPath, 'config.toml'),
+      '\n[projects."/tmp/wsl-concurrent-project"]\ntrust_level = "trusted"\n',
+    );
+
+    await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-concurrent-project/);
+    assert.match(
+      fs.readFileSync(fakeWsl.accountConfigPath, 'utf8'),
+      /^model = "gpt-concurrent"$/m,
+    );
+  } finally {
+    cleanupCodexOverlayInWsl(terminalId);
+    if (overlayPath) await waitForPathMissing(overlayPath);
+    fakeWsl.restore();
+  }
+});
+
+test('host polling keeps promoting trust edits while a WSL overlay remains live', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-host-polling-');
+  const terminalId = 'terminal-wsl-host-polling';
+  let overlayPath: string | undefined;
+  try {
+    overlayPath = await createCodexOverlayInWsl(terminalId, 'posix', false);
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    fs.appendFileSync(
+      path.join(overlayPath, 'config.toml'),
+      '\n[projects."/tmp/wsl-host-polling-project"]\ntrust_level = "trusted"\n',
+    );
+
+    await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-host-polling-project/);
+  } finally {
+    cleanupCodexOverlayInWsl(terminalId);
+    if (overlayPath) await waitForPathMissing(overlayPath);
+    fakeWsl.restore();
+  }
+});
+
+test('a new WSL overlay waits for trust promotion from a terminal being cleaned up', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-cleanup-trust-');
+  const firstTerminalId = 'terminal-wsl-cleanup-first';
+  const secondTerminalId = 'terminal-wsl-cleanup-second';
+  let firstOverlay: string | undefined;
+  let secondOverlay: string | undefined;
+  try {
+    firstOverlay = await createCodexOverlayInWsl(firstTerminalId, 'posix', false);
+    fs.appendFileSync(
+      path.join(firstOverlay, 'config.toml'),
+      '\n[projects."/tmp/wsl-cleanup-project"]\ntrust_level = "trusted"\n',
+    );
+
+    cleanupCodexOverlayInWsl(firstTerminalId);
+    secondOverlay = await createCodexOverlayInWsl(secondTerminalId, 'posix', false);
+
+    const secondConfig = fs.readFileSync(path.join(secondOverlay, 'config.toml'), 'utf8');
+    assert.match(secondConfig, /^\[projects\."\/tmp\/wsl-cleanup-project"\]$/m);
+    assert.match(secondConfig, /^trust_level = "trusted"$/m);
+  } finally {
+    cleanupCodexOverlayInWsl(firstTerminalId);
+    cleanupCodexOverlayInWsl(secondTerminalId);
+    if (firstOverlay) await waitForPathMissing(firstOverlay);
+    if (secondOverlay) await waitForPathMissing(secondOverlay);
+    fakeWsl.restore();
+  }
+});
 
 test('WSL overlay create script mirrors the codex home with guest-native symlinks', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-'));
@@ -111,6 +295,17 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     );
     assert.equal(fs.readFileSync(path.join(overlay!, 'config.toml'), 'utf8'), finalConfig);
     assert.equal(fs.readFileSync(path.join(overlay!, '.tessera-overlay.json'), 'utf8'), marker);
+    const advancedBaseline = serializeCodexTrustBaseline(
+      'model = "gpt-5.4"\n\n[projects."/tmp/live"]\ntrust_level = "trusted"\n',
+    );
+    runScript(
+      buildWslCodexTrustBaselineWriteScript('terminal-wsl-test', b64(advancedBaseline)),
+      home,
+    );
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, '.tessera-trust-baseline.json'), 'utf8'),
+      advancedBaseline,
+    );
 
     // 재실행(stale 재생성)이 이전 잔여를 지우고 실 홈은 건드리지 않는다.
     runScript(buildWslCodexOverlayCreateScript('terminal-wsl-test', b64(hooksJson)), home);
@@ -145,6 +340,26 @@ test('WSL overlay create script tolerates a missing codex home', () => {
     assert.equal(fs.readFileSync(path.join(overlay!, 'hooks.json'), 'utf8'), '{}');
     // config가 없으면 보고 라인도 없다.
     assert.equal(readWslOverlayReport(stdout, 'TESSERA_CONFIG_B64'), undefined);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('WSL lifecycle overlay preserves the account Tessera skill when injection is off', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-codex-off-'));
+  const accountSkill = path.join(home, '.codex/skills/tessera-cli/SKILL.md');
+  fs.mkdirSync(path.dirname(accountSkill), { recursive: true });
+  fs.writeFileSync(accountSkill, 'user-owned Tessera skill\n');
+  try {
+    const stdout = runScript(
+      buildWslCodexOverlayCreateScript('terminal-wsl-off', b64('{}'), 'posix', false),
+      home,
+    );
+    const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
+    assert.equal(
+      fs.readFileSync(path.join(overlay!, 'skills/tessera-cli/SKILL.md'), 'utf8'),
+      'user-owned Tessera skill\n',
+    );
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -345,7 +560,10 @@ test('WSL trust scripts promote project and hook approvals without copying other
       currentAccountConfig: Buffer.from(current!, 'base64').toString('utf8'),
       managedHooksPath: hooksPath!,
     });
-    runScript(buildWslCodexTrustPromotionScript(b64(codexHome), b64(merged)), home);
+    runScript(
+      buildWslCodexTrustPromotionScript(b64(codexHome), current!, b64(merged)),
+      home,
+    );
 
     const promoted = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
     assert.match(promoted, /^model = "gpt-5\.4"$/m);
@@ -374,6 +592,7 @@ test('WSL trust promotion preserves a symlinked account config', (t) => {
     runScript(
       buildWslCodexTrustPromotionScript(
         b64(codexHome),
+        b64('model = "gpt-5.4"\n'),
         b64('model = "gpt-5.4"\n\n[projects."/tmp/project"]\ntrust_level = "trusted"\n'),
       ),
       home,
@@ -385,3 +604,26 @@ test('WSL trust promotion preserves a symlinked account config', (t) => {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+async function waitForFileMatch(filePath: string, pattern: RegExp): Promise<void> {
+  const deadline = Date.now() + WSL_LIFECYCLE_TEST_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(filePath) && pattern.test(fs.readFileSync(filePath, 'utf8'))) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`Timed out waiting for ${filePath} to match ${pattern}`);
+}
+
+async function waitForPathMissing(targetPath: string): Promise<void> {
+  const deadline = Date.now() + WSL_LIFECYCLE_TEST_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (!fs.existsSync(targetPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`Timed out waiting for ${targetPath} to be removed`);
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

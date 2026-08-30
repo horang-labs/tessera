@@ -5,6 +5,7 @@ import type { TFunction } from 'i18next';
 import { isPairingRequest, type PairingRequest } from '@/lib/auth/pairing-contract';
 import { useI18n } from '@/lib/i18n';
 import { formatPairingTimeRemaining } from './pairing-time';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 type PairingView =
   | 'requesting'
@@ -405,6 +406,7 @@ export function PairingClient() {
 
             {canRetry ? (
               <button
+                {...telemetryClickAttributes('pairing.retry', 'auth')}
                 type="button"
                 onClick={() => {
                   setView(request ? 'waiting' : 'requesting');

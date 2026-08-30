@@ -13,6 +13,7 @@ import type { TerminalNamedKey } from '@/lib/terminal/session-control-input';
 import { TERMINAL_IMAGE_FILE_ACCEPT } from '@/lib/terminal/terminal-clipboard-paste';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 
 interface TerminalInputBarProps {
   onSend: (data: string) => boolean;
@@ -124,6 +125,7 @@ export function TerminalInputBar({
       <div className="grid grid-cols-4 gap-1">
         {TERMINAL_INPUT_BAR_KEYS.map((key) => (
           <button
+            {...telemetryClickAttributes('terminal.special_key', 'terminal')}
             key={key.namedKey}
             type="button"
             onClick={() => handleKey(key.namedKey)}
@@ -140,6 +142,7 @@ export function TerminalInputBar({
         ))}
       </div>
       <input
+        {...telemetryIgnoreAttributes('hidden_file_input')}
         ref={fileInputRef}
         type="file"
         accept={TERMINAL_IMAGE_FILE_ACCEPT}
@@ -151,6 +154,7 @@ export function TerminalInputBar({
       />
       <div className="mt-2 flex items-end gap-1">
         <button
+          {...telemetryClickAttributes('terminal.attach', 'terminal')}
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isAttachingImage}
@@ -176,6 +180,7 @@ export function TerminalInputBar({
             : <ImagePlus className="h-4 w-4" />}
         </button>
         <textarea
+          {...telemetryClickAttributes('terminal.input', 'terminal')}
           value={text}
           onChange={(event) => setText(event.target.value)}
           rows={1}
@@ -191,6 +196,7 @@ export function TerminalInputBar({
           )}
         />
         <button
+          {...telemetryClickAttributes('terminal.send', 'terminal')}
           type="button"
           onClick={handleSubmit}
           disabled={terminalInputBarTextPayload(text) === null}

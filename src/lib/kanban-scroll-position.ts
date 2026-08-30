@@ -16,7 +16,7 @@ export function getKanbanScrollPositionKey(
 export function getKanbanScrollPosition(key: string): number {
   if (typeof window !== 'undefined') {
     try {
-      const storedPosition = window.sessionStorage.getItem(`${KANBAN_SCROLL_STORAGE_PREFIX}${key}`);
+      const storedPosition = readUiStorageItem(`${KANBAN_SCROLL_STORAGE_PREFIX}${key}`);
       if (storedPosition !== null) {
         const parsedPosition = Number(storedPosition);
         if (Number.isFinite(parsedPosition)) {
@@ -36,7 +36,7 @@ export function saveKanbanScrollPosition(key: string, scrollLeft: number): void 
   kanbanScrollPositions.set(key, scrollLeft);
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.setItem(`${KANBAN_SCROLL_STORAGE_PREFIX}${key}`, String(scrollLeft));
+    writeUiStorageItem(`${KANBAN_SCROLL_STORAGE_PREFIX}${key}`, String(scrollLeft));
   } catch {
     // Session storage can be unavailable in restricted browser contexts.
   }
@@ -55,3 +55,4 @@ export function saveCurrentKanbanScrollPosition(
     scrollArea.scrollLeft,
   );
 }
+import { readUiStorageItem, writeUiStorageItem } from '@/lib/persistence/ui-storage';
