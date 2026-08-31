@@ -21,7 +21,9 @@ import {
 } from '../src/lib/workspace-tabs/special-session';
 import {
   openWorkspaceFileTab,
+  openWorkspaceTargetFileTab,
   openWorktreeFileTab,
+  previewWorkspaceFileTab,
   previewWorkspaceTargetFileTab,
   previewWorktreeFileTab,
 } from '../src/lib/workspace-tabs/open-workspace-tab';
@@ -194,6 +196,60 @@ test('opening a Worktree file dismisses Peek and targets a Worktree-scoped previ
   assert.equal(
     specialSessionId,
     buildWorktreeFileSessionId('wt_project_root', 'README.md'),
+  );
+});
+
+test('opening a previewed Worktree file again retains that same tab', () => {
+  const target = { kind: 'worktree', id: 'wt_preview_pin' } as const;
+  previewWorkspaceTargetFileTab(target, 'file', 'README.md', {
+    projectDir: 'project-a',
+  });
+
+  const previewTabId = useTabStore.getState().activeTabId;
+  assert.equal(
+    useTabStore.getState().tabs.find((tab) => tab.id === previewTabId)?.isPreview,
+    true,
+  );
+
+  openWorkspaceTargetFileTab(target, 'file', 'README.md', {
+    projectDir: 'project-a',
+  });
+
+  assert.equal(useTabStore.getState().activeTabId, previewTabId);
+  assert.equal(
+    useTabStore.getState().tabs.find((tab) => tab.id === previewTabId)?.isPreview,
+    false,
+  );
+});
+
+test('previewing a Session file retains its preview source Session', () => {
+  const sourceTabId = 'source-session-preview-tab';
+  const sourcePanelId = 'source-session-preview-panel';
+  const sourceSessionId = 'source-session-preview';
+  const panelStore = usePanelStore.getState();
+  panelStore.initTab(sourceTabId, {
+    layout: { type: 'leaf', panelId: sourcePanelId },
+    panels: {
+      [sourcePanelId]: { id: sourcePanelId, sessionId: sourceSessionId },
+    },
+    activePanelId: sourcePanelId,
+  });
+  panelStore.setActiveTabId(sourceTabId);
+  useTabStore.setState({
+    tabs: [{ id: sourceTabId, projectDir: 'project-a', title: null, isPreview: true }],
+    activeTabId: sourceTabId,
+    lruTabIds: [sourceTabId],
+    currentProjectDir: 'project-a',
+  });
+
+  previewWorkspaceFileTab(sourceSessionId, 'file', 'README.md');
+
+  const tabs = useTabStore.getState().tabs;
+  assert.equal(tabs.find((tab) => tab.id === sourceTabId)?.isPreview, false);
+  assert.notEqual(useTabStore.getState().activeTabId, sourceTabId);
+  assert.equal(
+    tabs.find((tab) => tab.id === useTabStore.getState().activeTabId)?.isPreview,
+    true,
   );
 });
 

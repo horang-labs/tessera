@@ -41,6 +41,7 @@ import {
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import {
   openWorkspaceTargetFileTab,
+  previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { resolveWorkspaceTarget, workspaceTargetKey } from '@/types/worktree';
 import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
@@ -683,12 +684,18 @@ export function WorkspaceFilePanel({
           onClick={(event) => {
             setSelectedPath(node.path);
             if (!target) return;
-            // A browser double-click also dispatches two click events. Only the
-            // first creates a tab; the double-click itself may still rename the
-            // name hotspot without creating extra duplicate tabs.
+            // A browser double-click also dispatches two click events. The
+            // first click opens the replaceable file-preview tab; its paired
+            // double-click below promotes that preview to a retained tab.
             if (!shouldOpenOnRowClick(event.detail)) return;
-            openWorkspaceTargetFileTab(target, 'file', node.path, {
+            previewWorkspaceTargetFileTab(target, 'file', node.path, {
               preferKanbanPeek: true,
+              projectDir: sessionProjectDir,
+            });
+          }}
+          onDoubleClick={() => {
+            if (!target) return;
+            openWorkspaceTargetFileTab(target, 'file', node.path, {
               projectDir: sessionProjectDir,
             });
           }}
@@ -718,16 +725,7 @@ export function WorkspaceFilePanel({
           ) : (
             <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
           )}
-          <span
-            // Renaming is scoped to the name text, so the icon and the rest of
-            // the row keep opening the file the way they always have.
-            onDoubleClick={(event) => {
-              if (!canMutate) return;
-              event.stopPropagation();
-              beginRename(node);
-            }}
-            className="min-w-0 flex-1 truncate font-mono text-[11px]"
-          >
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
             {node.name}
           </span>
         </button>
