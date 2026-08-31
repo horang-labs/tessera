@@ -1295,6 +1295,8 @@ export const ja: I18nMessages = {
     inputNumber: '入力{{number}}',
     openInput: '入力画像{{number}}を拡大表示',
     openResult: '結果画像を拡大表示',
+    downloadInput: '入力画像{{number}}をダウンロード',
+    downloadResult: '結果画像をダウンロード',
     showMore: 'もっと見る',
     showLess: '折りたたむ',
     copyPrompt: 'プロンプト全体をコピー',

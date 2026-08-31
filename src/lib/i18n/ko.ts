@@ -1302,6 +1302,8 @@ export const ko: I18nMessages = {
     inputNumber: '입력 {{number}}',
     openInput: '입력 이미지 {{number}} 크게 보기',
     openResult: '결과 이미지 크게 보기',
+    downloadInput: '입력 이미지 {{number}} 다운로드',
+    downloadResult: '결과 이미지 다운로드',
     showMore: '더 보기',
     showLess: '접기',
     copyPrompt: '프롬프트 전체 복사',

@@ -1298,6 +1298,8 @@ export const en: I18nMessages = {
     inputNumber: 'Input {{number}}',
     openInput: 'Open input image {{number}}',
     openResult: 'Open result image',
+    downloadInput: 'Download input image {{number}}',
+    downloadResult: 'Download result image',
     showMore: 'Show more',
     showLess: 'Show less',
     copyPrompt: 'Copy full prompt',

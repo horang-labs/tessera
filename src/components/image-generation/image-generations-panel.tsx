@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- Authenticated, session-scoped image routes cannot use Next's unauthenticated optimizer. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, ImageIcon, LoaderCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Copy, Download, ImageIcon, LoaderCircle, RefreshCw } from "lucide-react";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { clearPathInsertDragData, setPathInsertDragData } from "@/lib/dnd/panel-session-drag";
 import type { PublicImageGenerationTrace } from "@/lib/image-generation/traces";
@@ -158,26 +158,34 @@ export function ImageGenerationTraceCard({
             {trace.inputs.length > 0 ? (
               <div className="grid grid-cols-3 gap-2">
                 {trace.inputs.map((input, index) => (
-                  <button
-                    {...telemetryClickAttributes("image_generation.input.open", "right_panel")}
-                    key={`${input.url}-${index}`}
-                    type="button"
-                    draggable={Boolean(input.path)}
-                    className="group relative block w-full overflow-hidden rounded-md border border-(--chat-header-border) bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
-                    onDragStart={(event) => {
-                      if (!input.path || !setPathInsertDragData(event.dataTransfer, [input.path])) {
-                        event.preventDefault();
-                      }
-                    }}
-                    onDragEnd={clearPathInsertDragData}
-                    onClick={() => onOpenImage({ src: input.url, alt: t("imagePanel.inputNumber", { number: index + 1 }) })}
-                    aria-label={t("imagePanel.openInput", { number: index + 1 })}
-                  >
-                    <img src={input.url} draggable={false} alt="" loading="lazy" className="aspect-square w-full object-cover transition-transform duration-150 group-hover:scale-[1.04]" />
-                    <span className="pointer-events-none absolute left-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/65 px-1 text-[9px] font-semibold text-white shadow-sm backdrop-blur-sm">
-                      {index + 1}
-                    </span>
-                  </button>
+                  <div key={`${input.url}-${index}`} className="relative">
+                    <button
+                      {...telemetryClickAttributes("image_generation.input.open", "right_panel")}
+                      type="button"
+                      draggable={Boolean(input.path)}
+                      className="group relative block w-full overflow-hidden rounded-md border border-(--chat-header-border) bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+                      onDragStart={(event) => {
+                        if (!input.path || !setPathInsertDragData(event.dataTransfer, [input.path])) {
+                          event.preventDefault();
+                        }
+                      }}
+                      onDragEnd={clearPathInsertDragData}
+                      onClick={() => onOpenImage({ src: input.url, alt: t("imagePanel.inputNumber", { number: index + 1 }) })}
+                      aria-label={t("imagePanel.openInput", { number: index + 1 })}
+                    >
+                      <img src={input.url} draggable={false} alt="" loading="lazy" className="aspect-square w-full object-cover transition-transform duration-150 group-hover:scale-[1.04]" />
+                      <span className="pointer-events-none absolute left-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/65 px-1 text-[9px] font-semibold text-white shadow-sm backdrop-blur-sm">
+                        {index + 1}
+                      </span>
+                    </button>
+                    <ImageDownloadButton
+                      url={input.url}
+                      path={input.path}
+                      fallbackName={`input-image-${index + 1}.png`}
+                      label={t("imagePanel.downloadInput", { number: index + 1 })}
+                      action="image_generation.input.download"
+                    />
+                  </div>
                 ))}
               </div>
             ) : null}
@@ -259,6 +267,15 @@ function ResultHeroMedia({
           />
         </button>
       ) : null}
+      {result ? (
+        <ImageDownloadButton
+          url={result.url}
+          path={result.path}
+          fallbackName="generated-image.png"
+          label={t("imagePanel.downloadResult")}
+          action="image_generation.result.download"
+        />
+      ) : null}
       {!ready ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-(--text-muted)">
           {status === "running" || result ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ImageIcon className="h-5 w-5" />}
@@ -266,6 +283,44 @@ function ResultHeroMedia({
       ) : null}
     </div>
   );
+}
+
+function ImageDownloadButton({
+  url,
+  path,
+  fallbackName,
+  label,
+  action,
+}: {
+  url: string;
+  path?: string;
+  fallbackName: string;
+  label: string;
+  action: "image_generation.input.download" | "image_generation.result.download";
+}) {
+  return (
+    <a
+      {...telemetryClickAttributes(action, "right_panel")}
+      href={url}
+      download={imageDownloadFileName(path, fallbackName)}
+      draggable={false}
+      className="absolute bottom-2 right-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-white/20 bg-black/65 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+      aria-label={label}
+      title={label}
+      onClick={(event) => event.stopPropagation()}
+      onDragStart={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      <Download aria-hidden="true" className="h-3.5 w-3.5" />
+    </a>
+  );
+}
+
+function imageDownloadFileName(path: string | undefined, fallbackName: string): string {
+  const fileName = path?.split(/[\\/]/).at(-1)?.trim();
+  return fileName || fallbackName;
 }
 
 function PromptDetails({ title, text, codexText }: { title: string; text: string; codexText?: string }) {

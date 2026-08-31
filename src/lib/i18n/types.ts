@@ -1277,6 +1277,8 @@ export interface I18nMessages {
     inputNumber: string;
     openInput: string;
     openResult: string;
+    downloadInput: string;
+    downloadResult: string;
     showMore: string;
     showLess: string;
     copyPrompt: string;

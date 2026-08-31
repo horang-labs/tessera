@@ -1295,6 +1295,8 @@ export const zh: I18nMessages = {
     inputNumber: '输入 {{number}}',
     openInput: '放大输入图像 {{number}}',
     openResult: '放大结果图像',
+    downloadInput: '下载输入图像 {{number}}',
+    downloadResult: '下载结果图像',
     showMore: '显示更多',
     showLess: '收起',
     copyPrompt: '复制完整提示词',
