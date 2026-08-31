@@ -26,9 +26,19 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   const avoidsWindowControls = electronPlatform === 'win32';
   const resolvedAlt = alt || t('chat.imageOriginalView');
 
+  // The opener is a button, so it remains focused behind this portal. Android
+  // Chrome can restore that focus when the portal is removed, which summons the
+  // software keyboard even though the user only dismissed an image.
+  const closeLightbox = useCallback(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    onClose();
+  }, [onClose]);
+
   // The PTY chat view handles Escape during React's capture phase. Claim it at
   // document capture first so closing the lightbox cannot also interrupt the PTY.
-  useCloseOnEscape(onClose, { capture: true });
+  useCloseOnEscape(closeLightbox, { capture: true });
 
   // Scroll lock
   useEffect(() => {
@@ -40,8 +50,8 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   }, []);
 
   const handleOverlayClick = useCallback(() => {
-    onClose();
-  }, [onClose]);
+    closeLightbox();
+  }, [closeLightbox]);
 
   if (typeof document === 'undefined') {
     return null;
@@ -52,6 +62,7 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       {...telemetryClickAttributes('message.image.close', 'message')}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
       onClick={handleOverlayClick}
+      style={{ touchAction: 'none' }}
       role="dialog"
       aria-modal="true"
       aria-label={resolvedAlt}
@@ -59,7 +70,7 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       <button
         {...telemetryClickAttributes('message.image.close', 'message')}
         type="button"
-        onClick={onClose}
+        onClick={closeLightbox}
         className={cn(
           'absolute right-4 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors text-xl',
           avoidsWindowControls ? 'top-12' : 'top-4',
