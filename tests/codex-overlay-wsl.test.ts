@@ -46,11 +46,13 @@ function b64(value: string): string {
 function installFakeWsl(
   prefix: string,
   options: {
+    watcherReadyDelaySeconds?: string;
     concurrentConfigBeforeFirstPromotion?: string;
+    exitFirstWatcherAfterReady?: boolean;
+    hangFirstWatcherBeforeReady?: boolean;
   } = {},
 ): {
   accountConfigPath: string;
-  trustWatcherLaunchCount: () => number;
   restore: () => void;
 } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -68,10 +70,23 @@ function installFakeWsl(
       'export HOME',
       'if [ "$1" = "--exec" ]; then',
       '  shift',
-      '  if [ "$1" = "sh" ] && [ "$2" = "-s" ]; then',
+      '  if [ -n "${TESSERA_TEST_WSL_WATCH_DELAY:-}" ] || [ -n "${TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64:-}" ] || [ -n "${TESSERA_TEST_WSL_EXIT_FIRST_WATCHER:-}" ] || [ -n "${TESSERA_TEST_WSL_HANG_FIRST_WATCHER:-}" ]; then',
       '    script="$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-script-$$"',
       '    cat > "$script"',
-      '    if grep -q TESSERA_TRUST_WATCH_READY "$script"; then echo 1 >> "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watcher-launches"; fi',
+      '    if [ -n "${TESSERA_TEST_WSL_WATCH_DELAY:-}" ] && grep -q TESSERA_TRUST_WATCH_READY "$script" && [ ! -f "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watch-delayed" ]; then',
+      '      : > "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watch-delayed"',
+      '      sleep "$TESSERA_TEST_WSL_WATCH_DELAY"',
+      '    fi',
+      '    if [ -n "${TESSERA_TEST_WSL_EXIT_FIRST_WATCHER:-}" ] && grep -q TESSERA_TRUST_WATCH_READY "$script" && [ ! -f "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watcher-exited" ]; then',
+      '      : > "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watcher-exited"',
+      '      awk \'{ if ($0 ~ /^while \\[ -f "\\$config" \\]; do$/) print "exit 0"; print }\' "$script" > "$script.once"',
+      '      mv "$script.once" "$script"',
+      '    fi',
+      '    if [ -n "${TESSERA_TEST_WSL_HANG_FIRST_WATCHER:-}" ] && grep -q TESSERA_TRUST_WATCH_READY "$script" && [ ! -f "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watcher-hung" ]; then',
+      '      : > "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-watcher-hung"',
+      '      awk \'{ if ($0 ~ /^last=/) print "while :; do :; done"; print }\' "$script" > "$script.once"',
+      '      mv "$script.once" "$script"',
+      '    fi',
       '    if [ -n "${TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64:-}" ] && grep -q "config.toml.tessera" "$script" && [ ! -f "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-injected" ]; then',
       '      printf "%s" "$TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64" | base64 -d > "$TESSERA_TEST_WSL_HOME/.codex/config.toml"',
       '      : > "$TESSERA_TEST_WSL_HOME/.tessera-test-wsl-injected"',
@@ -88,44 +103,40 @@ function installFakeWsl(
 
   const previousPath = process.env.PATH;
   const previousGuestHome = process.env.TESSERA_TEST_WSL_HOME;
+  const previousWatchDelay = process.env.TESSERA_TEST_WSL_WATCH_DELAY;
   const previousConcurrentConfig = process.env.TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64;
+  const previousExitFirstWatcher = process.env.TESSERA_TEST_WSL_EXIT_FIRST_WATCHER;
+  const previousHangFirstWatcher = process.env.TESSERA_TEST_WSL_HANG_FIRST_WATCHER;
   process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ''}`;
   process.env.TESSERA_TEST_WSL_HOME = guestHome;
+  if (options.watcherReadyDelaySeconds) {
+    process.env.TESSERA_TEST_WSL_WATCH_DELAY = options.watcherReadyDelaySeconds;
+  }
   if (options.concurrentConfigBeforeFirstPromotion) {
     process.env.TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64 = b64(
       options.concurrentConfigBeforeFirstPromotion,
     );
   }
+  if (options.exitFirstWatcherAfterReady) {
+    process.env.TESSERA_TEST_WSL_EXIT_FIRST_WATCHER = '1';
+  }
+  if (options.hangFirstWatcherBeforeReady) {
+    process.env.TESSERA_TEST_WSL_HANG_FIRST_WATCHER = '1';
+  }
 
   return {
     accountConfigPath,
-    trustWatcherLaunchCount: () => {
-      const countPath = path.join(guestHome, '.tessera-test-wsl-watcher-launches');
-      if (!fs.existsSync(countPath)) return 0;
-      return fs.readFileSync(countPath, 'utf8').trim().split('\n').filter(Boolean).length;
-    },
     restore: () => {
       restoreEnv('PATH', previousPath);
       restoreEnv('TESSERA_TEST_WSL_HOME', previousGuestHome);
+      restoreEnv('TESSERA_TEST_WSL_WATCH_DELAY', previousWatchDelay);
       restoreEnv('TESSERA_TEST_WSL_CONCURRENT_CONFIG_B64', previousConcurrentConfig);
+      restoreEnv('TESSERA_TEST_WSL_EXIT_FIRST_WATCHER', previousExitFirstWatcher);
+      restoreEnv('TESSERA_TEST_WSL_HANG_FIRST_WATCHER', previousHangFirstWatcher);
       fs.rmSync(root, { recursive: true, force: true });
     },
   };
 }
-
-test('live WSL Codex overlays do not retain one wsl.exe trust watcher per terminal', async () => {
-  const fakeWsl = installFakeWsl('tessera-wsl-no-per-terminal-watch-');
-  const terminalIds = ['terminal-wsl-watch-a', 'terminal-wsl-watch-b'];
-  try {
-    await Promise.all(terminalIds.map((terminalId) => (
-      createCodexOverlayInWsl(terminalId, 'posix', false)
-    )));
-    assert.equal(fakeWsl.trustWatcherLaunchCount(), 0);
-  } finally {
-    for (const terminalId of terminalIds) cleanupCodexOverlayInWsl(terminalId);
-    fakeWsl.restore();
-  }
-});
 
 test('a running WSL Codex overlay promotes project trust without cleanup', async () => {
   const fakeWsl = installFakeWsl('tessera-wsl-live-trust-');
@@ -142,6 +153,49 @@ test('a running WSL Codex overlay promotes project trust without cleanup', async
     await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-live-project/);
 
     assert.equal(fs.existsSync(path.join(overlayPath, 'config.toml')), true);
+  } finally {
+    cleanupCodexOverlayInWsl(terminalId);
+    if (overlayPath) await waitForPathMissing(overlayPath);
+    fakeWsl.restore();
+  }
+});
+
+test('a late WSL trust watcher catches up changes made after its readiness timeout', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-late-watch-', {
+    watcherReadyDelaySeconds: '3.25',
+  });
+  const terminalId = 'terminal-wsl-late-watch';
+  let overlayPath: string | undefined;
+  try {
+    overlayPath = await createCodexOverlayInWsl(terminalId, 'posix', false);
+    fs.appendFileSync(
+      path.join(overlayPath, 'config.toml'),
+      '\n[projects."/tmp/wsl-late-watch-project"]\ntrust_level = "trusted"\n',
+    );
+
+    await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-late-watch-project/);
+  } finally {
+    cleanupCodexOverlayInWsl(terminalId);
+    if (overlayPath) await waitForPathMissing(overlayPath);
+    fakeWsl.restore();
+  }
+});
+
+test('a wedged WSL trust watcher is replaced and catches up the outage window', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-wedged-watch-', {
+    hangFirstWatcherBeforeReady: true,
+  });
+  const terminalId = 'terminal-wsl-wedged-watch';
+  let overlayPath: string | undefined;
+  try {
+    overlayPath = await createCodexOverlayInWsl(terminalId, 'posix', false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    fs.appendFileSync(
+      path.join(overlayPath, 'config.toml'),
+      '\n[projects."/tmp/wsl-wedged-watch-project"]\ntrust_level = "trusted"\n',
+    );
+
+    await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-wedged-watch-project/);
   } finally {
     cleanupCodexOverlayInWsl(terminalId);
     if (overlayPath) await waitForPathMissing(overlayPath);
@@ -174,19 +228,21 @@ test('WSL trust promotion retries instead of overwriting a concurrent account ed
   }
 });
 
-test('host polling keeps promoting trust edits while a WSL overlay remains live', async () => {
-  const fakeWsl = installFakeWsl('tessera-wsl-host-polling-');
-  const terminalId = 'terminal-wsl-host-polling';
+test('a stopped WSL trust watcher restarts while its overlay remains live', async () => {
+  const fakeWsl = installFakeWsl('tessera-wsl-watch-restart-', {
+    exitFirstWatcherAfterReady: true,
+  });
+  const terminalId = 'terminal-wsl-watch-restart';
   let overlayPath: string | undefined;
   try {
     overlayPath = await createCodexOverlayInWsl(terminalId, 'posix', false);
     await new Promise((resolve) => setTimeout(resolve, 750));
     fs.appendFileSync(
       path.join(overlayPath, 'config.toml'),
-      '\n[projects."/tmp/wsl-host-polling-project"]\ntrust_level = "trusted"\n',
+      '\n[projects."/tmp/wsl-restarted-watch-project"]\ntrust_level = "trusted"\n',
     );
 
-    await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-host-polling-project/);
+    await waitForFileMatch(fakeWsl.accountConfigPath, /\/tmp\/wsl-restarted-watch-project/);
   } finally {
     cleanupCodexOverlayInWsl(terminalId);
     if (overlayPath) await waitForPathMissing(overlayPath);

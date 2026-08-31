@@ -3,11 +3,6 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { SettingsManager } from '@/lib/settings/manager';
 import type { UserSettings } from '@/lib/settings/types';
 import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
-import {
-  requiresArchivedWorktreeRetentionConfirmation,
-  shouldPruneArchivedWorktreesForSettingsUpdate,
-} from '@/lib/settings/archived-worktree-retention';
-import { configureArchivedWorktreeRetention } from '@/lib/archive/archive-retention-runner';
 import { invalidateAgentEnvironmentCache } from '@/lib/cli/spawn-cli';
 import { invalidateCliStatusSnapshot } from '@/lib/cli/connection-checker';
 import { invalidateProviderSessionOptionsCache } from '@/lib/cli/provider-session-options';
@@ -57,12 +52,8 @@ export async function PUT(request: NextRequest) {
     const { userId } = auth;
 
     const previousSettings = await SettingsManager.load(userId, { silent: true });
-    const body = await request.json() as Partial<UserSettings> & {
-      confirmArchivedWorktreePrune?: unknown;
-      machineSettings?: unknown;
-    };
+    const body = await request.json() as Partial<UserSettings> & { machineSettings?: unknown };
     const {
-      confirmArchivedWorktreePrune,
       machineSettings: requestedMachineSettingsUpdate,
       ...settingsBody
     } = body;
@@ -97,20 +88,6 @@ export async function PUT(request: NextRequest) {
       lastModified: new Date().toISOString(),
     });
 
-    const requiresRetentionConfirmation = requiresArchivedWorktreeRetentionConfirmation(
-      previousSettings,
-      settings,
-    );
-    if (requiresRetentionConfirmation && confirmArchivedWorktreePrune !== true) {
-      return NextResponse.json(
-        {
-          error: 'Archived worktree retention confirmation required',
-          code: 'archived_worktree_retention_confirmation_required',
-        },
-        { status: 409 },
-      );
-    }
-
     await SettingsManager.save(userId, settings);
     if (hasAdvertisedAddressUpdate) {
       machineSettings = await saveMachineSettings({
@@ -134,14 +111,6 @@ export async function PUT(request: NextRequest) {
       // PTY 감지 캐시는 환경(native/wsl)별 PATH 세계라 환경 전환 시 재프로브.
       invalidateTerminalProviderDetection();
     }
-    configureArchivedWorktreeRetention(
-      settings.autoDeleteArchivedWorktrees
-        ? { retentionDays: settings.archivedWorktreeRetentionDays, userId }
-        : null,
-      {
-        runImmediately: shouldPruneArchivedWorktreesForSettingsUpdate(previousSettings, settings),
-      },
-    );
     return NextResponse.json({ success: true, settings, machineSettings });
   } catch (error) {
     if (error instanceof InvalidAdvertisedAddressError) {

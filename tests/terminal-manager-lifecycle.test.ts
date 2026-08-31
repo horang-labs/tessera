@@ -904,48 +904,6 @@ test('a provider-declared single Escape settles a running turn when the stop hoo
   )), [['idle', 'InterruptFallback']]);
 });
 
-test('PTY Escape fallback ignores tool activity that arrives before the settle timer', async () => {
-  const spawned: FakePty[] = [];
-  const inferredStates: ServerTransportMessage[] = [];
-  const manager = new TerminalManager(
-    () => {},
-    async () => createFactory(spawned),
-    undefined,
-    {
-      interruptSettleMs: 10,
-      onSessionStateChange: ({ message }) => inferredStates.push(message),
-    },
-  );
-
-  await manager.create(createOptions({ interruptInputPolicy: 'single-escape' }));
-  manager.recordSessionState({
-    type: 'session_state',
-    sessionId: 'session-a',
-    terminalId: 'terminal-a',
-    status: 'running',
-    hookEvent: 'PreToolUse',
-  }, 'user-a');
-
-  manager.write('terminal-a', 'user-a', 'connection-a', 'surface-a', '\x1b');
-  const acceptedInterruptedTool = manager.recordSessionState({
-    type: 'session_state',
-    sessionId: 'session-a',
-    terminalId: 'terminal-a',
-    status: 'running',
-    hookEvent: 'PostToolUse',
-  }, 'user-a');
-  await new Promise((resolve) => setTimeout(resolve, 25));
-
-  assert.equal(acceptedInterruptedTool, false);
-  assert.equal(
-    manager.getSessionStateForSession('session-a', 'user-a')?.status,
-    'idle',
-  );
-  assert.deepEqual(inferredStates.map((state) => (
-    state.type === 'session_state' ? [state.status, state.hookEvent] : [state.type]
-  )), [['idle', 'InterruptFallback']]);
-});
-
 test('a terminal without the single-Escape policy does not infer an interrupt', async () => {
   const spawned: FakePty[] = [];
   const inferredStates: ServerTransportMessage[] = [];

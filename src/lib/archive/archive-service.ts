@@ -12,7 +12,6 @@ import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { isManagedWorktreePath, removeManagedWorktree } from '@/lib/worktrees/managed';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
-import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
 import { pathExists } from '@/lib/filesystem/path-exists';
@@ -103,8 +102,6 @@ export interface ArchiveListResult {
 export interface RetentionResult {
   removed: number;
   skipped: number;
-  /** Eligible Worktrees for which this pass attempted physical cleanup. */
-  attempted: number;
   errors: Array<{ id: string; kind: ArchiveItemKind; error: string }>;
 }
 
@@ -117,11 +114,6 @@ export interface ArchiveListOptions {
 }
 
 const MAX_ARCHIVE_PAGE_SIZE = 200;
-const WINDOWS_WSL_REMOVAL_COOLDOWN_MS = 5_000;
-
-function waitForRemovalCooldown(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, WINDOWS_WSL_REMOVAL_COOLDOWN_MS));
-}
 
 function normalizePageLimit(limit: number | undefined): number | undefined {
   if (limit === undefined || !Number.isFinite(limit)) return undefined;
@@ -466,8 +458,11 @@ export async function removeArchivedWorktreeById(worktreeId: string, userId?: st
   if (item.sessions.some((session) => activeIds.has(session.id))) {
     throw new Error('Cannot delete worktree while sessions are running');
   }
-  const git = await createArchiveGitContext(userId);
-  const removed = await removeArchivedWorktree(item, git.runGit, true);
+  const removed = await removeArchivedWorktree(
+    item,
+    await createArchiveGitRunner(userId),
+    true,
+  );
   if (!removed) {
     throw new Error('Worktree is unavailable; canonical records were preserved');
   }
@@ -477,13 +472,13 @@ export async function removeArchivedWorktrees(
   options: Pick<ArchiveListOptions, 'projectId' | 'query'> = {},
   userId?: string,
 ): Promise<RetentionResult> {
-  const result: RetentionResult = { removed: 0, skipped: 0, attempted: 0, errors: [] };
+  const result: RetentionResult = { removed: 0, skipped: 0, errors: [] };
   const { items } = await listArchiveItems({
     projectId: options.projectId,
     query: options.query,
   });
   const activeIds = getActiveSessionIds();
-  const git = await createArchiveGitContext(userId);
+  const runGit = await createArchiveGitRunner(userId);
   const visitedWorktreeIds = new Set<string>();
 
   for (const item of items) {
@@ -500,14 +495,10 @@ export async function removeArchivedWorktrees(
       continue;
     }
     visitedWorktreeIds.add(item.worktreeId);
-    if (git.paceRemovals && result.attempted > 0) {
-      await waitForRemovalCooldown();
-    }
-    result.attempted += 1;
 
     try {
       assertWorktreeDeletionAllowed(item.worktreeId);
-      const removed = await removeArchivedWorktree(item, git.runGit);
+      const removed = await removeArchivedWorktree(item, runGit);
       if (removed) {
         result.removed += 1;
       } else {
@@ -608,13 +599,11 @@ function assertWorktreeDeletionAllowed(worktreeId: string): void {
 export async function pruneExpiredArchivedWorktrees(
   retentionDays: number,
   userId?: string,
-  options: { maxWorktreeAttempts?: number } = {},
 ): Promise<RetentionResult> {
-  const result: RetentionResult = { removed: 0, skipped: 0, attempted: 0, errors: [] };
+  const result: RetentionResult = { removed: 0, skipped: 0, errors: [] };
   const { items } = await listArchiveItems();
-  const git = await createArchiveGitContext(userId);
+  const runGit = await createArchiveGitRunner(userId);
   const visitedWorktreeIds = new Set<string>();
-  const maxWorktreeAttempts = options.maxWorktreeAttempts ?? Number.POSITIVE_INFINITY;
 
   for (const item of items) {
     if (
@@ -627,16 +616,11 @@ export async function pruneExpiredArchivedWorktrees(
       result.skipped += 1;
       continue;
     }
-    if (result.attempted >= maxWorktreeAttempts) break;
     visitedWorktreeIds.add(item.worktreeId);
-    if (git.paceRemovals && result.attempted > 0) {
-      await waitForRemovalCooldown();
-    }
-    result.attempted += 1;
 
     try {
       assertWorktreeDeletionAllowed(item.worktreeId);
-      const removed = await removeArchivedWorktree(item, git.runGit);
+      const removed = await removeArchivedWorktree(item, runGit);
       if (removed) {
         result.removed += 1;
       } else {
@@ -652,14 +636,7 @@ export async function pruneExpiredArchivedWorktrees(
   return result;
 }
 
-async function createArchiveGitContext(userId?: string): Promise<{
-  runGit: GitRunner | undefined;
-  paceRemovals: boolean;
-}> {
-  if (!userId) return { runGit: undefined, paceRemovals: false };
-  const agentEnvironment = await resolveGitEnvironment({ userId });
-  return {
-    runGit: createGitRunner(agentEnvironment),
-    paceRemovals: agentEnvironment === 'wsl' && getRuntimePlatform() === 'win32',
-  };
+async function createArchiveGitRunner(userId?: string): Promise<GitRunner | undefined> {
+  if (!userId) return undefined;
+  return createGitRunner(await resolveGitEnvironment({ userId }));
 }

@@ -240,19 +240,12 @@ export interface GitAbortOutcome {
   branch: string | null;
 }
 
-export interface GitRevertOutcome {
-  action: "revert";
-  /** The paths reverted, in selection order. */
-  files: string[];
-}
-
 export type GitActionOutcome =
   | GitCommitOutcome
   | GitPushOutcome
   | GitPullOutcome
   | GitCreatePullRequestOutcome
-  | GitAbortOutcome
-  | GitRevertOutcome;
+  | GitAbortOutcome;
 
 export type GitActionResult =
   | { ok: true; outcome: GitActionOutcome }

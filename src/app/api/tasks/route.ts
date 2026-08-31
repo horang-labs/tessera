@@ -9,7 +9,7 @@ import { broadcastTaskMutation, getOriginClientIdFromRequest } from '@/lib/ws/mu
 import logger from '@/lib/logger';
 import { pathExists } from '@/lib/filesystem/path-exists';
 import { getProjectViewWorktrees } from '@/lib/projects/project-view-projection';
-import { getProject, getProjectWorktree } from '@/lib/db/projects';
+import { getProjectWorktree } from '@/lib/db/projects';
 
 /**
  * GET /api/tasks?projectId=xxx
@@ -28,9 +28,6 @@ export async function GET(req: NextRequest) {
   try {
     const activeSessionIds = getActiveSessionIds(userId);
     const rawTasks = getProjectViewWorktrees(projectId, activeSessionIds);
-    const projectWorktree = getProjectWorktree(projectId);
-    const projectDiffWorkDir = projectWorktree?.filesystemPath
-      ?? getProject(projectId)?.decoded_path;
     const worktreePresence = await Promise.all(
       rawTasks.map(async (task) => ({
         id: task.id,
@@ -46,10 +43,7 @@ export async function GET(req: NextRequest) {
     );
     // Diff badge only applies to tasks bound to a worktree branch.
     const diffStatsByWorkDir = getCachedOrScheduleBulk(
-      [
-        projectDiffWorkDir,
-        ...rawTasks.map((t) => (t.worktreeBranch ? t.workDir : undefined)),
-      ],
+      rawTasks.map((t) => (t.worktreeBranch ? t.workDir : undefined)),
       userId,
     );
     const tasks = rawTasks.map((t) => ({

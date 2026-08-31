@@ -107,36 +107,6 @@ test('a branch refresh hides a Session from projection but retains an open tab t
   });
 });
 
-test('a canonical Project checkout update reaches every direct chat across WSL path spellings', () => {
-  const linuxChat = { ...scopedSession, id: 'linux-chat', workDir: '/home/work/repository' };
-  const missingPathChat = { ...scopedSession, id: 'missing-path-chat', workDir: undefined };
-  const stats = {
-    added: 3,
-    removed: 2,
-    changedFiles: 2,
-    newFiles: 1,
-    deletedFiles: 0,
-    computedAt: '2026-08-21T00:00:00.000Z',
-  };
-  const projectView = project([linuxChat, missingPathChat], 'main');
-  useSessionStore.setState({
-    ...useSessionStore.getInitialState(),
-    projects: [{
-      ...projectView,
-      projectWorktree: {
-        ...projectView.projectWorktree!,
-        path: '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\repository',
-      },
-    }],
-  });
-
-  useSessionStore.getState().applyDiffStatsUpdate([], stats, '/home/work/repository');
-
-  const updated = useSessionStore.getState().projects[0];
-  assert.deepEqual(updated.projectWorktree?.diffStats, stats);
-  assert.deepEqual(updated.sessions.map((session) => session.diffStats), [stats, stats]);
-});
-
 test('a changed Worktree branch schedules a Project projection refresh', async () => {
   useSessionStore.setState({
     ...useSessionStore.getInitialState(),

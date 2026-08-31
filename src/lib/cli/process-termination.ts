@@ -73,33 +73,6 @@ function killWindowsProcessTree(pid: number): void {
   }
 }
 
-/**
- * Stop a disposable CLI and every wrapper/grandchild it created.
- *
- * Windows-hosted WSL commands have a wsl.exe -> wsl.exe -> wslhost.exe tree.
- * Killing only the ChildProcess handle can leave the inner bridge (and its
- * conhost) alive long after the request has completed.
- */
-export function forceKillProcessTree(proc: ChildProcess): void {
-  const pid = proc.pid;
-  if (!pid) return;
-
-  if (process.platform === 'win32') {
-    killWindowsProcessTree(pid);
-    return;
-  }
-
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
-    try {
-      proc.kill('SIGKILL');
-    } catch {
-      // Process already exited.
-    }
-  }
-}
-
 export async function gracefulKillProcess(sessionId: string, proc: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
     const pid = proc.pid;

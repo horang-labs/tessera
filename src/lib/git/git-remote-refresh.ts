@@ -12,7 +12,6 @@
  */
 
 import logger from "@/lib/logger";
-import { crossEnvironmentFilesystemPathKey } from "@/lib/filesystem/path-equivalence";
 import { fetchGitRemote, getGitCommonDir } from "./git-panel";
 import { scheduleGitPanelRecompute } from "./git-panel-cache";
 
@@ -119,8 +118,7 @@ async function resolveRefsKeyCached(
   deps: GitRemoteRefreshDeps,
 ): Promise<string> {
   const state = getState();
-  const workDirKey = crossEnvironmentFilesystemPathKey(workDir);
-  const cached = state.refsKeyByWorkDir.get(workDirKey);
+  const cached = state.refsKeyByWorkDir.get(workDir);
   if (cached !== undefined) return cached;
 
   let resolved: string | null = null;
@@ -144,9 +142,9 @@ async function resolveRefsKeyCached(
   // the repository, which the interval already bounds. It is never a wrong
   // answer, only a less shared one. Not cached, so a momentary failure does not
   // decide the key for the rest of the process's life.
-  if (resolved === null) return workDirKey;
+  if (resolved === null) return workDir;
 
-  state.refsKeyByWorkDir.set(workDirKey, resolved);
+  state.refsKeyByWorkDir.set(workDir, resolved);
   return resolved;
 }
 

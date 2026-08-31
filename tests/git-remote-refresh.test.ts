@@ -107,29 +107,6 @@ test('sessions sharing a working directory fetch once between them', async () =>
   assert.deepEqual(h.fetched, [workDir]);
 });
 
-test('WSL display and UNC spellings share the fallback refresh interval', async () => {
-  const posix = '/home/work/Source/tessera-dev';
-  const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
-  const fetched: string[] = [];
-  const deps: GitRemoteRefreshDeps = {
-    now: () => 1_000_000,
-    resolveRefsKey: async () => null,
-    runFetch: async (workDir) => { fetched.push(workDir); },
-    onFetched: () => undefined,
-  };
-
-  await scheduleGitRemoteRefresh(
-    { sessionId: 'alias-posix', workDir: posix, userId: 'user-1' },
-    deps,
-  );
-  await scheduleGitRemoteRefresh(
-    { sessionId: 'alias-unc', workDir: unc, userId: 'user-1' },
-    deps,
-  );
-
-  assert.deepEqual(fetched, [posix]);
-});
-
 test('reads that arrive together start one fetch, not two', async () => {
   // Two panels on the same checkout poll on their own clocks and do overlap.
   // Neither has resolved which refs it is asking about yet, so the guard has to

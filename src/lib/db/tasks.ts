@@ -19,7 +19,6 @@ import {
   resolveEffectiveWorktreeCheckout,
 } from './worktree-identity';
 import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
-import { areCrossEnvironmentFilesystemPathsEquivalent } from '@/lib/filesystem/path-equivalence';
 
 export interface TaskRow {
   id: string;
@@ -609,21 +608,14 @@ export function setTaskArchived(id: string, archived: boolean): void {
 /**
  * Replace the PR status block for a task. Set `unsupported` when the task's
  * worktree cannot be synced (no GitHub origin / gh missing) so the UI can
- * hide "pending PR" affordances. Returns the workflow state only when the
- * Task still exists, is unarchived, and the transaction converged it.
+ * hide "pending PR" affordances.
  */
 export function setTaskPrStatus(
   id: string,
   input:
     | { unsupported: true }
-    | {
-        unsupported: false;
-        prStatus: TaskPrStatus | null;
-        remoteBranchExists?: boolean;
-        /** Successful current-PR probes also converge the Task workflow. */
-        workflowStatus?: WorkflowStatus;
-      }
-): WorkflowStatus | undefined {
+    | { unsupported: false; prStatus: TaskPrStatus | null; remoteBranchExists?: boolean }
+): void {
   const db = getDb();
   if (input.unsupported) {
     db.prepare(`
@@ -640,79 +632,54 @@ export function setTaskPrStatus(
           pr_status_known = 0
       WHERE id = ?
     `).run(new Date().toISOString(), id);
-    return undefined;
+    return;
   }
 
-  return db.transaction((): WorkflowStatus | undefined => {
-    const remoteFlag =
-      input.remoteBranchExists === undefined ? null : input.remoteBranchExists ? 1 : 0;
-    const pr = input.prStatus;
-    if (pr === null) {
-      db.prepare(`
-        UPDATE tasks
-        SET pr_number = NULL,
-            pr_url = NULL,
-            pr_state = NULL,
-            pr_merged_at = NULL,
-            pr_last_synced = ?,
-            pr_unsupported = 0,
-            remote_branch_exists = ?,
-            pr_head_ref_oid = NULL,
-            pr_relation = NULL,
-            pr_status_known = 1
-        WHERE id = ?
-      `).run(new Date().toISOString(), remoteFlag, id);
-    } else {
-      db.prepare(`
-        UPDATE tasks
-        SET pr_number = ?,
-            pr_url = ?,
-            pr_state = ?,
-            pr_merged_at = ?,
-            pr_last_synced = ?,
-            pr_unsupported = 0,
-            remote_branch_exists = ?,
-            pr_head_ref_oid = ?,
-            pr_relation = ?,
-            pr_status_known = 1
-        WHERE id = ?
-      `).run(
-        pr.number,
-        pr.url,
-        pr.state,
-        pr.mergedAt ?? null,
-        pr.lastSynced,
-        remoteFlag,
-        pr.headRefOid ?? null,
-        pr.relation,
-        id,
-      );
-    }
+  const remoteFlag =
+    input.remoteBranchExists === undefined ? null : input.remoteBranchExists ? 1 : 0;
+  const pr = input.prStatus;
+  if (pr === null) {
+    db.prepare(`
+      UPDATE tasks
+      SET pr_number = NULL,
+          pr_url = NULL,
+          pr_state = NULL,
+          pr_merged_at = NULL,
+          pr_last_synced = ?,
+          pr_unsupported = 0,
+          remote_branch_exists = ?,
+          pr_head_ref_oid = NULL,
+          pr_relation = NULL,
+          pr_status_known = 1
+      WHERE id = ?
+    `).run(new Date().toISOString(), remoteFlag, id);
+    return;
+  }
 
-    if (input.workflowStatus !== undefined) {
-      db.prepare(`
-        UPDATE tasks
-        SET workflow_status = ?, updated_at = ?
-        WHERE id = ?
-          AND archived = 0
-          AND workflow_status <> ?
-      `).run(
-        input.workflowStatus,
-        new Date().toISOString(),
-        id,
-        input.workflowStatus,
-      );
-      const workflow = db.prepare(`
-        SELECT workflow_status
-        FROM tasks
-        WHERE id = ? AND archived = 0
-      `).get(id) as { workflow_status: string } | undefined;
-      return workflow?.workflow_status === input.workflowStatus
-        ? input.workflowStatus
-        : undefined;
-    }
-    return undefined;
-  })();
+  db.prepare(`
+    UPDATE tasks
+    SET pr_number = ?,
+        pr_url = ?,
+        pr_state = ?,
+        pr_merged_at = ?,
+        pr_last_synced = ?,
+        pr_unsupported = 0,
+        remote_branch_exists = ?,
+        pr_head_ref_oid = ?,
+        pr_relation = ?,
+        pr_status_known = 1
+    WHERE id = ?
+  `).run(
+    pr.number,
+    pr.url,
+    pr.state,
+    pr.mergedAt ?? null,
+    pr.lastSynced,
+    remoteFlag,
+    pr.headRefOid ?? null,
+    pr.relation,
+    id,
+  );
 }
 
 /** Preserve the last displayable PR while making creation fail closed. */
@@ -733,7 +700,6 @@ export interface TaskPrSyncContext {
   prStatusKnown: boolean;
   prStatus?: TaskPrStatus;
   remoteBranchExists?: boolean;
-  workflowStatus: WorkflowStatus;
 }
 
 /** Read everything task-pr-sync needs for a single task in one query. */
@@ -753,11 +719,10 @@ export function getTaskPrSyncContext(id: string): TaskPrSyncContext | null {
       tasks.pr_head_ref_oid AS pr_head_ref_oid,
       tasks.pr_relation AS pr_relation,
       tasks.pr_status_known AS pr_status_known,
-      tasks.workflow_status AS workflow_status,
       ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
     FROM tasks
     WHERE tasks.id = ?
-  `).get(id) as (Pick<TaskRow, 'id' | 'worktree_branch' | 'pr_unsupported' | 'pr_number' | 'pr_url' | 'pr_state' | 'pr_merged_at' | 'pr_last_synced' | 'remote_branch_exists' | 'pr_head_ref_oid' | 'pr_relation' | 'pr_status_known' | 'workflow_status'> & { work_dir: string | null }) | undefined;
+  `).get(id) as (Pick<TaskRow, 'id' | 'worktree_branch' | 'pr_unsupported' | 'pr_number' | 'pr_url' | 'pr_state' | 'pr_merged_at' | 'pr_last_synced' | 'remote_branch_exists' | 'pr_head_ref_oid' | 'pr_relation' | 'pr_status_known'> & { work_dir: string | null }) | undefined;
   if (!row) return null;
 
   const prStatus = readPrStatusFromRow(row);
@@ -773,7 +738,6 @@ export function getTaskPrSyncContext(id: string): TaskPrSyncContext | null {
       row.remote_branch_exists === null || row.remote_branch_exists === undefined
         ? undefined
         : !!row.remote_branch_exists,
-    workflowStatus: row.workflow_status as WorkflowStatus,
   };
 }
 
@@ -866,27 +830,13 @@ export function getTaskBySessionId(
  * the directory names it unambiguously.
  */
 export function findTaskIdForWorktree(workDir: string): string | null {
-  const db = getDb();
-  const row = db.prepare(`
+  const row = getDb().prepare(`
     SELECT tasks.id AS task_id
     FROM tasks
     WHERE ${PARENT_FIRST_WORKTREE_PATH_SQL} = ?
     LIMIT 1
   `).get(workDir) as { task_id: string } | undefined;
-  if (row) return row.task_id;
-
-  // A Windows server stores canonical Worktree roots as UNC while an existing
-  // WSL Session may still report `/home/...`. Exact SQL remains the hot path;
-  // the fallback only runs when the spellings differ.
-  const candidates = db.prepare(`
-    SELECT tasks.id AS task_id, ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
-    FROM tasks
-    WHERE ${PARENT_FIRST_WORKTREE_PATH_SQL} IS NOT NULL
-    ORDER BY tasks.created_at, tasks.id
-  `).all() as Array<{ task_id: string; work_dir: string }>;
-  return candidates.find((candidate) =>
-    areCrossEnvironmentFilesystemPathsEquivalent(candidate.work_dir, workDir)
-  )?.task_id ?? null;
+  return row?.task_id ?? null;
 }
 
 /**

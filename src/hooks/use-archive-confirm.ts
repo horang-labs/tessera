@@ -2,25 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const DEFAULT_ARCHIVE_CONFIRM_SCOPE = '';
-
-export function isArchiveConfirmationArmed(
-  armedScopeKey: string | null,
-  currentScopeKey?: string | null,
-): boolean {
-  return armedScopeKey !== null
-    && armedScopeKey === (currentScopeKey ?? DEFAULT_ARCHIVE_CONFIRM_SCOPE);
-}
-
-export function useArchiveConfirm(
-  onConfirm: () => void,
-  timeoutMs = 3000,
-  scopeKey?: string | null,
-) {
-  const [armedScopeKey, setArmedScopeKey] = useState<string | null>(null);
+export function useArchiveConfirm(onConfirm: () => void, timeoutMs = 3000) {
+  const [isConfirmingArchive, setIsConfirmingArchive] = useState(false);
   const timeoutRef = useRef<number | null>(null);
-  const resolvedScopeKey = scopeKey ?? DEFAULT_ARCHIVE_CONFIRM_SCOPE;
-  const isConfirmingArchive = isArchiveConfirmationArmed(armedScopeKey, scopeKey);
 
   const clearConfirmTimeout = useCallback(() => {
     if (timeoutRef.current !== null) {
@@ -31,17 +15,17 @@ export function useArchiveConfirm(
 
   const resetArchiveConfirm = useCallback(() => {
     clearConfirmTimeout();
-    setArmedScopeKey(null);
+    setIsConfirmingArchive(false);
   }, [clearConfirmTimeout]);
 
   const armArchiveConfirm = useCallback(() => {
     clearConfirmTimeout();
-    setArmedScopeKey(resolvedScopeKey);
+    setIsConfirmingArchive(true);
     timeoutRef.current = window.setTimeout(() => {
-      setArmedScopeKey(null);
+      setIsConfirmingArchive(false);
       timeoutRef.current = null;
     }, timeoutMs);
-  }, [clearConfirmTimeout, resolvedScopeKey, timeoutMs]);
+  }, [clearConfirmTimeout, timeoutMs]);
 
   const handleArchiveClick = useCallback(() => {
     if (isConfirmingArchive) {

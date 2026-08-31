@@ -14,7 +14,7 @@ import {
 } from '@/lib/projects/current-project';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
-import { getCachedBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -70,15 +70,20 @@ export async function GET(req: NextRequest) {
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
       }));
-      // Every direct chat in a Project shares the Project checkout. This cold
-      // cross-project request may read its cache, but must never enqueue work
-      // for every persisted Session. The focused task request warms it later.
-      const projectDiffWorkDir = projectWorktree?.filesystemPath ?? project.decoded_path;
-      const diffStatsByWorkDir = getCachedBulk([projectDiffWorkDir]);
-      const projectDiffStats = diffStatsByWorkDir.get(projectDiffWorkDir) ?? undefined;
+      // Diff badge for any session whose work dir is a git worktree (standalone
+      // chats included). Cache-miss workDirs schedule a compute + WS push.
+      const diffStatsByWorkDir = getCachedOrScheduleBulk(
+        [
+          ...mapped.map((s) => s.workDir ?? undefined),
+          projectWorktree?.filesystemPath ?? undefined,
+        ],
+        userId,
+      );
       const sessions = mapped.map((s) => ({
         ...s,
-        diffStats: projectDiffStats,
+        diffStats: s.workDir
+          ? diffStatsByWorkDir.get(s.workDir) ?? undefined
+          : undefined,
       }));
 
       return {
@@ -95,7 +100,7 @@ export async function GET(req: NextRequest) {
               agentEnvironment,
             ),
             currentBranch: projectWorktree.currentBranch,
-            diffStats: projectDiffStats,
+            diffStats: diffStatsByWorkDir.get(projectWorktree.filesystemPath) ?? undefined,
           },
         }),
         ...(result.branchRenameWarning && {

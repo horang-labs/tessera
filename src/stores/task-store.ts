@@ -111,7 +111,6 @@ interface TaskState {
     prStatusKnown: boolean,
     prUnsupported: boolean,
     remoteBranchExists: boolean | undefined,
-    workflowStatus?: WorkflowStatus,
   ) => void;
   /** Insert an optimistic placeholder task (isPending=true) at the top of the project list */
   addPendingTask: (task: TaskEntity) => void;
@@ -804,14 +803,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     projectViewWorkspaceState.promoteTodoTasks(taskIds);
   },
 
-  applyPrStatusUpdate: (
-    taskId,
-    prStatus,
-    prStatusKnown,
-    prUnsupported,
-    remoteBranchExists,
-    workflowStatus,
-  ) => {
+  applyPrStatusUpdate: (taskId, prStatus, prStatusKnown, prUnsupported, remoteBranchExists) => {
     const patch = (tasks: TaskEntity[]): TaskEntity[] => {
       let changed = false;
       const next = tasks.map((task) => {
@@ -831,9 +823,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         Object.entries(state.tasksByProject).map(([projectId, tasks]) => [projectId, patch(tasks)]),
       ),
     }));
-    if (workflowStatus !== undefined) {
-      projectViewWorkspaceState.applyTaskMutation({ taskId, workflowStatus });
-    }
   },
 
   addPendingTask: (task) => {

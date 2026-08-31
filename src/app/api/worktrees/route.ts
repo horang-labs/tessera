@@ -279,7 +279,6 @@ export async function POST(req: NextRequest) {
   logger.info({ branchName, projectDir, worktreePath, worktreeRoot }, 'Creating git worktree');
 
   // --- Run git worktree add ---
-  let reusedExistingCheckout = false;
   try {
     await createGitWorktree({
       projectDir,
@@ -301,24 +300,7 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
-    if (
-      err instanceof WorktreeCreationError
-      && err.code === 'branch_already_checked_out'
-      && err.holderWorktreePath
-      && err.holderWorktreePath !== projectDir
-      && checkoutTarget
-    ) {
-      // A chat agent can create a Git Worktree directly, before Tessera has a
-      // chance to persist it. The branch may only be checked out once, so
-      // attach this task/session to that checkout instead of attempting a
-      // second `git worktree add` and leaving the user with an unusable error.
-      worktreePath = err.holderWorktreePath;
-      reusedExistingCheckout = true;
-      logger.info(
-        { branchName, projectDir, worktreePath },
-        'Reusing externally created git worktree already holding branch',
-      );
-    } else if (err instanceof WorktreeCreationError && err.code === 'branch_already_checked_out') {
+    if (err instanceof WorktreeCreationError && err.code === 'branch_already_checked_out') {
       return NextResponse.json(
         {
           code: 'BRANCH_ALREADY_CHECKED_OUT',
@@ -328,17 +310,20 @@ export async function POST(req: NextRequest) {
         },
         { status: 409 },
       );
-    } else if (msg.includes('already exists')) {
+    }
+    if (msg.includes('already exists')) {
       return NextResponse.json(
         { error: `Worktree path already exists: ${worktreePath}` },
         { status: 409 }
       );
-    } else if (msg.includes('is not a git repository')) {
+    }
+    if (msg.includes('is not a git repository')) {
       return NextResponse.json(
         { error: 'The project directory is not a git repository.' },
         { status: 422 }
       );
-    } else if (msg.includes('already checked out') || msg.includes('already used by worktree')) {
+    }
+    if (msg.includes('already checked out') || msg.includes('already used by worktree')) {
       return NextResponse.json(
         {
           code: 'BRANCH_ALREADY_CHECKED_OUT',
@@ -346,12 +331,12 @@ export async function POST(req: NextRequest) {
         },
         { status: 409 }
       );
-    } else {
-      return NextResponse.json(
-        { error: `Failed to create worktree: ${msg}` },
-        { status: 500 }
-      );
     }
+
+    return NextResponse.json(
+      { error: `Failed to create worktree: ${msg}` },
+      { status: 500 }
+    );
   }
 
   // Git runs inside the configured agent environment and must receive its own
@@ -392,9 +377,7 @@ export async function POST(req: NextRequest) {
     // one has nowhere to report to and is left unprepared.
     logger.warn(
       { branchName, projectDir, worktreePath },
-      reusedExistingCheckout
-        ? 'Existing worktree reused without a task; preparation was not started'
-        : 'Worktree created without a task; preparation was not started',
+      'Worktree created without a task; preparation was not started',
     );
   }
 

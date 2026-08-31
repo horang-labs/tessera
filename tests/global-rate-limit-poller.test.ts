@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { RateLimitPoller } from '../src/lib/rate-limit/poller';
 
-test('polls and caches Claude and Codex limits on the scheduled fallback', async () => {
+test('polls and caches Claude and Codex limits globally without a session', async () => {
   const observedEnvironments: string[] = [];
-  let scheduledPoll: (() => void) | null = null;
   const poller = new RateLimitPoller({
     listProviders: () => [
       {
@@ -30,20 +29,12 @@ test('polls and caches Claude and Codex limits on the scheduled fallback', async
         },
       },
     ],
-    schedule: (callback) => {
-      scheduledPoll = callback;
-      return {} as NodeJS.Timeout;
-    },
-    clearSchedule: () => {},
   });
   const broadcasts: string[] = [];
   poller.setBroadcast((message) => broadcasts.push(message.providerId));
   poller.setEnvironmentResolver(() => 'wsl');
 
   await poller.start();
-  assert.deepEqual(observedEnvironments, []);
-  scheduledPoll?.();
-  await new Promise((resolve) => setImmediate(resolve));
   poller.stop();
 
   assert.deepEqual(broadcasts.sort(), ['claude-code', 'codex']);

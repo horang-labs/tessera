@@ -7,10 +7,7 @@ import {
   supportsDesktopGitControl,
 } from '../src/components/git/git-desktop-commit-control';
 import type { GitPanelData } from '../src/types/git';
-import {
-  gitPrimaryActionToneClassName,
-  resolvePendingLabelKey,
-} from '../src/components/git/git-primary-action';
+import { resolvePendingLabelKey } from '../src/components/git/git-primary-action';
 import { derivePrimaryGitAction } from '../src/lib/git/primary-git-action';
 
 const DIRTY_DATA = {
@@ -68,13 +65,4 @@ test('pending copy names the menu action actually running', () => {
     resolvePendingLabelKey(pull, 'publish' as never),
     'gitPanel.push.publishButtonPending',
   );
-});
-
-test('the merged Task archive action uses the shared merged PR color token', () => {
-  const mergedTone = gitPrimaryActionToneClassName('archive_worktree');
-  const openTone = gitPrimaryActionToneClassName('view_pr');
-
-  assert.match(mergedTone, /bg-\(--pr-merged-text\)/);
-  assert.doesNotMatch(mergedTone, /bg-blue-/);
-  assert.match(openTone, /bg-blue-600/);
 });

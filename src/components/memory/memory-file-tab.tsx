@@ -33,7 +33,6 @@ import {
 import type { MemoryFileData, MemoryRootKey } from "@/types/memory";
 import type { ServerTransportMessage } from "@/lib/ws/message-types";
 import { cn } from "@/lib/utils";
-import { formatBytes } from '@/lib/format-bytes';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 type MemoryViewMode = "preview" | "edit";
@@ -62,6 +61,12 @@ function shouldRefreshForSession(msg: ServerTransportMessage, sessionId: string)
       && event.status === "completed"
       && (event.toolKind === "file_edit" || event.toolKind === "file_write")
     );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} MB`;
 }
 
 function displayFileName(value: string): string {

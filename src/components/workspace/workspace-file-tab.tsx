@@ -24,7 +24,6 @@ import {
   clearWorkspaceFileDirty,
   markWorkspaceFileDirty,
 } from "@/lib/workspace-files/workspace-dirty-registry";
-import { isWorkspaceImageMimeType } from '@/lib/workspace-files/workspace-file-preview';
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import {
@@ -165,8 +164,7 @@ export function WorkspaceFileTab({
   // everything past that. A binary file has no text buffer to edit at all.
   const editable = fileData !== null
     && !fileData.binary
-    && !fileData.truncated
-    && !isWorkspaceImageMimeType(fileData.mimeType);
+    && !fileData.truncated;
   const dirty = editable && draft !== null && draft !== fileData.content;
   dirtyRef.current = dirty;
 

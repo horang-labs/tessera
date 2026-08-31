@@ -82,22 +82,6 @@ test('sessions sharing one workDir produce a single recompute', () => {
   assert.deepEqual(recomputed, [{ workDir: '/repo/shared', userId: 'user-a' }]);
 });
 
-test('WSL display and UNC spellings produce a single recompute', () => {
-  const recomputed: Array<{ workDir: string; userId: string }> = [];
-  const result = runDiffStatsSafetySweep({
-    getConnectedUserIds: () => ['user-a'],
-    getActiveSessionIds: () => ['session-posix', 'session-unc'],
-    getSessionWorkDir: (sessionId) => sessionId === 'session-posix'
-      ? '/home/work/Source/tessera-dev'
-      : '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev',
-    needsRefresh: () => true,
-    recompute: (workDir, userId) => recomputed.push({ workDir, userId }),
-  });
-
-  assert.equal(result.inspected, 1);
-  assert.equal(recomputed.length, 1);
-});
-
 test('a workDir shared across users is recomputed once, for the first owner seen', () => {
   const { dependencies, recomputed } = createDependencies({
     connectedUserIds: ['user-a', 'user-b'],

@@ -592,7 +592,6 @@ export type AppServerMessage =
       prStatusKnown: boolean;
       prUnsupported: boolean;
       remoteBranchExists?: boolean;
-      workflowStatus?: import('@/types/task-entity').WorkflowStatus;
     }
   | {
       type: 'session_pr_status_update';

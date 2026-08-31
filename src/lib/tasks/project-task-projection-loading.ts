@@ -14,15 +14,3 @@ export function getProjectIdsMissingTaskProjection(
       && !attemptedProjectIds.has(projectId)
     );
 }
-
-/** Load All Projects task projections in display order without request fan-out. */
-export async function loadProjectTaskProjectionsSequentially(
-  projectIds: readonly string[],
-  loadProject: (projectId: string) => Promise<void>,
-  shouldContinue: () => boolean = () => true,
-): Promise<void> {
-  for (const projectId of projectIds) {
-    if (!shouldContinue()) return;
-    await loadProject(projectId);
-  }
-}

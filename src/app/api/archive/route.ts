@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { listArchiveItems } from '@/lib/archive/archive-service';
-import {
-  configureArchivedWorktreeRetention,
-  runArchivedWorktreeRetentionNow,
-} from '@/lib/archive/archive-retention-runner';
+import { listArchiveItems, pruneExpiredArchivedWorktrees } from '@/lib/archive/archive-service';
 import { SettingsManager } from '@/lib/settings/manager';
 import logger from '@/lib/logger';
 
@@ -42,21 +38,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const settings = await SettingsManager.load(auth.userId);
-    const policy = {
-      retentionDays: settings.archivedWorktreeRetentionDays,
-      userId: auth.userId,
-    };
-    configureArchivedWorktreeRetention(policy);
-    let result;
-    try {
-      result = await runArchivedWorktreeRetentionNow();
-    } finally {
-      if (!settings.autoDeleteArchivedWorktrees) {
-        // POST remains an explicit one-pass maintenance action even when the
-        // recurring policy is disabled. Do not leave a recurring timer behind.
-        configureArchivedWorktreeRetention(null);
-      }
-    }
+    const result = await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays, auth.userId);
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     logger.error({ error }, 'Failed to prune archived worktrees');
