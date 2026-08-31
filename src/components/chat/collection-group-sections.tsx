@@ -75,6 +75,8 @@ import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime
 import {
   SIDEBAR_TREE_LEADING_SLOT,
   SIDEBAR_TREE_ROW_GUTTER,
+  SIDEBAR_TREE_WORKTREE_CHILD_BRANCH,
+  SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
 } from './sidebar-tree-layout';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
@@ -663,9 +665,15 @@ function SubSessionRow({
           )}
         />
       )}
-      <div className="absolute -left-3 top-1/2 h-px w-[10px] bg-(--divider)" />
+      <div className={cn(
+        'absolute top-1/2 h-px w-[10px] bg-(--divider)',
+        SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+      )} />
       {isActive && (
-        <div className="absolute -left-3 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)" />
+        <div className={cn(
+          'absolute top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)',
+          SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+        )} />
       )}
       {showProviderIcons ? (
         <span className="relative flex shrink-0 items-center">
@@ -1272,7 +1280,7 @@ export function TaskItemRow({
 
       {isExpanded && (
         <div
-          className="relative ml-[30px] pl-3"
+          className={cn('relative', SIDEBAR_TREE_WORKTREE_CHILD_BRANCH)}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes(COLLECTION_ITEM_DND_MIME)) return;
 
