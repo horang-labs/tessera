@@ -170,8 +170,9 @@ test('creating a file posts and opens what it created', () => {
   // POST, now issued straight from the inline input.
   assert.match(mutationClientSource, /createWorkspaceFileRequest/);
   assert.match(mutationClientSource, /body: JSON\.stringify\(\{ path, content: "" \}\)/);
-  assert.match(filePanelSource, /await loadFiles\(\{[\s\S]*silent: true,[\s\S]*mutation:/);
-  assert.match(fileListHookSource, /cache: 'no-store'/);
+  // Lazy trees reconcile only the created entry's parent directory.
+  assert.match(filePanelSource, /await loadDirectory\(created\.path\.split\([\s\S]*silent: true,[\s\S]*mutation:/);
+  assert.match(fileListHookSource, /cache: ["']no-store["']/);
   assert.match(fileListHookSource, /MUTATION_LIST_ATTEMPTS = 5/);
   assert.match(filePanelSource, /mutation: \{ kind: "file", path: created\.path, type: "create" \}/);
   assert.match(filePanelSource, /useWorkspacePeekStore\(\(state\) => state\.target\)/);

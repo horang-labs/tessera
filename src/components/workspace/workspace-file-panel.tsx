@@ -90,7 +90,6 @@ interface WorkspaceDirectoryNode {
   name: string;
   path: string;
   children: WorkspaceTreeNode[];
-  fileCount: number;
 }
 
 type WorkspaceTreeNode = WorkspaceDirectoryNode | WorkspaceFileNode;
@@ -123,17 +122,12 @@ function finalizeDirectory(node: MutableDirectoryNode): WorkspaceDirectoryNode {
     .sort((a, b) => compareNodeNames(a.name, b.name));
   const files = [...node.files].sort((a, b) => compareNodeNames(a.name, b.name));
   const children: WorkspaceTreeNode[] = [...directories, ...files];
-  const fileCount = children.reduce((count, child) => {
-    if (child.type === "file") return count + 1;
-    return count + child.fileCount;
-  }, 0);
 
   return {
     type: "directory",
     name: node.name,
     path: node.path,
     children,
-    fileCount,
   };
 }
 
@@ -248,9 +242,14 @@ export function WorkspaceFilePanel({
     directories,
     error,
     files,
+    loadedDirectories,
+    loadDirectory,
     loadFiles,
     loading,
+    loadingDirectories,
     refreshFiles,
+    searchFiles,
+    searchResult,
     symlinks,
     truncated,
     workDir,
@@ -293,21 +292,90 @@ export function WorkspaceFilePanel({
     onRename: renameEntry,
     workspaceKey: targetKey,
   });
+  const handleExternalRefresh = inlineInput.handleExternalRefresh;
+  const skipInitialLiveRefreshRef = useRef(true);
+  useEffect(() => {
+    skipInitialLiveRefreshRef.current = true;
+  }, [targetKey]);
+  const handleLiveRefresh = useCallback(() => {
+    // The root listing just came from disk before the subscription was allowed
+    // to start. Its subscribe-time refresh would duplicate that same shallow
+    // request; later reconnects and actual tree changes still refresh normally.
+    if (skipInitialLiveRefreshRef.current) {
+      skipInitialLiveRefreshRef.current = false;
+      return;
+    }
+    handleExternalRefresh();
+  }, [handleExternalRefresh]);
 
   useWorkspaceFilesLiveSync({
-    enabled: Boolean(sessionId) && isDocumentVisible,
+    // Let the shallow root request win the first paint before starting the
+    // recursive background watch index on bridged Windows/WSL workspaces.
+    enabled: Boolean(sessionId) && isDocumentVisible && !loading,
     // Gated, not passed straight through: a reconcile landing while a name is
     // being typed would take the row it is being typed into.
-    onRefresh: inlineInput.handleExternalRefresh,
+    onRefresh: handleLiveRefresh,
     sessionId,
     subscriberId,
   });
 
+  const isSearching = query.trim().length > 0;
+  useEffect(function loadGlobalSearchResults() {
+    const trimmed = query.trim();
+    const abortController = new AbortController();
+    if (!trimmed) {
+      void searchFiles("", { signal: abortController.signal });
+      return () => abortController.abort();
+    }
+    const timer = window.setTimeout(() => {
+      void searchFiles(trimmed, { signal: abortController.signal });
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      abortController.abort();
+    };
+  }, [query, searchFiles]);
+
+  const loadedDirectorySet = useMemo(() => new Set(loadedDirectories), [loadedDirectories]);
+  const loadingDirectorySet = useMemo(() => new Set(loadingDirectories), [loadingDirectories]);
+
+  // Expansion state is persisted. Restore it one level at a time after the
+  // root is visible, never by turning tab entry back into a recursive scan.
+  useEffect(function restoreExpandedDirectories() {
+    if (loading || isSearching) return;
+    const knownDirectories = new Set(directories);
+    for (const path of [...storedExpandedPaths].sort((left, right) =>
+      left.split("/").length - right.split("/").length)) {
+      const parent = path.split("/").slice(0, -1).join("/");
+      if (
+        knownDirectories.has(path)
+        && loadedDirectorySet.has(parent)
+        && !loadedDirectorySet.has(path)
+        && !loadingDirectorySet.has(path)
+      ) {
+        void loadDirectory(path, { silent: true });
+      }
+    }
+  }, [
+    directories,
+    isSearching,
+    loadDirectory,
+    loadedDirectorySet,
+    loading,
+    loadingDirectorySet,
+    storedExpandedPaths,
+  ]);
+
+  const listedFiles = isSearching ? searchResult.files : files;
+  const listedDirectories = isSearching ? searchResult.directories : directories;
+  const listedSymlinks = isSearching ? searchResult.symlinks : symlinks;
+  const listedTruncated = isSearching ? searchResult.truncated : truncated;
+
   const baseFiles = useMemo(
     () => (showHiddenFiles
-      ? files
-      : files.filter((filePath) => !isHiddenWorkspaceRelativePath(filePath))),
-    [files, showHiddenFiles],
+      ? listedFiles
+      : listedFiles.filter((filePath) => !isHiddenWorkspaceRelativePath(filePath))),
+    [listedFiles, showHiddenFiles],
   );
   const visibleFiles = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -317,9 +385,9 @@ export function WorkspaceFilePanel({
   }, [baseFiles, query]);
   const baseDirectories = useMemo(
     () => (showHiddenFiles
-      ? directories
-      : directories.filter((dirPath) => !isHiddenWorkspaceRelativePath(dirPath))),
-    [directories, showHiddenFiles],
+      ? listedDirectories
+      : listedDirectories.filter((dirPath) => !isHiddenWorkspaceRelativePath(dirPath))),
+    [listedDirectories, showHiddenFiles],
   );
   const visibleDirectories = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -341,12 +409,11 @@ export function WorkspaceFilePanel({
     return baseDirectories.filter((dirPath) =>
       dirPath.toLowerCase().includes(trimmed) || ancestors.has(dirPath));
   }, [baseDirectories, query, visibleFiles]);
-  const symlinkPaths = useMemo(() => new Set(symlinks), [symlinks]);
+  const symlinkPaths = useMemo(() => new Set(listedSymlinks), [listedSymlinks]);
   const fileTree = useMemo(
     () => buildFileTree(visibleFiles, symlinkPaths, visibleDirectories),
     [symlinkPaths, visibleDirectories, visibleFiles],
   );
-  const isSearching = query.trim().length > 0;
 
   // Expand the ancestors, or an entry created inside a collapsed folder appears
   // to have done nothing.
@@ -359,7 +426,7 @@ export function WorkspaceFilePanel({
     try {
       const created = await createWorkspaceDirectoryRequest(target, path);
       expandParentOf(created.path);
-      await loadFiles({
+      await loadDirectory(created.path.split("/").slice(0, -1).join("/"), {
         silent: true,
         mutation: { kind: "directory", path: created.path, type: "create" },
       });
@@ -386,7 +453,7 @@ export function WorkspaceFilePanel({
       // Creation immediately navigates away to the new file tab. Finish the
       // list reload first so a Worktree panel without a Session watcher does not
       // show a stale tree when the user comes back.
-      await loadFiles({
+      await loadDirectory(created.path.split("/").slice(0, -1).join("/"), {
         silent: true,
         mutation: { kind: "file", path: created.path, type: "create" },
       });
@@ -418,7 +485,7 @@ export function WorkspaceFilePanel({
       if (selectedPath && isPathUnderMutation(selectedPath, renamed.previousPath)) {
         setSelectedPath(renamed.path + selectedPath.slice(renamed.previousPath.length));
       }
-      await loadFiles({
+      await loadDirectory(renamed.previousPath.split("/").slice(0, -1).join("/"), {
         silent: true,
         mutation: {
           kind,
@@ -454,7 +521,7 @@ export function WorkspaceFilePanel({
       if (selectedPath && isPathUnderMutation(selectedPath, request.path)) {
         setSelectedPath(null);
       }
-      await loadFiles({
+      await loadDirectory(request.path.split("/").slice(0, -1).join("/"), {
         silent: true,
         mutation: { kind: request.kind, path: request.path, type: "delete" },
       });
@@ -475,6 +542,14 @@ export function WorkspaceFilePanel({
 
   function toggleDirectory(path: string) {
     if (!targetKey) return;
+    if (
+      !isSearching
+      && !expandedPaths.has(path)
+      && !loadedDirectorySet.has(path)
+      && !loadingDirectorySet.has(path)
+    ) {
+      void loadDirectory(path);
+    }
     toggleStoredPath(targetKey, path);
   }
 
@@ -584,6 +659,7 @@ export function WorkspaceFilePanel({
 
     if (node.type === "directory") {
       const expanded = isSearching || expandedPaths.has(node.path);
+      const directoryLoading = loadingDirectorySet.has(node.path);
       const FolderIcon = expanded ? FolderOpen : Folder;
       const absolutePath = toAbsoluteWorkspacePath(workDir, node.path);
       const children = (
@@ -646,9 +722,9 @@ export function WorkspaceFilePanel({
             >
               {node.name}
             </span>
-            <span className="shrink-0 font-mono text-[10px] text-(--text-muted) tabular-nums">
-              {node.fileCount}
-            </span>
+            {directoryLoading ? (
+              <LoaderCircle className="h-3 w-3 shrink-0 animate-spin text-(--text-muted)" />
+            ) : null}
           </button>
           </div>
           {expanded ? children : null}
@@ -754,8 +830,10 @@ export function WorkspaceFilePanel({
                 Files
               </p>
               <p className="truncate text-[11px] text-(--text-muted)">
-                {baseFiles.length.toLocaleString()} files
-                {truncated ? " · truncated" : ""}
+                {isSearching
+                  ? `${visibleFiles.length.toLocaleString()} matches`
+                  : `${baseFiles.length.toLocaleString()} files loaded`}
+                {listedTruncated ? " · truncated" : ""}
               </p>
             </div>
           </div>
@@ -824,6 +902,12 @@ export function WorkspaceFilePanel({
         <div className="flex h-full items-center justify-center">
           <LoaderCircle className="h-5 w-5 animate-spin text-(--text-muted)" />
         </div>
+      ) : isSearching && searchResult.loading ? (
+        <div className="flex h-full items-center justify-center">
+          <LoaderCircle className="h-5 w-5 animate-spin text-(--text-muted)" />
+        </div>
+      ) : isSearching && searchResult.error ? (
+        <EmptyState title="Search unavailable" body={searchResult.error} icon="error" />
       ) : error ? (
         <EmptyState title="Files unavailable" body={error} icon="error" />
       ) : fileTree.length === 0 && !inlineInput.input ? (
