@@ -696,6 +696,7 @@ export function WorkspaceFilePanel({
           onDoubleClick={() => {
             if (!target) return;
             openWorkspaceTargetFileTab(target, 'file', node.path, {
+              preferKanbanPeek: true,
               projectDir: sessionProjectDir,
             });
           }}

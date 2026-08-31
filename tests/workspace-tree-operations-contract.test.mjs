@@ -168,7 +168,7 @@ test('an input from another workspace cannot strand this panel', () => {
   assert.match(filePanelSource, /onRename: renameEntry,\s*\n\s*workspaceKey: targetKey,/);
 });
 
-test('a file click previews once and its double-click retains a real tab', () => {
+test('a file click previews once and its double-click respects Kanban Peek', () => {
   // Both clicks reach the row, but only the first is an independent preview.
   assert.match(fileRowSource, /if \(!shouldOpenOnRowClick\(event\.detail\)\) return;/);
   assert.match(inlineStateSource, /return clickCount === 1/);
@@ -182,10 +182,10 @@ test('a file click previews once and its double-click retains a real tab', () =>
   );
   assert.ok(doubleClick?.groups?.body, 'the file row owns a double-click handler');
   assert.match(doubleClick.groups.body, /openWorkspaceTargetFileTab\(target, 'file', node\.path/);
-  assert.doesNotMatch(
+  assert.match(
     doubleClick.groups.body,
-    /preferKanbanPeek/,
-    'double-click must bypass Kanban Peek and retain a tab',
+    /preferKanbanPeek: true/,
+    'double-click pins in List mode but must stay inside Kanban Peek mode',
   );
   // F2 renames; Enter still activates the row, so the keyboard can open a file.
   assert.match(fileRowSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
