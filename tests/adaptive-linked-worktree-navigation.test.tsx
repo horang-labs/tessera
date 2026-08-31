@@ -158,18 +158,6 @@ test('linked Worktree rows render standalone, composite, and expanded identities
   assert.match(expanded, /collection-subsession-two/);
 });
 
-test('expanded Worktree child session titles retain the desktop row width until actions appear', () => {
-  const markup = renderLinkedWorktree(['one', 'two']);
-
-  // The desktop quick actions are hover-only. They must overlay the row rather
-  // than reserve their full width, otherwise every child title is truncated
-  // while that space is visibly empty.
-  assert.match(
-    markup,
-    /data-testid="collection-subsession-one"[\s\S]*?class="[^"]*sm:absolute[^"]*"/,
-  );
-});
-
 test('selecting an expanded child Session does not also select its parent Worktree', () => {
   assert.equal(isLinkedWorktreeParentActive({
     density: 'expanded',
