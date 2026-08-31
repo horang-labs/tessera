@@ -110,6 +110,66 @@ test('the same canonical Session has independent tabs and active targets in A an
   assert.equal(usePanelStore.getState().activeTabId, tabC);
 });
 
+test('Project switching preserves the visible order of interleaved global and Project tabs', () => {
+  resetWorkspace();
+
+  const tabs = [
+    { id: 'project-a-first', projectDir: 'project-a', title: 'A first', isPreview: false },
+    { id: 'global-middle', projectDir: null, title: 'Global middle', isPreview: false },
+    { id: 'project-a-last', projectDir: 'project-a', title: 'A last', isPreview: false },
+  ];
+  const panelData = (tabId: string) => ({
+    layout: { type: 'leaf' as const, panelId: `${tabId}-panel` },
+    panels: { [`${tabId}-panel`]: { id: `${tabId}-panel`, sessionId: null } },
+    activePanelId: `${tabId}-panel`,
+  });
+  const projectCTab = {
+    id: 'project-c-only',
+    projectDir: 'project-c',
+    title: 'C only',
+    isPreview: false,
+  };
+
+  useTabStore.setState({
+    ...useTabStore.getInitialState(),
+    tabs,
+    activeTabId: 'project-a-first',
+    lruTabIds: tabs.map((tab) => tab.id),
+    currentProjectDir: 'project-a',
+    projectTabStates: {
+      'project-c': {
+        tabs: [projectCTab],
+        activeTabId: projectCTab.id,
+        lruTabIds: [projectCTab.id],
+        tabPanelSnapshots: { [projectCTab.id]: panelData(projectCTab.id) },
+      },
+    },
+    globalTabState: null,
+  });
+  usePanelStore.setState({
+    activeTabId: 'project-a-first',
+    tabPanels: Object.fromEntries(tabs.map((tab) => [tab.id, panelData(tab.id)])),
+  });
+
+  const originalOrder = tabs.map((tab) => tab.id);
+  useTabStore.getState().switchProject('project-c');
+  useTabStore.getState().switchProject('project-a');
+
+  assert.deepEqual(
+    useTabStore.getState().tabs.map((tab) => tab.id),
+    originalOrder,
+  );
+
+  useTabStore.getState().persistToLocalStorage();
+  resetWorkspace(false);
+  useTabStore.getState().restoreFromLocalStorage();
+  assert.deepEqual(
+    useTabStore.getState().tabs.map((tab) => tab.id),
+    originalOrder,
+    'reload must preserve the same visible order',
+  );
+});
+
 test('reload restores each tab through its selected Project projection', () => {
   resetWorkspace();
   const tabA = openSharedSession('project-a');

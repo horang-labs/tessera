@@ -91,6 +91,8 @@ export interface TabStoreState {
   projectTabStates: Record<string, ProjectTabState>;
   /** 모든 프로젝트에서 항상 보이는 전역 탭 상태. */
   globalTabState: ProjectTabState | null;
+  /** 프로젝트별 화면에서 전역/프로젝트 탭이 합쳐져 보이는 순서. */
+  tabOrderIdsByScope: Record<string, string[]>;
   /** 현재 활성 프로젝트 디렉토리. null이면 아직 프로젝트 미결정 상태. */
   currentProjectDir: string | null;
 }
@@ -312,6 +314,8 @@ export interface PersistedTabStoreV3 {
   projects: Record<string, { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] }>;
   /** 전역 탭 상태. 전역 탭이 없으면 null. */
   global: { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] } | null;
+  /** 프로젝트별 화면에서 전역/프로젝트 탭이 합쳐져 보이는 순서. */
+  tabOrderIdsByScope?: Record<string, string[]>;
 }
 
 /** localStorage에 저장되는 탭 스토어 DTO (v1 | v2 | v3) */
