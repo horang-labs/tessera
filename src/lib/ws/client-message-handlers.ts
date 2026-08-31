@@ -459,7 +459,6 @@ export function handleIncomingServerMessage({
         msg.prStatusKnown,
         msg.prUnsupported,
         msg.remoteBranchExists,
-        msg.workflowStatus,
       );
       return { wasReconnect };
 

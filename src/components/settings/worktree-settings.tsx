@@ -1,10 +1,8 @@
 'use client';
 
 import { useI18n } from '@/lib/i18n';
-import { useWorktreeRetentionSettingsUpdate } from '@/hooks/use-worktree-retention-settings-update';
+import { useSettingsStore } from '@/stores/settings-store';
 import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
-import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
-import { cn } from '@/lib/utils';
 
 const WORKTREE_PATH_TEMPLATE_EXAMPLES = [
   {
@@ -56,43 +54,13 @@ const WORKTREE_PATH_TEMPLATE_TOKENS = [
 
 export default function WorktreeSettings() {
   const { t } = useI18n();
-  const {
-    settings,
-    updateSettings,
-    retentionDaysInputValue,
-    setRetentionDaysDraft,
-    commitRetentionDays,
-    retentionConfirmDialog,
-  } = useWorktreeRetentionSettingsUpdate({ surface: 'settings' });
-  const autoDeleteArchivedWorktrees = settings.autoDeleteArchivedWorktrees;
+  const settings = useSettingsStore((state) => state.settings);
+  const updateSettings = useSettingsStore((state) => state.updateSettings);
   const managedWorktreePathTemplate = settings.managedWorktreePathTemplate ?? '';
 
   return (
-    <>
-      <div className="space-y-4">
+    <div className="space-y-4">
         <h3 className="font-medium text-(--text-primary)">{t('settings.worktree.title')}</h3>
-
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex flex-col gap-0.5">
-            <label htmlFor="autoDeleteArchivedWorktrees" className="text-sm text-(--text-secondary)">
-              {t('settings.worktree.autoDeleteArchivedWorktrees')}
-            </label>
-            <span id="autoDeleteArchivedWorktreesDesc" className="text-[11px] text-(--text-tertiary)">
-              {t('settings.worktree.autoDeleteArchivedWorktreesDesc')}
-            </span>
-          </div>
-          <label className={PHONE_TOUCH_TARGET}>
-            <input
-              {...settingsTelemetryClickAttributes('settings.development.worktree_auto_delete')}
-              id="autoDeleteArchivedWorktrees"
-              aria-describedby="autoDeleteArchivedWorktreesDesc"
-              type="checkbox"
-              checked={autoDeleteArchivedWorktrees}
-              onChange={(event) => void updateSettings({ autoDeleteArchivedWorktrees: event.target.checked })}
-              className="h-4 w-4 accent-(--accent)"
-            />
-          </label>
-        </div>
 
         <div className="space-y-2">
           <div className="flex flex-col gap-0.5">
@@ -157,40 +125,6 @@ export default function WorktreeSettings() {
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex flex-col gap-0.5">
-            <label htmlFor="archivedWorktreeRetentionDays" className="text-sm text-(--text-secondary)">
-              {t('settings.worktree.retentionDays')}
-            </label>
-            <span id="archivedWorktreeRetentionDaysDesc" className="text-[11px] text-(--text-tertiary)">
-              {t('settings.worktree.retentionDaysDesc')}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              {...settingsTelemetryClickAttributes('settings.development.worktree_retention_days')}
-              id="archivedWorktreeRetentionDays"
-              aria-describedby="archivedWorktreeRetentionDaysDesc"
-              type="number"
-              min={1}
-              max={365}
-              value={retentionDaysInputValue}
-              onFocus={(event) => setRetentionDaysDraft(event.currentTarget.value)}
-              onChange={(event) => setRetentionDaysDraft(event.target.value)}
-              onBlur={() => void commitRetentionDays()}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-              className={cn(
-                'w-20 rounded-md border border-(--input-border) bg-(--input-bg) px-3 py-2 text-sm text-(--text-primary) focus:outline-none focus:ring-1 focus:ring-(--accent)',
-                PHONE_TOUCH_TARGET_HEIGHT,
-              )}
-            />
-            <span className="text-sm text-(--text-muted)">{t('settings.worktree.days')}</span>
-          </div>
-        </div>
-      </div>
-      {retentionConfirmDialog}
-    </>
+    </div>
   );
 }

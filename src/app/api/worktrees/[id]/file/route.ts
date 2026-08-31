@@ -65,10 +65,6 @@ async function authenticateAndResolveRoot(
 
 function toErrorResponse(error: unknown, worktreeId: string, action: string): NextResponse {
   if (error instanceof WorkspaceFileError) {
-    logger.error(
-      { error, worktreeId, code: error.code, status: error.status },
-      `Failed to ${action} Worktree file`,
-    );
     return jsonError(error.code, error.message, error.status);
   }
   logger.error({ error, worktreeId }, `Failed to ${action} Worktree file`);

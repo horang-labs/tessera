@@ -31,6 +31,7 @@ interface GitPanelStoreState {
   applyGitPanelData: (sessionId: string, data: GitPanelData) => void;
 
   setCommitMessage: (worktreeKey: string, message: string) => void;
+  toggleCommitFile: (worktreeKey: string, path: string) => void;
   setCommitFilesSelected: (
     worktreeKey: string,
     paths: readonly string[],
@@ -150,6 +151,21 @@ export const useGitPanelStore = create<GitPanelStoreState>((set) => ({
         },
       },
     }));
+  },
+
+  toggleCommitFile: (worktreeKey, path) => {
+    set((state) => {
+      const current = state.deliveryByWorktree[worktreeKey] ?? emptyDeliveryState();
+      const deselectedPaths = new Set(current.deselectedPaths);
+      if (deselectedPaths.has(path)) deselectedPaths.delete(path);
+      else deselectedPaths.add(path);
+      return {
+        deliveryByWorktree: {
+          ...state.deliveryByWorktree,
+          [worktreeKey]: { ...current, deselectedPaths },
+        },
+      };
+    });
   },
 
   setCommitFilesSelected: (worktreeKey, paths, selected) => {

@@ -4,10 +4,7 @@ import {
   buildOriginProjectRepresentation,
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
-import {
-  getProjectIdsMissingTaskProjection,
-  loadProjectTaskProjectionsSequentially,
-} from '@/lib/tasks/project-task-projection-loading';
+import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
 
@@ -125,29 +122,4 @@ test('fresh global surfaces request every missing Project task projection', () =
     {},
     new Set(['project-a', 'project-c']),
   ), []);
-});
-
-test('All Projects loads task projections strictly in display order', async () => {
-  const events: string[] = [];
-  let inFlight = 0;
-  let maxInFlight = 0;
-
-  await loadProjectTaskProjectionsSequentially(
-    ['project-a', 'project-b', 'project-c'],
-    async (projectId) => {
-      inFlight += 1;
-      maxInFlight = Math.max(maxInFlight, inFlight);
-      events.push(`start:${projectId}`);
-      await Promise.resolve();
-      events.push(`end:${projectId}`);
-      inFlight -= 1;
-    },
-  );
-
-  assert.equal(maxInFlight, 1);
-  assert.deepEqual(events, [
-    'start:project-a', 'end:project-a',
-    'start:project-b', 'end:project-b',
-    'start:project-c', 'end:project-c',
-  ]);
 });

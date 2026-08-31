@@ -23,7 +23,6 @@ export function installTaskPrStatusBroadcast(broadcast: BroadcastFn): void {
         prStatusKnown: update.prStatusKnown,
         prUnsupported: update.prUnsupported,
         remoteBranchExists: update.remoteBranchExists,
-        workflowStatus: update.workflowStatus,
       });
     } catch (err) {
       logger.warn({ err, taskId: update.taskId }, 'Failed to broadcast task PR update');

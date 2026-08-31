@@ -9,7 +9,6 @@ import {
   executeGitAction,
   GitActionRejection,
   promoteHookRejection,
-  resolveGitActionFilePath,
   type GitActionTarget,
 } from '@/lib/git/git-actions';
 import { GitCommandError } from '@/lib/worktrees/git-runner';
@@ -24,25 +23,6 @@ const execFileAsync = promisify(execFile);
  */
 const LOCAL_ENVIRONMENT: AgentEnvironment = 'wsl';
 const SKIP_ON_WINDOWS = process.platform === 'win32';
-
-test('untracked revert resolves a CLI-reported path for the host filesystem', async () => {
-  const reportedWorkDir = '/home/work/Source/tessera-dev';
-  const expectedHostRoot = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
-  const expectedHostPath = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev\\fresh.txt';
-  const inputs: string[] = [];
-
-  const resolved = await resolveGitActionFilePath(
-    reportedWorkDir,
-    'fresh.txt',
-    async (candidate) => {
-      inputs.push(candidate);
-      return expectedHostRoot;
-    },
-  );
-
-  assert.deepEqual(inputs, [reportedWorkDir]);
-  assert.equal(resolved, expectedHostPath);
-});
 
 async function withTempRepo(
   run: (target: GitActionTarget, repoDir: string) => Promise<void>,
@@ -373,118 +353,5 @@ test('a failing commit puts back the index entries it had to create', async (t) 
         ['fresh.txt', 'untracked'],
       ],
     );
-  });
-});
-
-test('reverting a modified file restores it to HEAD', async (t) => {
-  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
-
-  await withTempRepo(async (target, repoDir) => {
-    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'seed changed\n');
-
-    const result = await executeGitAction(target, {
-      action: 'revert',
-      files: ['seed.txt'],
-    });
-
-    assert.equal(result.ok, true, 'expected the revert to succeed');
-    if (!result.ok) return;
-    assert.equal(result.outcome.action, 'revert');
-    assert.deepEqual(result.outcome.files, ['seed.txt']);
-    // The working tree is back to the committed seed.
-    assert.equal(fs.readFileSync(path.join(repoDir, 'seed.txt'), 'utf8'), 'seed\n');
-    assert.equal(await statusOf(repoDir), '');
-  });
-});
-
-test('reverting a deleted file restores the file from HEAD', async (t) => {
-  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
-
-  await withTempRepo(async (target, repoDir) => {
-    fs.rmSync(path.join(repoDir, 'seed.txt'));
-
-    const result = await executeGitAction(target, {
-      action: 'revert',
-      files: ['seed.txt'],
-    });
-
-    assert.equal(result.ok, true, 'expected the revert to succeed');
-    if (!result.ok) return;
-    assert.equal(fs.readFileSync(path.join(repoDir, 'seed.txt'), 'utf8'), 'seed\n');
-    assert.equal(await statusOf(repoDir), '');
-  });
-});
-
-test('reverting untracked files deletes them outright', async (t) => {
-  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
-
-  await withTempRepo(async (target, repoDir) => {
-    fs.writeFileSync(path.join(repoDir, 'fresh.txt'), 'brand new\n');
-    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'seed changed\n');
-
-    const result = await executeGitAction(target, {
-      action: 'revert',
-      files: ['fresh.txt', 'seed.txt'],
-    });
-
-    assert.equal(result.ok, true, 'expected the revert to succeed');
-    if (!result.ok) return;
-    // The untracked file is gone; the modified file is restored.
-    assert.equal(fs.existsSync(path.join(repoDir, 'fresh.txt')), false);
-    assert.equal(fs.readFileSync(path.join(repoDir, 'seed.txt'), 'utf8'), 'seed\n');
-    assert.equal(await statusOf(repoDir), '');
-  });
-});
-
-test('reverting a file outside the change set is refused', async (t) => {
-  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
-
-  await withTempRepo(async (target, repoDir) => {
-    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'seed changed\n');
-    const statusBefore = await statusOf(repoDir);
-
-    const rejection = await executeGitAction(target, {
-      action: 'revert',
-      files: ['never-existed.txt'],
-    }).then(() => null, (error: unknown) => error);
-
-    assert.ok(rejection instanceof GitActionRejection);
-    assert.equal(rejection.code, 'file_not_in_change_set');
-    assert.equal(await statusOf(repoDir), statusBefore);
-  });
-});
-
-test('reverting nothing is refused', async (t) => {
-  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
-
-  await withTempRepo(async (target) => {
-    const rejection = await executeGitAction(target, {
-      action: 'revert',
-      files: [],
-    }).then(() => null, (error: unknown) => error);
-
-    assert.ok(rejection instanceof GitActionRejection);
-    assert.equal(rejection.code, 'no_files_selected');
-  });
-});
-
-test('reverting a conflicted or staged-only file is refused', async (t) => {
-  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
-
-  await withTempRepo(async (target, repoDir) => {
-    // A change that exists only in the index (staged) has no working-tree
-    // state to restore, so it is not revertible.
-    fs.writeFileSync(path.join(repoDir, 'seed.txt'), 'staged change\n');
-    await execFileAsync('git', ['add', 'seed.txt'], { cwd: repoDir });
-    const statusBefore = await statusOf(repoDir);
-
-    const rejection = await executeGitAction(target, {
-      action: 'revert',
-      files: ['seed.txt'],
-    }).then(() => null, (error: unknown) => error);
-
-    assert.ok(rejection instanceof GitActionRejection);
-    assert.equal(rejection.code, 'not_revertible');
-    assert.equal(await statusOf(repoDir), statusBefore);
   });
 });

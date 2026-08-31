@@ -16,7 +16,6 @@ import {
   WorkspaceFileError,
   withFsDeadline,
 } from '@/lib/workspace-files/workspace-file-io';
-import { inferWorkspaceFileContentType } from '@/lib/workspace-files/workspace-file-preview';
 
 export { WorkspaceFileError };
 
@@ -94,6 +93,15 @@ function inferLanguage(filePath: string): string {
   return aliases[ext] ?? ext ?? 'text';
 }
 
+function inferContentType(filePath: string): string {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const aliases: Record<string, string> = {
+    avif: 'image/avif', bmp: 'image/bmp', gif: 'image/gif', jpeg: 'image/jpeg',
+    jpg: 'image/jpeg', png: 'image/png', svg: 'image/svg+xml', webp: 'image/webp',
+  };
+  return aliases[ext] ?? 'application/octet-stream';
+}
+
 export async function readWorkspaceFileResponse({
   raw,
   rawPath,
@@ -118,10 +126,9 @@ export async function readWorkspaceFileResponse({
     const buffer = await withFsDeadline(fs.readFile(absolutePath));
     return new NextResponse(buffer, {
       headers: {
-        'Content-Type': inferWorkspaceFileContentType(relativePath),
+        'Content-Type': inferContentType(relativePath),
         'Cache-Control': 'private, max-age=30',
         'Content-Length': String(buffer.byteLength),
-        'X-Content-Type-Options': 'nosniff',
       },
     });
   }
@@ -147,7 +154,6 @@ export async function readWorkspaceFileResponse({
     path: relativePath,
     content: binary ? '' : contentBuffer.toString('utf8'),
     language: inferLanguage(relativePath),
-    mimeType: inferWorkspaceFileContentType(relativePath),
     size: fileStat.size,
     mtimeMs: fileStat.mtimeMs,
     truncated,

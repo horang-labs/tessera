@@ -129,23 +129,6 @@ function focusOrCreateSpecialTab(
   return tabId;
 }
 
-/**
- * A file tab belongs to its source Session. If that Session is open in a
- * preview tab, opening a file would switch the active tab away from it; the
- * preview-terminal audit then closes that tab and kills the Session's PTY,
- * which retires the Session — and with it the just-opened file tab.
- * Promote the Session's own tab to a retained tab before the file tab is
- * created so the preview terminal survives.
- */
-function promoteSourceSessionTab(sourceSessionId: string): void {
-  const tabStore = useTabStore.getState();
-  const location = tabStore.findSessionLocation(sourceSessionId);
-  if (!location) return;
-  const tab = tabStore.tabs.find((candidate) => candidate.id === location.tabId);
-  if (!tab?.isPreview) return;
-  tabStore.pinTab(location.tabId);
-}
-
 export function openWorkspaceFileTab(
   sourceSessionId: string,
   kind: WorkspaceFileTabKind,
@@ -157,7 +140,6 @@ export function openWorkspaceFileTab(
     options.preferKanbanPeek
     && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
   ) return;
-  promoteSourceSessionTab(sourceSessionId);
   const tabId = focusOrCreateSpecialTab(
     buildWorkspaceFileSessionId(sourceSessionId, kind, filePath, options.worktreeId),
     {

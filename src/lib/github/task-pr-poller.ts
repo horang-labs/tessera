@@ -10,7 +10,6 @@ import { isElectronRuntime } from '@/lib/electron-runtime';
 import { resolveServerDefaultUserId } from '@/lib/server-default-user';
 import { SettingsManager } from '@/lib/settings/manager';
 import { getActiveSessionIds } from '@/lib/session/active-session-runtime';
-import * as dbSessions from '@/lib/db/sessions';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import { syncAllEligibleTaskPrs } from './task-pr-sync';
 import { syncAllEligibleSessionPrs } from './session-pr-sync';
@@ -65,22 +64,13 @@ class TaskPrPoller {
     try {
       const startedAt = Date.now();
       const agentEnvironment = await resolvePollerAgentEnvironment();
-      const activeSessionIds = getActiveSessionIds();
-      const activeTaskIds = new Set(
-        [...activeSessionIds]
-          .map((sessionId) => dbSessions.getSession(sessionId)?.task_id)
-          .filter((taskId): taskId is string => Boolean(taskId)),
-      );
-      // Never turn a periodic refresh into a database-sized process launch.
-      // Turn-end hooks refresh individual tasks; this backstop only covers the
-      // handful of tasks that still own a live runtime.
-      await syncAllEligibleTaskPrs({ agentEnvironment, taskIds: activeTaskIds });
+      await syncAllEligibleTaskPrs({ agentEnvironment });
       // Bare-session PR state is only visible for live runtimes. Sweeping every
       // historical session at startup can launch hundreds of WSL/gh probes and
       // contend with terminal input while the first session is opening.
       await syncAllEligibleSessionPrs({
         agentEnvironment,
-        sessionIds: activeSessionIds,
+        sessionIds: getActiveSessionIds(),
       });
       logger.debug({ reason, durationMs: Date.now() - startedAt }, 'PR poll complete');
     } catch (err) {

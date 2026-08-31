@@ -15,11 +15,13 @@
   <a href="https://www.npmjs.com/package/@horang-labs/tessera"><img src="https://img.shields.io/npm/v/@horang-labs/tessera?label=npm" alt="npm"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen" alt="Node.js 20 or later"></a>
   <a href="#license"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"></a>
+  <a href="https://discord.gg/7557zmY8x"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Join the Discord community"></a>
 </p>
 
 <p align="center">
   <strong><a href="https://github.com/horang-labs/tessera/releases">Download Tessera</a></strong>
   · <a href="#browser-runtime">Run with npm</a>
+  · <a href="https://discord.gg/7557zmY8x">Join Discord</a>
 </p>
 
 <p align="center">
@@ -34,6 +36,8 @@ Tessera turns a pile of terminals into a visible workflow. Give each task its ow
 - **Use the right agent and model** — mix Claude Code, Codex, and OpenCode in PTY or GUI mode, including custom model IDs.
 - **Keep every session within reach** — move between list, board, tabs, split panes, and your phone without losing the conversation.
 - **Finish where the work happened** — inspect files and diffs, commit, sync, publish branches, and open pull requests from Tessera.
+
+**OpenCode is first-class:** run it in PTY or rich GUI mode, use its discovered commands and model or mode controls, follow permissions, tool calls, and todos, and switch a live PTY into Chat View.
 
 > [!NOTE]
 > Tessera runs locally and uses the provider CLIs already installed and authenticated on your machine.

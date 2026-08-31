@@ -111,40 +111,6 @@ test('preparation and reverse lookup use the parent path before the legacy child
   assert.equal(tasks.findTaskIdForWorktree(spacedPath), 'spaced-path-task');
 });
 
-test('workDir lookups match Windows-hosted WSL aliases', async () => {
-  const { sessions, tasks } = await modules();
-  const posix = '/home/work/Source/alias-worktree';
-  const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\alias-worktree';
-
-  tasks.createTask({ id: 'alias-task', projectId: dataDir, title: 'Alias task' });
-  tasks.setTaskWorktreeCheckout('alias-task', {
-    branch: 'feature/alias',
-    path: unc,
-  });
-  sessions.createSession('alias-posix-session', dataDir, 'Alias POSIX', 'codex', {
-    workDir: posix,
-  });
-  sessions.createSession('alias-unc-session', dataDir, 'Alias UNC', 'codex', {
-    workDir: unc,
-  });
-
-  assert.equal(tasks.findTaskIdForWorktree(posix), 'alias-task');
-  assert.deepEqual(
-    sessions.getSessionsByWorkDir(posix).map((session) => session.id).sort(),
-    ['alias-posix-session', 'alias-unc-session'],
-  );
-  assert.deepEqual(
-    sessions.getActiveSessionIdsSharingWorkDir(posix).sort(),
-    ['alias-posix-session', 'alias-unc-session'],
-  );
-  assert.equal(sessions.countOtherSessionsByWorkDir(posix, 'alias-posix-session'), 1);
-  assert.equal(sessions.countNonArchivedSessionsByWorkDir(posix), 2);
-
-  sessions.clearWorktreeMetadataByWorkDir(posix);
-  assert.equal(sessions.getSession('alias-posix-session')?.work_dir, null);
-  assert.equal(sessions.getSession('alias-unc-session')?.work_dir, null);
-});
-
 test('PR observation uses parent paths for zero-session Worktrees and legacy fallback only when needed', async () => {
   const { sessions, tasks } = await modules();
   const parentPath = path.join(dataDir, 'pr-parent-owned');

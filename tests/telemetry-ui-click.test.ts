@@ -190,11 +190,6 @@ test('PostHog transport keeps its public project token while dropping private SD
         token: 'sdk-token-that-must-not-be-trusted',
         control: 'composer.send',
         surface: 'composer',
-        '$browser': 'Chrome',
-        '$browser_version': 130,
-        '$browser_language': 'en-US',
-        '$browser_language_prefix': 'en',
-        '$timezone': 'Asia/Singapore',
         '$el_text': 'private prompt',
         '$current_url': 'http://localhost/private',
       },
@@ -216,41 +211,7 @@ test('PostHog transport keeps its public project token while dropping private SD
   assert.equal(result?.properties?.control, 'composer.send');
   assert.equal(result?.properties?.surface, 'composer');
   assert.equal(result?.properties?.client_form_factor, 'desktop');
-  assert.equal(result?.properties?.['$browser'], 'Chrome');
-  assert.equal(result?.properties?.['$browser_version'], 130);
-  assert.equal(result?.properties?.['$browser_language'], 'en-US');
-  assert.equal(result?.properties?.['$browser_language_prefix'], 'en');
-  assert.equal(result?.properties?.['$timezone'], 'Asia/Singapore');
   assert.doesNotMatch(JSON.stringify(result), /private prompt|localhost\/private|sdk-token/);
-});
-
-test('PostHog transport preserves safe browser locale and timezone properties', () => {
-  const result = prepareTelemetryCaptureForTransport(
-    {
-      event: 'app_started',
-      properties: {
-        '$browser': 'Chrome',
-        '$browser_version': 130,
-        '$browser_language': 'en-US',
-        '$browser_language_prefix': 'en',
-        '$timezone': 'Asia/Singapore',
-        '$current_url': 'http://localhost/private',
-        '$raw_user_agent': 'private raw agent',
-      },
-    },
-    null,
-    true,
-    'phc-public-project-token',
-  );
-
-  assert.deepEqual(result?.properties, {
-    token: 'phc-public-project-token',
-    '$browser': 'Chrome',
-    '$browser_version': 130,
-    '$browser_language': 'en-US',
-    '$browser_language_prefix': 'en',
-    '$timezone': 'Asia/Singapore',
-  });
 });
 
 test('prompt submission telemetry keeps only privacy-safe composition metadata', () => {

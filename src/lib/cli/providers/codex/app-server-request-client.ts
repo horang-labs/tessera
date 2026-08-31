@@ -7,7 +7,6 @@ import {
   normalizeCwdForCliEnvironment,
   spawnCli,
 } from '@/lib/cli/spawn-cli';
-import { forceKillProcessTree } from '@/lib/cli/process-termination';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -59,7 +58,11 @@ export class CodexAppServerRequestError extends Error {
 
 function killRequestProcess(proc: ChildProcess): void {
   if (proc.killed || proc.exitCode !== null) return;
-  forceKillProcessTree(proc);
+  try {
+    proc.kill('SIGTERM');
+  } catch {
+    // The short-lived process may already have exited between the checks.
+  }
 }
 
 function getMutationConfirmation(

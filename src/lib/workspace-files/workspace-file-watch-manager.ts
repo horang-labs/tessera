@@ -20,7 +20,7 @@ import {
   type BridgeEvent,
   isWslDistroRunning,
   parseWslUncRoot,
-  sharedWslInotifyBridgePool,
+  WslInotifyBridge,
   type WslUncRoot,
 } from "./wsl-inotify-bridge";
 
@@ -50,7 +50,7 @@ interface WatchEventStats {
 }
 
 interface WorkspaceWatchEntry {
-  bridge: { stop(): void } | null;
+  bridge: WslInotifyBridge | null;
   bridgeActive: boolean;
   closeTimer: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
@@ -744,7 +744,7 @@ export class WorkspaceFileWatchManager {
   }
 
   private startBridge(entry: WorkspaceWatchEntry, wslRoot: WslUncRoot): void {
-    const bridge = sharedWslInotifyBridgePool.acquire({
+    const bridge = new WslInotifyBridge({
       root: wslRoot,
       excludeRegex: buildInotifyExcludeRegex(wslRoot.posixPath),
       onEvent: (event) => this.handleBridgeEvent(entry, event),
@@ -758,6 +758,7 @@ export class WorkspaceFileWatchManager {
       },
       onDown: (reason) => {
         entry.bridgeActive = false;
+        entry.bridge = null;
         if (this.entriesByRoot.get(entry.root) !== entry) return;
         entry.status = "fallback";
         this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
@@ -770,6 +771,7 @@ export class WorkspaceFileWatchManager {
       },
     });
     entry.bridge = bridge;
+    bridge.start();
   }
 
   private handleBridgeEvent(entry: WorkspaceWatchEntry, event: BridgeEvent): void {

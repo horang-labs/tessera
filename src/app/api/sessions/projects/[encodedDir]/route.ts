@@ -76,28 +76,26 @@ export async function GET(
       ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor })
       : getProjectViewSessions(encodedDir, { limit, cursor });
 
-    const project = dbProjects.getProject(encodedDir);
-    const projectWorktree = dbProjects.getProjectWorktree(encodedDir);
-    const projectDiffWorkDir = projectWorktree?.filesystemPath ?? project?.decoded_path;
-
     const mapped = result.sessions.map((row) => ({
       ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
       projectDir: encodedDir,
       lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
       ...(runtimeConfigs.get(row.id) ?? {}),
     }));
-    // Direct chats share one Project checkout. A focused page schedules that
-    // checkout once, regardless of how many Session rows the page contains.
+    // Diff badge shows for any session whose work dir is a git worktree —
+    // standalone chats included, not just worktree-branch-bound sessions. A
+    // chat created inside a worktree directory has a workDir but no
+    // worktreeBranch, yet still produces a real diff. computeWorktreeDiffStats
+    // returns null for non-git paths, so this stays safe for plain dirs.
     const diffStatsByWorkDir = getCachedOrScheduleBulk(
-      [projectDiffWorkDir],
+      mapped.map((s) => s.workDir ?? undefined),
       userId,
     );
-    const projectDiffStats = projectDiffWorkDir
-      ? diffStatsByWorkDir.get(projectDiffWorkDir) ?? undefined
-      : undefined;
     const sessions = mapped.map((s) => ({
       ...s,
-      diffStats: projectDiffStats,
+      diffStats: s.workDir
+        ? diffStatsByWorkDir.get(s.workDir) ?? undefined
+        : undefined,
     }));
 
     const hasMore = result.nextCursor !== null;

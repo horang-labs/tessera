@@ -388,13 +388,8 @@ export function GitPanel({
               onGenerate: () => void controller.generateCommitMessage(),
               onMessageChange: controller.setCommitMessage,
               onSetAllSelected: controller.setAllCommitFilesSelected,
-              onSetSelected: controller.setCommitFilesSelected,
-              selectionKey: controller.commitSelectionKey,
+              onToggleFile: controller.toggleCommitFile,
               totals: controller.commitTotals,
-            }}
-            revert={{
-              onConfirm: () => void controller.revertSelectedFiles(),
-              pending: controller.pendingVerb === "revert",
             }}
             primary={{
               action: controller.primaryAction,

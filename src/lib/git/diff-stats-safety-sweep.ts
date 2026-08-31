@@ -10,8 +10,6 @@
  * touching the push paths.
  */
 
-import { crossEnvironmentFilesystemPathKey } from '@/lib/filesystem/path-equivalence';
-
 export interface DiffStatsSafetySweepDependencies {
   /** Users with a live transport; nobody connected means nobody to broadcast to. */
   getConnectedUserIds(): Iterable<string>;
@@ -40,19 +38,17 @@ export function runDiffStatsSafetySweep(
   const refreshed: string[] = [];
   // First user seen for a workDir wins: a shared worktree only needs one
   // recompute, and the broadcast fans out to every session on that workDir.
-  const ownerByWorkDir = new Map<string, { workDir: string; userId: string }>();
+  const ownerByWorkDir = new Map<string, string>();
 
   for (const userId of dependencies.getConnectedUserIds()) {
     for (const sessionId of dependencies.getActiveSessionIds(userId)) {
       const workDir = dependencies.getSessionWorkDir(sessionId);
-      if (!workDir) continue;
-      const key = crossEnvironmentFilesystemPathKey(workDir);
-      if (ownerByWorkDir.has(key)) continue;
-      ownerByWorkDir.set(key, { workDir, userId });
+      if (!workDir || ownerByWorkDir.has(workDir)) continue;
+      ownerByWorkDir.set(workDir, userId);
     }
   }
 
-  for (const { workDir, userId } of ownerByWorkDir.values()) {
+  for (const [workDir, userId] of ownerByWorkDir) {
     if (!dependencies.needsRefresh(workDir)) continue;
     dependencies.recompute(workDir, userId);
     refreshed.push(workDir);

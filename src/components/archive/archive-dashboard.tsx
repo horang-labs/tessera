@@ -15,7 +15,6 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
 import { useSessionClickHandlers } from '@/hooks/use-session-click-handlers';
-import { useWorktreeRetentionSettingsUpdate } from '@/hooks/use-worktree-retention-settings-update';
 import { useSessionStore } from '@/stores/session-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import {
@@ -27,7 +26,6 @@ import type { TaskEntity, TaskSession, WorkflowStatus } from '@/types/task-entit
 import type { ArchiveItem, ArchiveProjectOption } from '@/lib/archive/archive-service';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import type { TelemetryUiControl } from '@/lib/telemetry/ui-click';
-import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 
@@ -243,18 +241,6 @@ export function ArchiveDashboard() {
   useEffect(() => {
     void loadArchive();
   }, [loadArchive]);
-
-  const {
-    settings,
-    updateSettings,
-    retentionDaysInputValue,
-    setRetentionDaysDraft,
-    commitRetentionDays,
-    retentionConfirmDialog,
-  } = useWorktreeRetentionSettingsUpdate({
-    surface: 'archive',
-    onApplied: loadArchive,
-  });
 
   const chatItems = chatState.items;
   const taskItems = taskState.items;
@@ -495,42 +481,12 @@ export function ArchiveDashboard() {
       <main className="mx-auto max-w-[1320px] space-y-4 px-6 py-5">
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-(--divider) bg-(--board-card-bg) p-3">
           <div className="flex flex-wrap items-center gap-3 text-xs text-(--text-muted)">
-            <span>{settings.autoDeleteArchivedWorktrees ? t('archive.autoDeleteOn') : t('archive.autoDeleteOff')}</span>
-            <span>{t('archive.retentionInfo', { days: settings.archivedWorktreeRetentionDays })}</span>
             <span>{t('archive.loadedCount', { loaded: visibleItemCount, total: summary?.total ?? 0 })}</span>
             <span>{t('archive.worktreesPresent', { count: loadedWorktreesPresent })}</span>
             <span>{t('archive.worktreesDeleted', { count: loadedWorktreesDeleted })}</span>
             <span>{t('archive.worktreesMissing', { count: loadedWorktreesMissing })}</span>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <label className={cn('flex items-center gap-1.5 text-xs text-(--text-muted)', PHONE_TOUCH_TARGET)}>
-              <input
-                {...telemetryClickAttributes('archive.auto_delete', 'archive')}
-                type="checkbox"
-                checked={settings.autoDeleteArchivedWorktrees}
-                onChange={(event) => void updateSettings({ autoDeleteArchivedWorktrees: event.target.checked })}
-                className="accent-(--accent)"
-              />
-              {t('archive.autoLabel')}
-            </label>
-            <input
-              {...telemetryClickAttributes('archive.retention_days', 'archive')}
-              aria-label={t('settings.worktree.retentionDays')}
-              type="number"
-              min={1}
-              max={365}
-              value={retentionDaysInputValue}
-              onFocus={(event) => setRetentionDaysDraft(event.currentTarget.value)}
-              onChange={(event) => setRetentionDaysDraft(event.target.value)}
-              onBlur={() => void commitRetentionDays()}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') event.currentTarget.blur();
-              }}
-              className={cn(
-                'h-7 w-16 rounded-md border border-(--input-border) bg-(--input-bg) px-2 text-xs text-(--text-primary) outline-none',
-                PHONE_TOUCH_TARGET_HEIGHT,
-              )}
-            />
             <button
               {...telemetryClickAttributes('archive.bulk_delete', 'archive')}
               onClick={() => setBulkWorktreeDeleteOpen(true)}
@@ -694,7 +650,6 @@ export function ArchiveDashboard() {
           </>
         )}
       />
-      {retentionConfirmDialog}
     </div>
   );
 }

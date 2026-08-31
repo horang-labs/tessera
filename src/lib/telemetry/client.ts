@@ -60,13 +60,6 @@ export interface TelemetryRuntimeContext {
 
 const MAX_STRING_LENGTH = 100;
 const MAX_ARRAY_LENGTH = 20;
-const postHogEnvironmentPropertyNames = [
-  '$browser',
-  '$browser_language',
-  '$browser_language_prefix',
-  '$browser_version',
-  '$timezone',
-] as const;
 
 const projectToken = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
 const apiHost = process.env.NEXT_PUBLIC_POSTHOG_API_HOST || '/ingest';
@@ -102,7 +95,6 @@ const allowedEvents = new Set<TelemetryEventName>([
 ]);
 
 const allowedProperties = new Set([
-  ...postHogEnvironmentPropertyNames,
   '$geoip_disable',
   '$process_person_profile',
   'active_seconds',
@@ -561,19 +553,6 @@ export function sanitizeTelemetryProperties(
   return sanitized;
 }
 
-function sanitizePostHogEnvironmentProperties(
-  properties: TelemetryEventProperties,
-): TelemetryEventProperties {
-  const sanitized = sanitizeTelemetryProperties(properties);
-  const environmentProperties: TelemetryEventProperties = {};
-
-  for (const key of postHogEnvironmentPropertyNames) {
-    if (sanitized[key] !== undefined) environmentProperties[key] = sanitized[key];
-  }
-
-  return environmentProperties;
-}
-
 export function prepareTelemetryCaptureForTransport(
   captureResult: CaptureResult | null,
   context: TelemetryRuntimeContext | null = telemetryContext,
@@ -592,7 +571,6 @@ export function prepareTelemetryCaptureForTransport(
       properties: {
         token: transportToken,
         ...baseProperties(context),
-        ...sanitizePostHogEnvironmentProperties(captureResult.properties ?? {}),
         ...clickProperties,
       },
     };
