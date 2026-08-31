@@ -201,7 +201,8 @@ test('folder toggles have no delayed timer that can fire under an input', () => 
 test('a watch reconcile cannot take the row being edited', () => {
   // The panel's live sync goes through the hook: while an input is open the
   // reload is held back and applied once, when the input closes.
-  assert.match(filePanelSource, /onRefresh: inlineInput\.handleExternalRefresh/);
+  assert.match(filePanelSource, /onRefresh: handleLiveRefresh/);
+  assert.match(filePanelSource, /handleExternalRefresh\(\)/);
   assert.match(inlineHookSource, /pendingRefreshRef\.current = true/);
   assert.match(inlineHookSource, /handlersRef\.current\.onRefreshFiles\(\)/);
 });
