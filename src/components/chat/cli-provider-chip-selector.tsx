@@ -23,6 +23,7 @@ type ProviderCreationSurface = Extract<TelemetryUiSurface, 'new_session' | 'coll
 interface CliProviderChipSelectorProps {
   value: string;
   onChange: (providerId: string) => void;
+  preferredProviderId?: string;
   className?: string;
   chipClassName?: string;
   executionMode?: AgentExecutionMode;
@@ -38,6 +39,7 @@ export function CliProviderChipSelector({
   executionMode,
   showRefresh = true,
   telemetrySurface = 'new_session',
+  preferredProviderId,
 }: CliProviderChipSelectorProps) {
   const { t } = useI18n();
   const providers = useProvidersStore((s) => s.providers);
@@ -48,6 +50,7 @@ export function CliProviderChipSelector({
   const defaultExecutionMode = useSettingsStore((s) => s.settings.agentExecutionMode);
   const agentExecutionMode = executionMode ?? defaultExecutionMode;
   const reportedIssueKeysRef = useRef<Set<string>>(new Set());
+  const selectionTouchedRef = useRef(false);
 
   useEffect(() => {
     // Populate on first mount if the WS onopen hook hasn't fired yet
@@ -71,9 +74,22 @@ export function CliProviderChipSelector({
 
   useEffect(() => {
     if (selectable.length === 0) return;
-    if (selectable.some((p) => p.id === value)) return;
-    onChange(selectable[0].id);
-  }, [selectable, onChange, value]);
+    const selectableProviderIds = selectable.map((provider) => provider.id);
+    if (
+      selectionTouchedRef.current
+      && value
+      && !selectableProviderIds.includes(value)
+    ) {
+      selectionTouchedRef.current = false;
+    }
+    const nextProviderId = resolveCliProviderSelection({
+      selectableProviderIds,
+      currentProviderId: value,
+      preferredProviderId,
+      selectionTouched: selectionTouchedRef.current,
+    });
+    if (nextProviderId && nextProviderId !== value) onChange(nextProviderId);
+  }, [selectable, onChange, preferredProviderId, value]);
 
   useEffect(() => {
     if (providers === null || loading || !initialized || !isEmpty) return;
@@ -138,7 +154,11 @@ export function CliProviderChipSelector({
             provider={provider}
             isSelected={provider.id === value}
             isSingle={selectable.length === 1}
-            onClick={() => selectable.length > 1 && onChange(provider.id)}
+            onClick={() => {
+              if (selectable.length <= 1) return;
+              selectionTouchedRef.current = true;
+              onChange(provider.id);
+            }}
             chipClassName={chipClassName}
             preferredExecutionMode={agentExecutionMode}
             telemetrySurface={telemetrySurface}
@@ -175,6 +195,30 @@ export function CliProviderChipSelector({
       )}
     </div>
   );
+}
+
+interface ResolveCliProviderSelectionInput {
+  selectableProviderIds: readonly string[];
+  currentProviderId: string;
+  preferredProviderId?: string;
+  selectionTouched: boolean;
+}
+
+/** Resolve automatic provider selection without overwriting a valid manual choice. */
+export function resolveCliProviderSelection({
+  selectableProviderIds,
+  currentProviderId,
+  preferredProviderId,
+  selectionTouched,
+}: ResolveCliProviderSelectionInput): string {
+  if (selectableProviderIds.length === 0) return currentProviderId;
+  const currentIsSelectable = selectableProviderIds.includes(currentProviderId);
+  if (selectionTouched && currentIsSelectable) return currentProviderId;
+  if (preferredProviderId && selectableProviderIds.includes(preferredProviderId)) {
+    return preferredProviderId;
+  }
+  if (currentIsSelectable) return currentProviderId;
+  return selectableProviderIds[0] ?? currentProviderId;
 }
 
 function ProviderChip({

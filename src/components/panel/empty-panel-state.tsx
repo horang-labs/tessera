@@ -152,6 +152,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
   const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
+  const defaultCliProvider = useSettingsStore((state) => state.settings.defaultCliProvider);
   const requestedCreationMode = usePanelStore(
     (state) => state.tabPanels[tabId]?.panels[panelId]?.creationMode ?? null,
   );
@@ -562,6 +563,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
               <CliProviderChipSelector
                 value={selectedProvider}
                 onChange={setSelectedProvider}
+                preferredProviderId={defaultCliProvider}
                 executionMode={executionMode}
                 className="gap-1.5"
                 chipClassName="px-2.5 py-1 text-[10px]"

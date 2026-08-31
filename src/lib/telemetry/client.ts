@@ -249,6 +249,7 @@ const allowedSettings = new Set([
   'agentExecutionMode',
   'terminalSessionDefaultView',
   'defaultNewSessionKind',
+  'defaultCliProvider',
   'profile',
   'notifications',
   'translate',

@@ -47,6 +47,11 @@ export const ja: I18nMessages = {
         description: '専用ブランチとワークツリーを作ってセッションを開始します。',
       },
     },
+    defaultCliProvider: {
+      title: 'デフォルト CLI プロバイダー',
+      description: '新しいセッションやワークツリーを作成するときに最初に選ぶプロバイダーです。',
+      note: '利用できない場合は、接続済みの別のプロバイダーを一時的に選択します。',
+    },
     executionMode: {
       title: 'エージェント実行モード',
       description: '新しいチャットとワークツリーセッションの開き方を選択します。',

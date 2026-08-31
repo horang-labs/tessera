@@ -17,6 +17,7 @@ import {
 } from '@/lib/cli/providers/opencode/session-config';
 import type { UserSettings, ProviderSessionDefaults } from './types';
 import { normalizeCliCommandOverrides } from './cli-command-overrides';
+import { DEFAULT_CLI_PROVIDER_IDS, isDefaultCliProvider } from './default-cli-provider';
 import {
   DEFAULT_PROFILE_AVATAR_DATA_URL,
   DEFAULT_PROFILE_DISPLAY_NAME,
@@ -547,6 +548,7 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     agentExecutionMode: 'pty',
     terminalSessionDefaultView: 'terminal',
     defaultNewSessionKind: 'task',
+    defaultCliProvider: DEFAULT_CLI_PROVIDER_IDS[0],
     profile: {
       displayName: DEFAULT_PROFILE_DISPLAY_NAME,
       avatarDataUrl: DEFAULT_PROFILE_AVATAR_DATA_URL,
@@ -663,6 +665,9 @@ export function normalizeUserSettings(raw: Partial<UserSettings> | null | undefi
     agentExecutionMode: raw?.agentExecutionMode === 'gui' ? 'gui' : 'pty',
     terminalSessionDefaultView: raw?.terminalSessionDefaultView === 'chat' ? 'chat' : 'terminal',
     defaultNewSessionKind: raw?.defaultNewSessionKind === 'chat' ? 'chat' : 'task',
+    defaultCliProvider: isDefaultCliProvider(raw?.defaultCliProvider)
+      ? raw.defaultCliProvider
+      : DEFAULT_CLI_PROVIDER_IDS[0],
     defaultModel: normalizedClaudeModel,
     terminalThemeLightPreset: normalizeTerminalThemePresetId(
       'light',

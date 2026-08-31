@@ -136,6 +136,7 @@ export function CollectionQuickCreateSheet({
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
   const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
+  const defaultCliProvider = useSettingsStore((state) => state.settings.defaultCliProvider);
   const resolvedInitialMode = resolveQuickCreateInitialMode({
     initialMode,
     defaultNewSessionKind,
@@ -524,6 +525,7 @@ export function CollectionQuickCreateSheet({
               telemetrySurface="collection_create"
               value={selectedProvider}
               onChange={setSelectedProvider}
+              preferredProviderId={defaultCliProvider}
               executionMode={executionMode}
               showRefresh={false}
               className="gap-1"

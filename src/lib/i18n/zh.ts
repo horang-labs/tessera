@@ -47,6 +47,11 @@ export const zh: I18nMessages = {
         description: '创建专属分支和工作树后启动会话。',
       },
     },
+    defaultCliProvider: {
+      title: '默认 CLI 提供方',
+      description: '选择新建会话或工作树时默认选中的提供方。',
+      note: '如果该提供方不可用，Tessera 会临时选择其他已连接的提供方。',
+    },
     executionMode: {
       title: '智能体运行模式',
       description: '选择新聊天和工作树会话的打开方式。',

@@ -47,6 +47,11 @@ export const ko: I18nMessages = {
         description: '전용 브랜치와 워크트리를 만들고 세션을 시작합니다.',
       },
     },
+    defaultCliProvider: {
+      title: '기본 CLI 프로바이더',
+      description: '새 세션이나 워크트리를 만들 때 처음 선택할 프로바이더입니다.',
+      note: '사용할 수 없으면 연결된 다른 프로바이더를 임시로 선택합니다.',
+    },
     executionMode: {
       title: '에이전트 실행 모드',
       description: '새 채팅과 워크트리 세션을 여는 방식을 선택합니다.',
