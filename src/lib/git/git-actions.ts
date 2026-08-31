@@ -28,6 +28,10 @@ import {
 } from "@/lib/github/gh-cli";
 import { normalizeGithubOwnerRepo } from "@/lib/github/pr-status-provider";
 import logger from "@/lib/logger";
+import {
+  getFilesystemPathModule,
+  resolvePathForHostFilesystem,
+} from "@/lib/filesystem/host-path";
 import type { AgentEnvironment } from "@/lib/settings/types";
 import type {
   GitActionFailure,
@@ -37,7 +41,9 @@ import type {
   GitConflictOperation,
 } from "@/types/git";
 import { detectGitConflictOperation } from "./git-conflict-state";
+import { rm } from "node:fs/promises";
 import { parseGitStatus } from "./git-status";
+import { canRevertFile } from "./revert-eligibility";
 import {
   resolveConfiguredUpstream,
   type ConfiguredUpstream,
@@ -110,13 +116,24 @@ export interface GitAbortAction {
   action: "abort";
 }
 
+/**
+ * Reverting selected changed files: their working trees are restored to HEAD,
+ * or the file is deleted outright when it has no HEAD version (untracked).
+ * `files` must each be in the change set (`docs/design/git-delivery.md` §2).
+ */
+export interface GitRevertAction {
+  action: "revert";
+  files: string[];
+}
+
 /** Widens as `docs/design/git-delivery.md` §2 lands the remaining actions. */
 export type GitAction =
   | GitCommitAction
   | GitPushAction
   | GitPullAction
   | GitCreatePullRequestAction
-  | GitAbortAction;
+  | GitAbortAction
+  | GitRevertAction;
 
 export type GitActionRejectionCode =
   | "empty_message"
@@ -126,7 +143,8 @@ export type GitActionRejectionCode =
   | "no_remote"
   | "no_upstream"
   | "not_github_remote"
-  | "no_conflict_in_progress";
+  | "no_conflict_in_progress"
+  | "not_revertible";
 
 /**
  * The request was refused before Git ran. Distinct from a `GitActionFailure`,
@@ -161,7 +179,80 @@ export async function executeGitAction(
       createGhRunner(target.agentEnvironment),
     );
   }
+  if (action.action === "revert") return runRevert(target, action, runGit);
   return runCommit(target, action, runGit);
+}
+
+/** Resolve a repository-relative Git path into a path this Node process can open. */
+export async function resolveGitActionFilePath(
+  workDir: string,
+  relativePath: string,
+  resolveHostPath: (filesystemPath: string) => Promise<string> = resolvePathForHostFilesystem,
+): Promise<string> {
+  // Translate the root before joining. On Windows, node:path would otherwise
+  // turn a CLI-reported `/home/...` root into a drive-rooted `C:\\home\\...`
+  // path before the bridge resolver has a chance to see the POSIX spelling.
+  const hostWorkDir = await resolveHostPath(workDir);
+  return getFilesystemPathModule(hostWorkDir).join(hostWorkDir, relativePath);
+}
+
+async function runRevert(
+  target: GitActionTarget,
+  action: GitRevertAction,
+  runGit: GitRunner,
+): Promise<GitActionResult> {
+  if (action.files.length === 0) {
+    throw new GitActionRejection(
+      "no_files_selected",
+      "Select at least one file to revert",
+    );
+  }
+
+  const changedFiles = await readChangeSet(target, runGit);
+  const byPath = new Map(changedFiles.map((file) => [file.path, file]));
+  for (const filePath of action.files) {
+    const file = byPath.get(filePath);
+    // The button is built from the same change set this reads, so a mismatch
+    // means the list changed underneath the click — reject rather than guess.
+    if (!file) {
+      throw new GitActionRejection(
+        "file_not_in_change_set",
+        `Not a changed file: ${filePath}`,
+      );
+    }
+    if (!canRevertFile(file)) {
+      throw new GitActionRejection(
+        "not_revertible",
+        `Cannot revert ${filePath}: it is conflicted or only staged`,
+      );
+    }
+  }
+
+  // Each file runs its own command so one failure does not abort the rest, and
+  // the outcome keeps the paths in selection order.
+  try {
+    for (const filePath of action.files) {
+      const file = byPath.get(filePath)!;
+      if (file.state === "untracked") {
+        // No HEAD version to restore to; orca discards these by deleting.
+        // `git rm` cannot remove an untracked path, so delete it directly.
+        await rm(await resolveGitActionFilePath(target.workDir, filePath));
+      } else {
+        await runGit(["restore", "--source=HEAD", "--worktree", "--", filePath], {
+          cwd: target.workDir,
+        });
+      }
+    }
+  } catch (error) {
+    // A partial revert still leaves the tree in a real state; the failure
+    // carries the change set as it stood after, so the panel shows the truth.
+    return {
+      ok: false,
+      failure: await describeFailure(error, target, runGit, (failed) => failed.kind),
+    };
+  }
+
+  return { ok: true, outcome: { action: "revert", files: action.files } };
 }
 
 async function runCommit(

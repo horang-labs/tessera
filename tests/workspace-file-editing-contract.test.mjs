@@ -175,7 +175,8 @@ test('creating a file posts and opens what it created', () => {
   assert.match(fileListHookSource, /MUTATION_LIST_ATTEMPTS = 5/);
   assert.match(filePanelSource, /mutation: \{ kind: "file", path: created\.path, type: "create" \}/);
   assert.match(filePanelSource, /useWorkspacePeekStore\(\(state\) => state\.target\)/);
-  assert.match(filePanelSource, /peekTarget\?\.worktreeId !== target\.id/);
+  assert.match(filePanelSource, /shouldReloadReselectedWorktree\(\{/);
+  assert.match(filePanelSource, /previousFileListTargetKeyRef\.current = targetKey/);
   assert.match(
     filePanelSource,
     /openWorkspaceTargetFileTab\(target, "file", created\.path, \{[\s\S]*projectDir: sessionProjectDir/,

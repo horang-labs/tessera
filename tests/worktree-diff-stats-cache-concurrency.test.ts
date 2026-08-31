@@ -48,9 +48,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const controlDir = process.env.TESSERA_DIFF_STATS_TEST_CONTROL;
-const workDir = process.argv[3];
-const command = process.argv[4];
-if (!controlDir || !workDir || command !== 'rev-parse') process.exit(0);
+const workDirsRoot = process.env.TESSERA_DIFF_STATS_TEST_WORKDIRS;
+const hasExplicitCwd = process.argv[2] === '-C';
+const workDir = hasExplicitCwd ? process.argv[3] : process.cwd();
+const command = hasExplicitCwd ? process.argv[4] : process.argv[2];
+if (
+  !controlDir
+  || !workDirsRoot
+  || !workDir.startsWith(workDirsRoot + path.sep)
+  || command !== 'rev-parse'
+) process.exit(0);
 
 const workName = path.basename(workDir);
 const countFile = path.join(controlDir, 'count-' + workName);
@@ -88,8 +95,10 @@ node "%~dp0git-probe.cjs" %*\r
 
   const previousPath = process.env.PATH;
   const previousControlDir = process.env.TESSERA_DIFF_STATS_TEST_CONTROL;
+  const previousWorkDirsRoot = process.env.TESSERA_DIFF_STATS_TEST_WORKDIRS;
   process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ''}`;
   process.env.TESSERA_DIFF_STATS_TEST_CONTROL = controlDir;
+  process.env.TESSERA_DIFF_STATS_TEST_WORKDIRS = workDirsRoot;
   invalidateAgentEnvironmentCache();
 
   const matchingFiles = (prefix: string): string[] => (
@@ -123,6 +132,11 @@ node "%~dp0git-probe.cjs" %*\r
       } else {
         process.env.TESSERA_DIFF_STATS_TEST_CONTROL = previousControlDir;
       }
+      if (previousWorkDirsRoot === undefined) {
+        delete process.env.TESSERA_DIFF_STATS_TEST_WORKDIRS;
+      } else {
+        process.env.TESSERA_DIFF_STATS_TEST_WORKDIRS = previousWorkDirsRoot;
+      }
       invalidateAgentEnvironmentCache();
       fs.rmSync(root, { recursive: true, force: true });
     },
@@ -138,7 +152,7 @@ async function cleanupGitProbeFixture(
   fixture.restore();
 }
 
-test('worktree diff stats compute at most two work directories concurrently', async () => {
+test('worktree diff stats compute one work directory at a time', async () => {
   const fixture = createGitProbeFixture();
   const workDirs = Array.from(
     { length: 5 },
@@ -147,11 +161,11 @@ test('worktree diff stats compute at most two work directories concurrently', as
   const computations = workDirs.map((workDir) => flushRecompute(workDir));
 
   try {
-    await waitFor('the first two diff computations to start', () => (
-      fixture.activeProbes().length >= 2
+    await waitFor('the first diff computation to start', () => (
+      fixture.activeProbes().length >= 1
     ));
     await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(fixture.activeProbes().length, 2);
+    assert.deepEqual(fixture.activeProbes(), ['repo-1-1']);
 
     while (fixture.completedProbes().length < workDirs.length) {
       await waitFor('queued work to take an available compute slot', () => (
@@ -165,7 +179,7 @@ test('worktree diff stats compute at most two work directories concurrently', as
       await waitFor(`${active} to complete`, () => (
         fixture.completedProbes().includes(active)
       ));
-      assert.ok(fixture.activeProbes().length <= 2);
+      assert.ok(fixture.activeProbes().length <= 1);
     }
 
     await Promise.all(computations);
@@ -217,14 +231,15 @@ test('a failed git probe releases its slot for queued work', async () => {
   const computations = [failed, busy, queued];
 
   try {
-    await waitFor('both compute slots to fill', () => fixture.activeProbes().length === 2);
-    assert.deepEqual(
-      fixture.activeProbes(),
-      ['busy-repo-1', 'fail-repo-1'],
-    );
+    await waitFor('the compute slot to fill', () => fixture.activeProbes().length === 1);
+    assert.deepEqual(fixture.activeProbes(), ['fail-repo-1']);
 
     fixture.release('fail-repo-1');
-    await waitFor('queued work to use the released slot', () => (
+    await waitFor('the next worktree to use the released slot', () => (
+      fixture.activeProbes().includes('busy-repo-1')
+    ));
+    fixture.release('busy-repo-1');
+    await waitFor('the final queued worktree to use the released slot', () => (
       fixture.activeProbes().includes('queued-repo-1')
     ));
     assert.equal(await failed, null);

@@ -66,8 +66,9 @@ export class RateLimitPoller {
 
     logger.info({ intervalMs: RATE_LIMIT_REFRESH_INTERVAL_MS }, 'Rate limit poller started');
 
-    // Fetch immediately on start.
-    await this.poll();
+    // Do not start CLI probes on the server's critical startup path. Active
+    // provider sessions publish their own initial snapshots; this timer is a
+    // fallback for accounts with no running session.
   }
 
   stop(): void {

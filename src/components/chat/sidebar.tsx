@@ -51,7 +51,10 @@ import {
   buildProjectViewRecentWorkItems,
   buildRecentWorkItems,
 } from '@/lib/chat/recent-work';
-import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
+import {
+  getProjectIdsMissingTaskProjection,
+  loadProjectTaskProjectionsSequentially,
+} from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
@@ -366,15 +369,22 @@ export function Sidebar() {
       allProjectsTaskLoadAttemptsRef.current.clear();
       return;
     }
-    for (const projectId of getProjectIdsMissingTaskProjection(
+    const projectIds = getProjectIdsMissingTaskProjection(
       projects,
       loadedTaskProjects,
       loadingTaskProjects,
       allProjectsTaskLoadAttemptsRef.current,
-    )) {
+    );
+    for (const projectId of projectIds) {
       allProjectsTaskLoadAttemptsRef.current.add(projectId);
-      void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
     }
+    let active = true;
+    void loadProjectTaskProjectionsSequentially(
+      projectIds,
+      (projectId) => useTaskStore.getState().loadTasks(projectId, { setCurrent: false }),
+      () => active,
+    );
+    return () => { active = false; };
   }, [loadedTaskProjects, loadingTaskProjects, projects, selectedProjectDir]);
 
   // Collection DnD (item moves between collections + group reorder)

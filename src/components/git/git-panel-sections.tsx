@@ -14,11 +14,13 @@ import {
   GitCommitHorizontal,
   GitPullRequest,
   LoaderCircle,
+  Undo2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
+import { GitRevertConfirmDialog } from "@/components/git/git-revert-confirm-dialog";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { useI18n } from "@/lib/i18n";
@@ -28,6 +30,7 @@ import { deriveGitConflictRecovery } from "@/lib/git/git-conflict-recovery";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
 import type { GitMenuAction, GitMenuActionId } from "@/lib/git/git-action-menu";
 import type { GitPendingVerb } from "./use-git-panel-controller";
+import { canRevertFile } from "@/lib/git/revert-eligibility";
 import type {
   GitChangedFile,
   GitConflictOperation,
@@ -49,6 +52,9 @@ import {
 import {
   FILE_STATE_META,
 } from "./git-panel-shared";
+import {
+  useCommitFileSelection,
+} from "./git-commit-selection";
 
 function formatShortCount(value: number): string {
   if (value < 1000) return String(value);
@@ -635,6 +641,7 @@ export function GitPanelContentSection({
   menu,
   primary,
   phoneScrollableContent,
+  revert,
   selectedPath,
   sessionId,
   targetSelected = Boolean(sessionId),
@@ -654,7 +661,8 @@ export function GitPanelContentSection({
     onGenerate: () => void;
     onMessageChange: (value: string) => void;
     onSetAllSelected: (selected: boolean) => void;
-    onToggleFile: (path: string) => void;
+    onSetSelected: (paths: readonly string[], selected: boolean) => void;
+    selectionKey: string | null;
     totals: { files: number; added: number; removed: number };
   };
   conflictHandoff: {
@@ -680,6 +688,11 @@ export function GitPanelContentSection({
     /** What is running here, whether this button or the menu started it. */
     pendingVerb: GitPendingVerb | null;
     onRun: () => void;
+  };
+  /** Reverting the selected changed files (§2). The selection is the commit's. */
+  revert: {
+    onConfirm: () => void;
+    pending: boolean;
   };
   /** Phone-only content that joins the changed files in one scroll region. */
   phoneScrollableContent?: {
@@ -707,6 +720,10 @@ export function GitPanelContentSection({
     canOpenFile: boolean;
     position: { x: number; y: number };
   } | null>(null);
+  // The changed files picked for revert, or null when no confirm is pending.
+  const [revertPendingFiles, setRevertPendingFiles] = useState<
+    GitChangedFile[] | null
+  >(null);
 
   // One element, handed to whichever of the two surfaces draws the button: the
   // menu is the same list either way, and §4 keeps it beside the button on every
@@ -744,6 +761,19 @@ export function GitPanelContentSection({
   const hasTarget = targetSelected ?? Boolean(sessionId);
   const allCommitFilesSelected = changedFileCount > 0
     && commit.totals.files === changedFileCount;
+  const someCommitFilesSelected = commit.totals.files > 0;
+  // The commit selection is the revert selection (§2): only the files that can
+  // actually be reverted participate in the button's enabled state.
+  const revertableSelectedFiles = (data?.changedFiles ?? []).filter(
+    (file) => commit.isSelected(file.path) && canRevertFile(file),
+  );
+  const { selectAllCheckboxRef, setFileSelected } = useCommitFileSelection({
+    allSelected: allCommitFilesSelected,
+    files: data?.changedFiles,
+    onSetSelected: commit.onSetSelected,
+    someSelected: someCommitFilesSelected,
+    targetKey: commit.selectionKey,
+  });
 
   const contentBody = (
     <>
@@ -793,27 +823,50 @@ export function GitPanelContentSection({
             ) : (
               <>
                 <div className="flex items-center justify-between gap-2 px-1">
-                  <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
-                    {t("gitPanel.commit.changedFiles")}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
+                  <label className="flex min-w-0 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
+                    <input
+                      ref={selectAllCheckboxRef}
+                      type="checkbox"
                       disabled={primary.pendingVerb !== null}
-                      onClick={() => commit.onSetAllSelected(!allCommitFilesSelected)}
+                      checked={allCommitFilesSelected}
+                      onChange={() => commit.onSetAllSelected(!allCommitFilesSelected)}
                       {...telemetryClickAttributes("git.commit_file.toggle_all", "git_panel")}
-                      className="rounded px-1 py-0.5 text-[10px] font-medium text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {t(allCommitFilesSelected
+                      aria-label={t(allCommitFilesSelected
                         ? "gitPanel.commit.deselectAll"
                         : "gitPanel.commit.selectAll")}
-                    </button>
-                    <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
-                      {data.changedFilesTruncated
-                        ? (data.changedFilesTotal ?? `${changedFileCount}+`)
-                        : changedFileCount}
-                    </span>
+                      className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <span className="truncate">{t("gitPanel.commit.changedFiles")}</span>
+                  </label>
+                  <span className="shrink-0 font-mono text-[11px] text-(--text-muted) tabular-nums">
+                    {commit.totals.files}/{data.changedFilesTruncated
+                      ? (data.changedFilesTotal ?? `${changedFileCount}+`)
+                      : changedFileCount}
                   </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={
+                      revertableSelectedFiles.length === 0
+                      || primary.pendingVerb !== null
+                      || revert.pending
+                    }
+                    onClick={() => setRevertPendingFiles(revertableSelectedFiles)}
+                    {...telemetryClickAttributes("git.revert_selected.open", "git_panel")}
+                    title={t(revertableSelectedFiles.length === 0
+                      ? "gitPanel.revert.nothingSelected"
+                      : "gitPanel.revert.selectAction")}
+                    data-testid="git-revert-selected"
+                    className="gap-1 text-[11px] text-(--text-muted) hover:text-(--text-primary) disabled:opacity-50"
+                  >
+                    <Undo2 className="h-3.5 w-3.5" />
+                    <span className="hidden min-[420px]:inline">
+                      {revert.pending
+                        ? t("gitPanel.revert.selectActionPending")
+                        : t("gitPanel.revert.selectAction")}
+                    </span>
+                  </Button>
                 </div>
                 <ScrollArea className={cn(phoneScrollableContent ? "overflow-y-visible" : "flex-1")}>
                   <div className="flex flex-col">
@@ -857,7 +910,13 @@ export function GitPanelContentSection({
                               // locks with the rest of the form (§7) rather
                               // than only while a commit is what is running.
                               disabled={primary.pendingVerb !== null}
-                              onChange={() => commit.onToggleFile(file.path)}
+                              onChange={(event) => {
+                                setFileSelected(
+                                  file.path,
+                                  event.currentTarget.checked,
+                                  event.nativeEvent,
+                                );
+                              }}
                               {...telemetryClickAttributes("git.commit_file.toggle", "git_panel")}
                               aria-label={t("gitPanel.commit.includeFile", {
                                 path: file.path,
@@ -1009,6 +1068,14 @@ export function GitPanelContentSection({
         position={contextMenu.position}
       />
     ) : null}
+    <GitRevertConfirmDialog
+      files={revertPendingFiles}
+      onCancel={() => setRevertPendingFiles(null)}
+      onConfirm={() => {
+        setRevertPendingFiles(null);
+        revert.onConfirm();
+      }}
+    />
     </>
   );
 }

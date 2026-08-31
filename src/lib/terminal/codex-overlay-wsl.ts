@@ -1,4 +1,6 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { stat } from 'node:fs/promises';
+import path from 'node:path';
 import logger from '@/lib/logger';
 import {
   buildCodexOverlayMarkerJson,
@@ -6,6 +8,7 @@ import {
   extractCodexOverlayTerminalId,
 } from '@/lib/codex-home';
 import { getWslGuestTesseraStateRoot } from '@/lib/electron-test-instance';
+import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
 import { buildCodexHookSettings } from './codex-hook-settings';
 import { appendTrustedHookState } from './codex-overlay';
 import {
@@ -55,11 +58,15 @@ interface GuestCodexOverlay {
   overlayPath: string;
   accountHome: string;
   canonicalHooksPath: string;
-  trustWatcher: ChildProcess | null;
+  trustWatchPath: string | null;
+  trustWatchSnapshot: GuestCodexTrustSnapshot | null;
   trustPromotionTimer: NodeJS.Timeout | null;
-  trustWatcherRestartTimer: NodeJS.Timeout | null;
-  trustWatcherRestartAttempts: number;
-  trustWatcherStableTimer: NodeJS.Timeout | null;
+}
+
+interface GuestCodexTrustSnapshot {
+  ctimeMs: number;
+  mtimeMs: number;
+  size: number;
 }
 
 const guestOverlayTerminals = new Map<string, GuestCodexOverlay>();
@@ -73,15 +80,11 @@ const guestOverlayTerminals = new Map<string, GuestCodexOverlay>();
  */
 const guestOpsByTerminal = new Map<string, Promise<unknown>>();
 let guestTrustPromotionTail: Promise<void> = Promise.resolve();
+let guestTrustPollTimer: NodeJS.Timeout | null = null;
+let guestTrustPollRunning = false;
 
-const TRUST_WATCH_READY = 'TESSERA_TRUST_WATCH_READY';
-const TRUST_WATCH_CHANGED = 'TESSERA_TRUST_WATCH_CHANGED';
 const TRUST_WRITE_RESULT = 'TESSERA_TRUST_WRITE_RESULT';
-const TRUST_WATCH_READY_TIMEOUT_MS = 3_000;
-const TRUST_WATCH_HARD_TIMEOUT_MS = 4_000;
-const TRUST_WATCH_RESTART_MAX_DELAY_MS = 5_000;
-const TRUST_WATCH_STABLE_UPTIME_MS = 30_000;
-const TRUST_WATCH_MAX_RESTARTS = 3;
+const TRUST_WATCH_INTERVAL_MS = 1_000;
 const TRUST_PROMOTION_MAX_ATTEMPTS = 3;
 
 function chainGuestOp<T>(terminalId: string, op: () => Promise<T>): Promise<T> {
@@ -211,30 +214,6 @@ export function buildWslCodexTrustBaselineWriteScript(
     `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
     `printf '%s' '${trustBaselineB64}' | base64 -d > "$overlay/${CODEX_TRUST_BASELINE_FILE}"`,
     `chmod 600 "$overlay/${CODEX_TRUST_BASELINE_FILE}"`,
-  ].join('\n');
-}
-
-function buildWslCodexTrustWatchScript(
-  terminalId: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  assertSafeTerminalId(terminalId);
-  const stateRoot = getWslGuestTesseraStateRoot(env);
-  return [
-    'set -eu',
-    `overlay="${stateRoot}/codex-overlay/${terminalId}"`,
-    'config="$overlay/config.toml"',
-    '[ -f "$config" ] || exit 0',
-    'last="$(cksum < "$config")"',
-    `printf '${TRUST_WATCH_READY}\\n'`,
-    'while [ -f "$config" ]; do',
-    '  sleep 0.25',
-    '  current="$(cksum < "$config" 2>/dev/null || true)"',
-    '  if [ "$current" != "$last" ]; then',
-    '    last="$current"',
-    `    printf '${TRUST_WATCH_CHANGED}\\n'`,
-    '  fi',
-    'done',
   ].join('\n');
 }
 
@@ -451,11 +430,9 @@ async function createOverlayScripts(
     overlayPath,
     accountHome,
     canonicalHooksPath,
-    trustWatcher: null,
+    trustWatchPath: null,
+    trustWatchSnapshot: null,
     trustPromotionTimer: null,
-    trustWatcherRestartTimer: null,
-    trustWatcherRestartAttempts: 0,
-    trustWatcherStableTimer: null,
   };
   guestOverlayTerminals.set(terminalId, overlay);
   await startGuestCodexTrustWatcher(terminalId, overlay);
@@ -467,145 +444,60 @@ async function startGuestCodexTrustWatcher(
   terminalId: string,
   overlay: GuestCodexOverlay,
 ): Promise<void> {
-  await new Promise<void>((resolve) => {
-    const catchUpOnReady = overlay.trustWatcherRestartAttempts > 0;
-    let stdoutBuffer = '';
-    let readinessSettled = false;
-    let readinessTimedOut = false;
-    let stderrTail = '';
-    let hardTimeout: NodeJS.Timeout | null = null;
-    let watcher: ChildProcess | undefined;
-    const clearHardTimeout = () => {
-      if (!hardTimeout) return;
-      clearTimeout(hardTimeout);
-      hardTimeout = null;
-    };
-    const settleReadiness = () => {
-      if (readinessSettled) return;
-      readinessSettled = true;
-      clearTimeout(readyTimer);
-      resolve();
-    };
-    const readyTimer = setTimeout(() => {
-      readinessTimedOut = true;
-      settleReadiness();
-      logger.warn({ terminalId }, 'codex WSL trust watcher readiness timed out');
-      scheduleGuestCodexTrustPromotion(terminalId, overlay);
-      hardTimeout = setTimeout(() => {
-        hardTimeout = null;
-        if (!watcher || guestOverlayTerminals.get(terminalId) !== overlay) return;
-        if (overlay.trustWatcher !== watcher) return;
-        overlay.trustWatcher = null;
-        watcher.kill();
-        scheduleGuestCodexTrustWatcherRestart(terminalId, overlay);
-      }, TRUST_WATCH_HARD_TIMEOUT_MS - TRUST_WATCH_READY_TIMEOUT_MS);
-      hardTimeout.unref();
-    }, TRUST_WATCH_READY_TIMEOUT_MS);
-    readyTimer.unref();
-
-    try {
-      watcher = spawn('wsl.exe', ['--exec', 'sh', '-s'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
-    } catch (err) {
-      settleReadiness();
-      logger.warn({ err, terminalId }, 'codex WSL trust watcher unavailable');
-      scheduleGuestCodexTrustWatcherRestart(terminalId, overlay);
-      return;
-    }
-    overlay.trustWatcher = watcher;
-
-    watcher.stdout?.on('data', (chunk: Buffer) => {
-      if (overlay.trustWatcher !== watcher) return;
-      stdoutBuffer += chunk.toString('utf8');
-      let newline = stdoutBuffer.indexOf('\n');
-      while (newline !== -1) {
-        const line = stdoutBuffer.slice(0, newline).replace(/\r$/, '');
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        if (line === TRUST_WATCH_READY) {
-          settleReadiness();
-          clearHardTimeout();
-          armGuestCodexTrustWatcherStableReset(overlay);
-          if (readinessTimedOut || catchUpOnReady) {
-            scheduleGuestCodexTrustPromotion(terminalId, overlay);
-          }
-        }
-        if (line === TRUST_WATCH_CHANGED) {
-          scheduleGuestCodexTrustPromotion(terminalId, overlay);
-        }
-        newline = stdoutBuffer.indexOf('\n');
-      }
-    });
-    watcher.stderr?.on('data', (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString('utf8')).slice(-500);
-    });
-    watcher.on('error', (err) => {
-      const wasCurrentWatcher = overlay.trustWatcher === watcher;
-      if (wasCurrentWatcher) overlay.trustWatcher = null;
-      clearHardTimeout();
-      if (!wasCurrentWatcher) return;
-      clearGuestCodexTrustWatcherStableReset(overlay);
-      settleReadiness();
-      logger.warn({ err, terminalId }, 'codex WSL trust watcher failed');
-      scheduleGuestCodexTrustPromotion(terminalId, overlay);
-      scheduleGuestCodexTrustWatcherRestart(terminalId, overlay);
-    });
-    watcher.on('close', (code) => {
-      const wasCurrentWatcher = overlay.trustWatcher === watcher;
-      if (wasCurrentWatcher) overlay.trustWatcher = null;
-      clearHardTimeout();
-      settleReadiness();
-      if (!wasCurrentWatcher || guestOverlayTerminals.get(terminalId) !== overlay) return;
-      clearGuestCodexTrustWatcherStableReset(overlay);
-      logger.warn(
-        { terminalId, code, stderr: stderrTail.trim() },
-        'codex WSL trust watcher stopped',
-      );
-      scheduleGuestCodexTrustPromotion(terminalId, overlay);
-      scheduleGuestCodexTrustWatcherRestart(terminalId, overlay);
-    });
-    watcher.stdin?.on('error', () => { /* EPIPE — close/error reports the failure. */ });
-    watcher.stdin?.end(buildWslCodexTrustWatchScript(terminalId));
-  });
-}
-
-function scheduleGuestCodexTrustWatcherRestart(
-  terminalId: string,
-  overlay: GuestCodexOverlay,
-): void {
-  if (guestOverlayTerminals.get(terminalId) !== overlay) return;
-  if (overlay.trustWatcher || overlay.trustWatcherRestartTimer) return;
-  if (overlay.trustWatcherRestartAttempts >= TRUST_WATCH_MAX_RESTARTS) {
-    logger.warn({ terminalId }, 'codex WSL trust watcher restart limit reached');
-    return;
-  }
-  const delayMs = Math.min(
-    250 * (2 ** overlay.trustWatcherRestartAttempts),
-    TRUST_WATCH_RESTART_MAX_DELAY_MS,
+  const configPath = await resolvePathForHostFilesystem(
+    path.posix.join(overlay.overlayPath, 'config.toml'),
   );
-  overlay.trustWatcherRestartAttempts += 1;
-  overlay.trustWatcherRestartTimer = setTimeout(() => {
-    overlay.trustWatcherRestartTimer = null;
-    if (guestOverlayTerminals.get(terminalId) !== overlay || overlay.trustWatcher) return;
-    void startGuestCodexTrustWatcher(terminalId, overlay);
-  }, delayMs);
-  overlay.trustWatcherRestartTimer.unref();
+  if (guestOverlayTerminals.get(terminalId) !== overlay) return;
+  overlay.trustWatchPath = configPath;
+  overlay.trustWatchSnapshot = await readGuestCodexTrustSnapshot(configPath);
+  if (guestOverlayTerminals.get(terminalId) !== overlay) return;
+  ensureGuestCodexTrustPoller();
 }
 
-function armGuestCodexTrustWatcherStableReset(overlay: GuestCodexOverlay): void {
-  clearGuestCodexTrustWatcherStableReset(overlay);
-  overlay.trustWatcherStableTimer = setTimeout(() => {
-    overlay.trustWatcherStableTimer = null;
-    overlay.trustWatcherRestartAttempts = 0;
-  }, TRUST_WATCH_STABLE_UPTIME_MS);
-  overlay.trustWatcherStableTimer.unref();
+async function readGuestCodexTrustSnapshot(
+  configPath: string,
+): Promise<GuestCodexTrustSnapshot | null> {
+  try {
+    const stats = await stat(configPath);
+    return { ctimeMs: stats.ctimeMs, mtimeMs: stats.mtimeMs, size: stats.size };
+  } catch {
+    return null;
+  }
 }
 
-function clearGuestCodexTrustWatcherStableReset(overlay: GuestCodexOverlay): void {
-  if (!overlay.trustWatcherStableTimer) return;
-  clearTimeout(overlay.trustWatcherStableTimer);
-  overlay.trustWatcherStableTimer = null;
+function ensureGuestCodexTrustPoller(): void {
+  if (guestTrustPollTimer) return;
+  guestTrustPollTimer = setInterval(() => {
+    void pollGuestCodexTrustFiles();
+  }, TRUST_WATCH_INTERVAL_MS);
+  guestTrustPollTimer.unref();
+}
+
+async function pollGuestCodexTrustFiles(): Promise<void> {
+  if (guestTrustPollRunning) return;
+  guestTrustPollRunning = true;
+  try {
+    // One server-wide poller checks overlays sequentially. WSL UNC stat calls
+    // therefore cannot fan out into one burst per retained terminal.
+    for (const [terminalId, overlay] of guestOverlayTerminals) {
+      const configPath = overlay.trustWatchPath;
+      if (!configPath) continue;
+      const previous = overlay.trustWatchSnapshot;
+      const current = await readGuestCodexTrustSnapshot(configPath);
+      if (guestOverlayTerminals.get(terminalId) !== overlay) continue;
+      overlay.trustWatchSnapshot = current;
+      if (!current) continue;
+      if (
+        previous
+        && current.mtimeMs === previous.mtimeMs
+        && current.ctimeMs === previous.ctimeMs
+        && current.size === previous.size
+      ) continue;
+      scheduleGuestCodexTrustPromotion(terminalId, overlay);
+    }
+  } finally {
+    guestTrustPollRunning = false;
+  }
 }
 
 function scheduleGuestCodexTrustPromotion(
@@ -626,17 +518,19 @@ function scheduleGuestCodexTrustPromotion(
 }
 
 function stopGuestCodexTrustWatcher(overlay: GuestCodexOverlay): void {
-  clearGuestCodexTrustWatcherStableReset(overlay);
   if (overlay.trustPromotionTimer) {
     clearTimeout(overlay.trustPromotionTimer);
     overlay.trustPromotionTimer = null;
   }
-  if (overlay.trustWatcherRestartTimer) {
-    clearTimeout(overlay.trustWatcherRestartTimer);
-    overlay.trustWatcherRestartTimer = null;
+  overlay.trustWatchPath = null;
+  overlay.trustWatchSnapshot = null;
+  if (
+    guestTrustPollTimer
+    && !Array.from(guestOverlayTerminals.values()).some((candidate) => candidate.trustWatchPath)
+  ) {
+    clearInterval(guestTrustPollTimer);
+    guestTrustPollTimer = null;
   }
-  overlay.trustWatcher?.kill();
-  overlay.trustWatcher = null;
 }
 
 async function promoteTrustFromLiveGuestOverlays(): Promise<void> {

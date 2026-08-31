@@ -163,6 +163,144 @@ test('a pushed branch with an open pull request offers View PR', () => {
   assert.equal(action.labelKey, 'gitPanel.pr.viewButton');
 });
 
+test('a current merged PR on an archive-capable Task offers Archive Worktree', () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    currentPullRequestState: 'merged',
+    canArchiveTask: true,
+  });
+
+  assert.equal(action.kind, 'archive_worktree');
+  assert.equal(action.action, 'archive_worktree');
+  assert.equal(action.enabled, true);
+  assert.equal(action.labelKey, 'gitPanel.pr.archiveButton');
+});
+
+test('a merged Task stays archivable after GitHub deletes its remote branch', () => {
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    // Once GitHub deletes the merged branch, its remote-tracking ref is gone
+    // and the local panel can no longer calculate either side of the upstream.
+    ahead: null,
+    behind: null,
+    remoteBranchExists: false,
+    prStatusKnown: true,
+    prStatus: {
+      number: 376,
+      url: 'https://github.com/horang-labs/tessera/pull/376',
+      state: 'merged',
+      relation: 'current',
+      lastSynced: '2026-08-17T07:47:24.000Z',
+    },
+  }, { canArchiveTask: true });
+  const action = derivePrimaryGitAction(snapshot);
+
+  assert.equal(action.kind, 'archive_worktree');
+  assert.equal(action.action, 'archive_worktree');
+  assert.equal(action.enabled, true);
+});
+
+test("a current merged Task whose remote branch survives still offers Archive, not Publish", () => {
+  // GitHub's delete-on-merge toggle does not always run, so a merged PR branch
+  // can remain on the remote. If that branch also lost its tracking ref (for
+  // example it was created without `--track`), the publish rung would otherwise
+  // masquerade a finished, merged branch as one that was never shared. A merged
+  // PR is delivery-finished regardless of the remote branch surviving.
+  const snapshot = gitStateSnapshotFromPanel({
+    ...PANEL,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    remoteBranchExists: true,
+    prStatusKnown: true,
+    prStatus: {
+      number: 383,
+      url: 'https://github.com/horang-labs/tessera/pull/383',
+      state: 'merged',
+      relation: 'current',
+      lastSynced: '2026-08-19T08:27:16.000Z',
+    },
+  }, { canArchiveTask: true });
+  const action = derivePrimaryGitAction(snapshot);
+
+  assert.equal(action.kind, 'archive_worktree');
+  assert.equal(action.action, 'archive_worktree');
+  assert.equal(action.enabled, true);
+});
+
+test("a standalone merged PR with a surviving branch and no upstream stays viewable", () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    upstream: null,
+    ahead: 0,
+    currentPullRequestState: 'merged',
+    canArchiveTask: false,
+  });
+
+  assert.equal(action.kind, 'view_pr');
+});
+
+test('an uncounted merged Task with a surviving remote branch stays unknown', () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    ahead: null,
+    behind: null,
+    remoteBranchExists: true,
+    currentPullRequestState: 'merged',
+    canArchiveTask: true,
+  });
+
+  assert.equal(action.kind, 'loading');
+});
+
+test('a standalone merged PR with a deleted remote branch stays viewable', () => {
+  const action = derivePrimaryGitAction({
+    ...SYNCED,
+    ahead: null,
+    behind: null,
+    remoteBranchExists: false,
+    currentPullRequestState: 'merged',
+    canArchiveTask: false,
+  });
+
+  assert.equal(action.kind, 'view_pr');
+});
+
+test('open and non-Task pull requests keep View PR', () => {
+  const openTask = derivePrimaryGitAction({
+    ...SYNCED,
+    currentPullRequestState: 'open',
+    canArchiveTask: true,
+  });
+  const standaloneMerged = derivePrimaryGitAction({
+    ...SYNCED,
+    currentPullRequestState: 'merged',
+    canArchiveTask: false,
+  });
+
+  assert.equal(openTask.kind, 'view_pr');
+  assert.equal(standaloneMerged.kind, 'view_pr');
+});
+
+test('delivery and recovery work outrank merged Task archive', () => {
+  const mergedTask = {
+    ...SYNCED,
+    currentPullRequestState: 'merged' as const,
+    canArchiveTask: true,
+  };
+
+  assert.equal(
+    derivePrimaryGitAction({ ...mergedTask, changedFileCount: 1 }).kind,
+    'commit',
+  );
+  assert.equal(derivePrimaryGitAction({ ...mergedTask, ahead: 1 }).kind, 'push');
+  assert.equal(derivePrimaryGitAction({ ...mergedTask, behind: 1 }).kind, 'pull');
+  assert.equal(
+    derivePrimaryGitAction({ ...mergedTask, conflictOperation: 'merge' }).kind,
+    'conflict',
+  );
+});
+
 test('a repository that cannot host a pull request says why, rather than offering one', () => {
   const action = derivePrimaryGitAction({ ...SYNCED, pullRequest: 'unsupported' });
 
@@ -388,6 +526,31 @@ test('a linked pull request reaches the ladder however the panel learned of it',
   });
 
   assert.equal(snapshot?.pullRequest, 'exists');
+  assert.equal(snapshot?.currentPullRequestState, 'open');
+});
+
+test('only an explicitly archive-capable merged Task panel reaches archive', () => {
+  const mergedPanel: GitPanelData = {
+    ...PANEL,
+    taskId: 'task-816',
+    prStatusKnown: true,
+    prStatus: {
+      number: 816,
+      url: 'https://github.com/horang-labs/tessera/pull/816',
+      state: 'merged',
+      relation: 'current',
+      lastSynced: '2026-08-16T00:00:00.000Z',
+    },
+  };
+
+  const taskSnapshot = gitStateSnapshotFromPanel(mergedPanel, { canArchiveTask: true });
+  const directWorktreeSnapshot = gitStateSnapshotFromPanel(
+    { ...mergedPanel, taskId: undefined, worktreeId: 'worktree-816' },
+    { canArchiveTask: false },
+  );
+
+  assert.equal(derivePrimaryGitAction(taskSnapshot).kind, 'archive_worktree');
+  assert.equal(derivePrimaryGitAction(directWorktreeSnapshot).kind, 'view_pr');
 });
 
 test('a historical pull request remains visible without blocking Create PR', () => {
