@@ -149,6 +149,20 @@ test('public generated results expose the agent-reported path for PTY dragging',
   );
 });
 
+test('public path inputs expose the agent path for PTY dragging', () => {
+  const [trace] = projectImageGenerationTraces([
+    exec('call', `tools.image_gen__imagegen({
+      prompt: 'edit it',
+      referenced_image_paths: ['/home/work/input image.png'],
+    })`),
+  ]);
+
+  assert.equal(
+    toPublicImageGenerationTraces('session', [trace])[0].inputs[0].path,
+    '/home/work/input image.png',
+  );
+});
+
 test('inline generated results retain savedPath as the agent drag path', () => {
   const generated = inlineGeneratedResult('generated', 'IMAGE_BYTES');
   generated.toolParams.savedPath = '/home/work/generated.png';

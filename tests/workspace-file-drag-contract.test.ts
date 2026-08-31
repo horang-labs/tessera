@@ -22,6 +22,7 @@ import {
   formatWorkspaceFileReference,
   insertWorkspaceFileReferenceAtCursor,
 } from '../src/lib/chat/workspace-file-reference';
+import { isNativeFileDrag } from '../src/lib/dnd/native-file-drop';
 
 class FakeDataTransfer {
   effectAllowed = 'uninitialized';
@@ -118,6 +119,21 @@ test('path insertion falls back to the live renderer drag when Chromium strips a
 
   const dropped = new FakeDataTransfer();
   assert.deepEqual(getInternalPathDropPaths(dropped), [path]);
+  clearPathInsertDragData();
+});
+
+test('generated image drags are not misclassified when Chromium retains the native Files type', () => {
+  const path = '/home/work/.tessera/generated image.png';
+  const source = new FakeDataTransfer();
+  setPathInsertDragData(source, [path]);
+
+  const crossedRendererSurface = new FakeDataTransfer();
+  Object.defineProperty(crossedRendererSurface, 'types', {
+    get: () => ['Files'],
+  });
+
+  assert.equal(isNativeFileDrag(crossedRendererSurface), false);
+  assert.deepEqual(getInternalPathDropPaths(crossedRendererSurface), [path]);
   clearPathInsertDragData();
 });
 

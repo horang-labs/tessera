@@ -14,7 +14,15 @@ const panelWrapperSource = read('src/components/panel/panel-wrapper.tsx');
 test('generated results expose a path-only drag without changing their click behavior', () => {
   assert.match(imagePanelSource, /draggable=\{Boolean\(result\.path\)\}/);
   assert.match(imagePanelSource, /setPathInsertDragData\(event\.dataTransfer, \[result\.path\]\)/);
+  assert.match(imagePanelSource, /src=\{result\.url\}[\s\S]{0,120}draggable=\{false\}/);
   assert.match(imagePanelSource, /onClick=\{\(\) => onOpenImage/);
+});
+
+test('input thumbnails expose the same path-only drag without changing their click behavior', () => {
+  assert.match(imagePanelSource, /draggable=\{Boolean\(input\.path\)\}/);
+  assert.match(imagePanelSource, /setPathInsertDragData\(event\.dataTransfer, \[input\.path\]\)/);
+  assert.match(imagePanelSource, /src=\{input\.url\}[\s\S]{0,120}draggable=\{false\}/);
+  assert.match(imagePanelSource, /onClick=\{\(\) => onOpenImage\(\{ src: input\.url/);
 });
 
 test('every PTY prompt surface accepts the generated-image path drag contract', () => {

@@ -162,11 +162,18 @@ export function ImageGenerationTraceCard({
                     {...telemetryClickAttributes("image_generation.input.open", "right_panel")}
                     key={`${input.url}-${index}`}
                     type="button"
+                    draggable={Boolean(input.path)}
                     className="group relative block w-full overflow-hidden rounded-md border border-(--chat-header-border) bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+                    onDragStart={(event) => {
+                      if (!input.path || !setPathInsertDragData(event.dataTransfer, [input.path])) {
+                        event.preventDefault();
+                      }
+                    }}
+                    onDragEnd={clearPathInsertDragData}
                     onClick={() => onOpenImage({ src: input.url, alt: t("imagePanel.inputNumber", { number: index + 1 }) })}
                     aria-label={t("imagePanel.openInput", { number: index + 1 })}
                   >
-                    <img src={input.url} alt="" loading="lazy" className="aspect-square w-full object-cover transition-transform duration-150 group-hover:scale-[1.04]" />
+                    <img src={input.url} draggable={false} alt="" loading="lazy" className="aspect-square w-full object-cover transition-transform duration-150 group-hover:scale-[1.04]" />
                     <span className="pointer-events-none absolute left-1.5 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/65 px-1 text-[9px] font-semibold text-white shadow-sm backdrop-blur-sm">
                       {index + 1}
                     </span>
@@ -237,6 +244,7 @@ function ResultHeroMedia({
         >
           <img
             src={result.url}
+            draggable={false}
             alt=""
             loading="eager"
             onLoad={(event) => {

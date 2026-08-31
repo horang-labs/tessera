@@ -31,9 +31,14 @@ export interface ImageGenerationTrace {
   timestamp: string;
 }
 
+type PublicTraceImage = Omit<ResolvedTraceImage, 'agentPath' | 'locator'> & {
+  url: string;
+  path?: string;
+};
+
 export interface PublicImageGenerationTrace extends Omit<ImageGenerationTrace, 'inputs' | 'result'> {
-  inputs: Array<Omit<ResolvedTraceImage, 'locator'> & { url: string }>;
-  result?: Omit<ResolvedTraceImage, 'locator'> & { url: string; path?: string };
+  inputs: PublicTraceImage[];
+  result?: PublicTraceImage;
 }
 
 interface ImageGenerationInvocation {
@@ -399,10 +404,14 @@ export function toPublicImageGenerationTraces(
     const { inputs, result, ...metadata } = trace;
     return {
       ...metadata,
-      inputs: inputs.map(({ locator: _locator, ...input }, index) => ({
-        ...input,
-        url: `/api/sessions/${encodeURIComponent(sessionId)}/image-generations/${encodeURIComponent(trace.id)}/inputs/${index}`,
-      })),
+      inputs: inputs.map(({ locator, agentPath, ...input }, index) => {
+        const path = agentPath ?? (locator.kind === 'path' ? locator.path : undefined);
+        return {
+          ...input,
+          ...(path ? { path } : {}),
+          url: `/api/sessions/${encodeURIComponent(sessionId)}/image-generations/${encodeURIComponent(trace.id)}/inputs/${index}`,
+        };
+      }),
       ...(result ? {
         result: {
           source: result.source,
