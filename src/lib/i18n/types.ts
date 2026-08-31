@@ -34,6 +34,11 @@ export interface I18nMessages {
       chat: { label: string; description: string };
       task: { label: string; description: string };
     };
+    defaultCliProvider: {
+      title: string;
+      description: string;
+      note: string;
+    };
     executionMode: {
       title: string;
       description: string;

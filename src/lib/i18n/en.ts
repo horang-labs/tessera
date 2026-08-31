@@ -47,6 +47,11 @@ export const en: I18nMessages = {
         description: 'Start a session with its own managed branch and worktree.',
       },
     },
+    defaultCliProvider: {
+      title: 'Default CLI provider',
+      description: 'Choose the provider preselected when you create a session or worktree.',
+      note: 'If it is unavailable, Tessera temporarily selects another connected provider.',
+    },
     executionMode: {
       title: 'Agent execution mode',
       description: 'Choose how new chats and worktree sessions open.',

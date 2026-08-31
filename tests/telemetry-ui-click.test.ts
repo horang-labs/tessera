@@ -152,6 +152,14 @@ test('semantic telemetry transport keeps only allowlisted safe properties', () =
   });
 });
 
+test('default CLI provider changes keep their allowlisted setting name', () => {
+  assert.deepEqual(sanitizeTelemetryProperties({
+    setting: 'defaultCliProvider',
+  }), {
+    setting: 'defaultCliProvider',
+  });
+});
+
 test('client form factor is reduced locally without transmitting raw device signals', () => {
   assert.equal(detectTelemetryClientFormFactor({
     userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit Mobile',

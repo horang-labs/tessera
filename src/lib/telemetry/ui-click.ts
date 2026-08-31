@@ -177,6 +177,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'settings.section.git',
   'settings.general.language',
   'settings.general.execution_mode',
+  'settings.general.default_cli_provider',
   'settings.general.new_session_kind',
   'settings.general.terminal_view',
   'settings.profile.display_name',

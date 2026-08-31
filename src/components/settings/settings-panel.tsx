@@ -27,6 +27,7 @@ import AgentExecutionModeSettings from './agent-execution-mode-settings';
 import TesseraCliSettings from './tessera-cli-settings';
 import TerminalViewDefaultSettings from './terminal-view-default-settings';
 import NewSessionKindSettings from './new-session-kind-settings';
+import DefaultCliProviderSettings from './default-cli-provider-settings';
 import CustomModelSettings from './custom-model-settings';
 import ProjectPreparationSettings from './project-preparation-settings';
 import RemoteAccessSection from './remote-access-section';
@@ -236,6 +237,9 @@ export default function SettingsPanel() {
       default:
         return (
           <>
+            <SettingsCard testId="settings-section-general-default-cli-provider">
+              <DefaultCliProviderSettings />
+            </SettingsCard>
             <SettingsCard testId="settings-section-general-execution-mode">
               <AgentExecutionModeSettings />
             </SettingsCard>
