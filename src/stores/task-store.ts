@@ -84,6 +84,8 @@ interface TaskState {
   setLinkedSessionRunning: (sessionId: string, running: boolean) => void;
   /** Mirror canonical unread state into every loaded Worktree Task summary. */
   setLinkedSessionUnreadCount: (sessionId: string, unreadCount: number) => void;
+  /** Reorder child Sessions across every loaded appearance of their Worktree Task. */
+  reorderLinkedSessions: (orderedIds: string[]) => string[];
   /**
    * Update a linked session title in local task cache.
    * Single-session tasks also mirror the parent task title.
@@ -212,6 +214,40 @@ function setLinkedSessionUnreadCountInList(
         candidate.id === sessionId ? { ...candidate, unreadCount } : candidate
       ),
     };
+  });
+
+  return changed ? nextTasks : tasks;
+}
+
+function reorderLinkedSessionsInList(
+  tasks: TaskEntity[],
+  orderedIds: readonly string[],
+): TaskEntity[] {
+  const orderMap = new Map(orderedIds.map((id, index) => [id, index]));
+  let changed = false;
+  const nextTasks = tasks.map((task) => {
+    if (!task.sessions.some((session) => orderMap.has(session.id))) return task;
+
+    const orderedSessions = orderedIds.flatMap((id, index) => {
+      const session = task.sessions.find((candidate) => candidate.id === id);
+      return session ? [{ ...session, sortOrder: index }] : [];
+    });
+    const remainingSessions = task.sessions
+      .filter((session) => !orderMap.has(session.id))
+      .map((session, index) => ({
+        ...session,
+        sortOrder: orderedSessions.length + index,
+      }));
+    const sessions = [...orderedSessions, ...remainingSessions];
+    const isUnchanged = sessions.length === task.sessions.length
+      && sessions.every((session, index) => (
+        session.id === task.sessions[index]?.id
+        && session.sortOrder === task.sessions[index]?.sortOrder
+      ));
+    if (isUnchanged) return task;
+
+    changed = true;
+    return { ...task, sessions };
   });
 
   return changed ? nextTasks : tasks;
@@ -702,6 +738,37 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         ? state
         : { tasks, tasksByProject };
     }),
+
+  reorderLinkedSessions: (orderedIds) => {
+    if (orderedIds.length === 0) return [];
+
+    const orderedIdSet = new Set(orderedIds);
+    const state = get();
+    const affectedProjectIds = Object.entries(state.tasksByProject)
+      .filter(([, tasks]) => tasks.some((task) =>
+        task.sessions.some((session) => orderedIdSet.has(session.id))
+      ))
+      .map(([projectId]) => projectId);
+
+    set((current) => {
+      const tasks = reorderLinkedSessionsInList(current.tasks, orderedIds);
+      let tasksByProject = current.tasksByProject;
+      for (const [projectId, projectTasks] of Object.entries(current.tasksByProject)) {
+        const reorderedTasks = reorderLinkedSessionsInList(projectTasks, orderedIds);
+        if (reorderedTasks === projectTasks) continue;
+        if (tasksByProject === current.tasksByProject) {
+          tasksByProject = { ...current.tasksByProject };
+        }
+        tasksByProject[projectId] = reorderedTasks;
+      }
+
+      return tasks === current.tasks && tasksByProject === current.tasksByProject
+        ? current
+        : { tasks, tasksByProject };
+    });
+
+    return affectedProjectIds;
+  },
 
   syncLinkedTaskTitle: (sessionId, title) =>
     set((state) => ({

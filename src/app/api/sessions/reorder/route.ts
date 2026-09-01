@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
-import { reorderSessionsByIds } from '@/lib/db/sessions';
+import { getSession, reorderSessionsByIds } from '@/lib/db/sessions';
+import { getTaskProjectViewIds } from '@/lib/projects/project-view-projection';
 import { broadcastSessionMutation, getOriginClientIdFromRequest } from '@/lib/ws/mutation-broadcast';
 import logger from '@/lib/logger';
 
@@ -22,11 +23,23 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: 'orderedIds must be a non-empty array' }, { status: 400 });
     }
 
+    const firstSession = typeof orderedIds[0] === 'string'
+      ? getSession(orderedIds[0])
+      : undefined;
+    const taskId = firstSession?.task_id ?? undefined;
+    const affectedProjectIds = taskId
+      ? getTaskProjectViewIds(taskId)
+      : firstSession?.project_id ? [firstSession.project_id] : [];
+
     reorderSessionsByIds(orderedIds);
     logger.info({ count: orderedIds.length }, 'Sessions reordered by canonical IDs');
 
     broadcastSessionMutation(auth.userId, {
       kind: 'reordered',
+      projectId: firstSession?.project_id,
+      sessionId: firstSession?.id,
+      taskId,
+      affectedProjectIds,
       originClientId: getOriginClientIdFromRequest(req),
     });
 
