@@ -27,6 +27,7 @@ import { inferToolCallKindFromToolName } from '@/types/tool-call-kind';
 import { buildToolDisplay } from '@/lib/tool-display';
 import { extractImageToolResult } from '@/lib/tool-results/tool-image';
 import type { FileReadImageToolResult } from '@/types/tool-result';
+import type { ContentBlock, ImageContentBlock } from '@/lib/ws/message-types';
 
 /** Mirrors HISTORY_VERSION in session-history.ts. */
 const HISTORY_VERSION = 1;
@@ -254,24 +255,89 @@ function decodeEventMessage(
   return null;
 }
 
+function decodeImageGenerationCompleted(
+  payload: Record<string, any>,
+  timestamp: string,
+): SessionHistoryEvent | null {
+  if (payload.type !== 'item_completed' || !isRecord(payload.item)) return null;
+  const item = payload.item;
+  if (item.kind !== 'image_gen.generation' && item.type !== 'imageGeneration') return null;
+  const id = typeof item.id === 'string' && item.id ? item.id : `image-generation-${timestamp}`;
+  const status = item.status === 'failed' || item.failure ? 'error' : 'completed';
+  const imageResult: FileReadImageToolResult | undefined = status === 'completed'
+    && typeof item.result === 'string'
+    && item.result.length > 0
+    ? {
+        kind: 'file_read',
+        contentType: 'image',
+        base64: item.result,
+        mimeType: 'image/png',
+      }
+    : undefined;
+  return {
+    v: HISTORY_VERSION,
+    type: 'tool_call',
+    timestamp,
+    toolName: 'ImageGeneration',
+    toolParams: {
+      itemType: 'imageGeneration',
+      ...(typeof item.revisedPrompt === 'string' ? { revisedPrompt: item.revisedPrompt } : {}),
+      ...(typeof item.savedPath === 'string' ? { savedPath: item.savedPath } : {}),
+      ...(typeof item.transparentBackground === 'boolean'
+        ? { transparentBackground: item.transparentBackground }
+        : {}),
+      ...(typeof item.failure === 'string' ? { failure: item.failure } : {}),
+    },
+    status,
+    ...(status === 'error' ? { error: typeof item.failure === 'string' ? item.failure : 'Image generation failed' } : {}),
+    ...(imageResult ? { toolUseResult: imageResult } : {}),
+    toolUseId: id,
+  };
+}
+
+function imageContentBlock(value: unknown): ImageContentBlock | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\s]+)$/i.exec(value);
+  if (!match) return undefined;
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: match[1].toLowerCase() as ImageContentBlock['source']['media_type'],
+      data: match[2].replace(/\s/g, ''),
+    },
+  };
+}
+
 function readResponseMessage(
   payload: Record<string, any>,
-): { role: 'user' | 'assistant'; text: string } | null {
+): { role: 'user' | 'assistant'; text: string; content: string | ContentBlock[] } | null {
   if (payload.role !== 'user' && payload.role !== 'assistant') return null;
   if (!Array.isArray(payload.content)) return null;
 
-  const text = payload.content
-    .flatMap((block: unknown) => {
-      if (!isRecord(block)) return [];
-      if (block.type !== 'input_text' && block.type !== 'output_text' && block.type !== 'text') {
-        return [];
+  const content: ContentBlock[] = [];
+  for (const block of payload.content) {
+    if (!isRecord(block)) continue;
+    if (block.type === 'input_text' || block.type === 'output_text' || block.type === 'text') {
+      if (typeof block.text === 'string' && block.text.trim()) {
+        content.push({ type: 'text', text: block.text });
       }
-      return typeof block.text === 'string' && block.text.trim() ? [block.text] : [];
-    })
-    .join('\n')
-    .trim();
+      continue;
+    }
+    if (block.type === 'input_image') {
+      const image = imageContentBlock(block.image_url ?? block.imageUrl ?? block.url);
+      if (image) content.push(image);
+    }
+  }
 
-  return text ? { role: payload.role, text } : null;
+  const text = content.flatMap((block) => block.type === 'text' ? [block.text] : []).join('\n').trim();
+
+  if (!text && content.length === 0) return null;
+  return {
+    role: payload.role,
+    text,
+    content: payload.role === 'user' && content.some((block) => block.type === 'image') ? content : text,
+  };
 }
 
 function isSyntheticResponseUserMessage(text: string): boolean {
@@ -288,7 +354,7 @@ function decodeResponseMessage(
   if (message.role === 'user' && isSyntheticResponseUserMessage(message.text)) return null;
 
   return message.role === 'user'
-    ? { v: HISTORY_VERSION, type: 'user_message', timestamp, content: message.text }
+    ? { v: HISTORY_VERSION, type: 'user_message', timestamp, content: message.content }
     : { v: HISTORY_VERSION, type: 'assistant_message', timestamp, content: message.text };
 }
 
@@ -322,6 +388,8 @@ export function decodeCodexTranscriptLine(
   }
 
   if (record.type === 'event_msg') {
+    const imageGeneration = decodeImageGenerationCompleted(payload, timestamp);
+    if (imageGeneration) return [imageGeneration];
     if (state.readResponseItemConversation) return [];
     const event = decodeEventMessage(payload, timestamp);
     return event ? [event] : [];

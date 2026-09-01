@@ -25,7 +25,8 @@ import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { sendTerminalChatMessage } from '@/lib/terminal/terminal-chat-send';
 import { registerPendingTerminalChatMessage } from '@/lib/chat/terminal-chat-live-refresh';
 import {
-  getWorkspaceFileDragAbsolutePath,
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
 } from '@/lib/dnd/panel-session-drag';
 import {
@@ -150,7 +151,9 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
   }, []);
 
   const acceptsPathDrop = useCallback((dataTransfer: DataTransfer) => (
-    isNativeFileDrag(dataTransfer) || hasWorkspaceFileDragData(dataTransfer)
+    isNativeFileDrag(dataTransfer) ||
+    hasWorkspaceFileDragData(dataTransfer) ||
+    hasPathInsertDragData(dataTransfer)
   ), []);
 
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -182,9 +185,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
 
     const paths = isNativeFileDrag(event.dataTransfer)
       ? getNativeFileDropAbsolutePaths(event.dataTransfer)
-      : [getWorkspaceFileDragAbsolutePath(event.dataTransfer)].filter(
-          (path): path is string => Boolean(path),
-        );
+      : getInternalPathDropPaths(event.dataTransfer);
     insertPaths(paths);
   }, [acceptsPathDrop, insertPaths, isBlocked, isSubmitting]);
 

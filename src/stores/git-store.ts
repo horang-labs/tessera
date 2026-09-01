@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage'
 
 /** Which of the right-hand panel's tabs is showing. */
-export type GitPanelTab = 'git' | 'files' | 'scripts' | 'memory'
+export type GitPanelTab = 'git' | 'files' | 'scripts' | 'memory' | 'images'
 
 interface GitPanelUIState {
   isOpen: boolean
