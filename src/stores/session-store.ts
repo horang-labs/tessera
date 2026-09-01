@@ -1633,6 +1633,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Session reorder by IDs only (collection view)
   reorderSessionsByIds: (orderedIds) => {
     const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+    const affectedTaskProjectIds = useTaskStore.getState().reorderLinkedSessions(orderedIds);
     set((state) => ({
       projects: state.projects.map((p) => ({
         ...p,
@@ -1649,12 +1650,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           : session,
       ),
     }));
-    fetchWithClientId('/api/sessions/reorder', {
+    void fetchWithClientId('/api/sessions/reorder', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderedIds }),
+    }).then((response) => {
+      if (!response.ok) throw new Error(`Session reorder failed: ${response.status}`);
     }).catch(() => {
-      get().loadProjects();
+      void Promise.all([
+        get().loadProjects(),
+        ...affectedTaskProjectIds.map((projectId) =>
+          useTaskStore.getState().loadTasks(projectId, {
+            setCurrent: useTaskStore.getState().currentProjectId === projectId,
+          })
+        ),
+      ]);
     });
   },
 
