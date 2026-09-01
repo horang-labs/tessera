@@ -180,6 +180,7 @@ export function previewWorkspaceFileTab(
     options.preferKanbanPeek
     && tryOpenWorkspaceFileInKanbanPeek(sourceSessionId, kind, filePath)
   ) return;
+  promoteSourceSessionTab(sourceSessionId);
   const tabId = previewSpecialFileTab(
     buildWorkspaceFileSessionId(sourceSessionId, kind, filePath, options.worktreeId),
     options.worktreeId,

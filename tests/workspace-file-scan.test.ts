@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { readWorkspaceDirectoryFiles } from "../src/lib/workspace-files/read-workspace-root";
 import {
   applyMaxFiles,
   isIgnoredWorkspacePath,
@@ -116,6 +117,35 @@ test("directory scan reads one level or the whole subtree", async () => {
     // top-level entry invalidates.
     const rootShallow = await scanWorkspaceDirectory(root, "", { recursive: false });
     assert.deepEqual(rootShallow.files, ["top.ts"]);
+  });
+});
+
+test("Files tab directory reads return only immediate children", async () => {
+  await withTempWorkspace(async (root) => {
+    await mkdir(path.join(root, "src/nested"), { recursive: true });
+    await mkdir(path.join(root, "empty"), { recursive: true });
+    await writeFile(path.join(root, "root.ts"), "");
+    await writeFile(path.join(root, "src/index.ts"), "");
+    await writeFile(path.join(root, "src/nested/deep.ts"), "");
+
+    const rootListing = await readWorkspaceDirectoryFiles(root, "");
+    assert.equal(rootListing.missing, false);
+    assert.deepEqual(rootListing.directories, ["empty", "src"]);
+    assert.deepEqual(rootListing.files, ["root.ts"]);
+
+    const srcListing = await readWorkspaceDirectoryFiles(root, "src");
+    assert.equal(srcListing.missing, false);
+    assert.deepEqual(srcListing.directories, ["src/nested"]);
+    assert.deepEqual(srcListing.files, ["src/index.ts"]);
+  });
+});
+
+test("Files tab directory reads reject paths outside the workspace", async () => {
+  await withTempWorkspace(async (root) => {
+    const result = await readWorkspaceDirectoryFiles(root, "../outside");
+    assert.equal(result.missing, true);
+    assert.deepEqual(result.directories, []);
+    assert.deepEqual(result.files, []);
   });
 });
 

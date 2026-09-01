@@ -21,6 +21,14 @@ const worktreeDirectoryRouteSource = read('../src/app/api/worktrees/[id]/directo
 const filesRouteSource = read('../src/app/api/sessions/[id]/files/route.ts');
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const panelContainerSource = read('../src/components/panel/panel-container.tsx');
+const directoryRowSource = filePanelSource.slice(
+  filePanelSource.indexOf('if (node.type === "directory")'),
+  filePanelSource.indexOf('const isSelected = node.path === selectedPath'),
+);
+const fileRowSource = filePanelSource.slice(
+  filePanelSource.indexOf('const isSelected = node.path === selectedPath'),
+  filePanelSource.indexOf('if (!sessionId && !worktreeId)'),
+);
 
 test('folder expansion is restored per workspace after the file panel remounts', () => {
   assert.match(filePanelSource, /selectExpandedWorkspacePaths\(targetKey\)/);
@@ -160,12 +168,27 @@ test('an input from another workspace cannot strand this panel', () => {
   assert.match(filePanelSource, /onRename: renameEntry,\s*\n\s*workspaceKey: targetKey,/);
 });
 
-test('a double-click gesture creates only one file tab', () => {
-  // Both clicks reach the row, but only the first is an independent open action.
-  assert.match(filePanelSource, /if \(!shouldOpenOnRowClick\(event\.detail\)\) return;/);
+test('a file click previews once and its double-click respects Kanban Peek', () => {
+  // Both clicks reach the row, but only the first is an independent preview.
+  assert.match(fileRowSource, /if \(!shouldOpenOnRowClick\(event\.detail\)\) return;/);
   assert.match(inlineStateSource, /return clickCount === 1/);
+  assert.match(
+    fileRowSource,
+    /previewWorkspaceTargetFileTab\(target, 'file', node\.path, \{\s*preferKanbanPeek: true,/,
+  );
+
+  const doubleClick = fileRowSource.match(
+    /onDoubleClick=\{\(\) => \{(?<body>[\s\S]*?)\n\s*\}\}\s*onKeyDown/,
+  );
+  assert.ok(doubleClick?.groups?.body, 'the file row owns a double-click handler');
+  assert.match(doubleClick.groups.body, /openWorkspaceTargetFileTab\(target, 'file', node\.path/);
+  assert.match(
+    doubleClick.groups.body,
+    /preferKanbanPeek: true/,
+    'double-click pins in List mode but must stay inside Kanban Peek mode',
+  );
   // F2 renames; Enter still activates the row, so the keyboard can open a file.
-  assert.match(filePanelSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
+  assert.match(fileRowSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
 });
 
 test('folder toggles have no delayed timer that can fire under an input', () => {
@@ -178,15 +201,16 @@ test('folder toggles have no delayed timer that can fire under an input', () => 
 test('a watch reconcile cannot take the row being edited', () => {
   // The panel's live sync goes through the hook: while an input is open the
   // reload is held back and applied once, when the input closes.
-  assert.match(filePanelSource, /onRefresh: inlineInput\.handleExternalRefresh/);
+  assert.match(filePanelSource, /onRefresh: handleLiveRefresh/);
+  assert.match(filePanelSource, /handleExternalRefresh\(\)/);
   assert.match(inlineHookSource, /pendingRefreshRef\.current = true/);
   assert.match(inlineHookSource, /handlersRef\.current\.onRefreshFiles\(\)/);
 });
 
-test('double-clicking the name renames without fighting the row click', () => {
+test('double-clicking a directory name renames without fighting its toggle', () => {
   // The first click toggles immediately and the second click is ignored before
   // the double-click handler opens rename, so no timer delays ordinary clicks.
-  assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*if \(!canMutate\) return;\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
+  assert.match(directoryRowSource, /onDoubleClick=\{\(event\) => \{\s*if \(!canMutate\) return;\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
   assert.match(filePanelSource, /if \(!shouldToggleDirectoryOnClick\(event\.detail\)\) return;/);
   assert.match(inlineStateSource, /return clickCount <= 1;/);
 });

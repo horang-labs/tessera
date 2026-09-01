@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import { resolveSessionWorkspaceFilesystemRoot } from '@/lib/session/session-workspace-root';
-import { readWorkspaceRootFiles } from '@/lib/workspace-files/read-workspace-root';
+import {
+  readWorkspaceDirectoryFiles,
+  readWorkspaceRootFiles,
+} from '@/lib/workspace-files/read-workspace-root';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { getProjectViewReferenceSessions } from '@/lib/projects/project-view-projection';
 
@@ -44,8 +47,15 @@ export async function GET(
     });
   }
 
+  const requestedDirectory = request.nextUrl.searchParams.has('directory')
+    ? request.nextUrl.searchParams.get('directory') ?? ''
+    : null;
+  const listing = requestedDirectory === null
+    ? await readWorkspaceRootFiles(root)
+    : await readWorkspaceDirectoryFiles(root, requestedDirectory);
+
   return NextResponse.json({
-    ...await readWorkspaceRootFiles(root),
+    ...listing,
     chats: refs.chats,
     tasks: refs.tasks,
   });
