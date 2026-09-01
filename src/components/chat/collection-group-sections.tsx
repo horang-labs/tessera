@@ -841,7 +841,7 @@ export function TaskItemRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const density = getLinkedWorktreeDensity(task.sessions);
   const isExpanded = density === 'expanded';
-  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.id, task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const activeTabId = useTabStore((state) => state.activeTabId);
   const activePanelSessionId = usePanelStore((state) => {
