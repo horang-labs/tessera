@@ -8,6 +8,8 @@ import {
 } from '../src/components/chat/sidebar-utils';
 import type { RecentWorkItem } from '../src/lib/chat/recent-work';
 import { useSelectionStore } from '../src/stores/selection-store';
+import { useSessionStore } from '../src/stores/session-store';
+import { useTaskStore } from '../src/stores/task-store';
 import type { ProjectGroup, UnifiedSession } from '../src/types/chat';
 import type { TaskEntity } from '../src/types/task-entity';
 
@@ -152,4 +154,47 @@ test('normal click replaces a stale Shift range anchor before session activation
   assert.deepEqual([...state.selectedIds], ['session-a', 'session-b']);
   assert.equal(state.lastClickedId, 'session-a');
   assert.equal(state.barAnchorId, 'session-b');
+});
+
+test('bulk delete removes selected child Sessions from both Project and Worktree caches', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    useSelectionStore.getState().clearSelection();
+    useSessionStore.setState(useSessionStore.getInitialState(), true);
+    useTaskStore.setState(useTaskStore.getInitialState(), true);
+  });
+  globalThis.fetch = async () => new Response('{}', { status: 200 });
+
+  const sessions = ['child-a', 'child-b'].map((id, sortOrder) => ({
+    id,
+    title: id,
+    sortOrder,
+    isRunning: false,
+  }));
+  useTaskStore.setState({
+    ...useTaskStore.getInitialState(),
+    tasks: [{ id: 'worktree-a', projectViewId: 'project-a', sessions } as TaskEntity],
+    tasksByProject: {
+      'project-a': [{ id: 'worktree-a', projectViewId: 'project-a', sessions } as TaskEntity],
+    },
+    currentProjectId: 'project-a',
+  }, true);
+  useSessionStore.setState({
+    ...useSessionStore.getInitialState(),
+    projects: [{
+      encodedDir: 'project-a', displayName: 'project-a', decodedPath: '/project-a',
+      isCurrent: true, sessions: sessions.map((session) => ({
+        ...session, projectDir: 'project-a', archived: false, hasStarted: true,
+      })) as UnifiedSession[], totalSessions: 2, loadedCount: 2, allLoaded: true,
+      nextCursor: null, loadBatchIndex: 0,
+    }],
+  }, true);
+  useSelectionStore.setState({ selectedIds: new Set(['child-a', 'child-b']) });
+
+  await useSelectionStore.getState().bulkDelete();
+
+  assert.deepEqual(useTaskStore.getState().tasksByProject['project-a'][0]?.sessions, []);
+  assert.deepEqual(useSessionStore.getState().projects[0]?.sessions, []);
+  assert.equal(useSessionStore.getState().projects[0]?.totalSessions, 0);
 });
