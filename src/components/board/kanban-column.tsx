@@ -200,6 +200,7 @@ interface KanbanChatColumnProps {
   onCardGenerateTitle?: (taskId: string) => void;
   onCardMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onCardStopProcess?: (taskId: string) => void;
+  onCardRestartProcess?: (taskId: string) => void;
 }
 
 export const KanbanChatColumn = memo(function KanbanChatColumn({
@@ -232,6 +233,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   onCardGenerateTitle,
   onCardMoveToCollection,
   onCardStopProcess,
+  onCardRestartProcess,
 }: KanbanChatColumnProps) {
   const { t } = useI18n();
   const isEditable = interactionMode === 'editable';
@@ -341,6 +343,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
                     onGenerateTitle={onCardGenerateTitle}
                     onMoveToCollection={onCardMoveToCollection}
                     onStopProcess={onCardStopProcess}
+                    onRestartProcess={onCardRestartProcess}
                     collections={collectionsByProject[session.projectDir] ?? collections}
                   />
                 ))}
@@ -396,6 +399,7 @@ interface KanbanWorkflowColumnProps {
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
+  onSessionRestartProcess?: (sessionId: string) => void;
   renamingTaskId?: string | null;
   onTaskRenameComplete?: (taskId: string) => void;
 }
@@ -432,6 +436,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   renamingTaskId,
   onTaskRenameComplete,
 }: KanbanWorkflowColumnProps) {
@@ -908,6 +913,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     onSessionOpenInNewTab={onSessionOpenInNewTab}
                     onSessionGenerateTitle={onSessionGenerateTitle}
                     onSessionStopProcess={onSessionStopProcess}
+                    onSessionRestartProcess={onSessionRestartProcess}
                     isRenameRequested={renamingTaskId === task.id}
                     onRenameComplete={() => onTaskRenameComplete?.(task.id)}
                   />
@@ -942,6 +948,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                       )
                     }
                     onStopProcess={onSessionStopProcess}
+                    onRestartProcess={onSessionRestartProcess}
                     collections={collectionsByProject[session.projectDir]}
                   />
                 ))}

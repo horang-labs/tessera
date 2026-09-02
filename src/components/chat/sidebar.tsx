@@ -488,6 +488,11 @@ export function Sidebar() {
     projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
+  const handleTaskRestartProcess = useCallback((sessionId: string) => {
+    wsClient.restartSession(sessionId);
+    projectViewWorkspaceState.markSessionRead(sessionId);
+  }, []);
+
   const prevActivePanelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -793,6 +798,7 @@ export function Sidebar() {
                   onSessionOpenInNewTab={handleTaskOpenInNewTab}
                   onSessionGenerateTitle={handleTaskGenerateTitle}
                   onSessionStopProcess={handleTaskStopProcess}
+                  onSessionRestartProcess={handleTaskRestartProcess}
                 />
               )}
               <AllProjectsList
@@ -807,6 +813,7 @@ export function Sidebar() {
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
+                onSessionRestartProcess={handleTaskRestartProcess}
               />
             </>
           )
@@ -873,6 +880,7 @@ export function Sidebar() {
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
+                onSessionRestartProcess={handleTaskRestartProcess}
                 disableDnd
                 allowPanelSessionDnd
                 hideHeader
@@ -898,6 +906,7 @@ export function Sidebar() {
                     onSessionOpenInNewTab={handleTaskOpenInNewTab}
                     onSessionGenerateTitle={handleTaskGenerateTitle}
                     onSessionStopProcess={handleTaskStopProcess}
+                    onSessionRestartProcess={handleTaskRestartProcess}
                   />
                 )}
                 {visibleCollectionGroups.map((group, groupIdx) => {
@@ -956,6 +965,7 @@ export function Sidebar() {
                       onSessionOpenInNewTab={handleTaskOpenInNewTab}
                       onSessionGenerateTitle={handleTaskGenerateTitle}
                       onSessionStopProcess={handleTaskStopProcess}
+                      onSessionRestartProcess={handleTaskRestartProcess}
                       disableDnd={isRunningFilterActive}
                     />
                   );

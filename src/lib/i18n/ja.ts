@@ -977,6 +977,7 @@ export const ja: I18nMessages = {
     error: 'エラー',
     stopped: '停止済み',
     stopProcess: 'プロセスを停止',
+    restartSession: 'セッションを再起動',
     processing: '処理中',
     inputRequired: '入力待ち',
     unreadNotification: '未読通知',

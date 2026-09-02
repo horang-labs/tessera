@@ -13,6 +13,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Sparkles,
   Trash2,
   type LucideIcon,
@@ -279,6 +280,7 @@ export function CollectionContextMenu({
   onOpenInNewTab,
   onGenerateTitle,
   onStopProcess,
+  onRestartProcess,
   onStatusChange,
   onRunPreparation,
 }: {
@@ -292,6 +294,7 @@ export function CollectionContextMenu({
   onOpenInNewTab?: () => void;
   onGenerateTitle?: () => void;
   onStopProcess?: () => void;
+  onRestartProcess?: () => void;
   onStatusChange?: (status: string) => void;
   /** Runs the project's preparation script again on this task's worktree. */
   onRunPreparation?: () => void;
@@ -382,17 +385,30 @@ export function CollectionContextMenu({
       className="animate-in fade-in-0 zoom-in-95 duration-100"
     >
       <div className="min-w-[180px] rounded-lg border border-(--divider) bg-(--sidebar-bg) py-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.16)]">
-        {menu.isRunning && onStopProcess && (
+        {menu.isRunning && (onStopProcess || onRestartProcess) && (
           <>
-            <button
-              {...telemetryClickAttributes('task.stop', 'workspace_list')}
-              className={cn(menuItemClass, 'text-(--error)')}
-              onClick={() => { onStopProcess(); onClose(); }}
-              data-testid="ctx-stop-process"
-            >
-              <CircleStop className="h-3.5 w-3.5 shrink-0" />
-              <span>Stop Process</span>
-            </button>
+            {onStopProcess && (
+              <button
+                {...telemetryClickAttributes('task.stop', 'workspace_list')}
+                className={cn(menuItemClass, 'text-(--error)')}
+                onClick={() => { onStopProcess(); onClose(); }}
+                data-testid="ctx-stop-process"
+              >
+                <CircleStop className="h-3.5 w-3.5 shrink-0" />
+                <span>Stop Process</span>
+              </button>
+            )}
+            {onRestartProcess && (
+              <button
+                {...telemetryClickAttributes('task.restart', 'workspace_list')}
+                className={menuItemClass}
+                onClick={() => { onRestartProcess(); onClose(); }}
+                data-testid="ctx-restart-process"
+              >
+                <RotateCcw className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+                <span>{t('status.restartSession')}</span>
+              </button>
+            )}
             <div className="mx-2 my-1 h-px bg-(--divider) opacity-40" />
           </>
         )}
@@ -951,7 +967,6 @@ export function TaskItemRow({
       }
     }
   }, [onStopProcess, task.projectViewId, task.sessions]);
-
   const handleDragStart = useCallback((event: React.DragEvent) => {
     if (disableDnd) {
       event.stopPropagation();

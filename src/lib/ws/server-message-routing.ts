@@ -39,6 +39,7 @@ import {
   compactSessionFromWebSocket,
   createSessionFromWebSocket,
   resumeSessionFromWebSocket,
+  restartSessionFromWebSocket,
   retrySessionFromWebSocket,
   runProcessManagerControlAction,
   sendCommandsListToWebSocketUser,
@@ -166,6 +167,7 @@ export async function routeClientTransportMessage({
 }: RouteClientTransportMessageOptions): Promise<void> {
   const unguardedSessionMessage = message.type === 'terminal_create'
     || message.type === 'terminal_prompt'
+    || message.type === 'restart_session'
     || message.type === 'subscribe_workspace_files'
     || message.type === 'unsubscribe_workspace_files'
     || message.type === 'mark_as_read'
@@ -329,6 +331,22 @@ export async function routeClientTransportMessage({
         approvalPolicy: message.approvalPolicy,
         sandboxMode: message.sandboxMode,
         serviceTier: message.serviceTier,
+      });
+      return;
+
+    case 'restart_session':
+      await restartSessionFromWebSocket({
+        userId,
+        sendToUser,
+        sessionId: message.sessionId,
+        permissionMode: message.permissionMode,
+        sessionMode: message.sessionMode,
+        accessMode: message.accessMode,
+        collaborationMode: message.collaborationMode,
+        approvalPolicy: message.approvalPolicy,
+        sandboxMode: message.sandboxMode,
+        serviceTier: message.serviceTier,
+        fastMode: message.fastMode,
       });
       return;
 

@@ -977,6 +977,7 @@ export const en: I18nMessages = {
     error: 'Error',
     stopped: 'Stopped',
     stopProcess: 'Stop process',
+    restartSession: 'Restart session',
     processing: 'Processing',
     inputRequired: 'Input required',
     unreadNotification: 'Unread notification',

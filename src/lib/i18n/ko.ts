@@ -984,6 +984,7 @@ export const ko: I18nMessages = {
     error: '오류',
     stopped: '중지됨',
     stopProcess: '프로세스 정지',
+    restartSession: '세션 재시작',
     processing: '처리 중',
     inputRequired: '입력 필요',
     unreadNotification: '읽지 않은 알림',

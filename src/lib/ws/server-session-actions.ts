@@ -28,8 +28,10 @@ import {
   isSessionHandedOffToTerminal,
   isSessionOperationConflictError,
   isTerminalHandoffConflictError,
+  withExclusiveTesseraSessionOperation,
   withTesseraSessionOperation,
 } from '../terminal/terminal-handoff-lock';
+import { resumeSessionWithLifecycle } from '../session/session-orchestrator-lifecycle';
 import type {
   ClientMessage,
   ContentBlock,
@@ -38,6 +40,8 @@ import type {
   TextContentBlock,
 } from './message-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
+import { terminalManager } from '@/lib/terminal/shared-terminal-manager';
+import { providerLaunchModule } from '@/lib/terminal/shared-provider-launch-module';
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 type SessionHistoryMessage = Extract<ServerTransportMessage, { type: 'session_history' }>;
@@ -59,6 +63,7 @@ const CODEX_REQUEST_USER_INPUT_TOOL_NAME = 'CodexRequestUserInput';
 const CODEX_MCP_ELICITATION_TOOL_NAME = 'CodexMcpElicitation';
 const CODEX_PERMISSIONS_REQUEST_TOOL_NAME = 'CodexPermissionsRequest';
 const LIVE_EVENT_VERSION = 1;
+const restartingSessionIds = new Set<string>();
 
 type SessionControlRequest = Pick<
   Extract<ClientMessage, { sessionId: string }>,
@@ -104,6 +109,11 @@ interface ResumeSessionActionOptions extends SessionActionOptions, ProviderRunti
 }
 
 interface RetrySessionActionOptions extends SessionActionOptions {
+  sessionId: string;
+}
+
+interface RestartSessionActionOptions extends SessionActionOptions, ProviderRuntimeControls {
+  permissionMode?: string;
   sessionId: string;
 }
 
@@ -782,6 +792,106 @@ export async function resumeSessionFromWebSocket({
       sessionId,
       code: 'resume_failed',
       message: `Failed to resume session: ${(err as Error).message}`,
+    });
+  }
+}
+
+export async function restartSessionFromWebSocket({
+  accessMode,
+  approvalPolicy,
+  collaborationMode,
+  fastMode,
+  permissionMode,
+  sandboxMode,
+  sendToUser,
+  serviceTier,
+  sessionId,
+  sessionMode,
+  userId,
+}: RestartSessionActionOptions): Promise<void> {
+  let announcedKind: 'chat' | 'terminal' | null = null;
+  try {
+    await withExclusiveTesseraSessionOperation(sessionId, async () => {
+      const record = dbSessions.getSession(sessionId);
+      if (!record) throw new Error('Session does not exist.');
+
+      const kind = dbSessions.extractSessionKind(record.provider_state);
+      if (restartingSessionIds.has(sessionId)) {
+        throw new Error('This session is already restarting.');
+      }
+      restartingSessionIds.add(sessionId);
+      try {
+        if (kind === 'terminal' && !await providerLaunchModule.canResumeSession(sessionId)) {
+          throw new Error('The provider session is not ready to resume yet.');
+        }
+        sendToUser(userId, { type: 'session_restarting', sessionId, kind });
+        announcedKind = kind;
+
+        if (kind === 'terminal') {
+          await terminalManager.stopSessionRuntime(sessionId, userId);
+          await providerLaunchModule.launch({ mode: 'detached', sessionId, userId });
+        } else {
+          const sessionRecord = dbSessions.getSessionWorktreeContext(sessionId);
+          const result = await resumeSessionWithLifecycle({
+            options: {
+              workDir: sessionRecord?.workDir || undefined,
+              permissionMode,
+              sessionMode,
+              accessMode,
+              collaborationMode,
+              approvalPolicy,
+              sandboxMode,
+              serviceTier,
+              fastMode,
+            },
+            processManager,
+            sessionId,
+            userId,
+          });
+          if (result.status !== 'running') {
+            throw new Error('Session could not be resumed.');
+          }
+          sendToUser(userId, {
+            type: 'session_started',
+            sessionId,
+            workDir: sessionRecord?.workDir || process.cwd(),
+            provider: record.provider ?? undefined,
+            model: result.model,
+            reasoningEffort: result.reasoningEffort,
+            serviceTier: result.serviceTier,
+            fastMode: result.fastMode,
+            sessionMode: result.sessionMode,
+            accessMode: result.accessMode,
+          });
+        }
+        sendToUser(userId, { type: 'session_restarted', sessionId, kind });
+        logger.info({ userId, sessionId, kind }, 'Session restarted');
+      } finally {
+        restartingSessionIds.delete(sessionId);
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown restart error';
+    const kind = announcedKind ?? dbSessions.extractSessionKind(
+      dbSessions.getSession(sessionId)?.provider_state ?? null,
+    );
+    logger.error({ userId, sessionId, kind, error }, 'Failed to restart session');
+    if (!announcedKind) {
+      sendToUser(userId, {
+        type: 'error',
+        sessionId,
+        code: isSessionOperationConflictError(error)
+          ? 'session_restart_in_progress'
+          : 'session_restart_unavailable',
+        message: `Could not restart session: ${message}`,
+      });
+      return;
+    }
+    sendToUser(userId, {
+      type: 'session_restart_failed',
+      sessionId,
+      kind,
+      message: `Failed to restart session: ${message}`,
     });
   }
 }
