@@ -28,6 +28,7 @@ import { i18n } from '@/lib/i18n';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { v4 as uuidv4 } from 'uuid';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
+import { getAdjacentTabId, type TabNavigationDirection } from '@/lib/tab/adjacent-tab';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export interface UseKeyboardShortcutsOptions {
@@ -147,6 +148,12 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     closeTab(id);
   }, []);
 
+  const handleNavigateTab = useCallback((direction: TabNavigationDirection) => {
+    const tabStore = useTabStore.getState();
+    const targetTabId = getAdjacentTabId(tabStore.tabs, tabStore.activeTabId, direction);
+    if (targetTabId) tabStore.setActiveTab(targetTabId);
+  }, []);
+
   const handleToggleSidebar = useCallback(() => {
     settingsStore.toggleSidebar();
   }, [settingsStore]);
@@ -228,6 +235,8 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   const handlers: Partial<Record<ShortcutId, () => void | Promise<void>>> = {
     'new-tab':        handleNewTab,
     'close-tab':      handleCloseTab,
+    'prev-tab':       () => handleNavigateTab('previous'),
+    'next-tab':       () => handleNavigateTab('next'),
     'toggle-sidebar': handleToggleSidebar,
     'toggle-view':    handleToggleView,
     'toggle-terminal-view': handleToggleTerminalView,
@@ -263,7 +272,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     overrides,
-    handleNewTab, handleCloseTab,
+    handleNewTab, handleCloseTab, handleNavigateTab,
     handleToggleSidebar, handleToggleView, handleToggleTerminalView,
     handleSplitRight, handleSplitDown,
     handleToggleTerminal, handleFocusPanel,

@@ -1,9 +1,11 @@
 'use client';
 
 import {
+  forwardRef,
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ChangeEvent,
@@ -25,7 +27,8 @@ import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { sendTerminalChatMessage } from '@/lib/terminal/terminal-chat-send';
 import { registerPendingTerminalChatMessage } from '@/lib/chat/terminal-chat-live-refresh';
 import {
-  getWorkspaceFileDragAbsolutePath,
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
 } from '@/lib/dnd/panel-session-drag';
 import {
@@ -87,15 +90,19 @@ export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
  * It also carries the PTY's lifecycle state, because the overlay has no other
  * live signal — without it a quiet session is indistinguishable from a broken one.
  */
-export const TerminalChatComposer = memo(function TerminalChatComposer({
-  sessionId,
-  isSinglePanel = false,
-  onInterrupt,
-}: {
+export interface TerminalChatComposerHandle {
+  insertPaths: (paths: string[]) => boolean;
+}
+
+export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, {
   sessionId: string;
   isSinglePanel?: boolean;
   onInterrupt: () => void;
-}) {
+}>(function TerminalChatComposer({
+  sessionId,
+  isSinglePanel = false,
+  onInterrupt,
+}, ref) {
   const { t } = useI18n();
   const isProcessing = useTerminalSessionStore(selectIsTerminalTurnProcessing(sessionId));
   const isAwaitingInput = useTerminalSessionStore(selectIsTerminalAwaitingInput(sessionId));
@@ -149,8 +156,18 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     });
   }, []);
 
+  useImperativeHandle(ref, () => ({
+    insertPaths(paths) {
+      if (isBlocked || isSubmitting || paths.length === 0) return false;
+      insertPaths(paths);
+      return true;
+    },
+  }), [insertPaths, isBlocked, isSubmitting]);
+
   const acceptsPathDrop = useCallback((dataTransfer: DataTransfer) => (
-    isNativeFileDrag(dataTransfer) || hasWorkspaceFileDragData(dataTransfer)
+    isNativeFileDrag(dataTransfer) ||
+    hasWorkspaceFileDragData(dataTransfer) ||
+    hasPathInsertDragData(dataTransfer)
   ), []);
 
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -182,9 +199,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
 
     const paths = isNativeFileDrag(event.dataTransfer)
       ? getNativeFileDropAbsolutePaths(event.dataTransfer)
-      : [getWorkspaceFileDragAbsolutePath(event.dataTransfer)].filter(
-          (path): path is string => Boolean(path),
-        );
+      : getInternalPathDropPaths(event.dataTransfer);
     insertPaths(paths);
   }, [acceptsPathDrop, insertPaths, isBlocked, isSubmitting]);
 
@@ -454,4 +469,4 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       </div>
     </div>
   );
-});
+}));

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, Archive, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Archive, LayoutGrid, Trash2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSelectionStore } from '@/stores/selection-store';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
@@ -20,7 +20,7 @@ const VIEWPORT_PADDING = 8;
 
 function computePosition(anchorEl: Element): { top: number; left: number } {
   const rect = anchorEl.getBoundingClientRect();
-  const barWidth = 340; // approximate max width
+  const barWidth = Math.min(500, window.innerWidth - VIEWPORT_PADDING * 2);
   const barHeight = 44;
 
   // Try right side first
@@ -46,6 +46,7 @@ interface SelectionActionBarContentProps {
   bulkMarkDone: () => void;
   bulkArchive: () => void;
   bulkDelete: () => void;
+  openInSplitView: () => void;
 }
 
 function SelectionActionBarContent({
@@ -55,6 +56,7 @@ function SelectionActionBarContent({
   bulkMarkDone,
   bulkArchive,
   bulkDelete,
+  openInSplitView,
 }: SelectionActionBarContentProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -72,7 +74,7 @@ function SelectionActionBarContent({
       style={{ top: position.top, left: position.left }}
       className={cn(
         'fixed z-[9998]',
-        'flex items-center gap-2 px-4 py-2.5 rounded-xl',
+        'flex w-max max-w-[calc(100vw-16px)] items-center gap-2 overflow-x-auto px-4 py-2.5 rounded-xl',
         'bg-(--sidebar-bg) border border-(--divider)',
         'shadow-[0_8px_32px_rgba(0,0,0,0.3),0_2px_8px_rgba(0,0,0,0.2)]',
         'animate-in fade-in duration-150',
@@ -99,6 +101,20 @@ function SelectionActionBarContent({
       >
         <CheckCircle2 className="w-3.5 h-3.5" />
         Done
+      </button>
+
+      <button
+        {...telemetryClickAttributes('list.selection.open_split_view', 'workspace_list')}
+        onClick={openInSplitView}
+        className={cn(
+          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium',
+          'text-(--text-secondary) hover:bg-(--sidebar-hover)',
+          'transition-colors whitespace-nowrap',
+        )}
+        data-testid="bulk-open-split-view"
+      >
+        <LayoutGrid className="w-3.5 h-3.5" />
+        Open in Split View
       </button>
 
       <button
@@ -159,6 +175,7 @@ export function SelectionActionBar() {
   const bulkMarkDone = useSelectionStore((state) => state.bulkMarkDone);
   const bulkArchive = useSelectionStore((state) => state.bulkArchive);
   const bulkDelete = useSelectionStore((state) => state.bulkDelete);
+  const openInSplitView = useSelectionStore((state) => state.openInSplitView);
   const position = useMemo(() => {
     if (!barAnchorId || selectedCount === 0 || typeof document === 'undefined') {
       return null;
@@ -191,6 +208,7 @@ export function SelectionActionBar() {
       bulkMarkDone={bulkMarkDone}
       bulkArchive={bulkArchive}
       bulkDelete={bulkDelete}
+      openInSplitView={openInSplitView}
     />
   );
 }

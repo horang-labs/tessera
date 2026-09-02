@@ -145,12 +145,25 @@ test('file shortcuts are bound to this view, not to the window', () => {
   assert.match(codeViewSource, /event\.metaKey \|\| event\.ctrlKey/);
 });
 
+test('clicking Monaco never moves focus to the surrounding file view', () => {
+  assert.match(codeViewSource, /const handleViewMouseDown/);
+  assert.match(codeViewSource, /target\.closest\("\.monaco-editor"\)/);
+  assert.match(codeViewSource, /onMouseDown=\{handleViewMouseDown\}/);
+});
+
 test('file viewers open an in-view search for both Monaco source and Markdown previews', () => {
   assert.match(codeViewSource, /WorkspaceFileFind/);
   assert.match(codeViewSource, /event\.key\.toLowerCase\(\) !== "f"/);
   assert.match(codeViewSource, /findRequest=\{monacoFindRequest\}/);
   assert.match(monacoEditorSource, /findRequest\?: number/);
   assert.match(monacoEditorSource, /editor\.trigger\("workspace", "actions\.find", null\)/);
+});
+
+test('Markdown preview search highlights matches without corrupting the input caret', () => {
+  assert.doesNotMatch(codeViewSource, /window\.getSelection\(\)/);
+  assert.match(codeViewSource, /return CSS\.highlights/);
+  assert.match(codeViewSource, /registry\?\.set\(/);
+  assert.match(codeViewSource, /registry\?\.delete\(/);
 });
 
 test('a dirty preview tab is pinned so it cannot be replaced out from under the draft', () => {

@@ -179,6 +179,7 @@ export interface CollectionGroupProps {
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
+  onSessionRestartProcess?: (sessionId: string) => void;
   onTaskStatusChange?: (taskId: string, status: string) => void;
   onChatStatusChange?: (sessionId: string, status: string) => void;
   disableDnd?: boolean;
@@ -227,6 +228,7 @@ export const CollectionGroup = memo(function CollectionGroup({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   onTaskStatusChange,
   onChatStatusChange,
   disableDnd = false,
@@ -448,6 +450,23 @@ export const CollectionGroup = memo(function CollectionGroup({
       }
     }
   }, [contextMenu, onSessionStopProcess, taskById]);
+
+  const handleContextMenuRestartProcess = useCallback(() => {
+    if (!contextMenu || !onSessionRestartProcess) return;
+
+    if (contextMenu.type === 'chat') {
+      onSessionRestartProcess(contextMenu.targetId);
+      return;
+    }
+
+    const task = useTaskStore.getState().getTask(contextMenu.targetId) ?? taskById.get(contextMenu.targetId);
+    for (const session of task?.sessions ?? []) {
+      const liveSession = projectViewWorkspaceState.resolveSession(session.id, task?.projectViewId);
+      if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
+        onSessionRestartProcess(session.id);
+      }
+    }
+  }, [contextMenu, onSessionRestartProcess, taskById]);
 
   const renderTaskRow = (task: TaskEntity) => (
     <TaskItemRow
@@ -713,6 +732,7 @@ export const CollectionGroup = memo(function CollectionGroup({
           onOpenInNewTab={contextMenu.type === 'chat' ? () => onSessionOpenInNewTab?.(contextMenu.targetId) : undefined}
           onGenerateTitle={onSessionGenerateTitle ? handleContextMenuGenerateTitle : undefined}
           onStopProcess={contextMenu.isRunning ? handleContextMenuStopProcess : undefined}
+          onRestartProcess={contextMenu.isRunning ? handleContextMenuRestartProcess : undefined}
           onRunPreparation={
             contextMenuTask && canPrepareTask(contextMenuTask, projectHasPreparationScript)
               ? () => requestPreparation(contextMenuTask.id)

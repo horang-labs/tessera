@@ -155,6 +155,38 @@ test('Codex dynamic tool image output is preserved for inline rendering', () => 
   assert.equal(resolveImageToolResultSrc(toolCall.toolUseResult), 'data:image/png;base64,QUJDRA==');
 });
 
+test('Codex imageGeneration keeps durable image bytes out of textual output', () => {
+  const parsed = codexProtocolParser.parseStdout(
+    'codex-generated-image',
+    JSON.stringify({
+      method: 'item/completed',
+      params: {
+        item: {
+          type: 'imageGeneration',
+          id: 'generated_image_1',
+          status: 'completed',
+          result: 'QUJDRA==',
+          savedPath: '/tmp/generated.png',
+          revisedPrompt: 'revised prompt',
+        },
+      },
+    }),
+  );
+  const toolCall = parsed
+    .map((item) => item.serverMessage)
+    .find((message) => message && (message as any).toolUseId === 'generated_image_1') as any;
+
+  assert.ok(toolCall);
+  assert.equal(toolCall.output, undefined);
+  assert.deepEqual(toolCall.toolUseResult, {
+    kind: 'file_read',
+    contentType: 'image',
+    base64: 'QUJDRA==',
+    mimeType: 'image/png',
+  });
+  assert.equal(toolCall.toolParams.savedPath, '/tmp/generated.png');
+});
+
 // --- claude code Read of an image through the live tool_result path ---
 
 function lastToolCall(parsed: ReturnType<typeof claudeCodeProtocolParser.parseStdout>, toolUseId: string) {

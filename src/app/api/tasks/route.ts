@@ -21,13 +21,14 @@ export async function GET(req: NextRequest) {
   const { userId } = auth;
 
   const projectId = req.nextUrl.searchParams.get('projectId');
+  const creationBranch = req.nextUrl.searchParams.get('creationBranch') || undefined;
   if (!projectId) {
     return NextResponse.json({ error: 'projectId is required' }, { status: 400 });
   }
 
   try {
     const activeSessionIds = getActiveSessionIds(userId);
-    const rawTasks = getProjectViewWorktrees(projectId, activeSessionIds);
+    const rawTasks = getProjectViewWorktrees(projectId, activeSessionIds, { creationBranch });
     const projectWorktree = getProjectWorktree(projectId);
     const projectDiffWorkDir = projectWorktree?.filesystemPath
       ?? getProject(projectId)?.decoded_path;

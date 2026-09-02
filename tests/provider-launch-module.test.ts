@@ -231,6 +231,25 @@ async function launchDetached(
   });
 }
 
+test('restart readiness requires a persisted provider resume identity', async () => {
+  const launcher = modules.createProviderLaunchModule({
+    terminalManager: createManager([]),
+  });
+  createTerminalSession('restart-not-ready', 'codex');
+  createTerminalSession('restart-ready-codex', 'codex', {
+    kind: 'terminal',
+    codexSessionId: 'codex-resume-id',
+  });
+  createTerminalSession('restart-ready-opencode', 'opencode', {
+    kind: 'terminal',
+    opencodeTerminalSessionId: 'opencode-resume-id',
+  });
+
+  assert.equal(await launcher.canResumeSession('restart-not-ready'), false);
+  assert.equal(await launcher.canResumeSession('restart-ready-codex'), true);
+  assert.equal(await launcher.canResumeSession('restart-ready-opencode'), true);
+});
+
 test('launch preparation finalizes provider argv before shell resolution', async () => {
   const captured: CapturedSpawn[] = [];
   const manager = createManager(captured);

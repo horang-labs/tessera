@@ -619,23 +619,30 @@ export const TabItem = memo(function TabItem({
           autoFocus
         />
       ) : (
-        <>
-          {isMultiPanel ? (
-            <span
-              aria-label={multiPanelLabel}
-              className="mr-1.5 flex shrink-0 items-center gap-1 text-[11px] font-semibold leading-none text-(--accent-light)"
-              data-testid="tab-item-panel-count"
-              data-panel-count={panelCount}
-              title={multiPanelLabel}
-            >
-              <Columns2 aria-hidden="true" size={11} strokeWidth={2} />
-              <span>{panelCount}</span>
+        <ShortcutTooltip
+          id="prev-tab"
+          label={t('shortcut.prevTab')}
+          secondaryId="next-tab"
+          secondaryLabel={t('shortcut.nextTab')}
+        >
+          <span className="flex min-w-0 flex-1 items-center">
+            {isMultiPanel ? (
+              <span
+                aria-label={multiPanelLabel}
+                className="mr-1.5 flex shrink-0 items-center gap-1 text-[11px] font-semibold leading-none text-(--accent-light)"
+                data-testid="tab-item-panel-count"
+                data-panel-count={panelCount}
+                title={multiPanelLabel}
+              >
+                <Columns2 aria-hidden="true" size={11} strokeWidth={2} />
+                <span>{panelCount}</span>
+              </span>
+            ) : null}
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+              {displayTitle}
             </span>
-          ) : null}
-          <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-            {displayTitle}
           </span>
-        </>
+        </ShortcutTooltip>
       )}
 
       {/* Close button — always visible (BR-UI-024) */}

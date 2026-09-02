@@ -83,3 +83,22 @@ test('retention days are committed only after editing finishes', () => {
     assert.match(source, /onBlur=\{\(\) => void commitRetentionDays\(\)\}/);
   }
 });
+
+test('Archive restore updates one row without replacing the dashboard with a full reload', () => {
+  const archive = read('src/components/archive/archive-dashboard.tsx');
+  const restoreStart = archive.indexOf('const restoreItem = useCallback');
+  const deleteStart = archive.indexOf('const deleteItem = useCallback', restoreStart);
+
+  assert.ok(restoreStart >= 0 && deleteStart > restoreStart);
+  const restoreHandler = archive.slice(restoreStart, deleteStart);
+
+  assert.doesNotMatch(
+    restoreHandler,
+    /loadArchive\(\)/,
+    'restoring one row must not put the whole Archive dashboard back into its loading screen',
+  );
+  assert.match(restoreHandler, /setRestoringItemIds/);
+  assert.match(restoreHandler, /removeRestoredArchiveItem/);
+  assert.match(archive, /ariaBusy=\{isRestoring\}/);
+  assert.match(archive, /isRestoring && 'animate-spin'/);
+});

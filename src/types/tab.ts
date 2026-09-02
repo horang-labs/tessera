@@ -167,6 +167,12 @@ export interface TabStoreActions {
   createTabWithSession(sessionId: string): void;
 
   /**
+   * 선택한 세션들을 하나의 고정 분할 탭으로 옮겨 열기.
+   * @returns 새 탭 ID. 세션이 없으면 null.
+   */
+  createTabWithSessions(sessionIds: string[]): string | null;
+
+  /**
    * 프리뷰 탭에서 세션 열기. 기존 프리뷰 탭이 있으면 세션만 교체, 없으면 새 프리뷰 탭 생성.
    * 채팅/세션 프리뷰 슬롯만 재사용한다.
    */
@@ -196,8 +202,9 @@ export interface TabStoreActions {
 
   /**
    * 세션이 없는 프로젝트 셸처럼 프로젝트 소유권을 직접 지정해야 하는 탭에 사용.
+   * null은 모든 프로젝트에서 보이는 전역 탭이다.
    */
-  setTabProject(tabId: string, projectDir: string): void;
+  setTabProject(tabId: string, projectDir: string | null): void;
 
   /**
    * 주어진 세션이 열려 있는 탭과 패널을 찾음 (BR-007).
