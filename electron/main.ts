@@ -8,7 +8,6 @@ import {
   Menu,
   nativeTheme,
   screen,
-  type ContextMenuParams,
   type MenuItemConstructorOptions,
 } from 'electron';
 import { fork, ChildProcess, spawnSync } from 'child_process';
@@ -50,6 +49,11 @@ import {
   type RestorableWindowState,
   type WindowBounds,
 } from './window-layout-state';
+import {
+  buildWebContentsContextMenuTemplate,
+  resolveTerminalPanelAtPoint,
+} from './web-contents-context-menu';
+import type { PanelSplitPlacement } from '../src/lib/panel/panel-split';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -313,38 +317,59 @@ function buildTitlebarMenuTemplate(
   }
 }
 
-function menuItemEnabled(value: boolean | undefined): boolean {
-  return value ?? true;
+function sendTerminalPanelSplitCommand(
+  win: BrowserWindow,
+  panelId: string,
+  placement: PanelSplitPlacement,
+): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send('terminal-panel-split-requested', { panelId, placement });
 }
 
-function buildWebContentsContextMenuTemplate(
-  params: ContextMenuParams
-): MenuItemConstructorOptions[] {
-  const { editFlags } = params;
+function sendTerminalPanelViewModeCommand(
+  win: BrowserWindow,
+  panelId: string,
+  mode: 'terminal' | 'chat',
+): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send('terminal-panel-view-mode-requested', { panelId, mode });
+}
 
-  if (params.isEditable) {
-    return [
-      { role: 'undo', enabled: menuItemEnabled(editFlags.canUndo) },
-      { role: 'redo', enabled: menuItemEnabled(editFlags.canRedo) },
-      { type: 'separator' },
-      { role: 'cut', enabled: menuItemEnabled(editFlags.canCut) },
-      { role: 'copy', enabled: menuItemEnabled(editFlags.canCopy) },
-      { role: 'paste', enabled: menuItemEnabled(editFlags.canPaste) },
-      { role: 'delete', enabled: menuItemEnabled(editFlags.canDelete) },
-      { type: 'separator' },
-      { role: 'selectAll', enabled: menuItemEnabled(editFlags.canSelectAll) },
-    ];
-  }
+function attachWebContentsContextMenu(win: BrowserWindow): void {
+  win.webContents.on('context-menu', (_event, params) => {
+    void (async () => {
+      const terminalPanel = await resolveTerminalPanelAtPoint(params.frame, params.x, params.y);
+      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
 
-  if (params.selectionText.length > 0) {
-    return [
-      { role: 'copy', enabled: menuItemEnabled(editFlags.canCopy) },
-      { type: 'separator' },
-      { role: 'selectAll', enabled: menuItemEnabled(editFlags.canSelectAll) },
-    ];
-  }
+      const template = buildWebContentsContextMenuTemplate(
+        params,
+        terminalPanel
+          ? {
+              panelId: terminalPanel.panelId,
+              onSplit: (targetPanelId, placement) => {
+                sendTerminalPanelSplitCommand(win, targetPanelId, placement);
+              },
+              viewMode: terminalPanel.viewMode ?? undefined,
+              onSwitchView: terminalPanel.viewMode
+                ? (targetPanelId, mode) => sendTerminalPanelViewModeCommand(
+                    win,
+                    targetPanelId,
+                    mode,
+                  )
+                : undefined,
+            }
+          : undefined,
+      );
+      if (template.length === 0) return;
 
-  return [];
+      const menu = Menu.buildFromTemplate(template);
+      menu.popup({
+        window: win,
+        x: params.x,
+        y: params.y,
+      });
+    })();
+  });
 }
 
 // ── Diagnostic log to file (visible on Windows) ─────────────────────────
@@ -1551,17 +1576,7 @@ function createWindow(port: number, restoredState?: RestorableWindowState): Brow
     return { action: 'deny' };
   });
 
-  win.webContents.on('context-menu', (_event, params) => {
-    const template = buildWebContentsContextMenuTemplate(params);
-    if (template.length === 0) return;
-
-    const menu = Menu.buildFromTemplate(template);
-    menu.popup({
-      window: win,
-      x: params.x,
-      y: params.y,
-    });
-  });
+  attachWebContentsContextMenu(win);
 
   // Windows asks in the renderer so the prompt matches the Tessera UI and can
   // remember the chosen behavior. Other platforms preserve tray behavior.
@@ -1657,12 +1672,7 @@ function createPopoutWindow(
     return { action: 'deny' };
   });
 
-  win.webContents.on('context-menu', (_event, params) => {
-    const template = buildWebContentsContextMenuTemplate(params);
-    if (template.length === 0) return;
-    const menu = Menu.buildFromTemplate(template);
-    menu.popup({ window: win, x: params.x, y: params.y });
-  });
+  attachWebContentsContextMenu(win);
 
   popoutWindows.add(win);
   popoutRoutes.set(win, route);
