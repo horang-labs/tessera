@@ -734,6 +734,7 @@ export const en: I18nMessages = {
     newTabDefault: 'New Tab',
     openGitPanel: 'Open right Git panel',
     closeGitPanel: 'Close right Git panel',
+    multiPanelTab: '{{count}}-panel tab',
     renameTab: 'Rename tab: {{title}}',
     closeTab: 'Close tab: {{title}}',
     closeOtherTabs: 'Close Other Tabs',

@@ -734,6 +734,7 @@ export const ja: I18nMessages = {
     newTabDefault: '新しいタブ',
     openGitPanel: '右側の Git パネルを開く',
     closeGitPanel: '右側の Git パネルを閉じる',
+    multiPanelTab: '{{count}} パネルのタブ',
     renameTab: 'タブ名を変更: {{title}}',
     closeTab: 'タブを閉じる: {{title}}',
     closeOtherTabs: '他のタブをすべて閉じる',
