@@ -159,7 +159,7 @@ export interface SessionState {
   ) => void;
   syncTaskCollectionId: (taskId: string, collectionId: string | null) => void;
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
-  toggleArchive: (sessionId: string, archived: boolean) => void;
+  toggleArchive: (sessionId: string, archived: boolean) => Promise<boolean>;
 
   // Task selectors
   getSessionsByStatusGroup: (
@@ -831,10 +831,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   removeSession: (sessionId) => {
     set((state) => {
-      const updatedProjects = state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.filter((s) => s.id !== sessionId),
-      }));
+      const updatedProjects = state.projects.map((project) => {
+        const sessions = project.sessions.filter((session) => session.id !== sessionId);
+        const removedCount = project.sessions.length - sessions.length;
+        if (removedCount === 0) return project;
+        return {
+          ...project,
+          sessions,
+          totalSessions: Math.max(0, project.totalSessions - removedCount),
+          loadedCount: Math.max(0, project.loadedCount - removedCount),
+        };
+      });
 
       // BR-DEL-006: 활성 세션 삭제 시 빈 상태 표시 (자동 전환 없음)
       // BR-DEL-007: 비활성 세션 삭제 시 현재 세션 유지
@@ -1502,7 +1509,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ),
     }));
 
-    fetchWithClientId(`/api/sessions/${sessionId}/archive`, {
+    return fetchWithClientId(`/api/sessions/${sessionId}/archive`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ archived }),
@@ -1527,6 +1534,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (result.cleanupError) {
           console.warn(`[session-store] archive cleanup warning for ${sessionId}: ${result.cleanupError}`);
         }
+        return true;
       })
       .catch(() => {
         // Rollback on any network or server error
@@ -1561,6 +1569,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }));
           console.warn(`[session-store] toggleArchive rollback for session ${sessionId}`);
         }
+        return false;
       });
   },
 
@@ -1633,6 +1642,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Session reorder by IDs only (collection view)
   reorderSessionsByIds: (orderedIds) => {
     const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+    const affectedTaskProjectIds = useTaskStore.getState().reorderLinkedSessions(orderedIds);
     set((state) => ({
       projects: state.projects.map((p) => ({
         ...p,
@@ -1649,12 +1659,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           : session,
       ),
     }));
-    fetchWithClientId('/api/sessions/reorder', {
+    void fetchWithClientId('/api/sessions/reorder', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderedIds }),
+    }).then((response) => {
+      if (!response.ok) throw new Error(`Session reorder failed: ${response.status}`);
     }).catch(() => {
-      get().loadProjects();
+      void Promise.all([
+        get().loadProjects(),
+        ...affectedTaskProjectIds.map((projectId) =>
+          useTaskStore.getState().loadTasks(projectId, {
+            setCurrent: useTaskStore.getState().currentProjectId === projectId,
+          })
+        ),
+      ]);
     });
   },
 

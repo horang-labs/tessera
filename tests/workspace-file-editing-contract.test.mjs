@@ -139,10 +139,18 @@ test('only a whole, textual buffer is editable', () => {
   assert.match(codeViewSource, /onChange=\{editable \? onDraftChange : undefined\}/);
 });
 
-test('the save shortcut is bound to this view, not to the window', () => {
-  assert.match(codeViewSource, /onKeyDown=\{handleSaveShortcut\}/);
+test('file shortcuts are bound to this view, not to the window', () => {
+  assert.match(codeViewSource, /onKeyDown=\{handleViewKeyDown\}/);
   assert.doesNotMatch(codeViewSource, /window\.addEventListener\("keydown"/);
   assert.match(codeViewSource, /event\.metaKey \|\| event\.ctrlKey/);
+});
+
+test('file viewers open an in-view search for both Monaco source and Markdown previews', () => {
+  assert.match(codeViewSource, /WorkspaceFileFind/);
+  assert.match(codeViewSource, /event\.key\.toLowerCase\(\) !== "f"/);
+  assert.match(codeViewSource, /findRequest=\{monacoFindRequest\}/);
+  assert.match(monacoEditorSource, /findRequest\?: number/);
+  assert.match(monacoEditorSource, /editor\.trigger\("workspace", "actions\.find", null\)/);
 });
 
 test('a dirty preview tab is pinned so it cannot be replaced out from under the draft', () => {

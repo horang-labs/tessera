@@ -107,23 +107,35 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     const { selectedIds } = get();
     if (selectedIds.size === 0) return;
 
-    const sessionStore = useSessionStore.getState();
-    const taskIds = new Set<string>();
-    const sessionIds: string[] = [];
+    const targets = new Map<string, {
+      ids: string[];
+      target: ReturnType<typeof resolveSessionWorktreeLifecycleTarget>;
+    }>();
     for (const id of selectedIds) {
       const task = projectViewWorkspaceState.resolveTaskBySessionId(id);
       const target = resolveSessionWorktreeLifecycleTarget(id, task);
-      if (target.kind === 'worktree') taskIds.add(target.taskId);
-      else sessionIds.push(target.sessionId);
+      const key = target.kind === 'worktree' ? `worktree:${target.taskId}` : `session:${id}`;
+      const existing = targets.get(key);
+      if (existing) existing.ids.push(id);
+      else targets.set(key, { ids: [id], target });
     }
-    for (const taskId of taskIds) {
-      void useTaskStore.getState().toggleTaskArchive(taskId, true);
-    }
-    for (const id of sessionIds) {
-      sessionStore.toggleArchive(id, true);
+
+    const results = await Promise.all([...targets.values()].map(async ({ ids, target }) => ({
+      ids,
+      success: target.kind === 'worktree'
+        ? await useTaskStore.getState().toggleTaskArchive(target.taskId, true)
+        : await useSessionStore.getState().toggleArchive(target.sessionId, true),
+    })));
+    const failedIds = results.flatMap(({ ids, success }) => success ? [] : ids);
+    const successCount = selectedIds.size - failedIds.length;
+    if (failedIds.length > 0) {
+      set({ selectedIds: new Set(failedIds), lastClickedId: null, barAnchorId: null });
+      if (successCount > 0) toast.warning(`${successCount}개 아카이브 성공, ${failedIds.length}개 실패`);
+      else toast.error(`아카이브 실패: ${failedIds.length}개 항목을 처리할 수 없습니다`);
+      return;
     }
     set({ selectedIds: new Set(), lastClickedId: null, barAnchorId: null });
-    toast.success(`${taskIds.size + sessionIds.length}개 항목을 아카이브했습니다`);
+    toast.success(`${successCount}개 항목을 아카이브했습니다`);
   },
 
   bulkDelete: async () => {
@@ -132,29 +144,48 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
 
     const ids = [...selectedIds];
     const failedIds: string[] = [];
+    const targets = new Map<string, {
+      ids: string[];
+      target: ReturnType<typeof resolveSessionWorktreeLifecycleTarget>;
+    }>();
 
+    // A single-session Worktree is represented by its child Session in the
+    // list. Several selected appearances can therefore resolve to the same
+    // Worktree. Collapse those before issuing requests so one batch never
+    // races itself or leaves a stale optimistic cache behind.
     for (const id of ids) {
+      const task = projectViewWorkspaceState.resolveTaskBySessionId(id);
+      const target = resolveSessionWorktreeLifecycleTarget(id, task);
+      const key = target.kind === 'worktree' ? `worktree:${target.taskId}` : `session:${id}`;
+      const existing = targets.get(key);
+      if (existing) existing.ids.push(id);
+      else targets.set(key, { ids: [id], target });
+    }
+
+    await Promise.all([...targets.values()].map(async ({ ids: targetIds, target }) => {
       try {
-        const task = projectViewWorkspaceState.resolveTaskBySessionId(id);
-        const target = resolveSessionWorktreeLifecycleTarget(id, task);
         if (target.kind === 'worktree') {
           if (!await useTaskStore.getState().deleteWorktree(target.taskId)) {
-            failedIds.push(id);
+            failedIds.push(...targetIds);
           }
-          continue;
+          return;
         }
-        const res = await fetchWithClientId(`/api/sessions/${encodeURIComponent(id)}`, {
+        const res = await fetchWithClientId(`/api/sessions/${encodeURIComponent(target.sessionId)}`, {
           method: 'DELETE',
         });
         if (res.ok) {
-          useSessionStore.getState().removeSession(id);
+          // A child Session is rendered from the Task cache rather than the
+          // direct Project Session list. Both caches must change in the same
+          // tick or the menu continues to show a successfully deleted row.
+          useSessionStore.getState().removeSession(target.sessionId);
+          useTaskStore.getState().removeTaskSession(target.sessionId);
         } else {
-          failedIds.push(id);
+          failedIds.push(...targetIds);
         }
       } catch {
-        failedIds.push(id);
+        failedIds.push(...targetIds);
       }
-    }
+    }));
 
     const successCount = ids.length - failedIds.length;
     if (failedIds.length > 0) {

@@ -124,6 +124,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'git.generate_commit_message',
   'git.repository.open',
   'git.pull_request.open',
+  'git.worktree_folder.open',
   'git.worktree_path.copy',
   'git.branch.copy',
   'git.commit_file.toggle',

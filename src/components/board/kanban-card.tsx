@@ -623,7 +623,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const sessionCount = task.sessions.length;
   const isMultiSession = sessionCount > 1;
   const expanded = isMultiSession;
-  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.id, task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const isActive = task.sessions.some((s) => s.id === activeSessionId);
   const primarySessionId = task.sessions[0]?.id;
