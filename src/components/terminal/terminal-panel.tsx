@@ -34,7 +34,8 @@ import { getTerminalTheme } from '@/lib/terminal/terminal-theme';
 import { getTerminalFontSize } from '@/lib/terminal/terminal-font-size';
 import { registerTerminalPreviewSurface } from '@/lib/terminal/terminal-preview-surface-lifecycle';
 import {
-  getWorkspaceFileDragAbsolutePath,
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
   isSessionReferenceDragData,
   setPanelNodeDragData,
@@ -214,7 +215,11 @@ export function TerminalPanel({
   }, []);
 
   const resolveDirectInputDropKind = useCallback((dataTransfer: DataTransfer) => {
-    if (isNativeFileDrag(dataTransfer) || hasWorkspaceFileDragData(dataTransfer)) {
+    if (
+      isNativeFileDrag(dataTransfer) ||
+      hasWorkspaceFileDragData(dataTransfer) ||
+      hasPathInsertDragData(dataTransfer)
+    ) {
       return 'path' as const;
     }
     const isLayoutDrag = [
@@ -280,9 +285,7 @@ export function TerminalPanel({
     if (kind === 'path') {
       const paths = isNativeFileDrag(event.dataTransfer)
         ? getNativeFileDropAbsolutePaths(event.dataTransfer)
-        : [getWorkspaceFileDragAbsolutePath(event.dataTransfer)].filter(
-            (path): path is string => Boolean(path),
-          );
+        : getInternalPathDropPaths(event.dataTransfer);
       let inserted = false;
       for (const path of paths) {
         if (insertFilePathIntoTerminal(terminalId, path)) inserted = true;

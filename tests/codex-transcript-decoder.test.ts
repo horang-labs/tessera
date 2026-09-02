@@ -91,6 +91,62 @@ test('Codex 0.147 conversation comes from response items without injected contex
   );
 });
 
+test('Codex response user messages retain inline input images', () => {
+  const events = decodeCodexTranscript([
+    line('session_meta', { cli_version: '0.147.0' }),
+    line('response_item', {
+      type: 'message',
+      role: 'user',
+      content: [
+        { type: 'input_image', image_url: 'data:image/png;base64,QUJD' },
+        { type: 'input_text', text: 'edit this' },
+      ],
+    }),
+  ]);
+  assert.deepEqual((events[0] as any).content, [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    { type: 'text', text: 'edit this' },
+  ]);
+});
+
+test('image_gen completion keeps image bytes out of textual output', () => {
+  const events = decodeCodexTranscript([
+    line('session_meta', { cli_version: '0.147.0' }),
+    line('event_msg', {
+      type: 'item_completed',
+      item: {
+        type: 'Extension',
+        kind: 'image_gen.generation',
+        id: 'image-1',
+        status: 'completed',
+        revisedPrompt: 'cleaner prompt',
+        savedPath: '/tmp/output.png',
+        result: 'a-very-large-base64-value',
+      },
+    }),
+  ]);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    v: 1,
+    type: 'tool_call',
+    timestamp: TS,
+    toolName: 'ImageGeneration',
+    toolParams: {
+      itemType: 'imageGeneration',
+      revisedPrompt: 'cleaner prompt',
+      savedPath: '/tmp/output.png',
+    },
+    status: 'completed',
+    toolUseResult: {
+      kind: 'file_read',
+      contentType: 'image',
+      base64: 'a-very-large-base64-value',
+      mimeType: 'image/png',
+    },
+    toolUseId: 'image-1',
+  });
+});
+
 test('a function_call pairs with the output that arrives later', () => {
   const events = decodeCodexTranscript([
     line('response_item', {
