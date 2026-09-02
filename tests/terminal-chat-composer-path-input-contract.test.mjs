@@ -6,6 +6,10 @@ const composerSource = fs.readFileSync(
   new URL('../src/components/chat/terminal-chat-composer.tsx', import.meta.url),
   'utf8',
 );
+const chatAreaSource = fs.readFileSync(
+  new URL('../src/components/chat/chat-area.tsx', import.meta.url),
+  'utf8',
+);
 
 test('terminal Chat View accepts every path drop supported by the direct PTY', () => {
   assert.match(
@@ -16,6 +20,14 @@ test('terminal Chat View accepts every path drop supported by the direct PTY', (
   assert.match(composerSource, /getInternalPathDropPaths\(event\.dataTransfer\)/);
   assert.match(composerSource, /onDrop=\{handleDrop\}/);
   assert.match(composerSource, /insertTerminalChatPathsAtCursor\(currentValue, cursorPos, paths\)/);
+});
+
+test('terminal Chat View inserts a whole-overlay path drop into the same composer draft', () => {
+  assert.match(composerSource, /TerminalChatComposerHandle/);
+  assert.match(composerSource, /useImperativeHandle/);
+  assert.match(chatAreaSource, /onDrop=\{handleTerminalChatOverlayDrop\}/);
+  assert.match(chatAreaSource, /terminalChatComposerRef\.current\?\.insertPaths\(paths\)/);
+  assert.match(chatAreaSource, /event\.stopPropagation\(\)/);
 });
 
 test('terminal Chat View uploads image-only paste and inserts the returned path', () => {

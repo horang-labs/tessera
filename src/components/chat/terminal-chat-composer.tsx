@@ -1,9 +1,11 @@
 'use client';
 
 import {
+  forwardRef,
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ChangeEvent,
@@ -88,15 +90,19 @@ export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
  * It also carries the PTY's lifecycle state, because the overlay has no other
  * live signal — without it a quiet session is indistinguishable from a broken one.
  */
-export const TerminalChatComposer = memo(function TerminalChatComposer({
-  sessionId,
-  isSinglePanel = false,
-  onInterrupt,
-}: {
+export interface TerminalChatComposerHandle {
+  insertPaths: (paths: string[]) => boolean;
+}
+
+export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, {
   sessionId: string;
   isSinglePanel?: boolean;
   onInterrupt: () => void;
-}) {
+}>(function TerminalChatComposer({
+  sessionId,
+  isSinglePanel = false,
+  onInterrupt,
+}, ref) {
   const { t } = useI18n();
   const isProcessing = useTerminalSessionStore(selectIsTerminalTurnProcessing(sessionId));
   const isAwaitingInput = useTerminalSessionStore(selectIsTerminalAwaitingInput(sessionId));
@@ -149,6 +155,14 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       input?.focus();
     });
   }, []);
+
+  useImperativeHandle(ref, () => ({
+    insertPaths(paths) {
+      if (isBlocked || isSubmitting || paths.length === 0) return false;
+      insertPaths(paths);
+      return true;
+    },
+  }), [insertPaths, isBlocked, isSubmitting]);
 
   const acceptsPathDrop = useCallback((dataTransfer: DataTransfer) => (
     isNativeFileDrag(dataTransfer) ||
@@ -455,4 +469,4 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       </div>
     </div>
   );
-});
+}));

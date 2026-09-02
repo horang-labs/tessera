@@ -158,12 +158,12 @@ export function ImageGenerationTraceCard({
             {trace.inputs.length > 0 ? (
               <div className="grid grid-cols-3 gap-2">
                 {trace.inputs.map((input, index) => (
-                  <div key={`${input.url}-${index}`} className="relative">
+                  <div key={`${input.url}-${index}`} className="group relative">
                     <button
                       {...telemetryClickAttributes("image_generation.input.open", "right_panel")}
                       type="button"
                       draggable={Boolean(input.path)}
-                      className="group relative block w-full overflow-hidden rounded-md border border-(--chat-header-border) bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+                      className="relative block w-full overflow-hidden rounded-md border border-(--chat-header-border) bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
                       onDragStart={(event) => {
                         if (!input.path || !setPathInsertDragData(event.dataTransfer, [input.path])) {
                           event.preventDefault();
@@ -232,7 +232,7 @@ function ResultHeroMedia({
   const ready = dimensions !== null;
   return (
     <div
-      className="relative w-full overflow-hidden transition-[aspect-ratio] duration-300 ease-out"
+      className="group relative w-full overflow-hidden transition-[aspect-ratio] duration-300 ease-out"
       style={{ aspectRatio: dimensions ? `${dimensions.width} / ${dimensions.height}` : "4 / 3" }}
     >
       {result ? (
@@ -240,7 +240,7 @@ function ResultHeroMedia({
           {...telemetryClickAttributes("image_generation.result.open", "right_panel")}
           type="button"
           draggable={Boolean(result.path)}
-          className="group absolute inset-0 block h-full w-full overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--accent)"
+          className="absolute inset-0 block h-full w-full overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--accent)"
           onDragStart={(event) => {
             if (!result.path || !setPathInsertDragData(event.dataTransfer, [result.path])) {
               event.preventDefault();
@@ -304,7 +304,7 @@ function ImageDownloadButton({
       href={url}
       download={imageDownloadFileName(path, fallbackName)}
       draggable={false}
-      className="absolute bottom-2 right-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-white/20 bg-black/65 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+      className="pointer-events-none absolute bottom-2 right-2 z-20 flex h-7 w-7 items-center justify-center rounded-md border border-white/20 bg-black/65 text-white opacity-0 shadow-sm backdrop-blur-sm transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-black/85 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
       aria-label={label}
       title={label}
       onClick={(event) => event.stopPropagation()}
