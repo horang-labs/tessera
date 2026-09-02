@@ -12,16 +12,26 @@ import type { ShortcutId } from '@/lib/keyboard/registry';
 export interface ShortcutTooltipProps {
   id: ShortcutId;
   label: string;
+  secondaryId?: ShortcutId;
+  secondaryLabel?: string;
   /** Override platform detection. Used in tests. */
   platform?: Platform;
   children: ReactElement;
 }
 
-export function ShortcutTooltip({ id, label, platform, children }: ShortcutTooltipProps) {
+export function ShortcutTooltip({
+  id,
+  label,
+  secondaryId,
+  secondaryLabel,
+  platform,
+  children,
+}: ShortcutTooltipProps) {
   const { t } = useI18n();
   const electronPlatform = useElectronPlatform();
   const isWebMode = !electronPlatform;
   const key = useEffectiveShortcut(id);
+  const secondaryKey = useEffectiveShortcut(secondaryId ?? id);
   const plat = platform ?? detectPlatform();
   const tooltipId = useId();
   const [open, setOpen] = useState(false);
@@ -29,6 +39,13 @@ export function ShortcutTooltip({ id, label, platform, children }: ShortcutToolt
 
   const formatted = key ? formatShortcut(key, plat) : '';
   const conflict = isWebMode && key !== null && isBrowserConflict(key);
+  const secondaryConflict = secondaryId
+    && isWebMode
+    && secondaryKey !== null
+    && isBrowserConflict(secondaryKey);
+  const secondaryFormatted = secondaryId && secondaryKey
+    ? formatShortcut(secondaryKey, plat)
+    : '';
 
   type ChildProps = {
     onMouseEnter?: (e: MouseEvent<HTMLElement>) => void;
@@ -49,7 +66,7 @@ export function ShortcutTooltip({ id, label, platform, children }: ShortcutToolt
     // so only our ShortcutTooltip shows. An empty `title` on the hovered element
     // stops the browser from walking up to a parent's title.
     title: '',
-    'aria-keyshortcuts': key ?? undefined,
+    'aria-keyshortcuts': [key, secondaryId ? secondaryKey : null].filter(Boolean).join(' ') || undefined,
     'aria-describedby': open ? tooltipId : undefined,
     onMouseEnter: (e: MouseEvent<HTMLElement>) => {
       positionFromTrigger(e.currentTarget);
@@ -78,12 +95,25 @@ export function ShortcutTooltip({ id, label, platform, children }: ShortcutToolt
       className="fixed z-[2147483647] rounded-md bg-(--tooltip-bg) px-2.5 py-1 text-xs text-white shadow-md pointer-events-none -translate-x-1/2 whitespace-nowrap"
       style={{ top: position.top, left: position.left }}
     >
-      {label}
-      {formatted && <span className="ml-1.5 opacity-60">{formatted}</span>}
-      {conflict && (
-        <span className="ml-1.5 text-(--warning)" title={t('shortcut.browserConflict')}>
-          ⚠
-        </span>
+      <div>
+        {label}
+        {formatted && <span className="ml-1.5 opacity-60">{formatted}</span>}
+        {conflict && (
+          <span className="ml-1.5 text-(--warning)" title={t('shortcut.browserConflict')}>
+            ⚠
+          </span>
+        )}
+      </div>
+      {secondaryId && secondaryLabel && (
+        <div>
+          {secondaryLabel}
+          {secondaryFormatted && <span className="ml-1.5 opacity-60">{secondaryFormatted}</span>}
+          {secondaryConflict && (
+            <span className="ml-1.5 text-(--warning)" title={t('shortcut.browserConflict')}>
+              ⚠
+            </span>
+          )}
+        </div>
       )}
     </div>
   ) : null;

@@ -824,6 +824,8 @@ export const zh: I18nMessages = {
   shortcut: {
     newTab: '新标签',
     closeTab: '关闭标签',
+    prevTab: '切换到上一个标签',
+    nextTab: '切换到下一个标签',
     toggleSidebar: '切换侧边栏',
     toggleView: '切换列表/看板视图',
     toggleTerminalView: '切换 PTY 聊天/终端视图',

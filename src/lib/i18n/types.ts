@@ -801,6 +801,8 @@ export interface I18nMessages {
   shortcut: {
     newTab: string;
     closeTab: string;
+    prevTab: string;
+    nextTab: string;
     toggleSidebar: string;
     toggleView: string;
     toggleTerminalView: string;

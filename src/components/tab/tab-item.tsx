@@ -625,9 +625,16 @@ export const TabItem = memo(function TabItem({
           autoFocus
         />
       ) : (
-        <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
-          {label}
-        </span>
+        <ShortcutTooltip
+          id="prev-tab"
+          label={t('shortcut.prevTab')}
+          secondaryId="next-tab"
+          secondaryLabel={t('shortcut.nextTab')}
+        >
+          <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
+            {label}
+          </span>
+        </ShortcutTooltip>
       )}
 
       {/* Close button — always visible (BR-UI-024) */}
