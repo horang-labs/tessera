@@ -980,6 +980,7 @@ export const zh: I18nMessages = {
     error: '错误',
     stopped: '已停止',
     stopProcess: '停止进程',
+    restartSession: '重启会话',
     processing: '处理中',
     inputRequired: '等待输入',
     unreadNotification: '未读通知',

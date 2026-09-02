@@ -962,6 +962,7 @@ export interface I18nMessages {
     error: string;
     stopped: string;
     stopProcess: string;
+    restartSession: string;
     processing: string;
     inputRequired: string;
     unreadNotification: string;

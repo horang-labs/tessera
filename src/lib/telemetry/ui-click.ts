@@ -95,6 +95,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'panel.split.down',
   'panel.close',
   'task.stop',
+  'task.restart',
   'task.menu.open',
   'task.status.change',
   'task.generate_title',

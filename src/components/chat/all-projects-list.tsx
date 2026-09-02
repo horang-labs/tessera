@@ -46,6 +46,7 @@ interface AllProjectsListProps {
   onSessionOpenInNewTab: (sessionId: string) => void;
   onSessionGenerateTitle: (sessionId: string) => void;
   onSessionStopProcess: (sessionId: string) => void;
+  onSessionRestartProcess: (sessionId: string) => void;
   onChatStatusChange: (sessionId: string, status: string) => void;
 }
 
@@ -60,6 +61,7 @@ export function AllProjectsList({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   onChatStatusChange,
 }: AllProjectsListProps) {
   const representation = useOriginProjectRepresentation();
@@ -95,6 +97,7 @@ export function AllProjectsList({
           onSessionOpenInNewTab={onSessionOpenInNewTab}
           onSessionGenerateTitle={onSessionGenerateTitle}
           onSessionStopProcess={onSessionStopProcess}
+          onSessionRestartProcess={onSessionRestartProcess}
           onChatStatusChange={onChatStatusChange}
         />
       ))}
@@ -122,6 +125,7 @@ function AllProjectSection({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   onChatStatusChange,
 }: AllProjectSectionProps) {
   const { t } = useI18n();
@@ -362,6 +366,7 @@ function AllProjectSection({
               onSessionOpenInNewTab={onSessionOpenInNewTab}
               onSessionGenerateTitle={onSessionGenerateTitle}
               onSessionStopProcess={onSessionStopProcess}
+              onSessionRestartProcess={onSessionRestartProcess}
               disableDnd
               allowPanelSessionDnd
               hideHeader
@@ -414,6 +419,7 @@ function AllProjectSection({
                   onSessionOpenInNewTab={onSessionOpenInNewTab}
                   onSessionGenerateTitle={onSessionGenerateTitle}
                   onSessionStopProcess={onSessionStopProcess}
+                  onSessionRestartProcess={onSessionRestartProcess}
                 />
               );
             })

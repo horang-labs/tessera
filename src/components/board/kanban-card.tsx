@@ -142,6 +142,7 @@ interface KanbanChatCardProps {
   onGenerateTitle?: (taskId: string) => void;
   onMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onStopProcess?: (sessionId: string) => void;
+  onRestartProcess?: (sessionId: string) => void;
   collections?: Collection[];
 }
 
@@ -165,6 +166,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   onGenerateTitle,
   onMoveToCollection,
   onStopProcess,
+  onRestartProcess,
   collections: scopedCollections,
 }: KanbanChatCardProps) {
   const { t } = useI18n();
@@ -255,6 +257,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [session.id, onOpenInNewTab]);
 
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [session.id, onStopProcess]);
+  const handleRestartProcess = useCallback(() => onRestartProcess?.(session.id), [session.id, onRestartProcess]);
   const {
     isConfirmingArchive,
     handleArchiveClick,
@@ -552,6 +555,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           onGenerateTitle={onGenerateTitle ? () => onGenerateTitle(session.id) : undefined}
           isRunning={runtimePresentation.showRunning}
           onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
+          onRestartProcess={runtimePresentation.canStop ? handleRestartProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}
@@ -588,6 +592,7 @@ interface KanbanTaskCardProps {
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
+  onSessionRestartProcess?: (sessionId: string) => void;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
 }
@@ -612,6 +617,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   isRenameRequested,
   onRenameComplete,
 }: KanbanTaskCardProps) {
@@ -1192,6 +1198,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 onOpenInNewTab={onSessionOpenInNewTab}
                 onGenerateTitle={onSessionGenerateTitle}
                 onStopProcess={onSessionStopProcess}
+                onRestartProcess={onSessionRestartProcess}
                 reorder={subSessionReorder}
               />
             ))}
@@ -1249,6 +1256,7 @@ function KanbanSubSessionItem({
   onOpenInNewTab,
   onGenerateTitle,
   onStopProcess,
+  onRestartProcess,
   reorder,
 }: {
   session: TaskSession;
@@ -1261,6 +1269,7 @@ function KanbanSubSessionItem({
   onOpenInNewTab?: (sessionId: string) => void;
   onGenerateTitle?: (sessionId: string) => void;
   onStopProcess?: (sessionId: string) => void;
+  onRestartProcess?: (sessionId: string) => void;
 }) {
   const [isHovered, setIsHovered] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
@@ -1285,7 +1294,7 @@ function KanbanSubSessionItem({
       onDelete ||
       onOpenInNewTab ||
       onGenerateTitle ||
-      (runtimePresentation.canStop && onStopProcess),
+      (runtimePresentation.canStop && (onStopProcess || onRestartProcess)),
   );
 
   const {
@@ -1326,6 +1335,7 @@ function KanbanSubSessionItem({
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [onOpenInNewTab, session.id]);
   const handleGenerateTitle = useCallback(() => onGenerateTitle?.(session.id), [onGenerateTitle, session.id]);
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [onStopProcess, session.id]);
+  const handleRestartProcess = useCallback(() => onRestartProcess?.(session.id), [onRestartProcess, session.id]);
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (isRenaming) {
       e.preventDefault();
@@ -1473,6 +1483,7 @@ function KanbanSubSessionItem({
           onGenerateTitle={onGenerateTitle ? handleGenerateTitle : undefined}
           isRunning={runtimePresentation.showRunning}
           onStopProcess={runtimePresentation.canStop && onStopProcess ? handleStopProcess : undefined}
+          onRestartProcess={runtimePresentation.canStop && onRestartProcess ? handleRestartProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}
