@@ -29,6 +29,19 @@ type MarkdownViewMode = "preview" | "source";
 
 const subscribeToStaticClientValue = () => () => {};
 const getNoElectronFileActions = () => false;
+const WORKSPACE_FIND_MATCH_HIGHLIGHT = "workspace-file-find-match";
+const WORKSPACE_FIND_ACTIVE_HIGHLIGHT = "workspace-file-find-active";
+
+function getWorkspaceFindHighlightRegistry(): HighlightRegistry | null {
+  if (typeof CSS === "undefined" || typeof Highlight === "undefined" || !CSS.highlights) return null;
+  return CSS.highlights;
+}
+
+function clearWorkspaceFindHighlights(): void {
+  const registry = getWorkspaceFindHighlightRegistry();
+  registry?.delete(WORKSPACE_FIND_MATCH_HIGHLIGHT);
+  registry?.delete(WORKSPACE_FIND_ACTIVE_HIGHLIGHT);
+}
 
 function dirname(filePath: string): string {
   const slashIndex = filePath.lastIndexOf("/");
@@ -109,9 +122,10 @@ function WorkspaceFileFind({
   const selectMatch = useCallback((index: number) => {
     const match = matchesRef.current[index];
     if (!match) return;
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(match);
+    getWorkspaceFindHighlightRegistry()?.set(
+      WORKSPACE_FIND_ACTIVE_HIGHLIGHT,
+      new Highlight(match),
+    );
     const element = match.startContainer.parentElement;
     element?.scrollIntoView({ block: "center", behavior: "smooth" });
     setMatchIndex(index);
@@ -119,6 +133,7 @@ function WorkspaceFileFind({
 
   useEffect(() => {
     inputRef.current?.focus();
+    return clearWorkspaceFindHighlights;
   }, []);
 
   const updateQuery = useCallback((nextQuery: string) => {
@@ -127,6 +142,7 @@ function WorkspaceFileFind({
     const normalizedQuery = nextQuery.toLocaleLowerCase();
     if (!container || !normalizedQuery) {
       matchesRef.current = [];
+      clearWorkspaceFindHighlights();
       setMatchCount(0);
       setMatchIndex(-1);
       return;
@@ -149,6 +165,9 @@ function WorkspaceFileFind({
       node = walker.nextNode();
     }
     matchesRef.current = matches;
+    const registry = getWorkspaceFindHighlightRegistry();
+    registry?.set(WORKSPACE_FIND_MATCH_HIGHLIGHT, new Highlight(...matches));
+    registry?.delete(WORKSPACE_FIND_ACTIVE_HIGHLIGHT);
     setMatchCount(matches.length);
     if (matches.length > 0) selectMatch(0);
     else setMatchIndex(-1);

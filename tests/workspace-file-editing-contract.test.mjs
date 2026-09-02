@@ -153,6 +153,13 @@ test('file viewers open an in-view search for both Monaco source and Markdown pr
   assert.match(monacoEditorSource, /editor\.trigger\("workspace", "actions\.find", null\)/);
 });
 
+test('Markdown preview search highlights matches without corrupting the input caret', () => {
+  assert.doesNotMatch(codeViewSource, /window\.getSelection\(\)/);
+  assert.match(codeViewSource, /return CSS\.highlights/);
+  assert.match(codeViewSource, /registry\?\.set\(/);
+  assert.match(codeViewSource, /registry\?\.delete\(/);
+});
+
 test('a dirty preview tab is pinned so it cannot be replaced out from under the draft', () => {
   assert.match(fileTabSource, /pinTab\(tabId\)/);
 });
