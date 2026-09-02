@@ -19,6 +19,7 @@ import { TabIdContext, usePanelStore } from '@/stores/panel-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { getInitialTerminalCwd } from '@/lib/terminal/client-terminal-cwd';
 import {
@@ -57,6 +58,14 @@ import {
 } from '@/types/panel';
 import { PanelDropZone } from '@/components/panel/panel-drop-zone';
 import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
+import {
+  getPanelSplitSpec,
+  isPanelLargeEnoughToSplit,
+} from '@/lib/panel/panel-split';
+import {
+  subscribeToTerminalPanelViewModeRequests,
+  subscribeToTerminalPanelSplitRequests,
+} from '@/lib/panel/electron-terminal-panel-context-menu';
 
 interface TerminalPanelProps {
   panelId: string;
@@ -86,6 +95,8 @@ interface TerminalPanelProps {
    * on a run somebody else started raises a question it cannot answer.
    */
   showHeader?: boolean;
+  /** Expose the native-menu transition to this session's transcript-backed chat surface. */
+  chatViewAvailable?: boolean;
 }
 
 function isTerminalAssignedToPanel(
@@ -120,6 +131,7 @@ export function TerminalPanel({
   startupOverlay,
   launch,
   showHeader = true,
+  chatViewAvailable = false,
 }: TerminalPanelProps) {
   const tabId = useContext(TabIdContext);
   const { t } = useTranslation();
@@ -340,6 +352,37 @@ export function TerminalPanel({
     }
   }, [runtimeOwnership, surface, terminalSessionId]);
 
+  useEffect(function subscribeToTerminalPanelContextMenu() {
+    return subscribeToTerminalPanelSplitRequests((request) => {
+      if (request.panelId !== panelId) return;
+
+      const wrapper = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-panel-wrapper="true"][data-panel-id]'),
+      ).find((element) => element.dataset.panelId === panelId);
+      const { direction, position } = getPanelSplitSpec(request.placement);
+      if (wrapper && !isPanelLargeEnoughToSplit(wrapper.getBoundingClientRect(), direction)) {
+        toast.warning(t('panel.tooSmallToSplit'));
+        return;
+      }
+
+      const panelStore = usePanelStore.getState();
+      panelStore.setActivePanelId(panelId);
+      const newPanelId = panelStore.splitPanel(panelId, direction, null, position);
+      if (!newPanelId) return;
+
+      const tabStore = useTabStore.getState();
+      tabStore.pinTab(tabStore.activeTabId);
+    });
+  }, [panelId, t]);
+
+  useEffect(function subscribeToTerminalPanelViewModeContextMenu() {
+    if (!chatViewAvailable || !terminalSessionId) return;
+    return subscribeToTerminalPanelViewModeRequests((request) => {
+      if (request.panelId !== panelId) return;
+      useTerminalViewModeStore.getState().setMode(terminalSessionId, request.mode);
+    });
+  }, [chatViewAvailable, panelId, terminalSessionId]);
+
   const handlePanelDragStart = useCallback((event: DragEvent<HTMLElement>) => {
     const didSet = setPanelNodeDragData(event.dataTransfer, { tabId, panelId });
     if (!didSet) event.preventDefault();
@@ -424,6 +467,8 @@ export function TerminalPanel({
     <div
       className="relative flex h-full min-h-0 flex-col"
       data-testid="terminal-panel"
+      data-terminal-panel-id={panelId}
+      data-terminal-chat-view-available={chatViewAvailable ? 'true' : undefined}
       style={{ backgroundColor: terminalTheme.background, color: terminalTheme.foreground }}
       onDragEnter={directInputDrop ? handleInputDragEnter : undefined}
       onDragOver={directInputDrop ? handleInputDragOver : undefined}

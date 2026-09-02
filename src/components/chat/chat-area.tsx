@@ -292,7 +292,14 @@ export const ChatArea = memo(function ChatArea({
     connectionStatus !== "connected" || sessionStatus === "error";
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-(--chat-bg)">
+    <div
+      className="flex-1 flex flex-col h-full bg-(--chat-bg)"
+      data-terminal-session-panel-id={isTerminalSession ? panelId : undefined}
+      data-terminal-chat-view-available={canToggleTerminalChatView ? 'true' : undefined}
+      data-terminal-view-mode={canToggleTerminalChatView
+        ? (isTerminalChatView ? 'chat' : 'terminal')
+        : undefined}
+    >
       {!isPeek && shouldShowSessionHeader({
         isTerminalSession,
         isSinglePanel,
@@ -342,6 +349,7 @@ export const ChatArea = memo(function ChatArea({
               directInputDrop={isPeek}
               startupOverlay={shouldShowPeekLoading ? <SessionPeekLoading /> : undefined}
               launch={{ providerId: sessionProvider, sessionId }}
+              chatViewAvailable={canToggleTerminalChatView}
             />
           ) : null
         ) : (
