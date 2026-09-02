@@ -145,6 +145,12 @@ test('file shortcuts are bound to this view, not to the window', () => {
   assert.match(codeViewSource, /event\.metaKey \|\| event\.ctrlKey/);
 });
 
+test('clicking Monaco never moves focus to the surrounding file view', () => {
+  assert.match(codeViewSource, /const handleViewMouseDown/);
+  assert.match(codeViewSource, /target\.closest\("\.monaco-editor"\)/);
+  assert.match(codeViewSource, /onMouseDown=\{handleViewMouseDown\}/);
+});
+
 test('file viewers open an in-view search for both Monaco source and Markdown previews', () => {
   assert.match(codeViewSource, /WorkspaceFileFind/);
   assert.match(codeViewSource, /event\.key\.toLowerCase\(\) !== "f"/);
