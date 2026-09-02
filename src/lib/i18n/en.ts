@@ -824,6 +824,8 @@ export const en: I18nMessages = {
   shortcut: {
     newTab: 'New Tab',
     closeTab: 'Close Tab',
+    prevTab: 'Switch to Previous Tab',
+    nextTab: 'Switch to Next Tab',
     toggleSidebar: 'Toggle Sidebar',
     toggleView: 'Toggle List / Board View',
     toggleTerminalView: 'Toggle PTY Chat / Terminal View',

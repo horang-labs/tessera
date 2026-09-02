@@ -824,6 +824,8 @@ export const ja: I18nMessages = {
   shortcut: {
     newTab: '新規タブ',
     closeTab: 'タブを閉じる',
+    prevTab: '前のタブに切り替え',
+    nextTab: '次のタブに切り替え',
     toggleSidebar: 'サイドバー切替',
     toggleView: 'リスト/ボード表示切替',
     toggleTerminalView: 'PTYチャット/ターミナル表示切替',
