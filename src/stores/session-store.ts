@@ -71,6 +71,8 @@ function findStoredSession(
 export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
+  /** Named creation-branch filters by Project View; missing means All branches. */
+  projectCreationBranchFilters: Record<string, string>;
   activeSessionId: string | null;
   /** True after the first successful Project load attempts saved/fallback restoration. */
   didHydrateActiveSession: boolean;
@@ -93,6 +95,7 @@ export interface SessionState {
     restoredActiveSessionId?: string | null;
     restoredActiveTabId?: string;
   }) => Promise<void>;
+  setProjectCreationBranchFilter: (projectId: string, branch?: string) => void;
   updateProjectWorktreeBranch: (worktreeId: string, branch: string | null) => void;
   dismissBranchRenameWarning: (projectId: string) => void;
   loadMoreSessions: (encodedDir: string) => Promise<void>;
@@ -435,6 +438,7 @@ let latestProjectLoadRequest = 0;
 export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
+  projectCreationBranchFilters: {},
   activeSessionId: null,
   didHydrateActiveSession: false,
   lastActiveProjectDir: null,
@@ -450,7 +454,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadProjects: async (options) => {
     const requestId = ++latestProjectLoadRequest;
     try {
-      const res = await fetch('/api/sessions/projects');
+      const creationBranchFilters = get().projectCreationBranchFilters;
+      const filterQuery = Object.keys(creationBranchFilters).length > 0
+        ? `?creationBranchFilters=${encodeURIComponent(JSON.stringify(creationBranchFilters))}`
+        : '';
+      const res = await fetch(`/api/sessions/projects${filterQuery}`);
       if (!res.ok) throw new Error('Failed to load projects');
       const data: { projects: any[] } = await res.json();
       // Keep Project-local open conversations addressable even when the live
@@ -474,6 +482,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           decodedPath: p.decodedPath,
           displayPath: p.displayPath,
           projectWorktree: p.projectWorktree,
+          creationBranches: p.creationBranches ?? [],
           branchRenameWarning: p.branchRenameWarning
             && !isBranchRenameWarningDismissed(p.encodedDir, p.branchRenameWarning)
             ? p.branchRenameWarning
@@ -596,6 +605,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
+  setProjectCreationBranchFilter: (projectId, branch) => {
+    set((state) => {
+      const projectCreationBranchFilters = { ...state.projectCreationBranchFilters };
+      if (branch) projectCreationBranchFilters[projectId] = branch;
+      else delete projectCreationBranchFilters[projectId];
+      return { projectCreationBranchFilters };
+    });
+    void get().loadProjects();
+    void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
+  },
+
   updateProjectWorktreeBranch: (worktreeId, branch) => {
     const affectedProjectIds = get().projects
       .filter((project) => project.projectWorktree?.id === worktreeId)
@@ -658,9 +678,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const cursorParam = project.nextCursor
         ? `&cursor=${encodeURIComponent(project.nextCursor)}`
         : `&offset=${project.loadedCount}`;
+      const creationBranch = get().projectCreationBranchFilters[encodedDir];
+      const branchParam = creationBranch ? `&creationBranch=${encodeURIComponent(creationBranch)}` : '';
 
       const res = await fetch(
-        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=${limit}${cursorParam}`
+        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=${limit}${cursorParam}${branchParam}`
       );
       if (!res.ok) throw new Error('Failed to load more sessions');
       const data = await res.json();
@@ -702,9 +724,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       const cursor = project.cursorByStatus?.[statusGroup];
       const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+      const creationBranch = get().projectCreationBranchFilters[encodedDir];
+      const branchParam = creationBranch ? `&creationBranch=${encodeURIComponent(creationBranch)}` : '';
 
       const res = await fetch(
-        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=20&statusGroup=${statusGroup}${cursorParam}`
+        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=20&statusGroup=${statusGroup}${cursorParam}${branchParam}`
       );
       if (!res.ok) throw new Error('Failed to load more sessions');
       const data = await res.json();

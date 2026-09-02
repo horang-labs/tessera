@@ -53,6 +53,7 @@ export async function GET(
     const limit = parseInt(searchParams.get('limit') || '20', 10);
     const cursor = searchParams.get('cursor') || undefined;
     const statusGroup = searchParams.get('statusGroup') || undefined;
+    const creationBranch = searchParams.get('creationBranch') || undefined;
 
     if (limit < 1 || limit > 100000) {
       return NextResponse.json(
@@ -73,8 +74,8 @@ export async function GET(
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
 
     const result = statusGroup
-      ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor })
-      : getProjectViewSessions(encodedDir, { limit, cursor });
+      ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor, creationBranch })
+      : getProjectViewSessions(encodedDir, { limit, cursor, creationBranch });
 
     const project = dbProjects.getProject(encodedDir);
     const projectWorktree = dbProjects.getProjectWorktree(encodedDir);

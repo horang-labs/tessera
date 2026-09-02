@@ -363,7 +363,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }));
 
     try {
-      const res = await fetch(`/api/tasks?projectId=${encodeURIComponent(projectId)}`);
+      const creationBranch = useSessionStore.getState().projectCreationBranchFilters[projectId];
+      const branchQuery = creationBranch
+        ? `&creationBranch=${encodeURIComponent(creationBranch)}`
+        : '';
+      const res = await fetch(`/api/tasks?projectId=${encodeURIComponent(projectId)}${branchQuery}`);
       if (!res.ok) return;
       const data = await res.json();
       const fetchedTasks: TaskEntity[] = data.tasks ?? [];
