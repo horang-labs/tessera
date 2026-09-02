@@ -714,6 +714,7 @@ export const zh: I18nMessages = {
     newTabDefault: '新标签',
     openGitPanel: '打开右侧 Git 面板',
     closeGitPanel: '关闭右侧 Git 面板',
+    multiPanelTab: '{{count}} 面板标签',
     renameTab: '重命名标签: {{title}}',
     closeTab: '关闭标签: {{title}}',
     closeOtherTabs: '关闭其他标签',
