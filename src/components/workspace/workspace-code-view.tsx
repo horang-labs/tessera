@@ -438,6 +438,13 @@ export function WorkspaceCodeView({
     handleSaveShortcut(event);
     handleFindShortcut(event);
   }, [handleFindShortcut, handleSaveShortcut]);
+  const handleViewMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    // Monaco focuses its hidden textarea during this same event. Taking focus
+    // back on the parent after it bubbles makes a file look read-only.
+    const target = event.target;
+    if (target instanceof Element && target.closest(".monaco-editor")) return;
+    event.currentTarget.focus({ preventScroll: true });
+  }, []);
 
   async function copyContent() {
     try {
@@ -515,7 +522,7 @@ export function WorkspaceCodeView({
 
   return (
     <>
-    <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)" tabIndex={-1} onMouseDown={(event) => event.currentTarget.focus({ preventScroll: true })} onKeyDown={handleViewKeyDown}>
+    <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)" tabIndex={-1} onMouseDown={handleViewMouseDown} onKeyDown={handleViewKeyDown}>
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-(--chat-header-border) px-4">
         <div className="flex min-w-0 items-center gap-2">
           {mode === "diff" ? (
