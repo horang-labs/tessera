@@ -290,6 +290,8 @@ export interface ProjectGroup {
   projectWorktree?: import('./worktree').ProjectWorktreeSummary;
   /** One exact external rename that currently hides immutable branch scope. */
   branchRenameWarning?: import('@/lib/projects/branch-rename-warning').ProjectBranchRenameWarning;
+  /** Immutable creation-branch metadata available as Project View filters. */
+  creationBranches?: string[];
   /** Whether this is the current project (matches process.cwd()) */
   isCurrent: boolean;
   /** Whether the project has a preparation script for its worktrees to run. */

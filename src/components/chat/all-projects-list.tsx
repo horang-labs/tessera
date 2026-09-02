@@ -26,6 +26,7 @@ import {
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { ProjectBranchFilter } from '@/components/worktree/project-branch-filter';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { selectActiveTab, usePanelStore } from '@/stores/panel-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
@@ -314,13 +315,19 @@ function AllProjectSection({
       {isExpanded && (
         <div className="ml-2">
           {project.projectWorktree ? (
-            <CompactProjectWorktreeRow
-              active={activeWorktreeId === project.projectWorktree.id}
-              branch={project.projectWorktree.currentBranch}
-              diffStats={project.projectWorktree.diffStats}
-              displayPath={project.projectWorktree.displayPath}
-              onSelect={handleProjectWorktreeSelect}
-            />
+            <>
+              <CompactProjectWorktreeRow
+                active={activeWorktreeId === project.projectWorktree.id}
+                branch={project.projectWorktree.currentBranch}
+                diffStats={project.projectWorktree.diffStats}
+                displayPath={project.projectWorktree.displayPath}
+                onSelect={handleProjectWorktreeSelect}
+              />
+              <ProjectBranchFilter
+                projectId={project.encodedDir}
+                branches={project.creationBranches ?? []}
+              />
+            </>
           ) : null}
           {shouldShowLoading ? (
             <div className="px-4 py-3 text-[0.6875rem] text-(--text-muted)">
