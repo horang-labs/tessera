@@ -1007,9 +1007,12 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         get().setActiveTab(existingPreview.id);
       }
       // 활성 패널의 세션을 교체
-      const tabData = panelStore.tabPanels[panelStore.activeTabId];
+      // setActiveTab() replaces the Zustand state object, so the snapshot read
+      // before the switch still points at the previously active tab.
+      const activePanelStore = usePanelStore.getState();
+      const tabData = activePanelStore.tabPanels[activePanelStore.activeTabId];
       if (tabData) {
-        panelStore.assignSession(
+        activePanelStore.assignSession(
           tabData.activePanelId,
           sessionId,
           inferSessionWorktreeId(sessionId, existingPreview.projectDir),
