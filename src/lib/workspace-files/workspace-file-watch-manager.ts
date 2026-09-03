@@ -604,6 +604,7 @@ export class WorkspaceFileWatchManager {
 
     entry.rescanning = true;
     let changed = false;
+    let rootChangeNotified = false;
     try {
       while (entry.pendingRescanDirs.size > 0) {
         if (this.entriesByRoot.get(entry.root) !== entry) return;
@@ -611,7 +612,7 @@ export class WorkspaceFileWatchManager {
         entry.pendingRescanDirs.clear();
 
         if (targets.length > MAX_RESCAN_DIRECTORIES) {
-          await this.refreshPollIndex(entry);
+          rootChangeNotified = await this.refreshPollIndex(entry) || rootChangeNotified;
           continue;
         }
 
@@ -629,7 +630,13 @@ export class WorkspaceFileWatchManager {
       entry.rescanning = false;
     }
 
-    if (!changed) return;
+    if (!changed) {
+      // The index only records paths, so writing new content to an existing
+      // file leaves the rescan unchanged. Root listeners still need the raw
+      // watch invalidation to refresh Git diff stats.
+      if (!rootChangeNotified) this.notifyRootChangeListeners(entry);
+      return;
+    }
     entry.pendingTreeChanged = true;
     if (entry.debounceTimer) {
       clearTimeout(entry.debounceTimer);
@@ -784,14 +791,14 @@ export class WorkspaceFileWatchManager {
     this.applyWatchEvent(entry, event.eventName, relativePath);
   }
 
-  private async refreshPollIndex(entry: WorkspaceWatchEntry): Promise<void> {
+  private async refreshPollIndex(entry: WorkspaceWatchEntry): Promise<boolean> {
     // A sweep already under way started reading the tree before this request
     // existed, so it cannot answer it. Remember the request and re-run once it
     // finishes instead of dropping it — dropping is how a burst of writes ends
     // up permanently missing from the index.
     if (entry.refreshing || !entry.ready) {
       entry.refreshRequested = true;
-      return;
+      return false;
     }
     // Touching \\wsl.localhost boots a stopped distro; after `wsl --shutdown`
     // stay quiet and serve the last snapshot until the distro is back.
@@ -800,17 +807,18 @@ export class WorkspaceFileWatchManager {
       && process.platform === "win32"
       && !(await isWslDistroRunning(entry.wslRoot.distro))
     ) {
-      return;
+      return false;
     }
     if (entry.refreshing || !entry.ready) {
       entry.refreshRequested = true;
-      return;
+      return false;
     }
     entry.refreshing = true;
     entry.refreshRequested = false;
+    let rootChangeNotified = false;
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
-      if (this.entriesByRoot.get(entry.root) !== entry) return;
+      if (this.entriesByRoot.get(entry.root) !== entry) return false;
       const previous = entry.files;
       const previousSymlinks = entry.symlinks;
       const previousDirectories = entry.directories;
@@ -865,11 +873,13 @@ export class WorkspaceFileWatchManager {
           entry.debounceTimer = null;
         }
         this.flushChanges(entry);
+        rootChangeNotified = true;
       } else if (!entry.bridgeActive && entry.rootChangeListeners.size > 0) {
         // A filename-only snapshot cannot see edits to an existing file. In
         // bridge fallback mode, periodically invalidate terminal git stats so
         // content-only changes are still observed.
         this.notifyRootChangeListeners(entry);
+        rootChangeNotified = true;
       }
     } catch (error) {
       logger.warn({ error, root: entry.root }, "Workspace poll index refresh failed");
@@ -880,6 +890,7 @@ export class WorkspaceFileWatchManager {
         void this.refreshPollIndex(entry);
       }
     }
+    return rootChangeNotified;
   }
 
   private addPendingPath(
