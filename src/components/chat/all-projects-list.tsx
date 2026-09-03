@@ -322,10 +322,13 @@ function AllProjectSection({
                 diffStats={project.projectWorktree.diffStats}
                 displayPath={project.projectWorktree.displayPath}
                 onSelect={handleProjectWorktreeSelect}
-              />
-              <ProjectBranchFilter
-                projectId={project.encodedDir}
-                branches={project.creationBranches ?? []}
+                trailingControl={(
+                  <ProjectBranchFilter
+                    compact
+                    projectId={project.encodedDir}
+                    branches={project.creationBranches ?? []}
+                  />
+                )}
               />
             </>
           ) : null}

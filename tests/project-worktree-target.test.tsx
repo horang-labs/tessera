@@ -59,7 +59,8 @@ test('Project Worktree rows render detailed and compact variants', () => {
   assert.match(row, /−3/);
   assert.match(row, /aria-current="true"/);
   assert.match(row, /data-variant="detailed"/);
-  assert.match(row, /mb-0\.5[^\"]*py-2(?:\s|\")/);
+  assert.match(row, /mb-2[^\"]*rounded-xl/);
+  assert.match(row, /px-2\.5 py-2/);
 
   const compactRow = renderToStaticMarkup(createElement(CompactProjectWorktreeRow, {
     active: false,
@@ -82,7 +83,8 @@ test('Project Worktree rows render detailed and compact variants', () => {
   assert.match(compactRow, /\+12/);
   assert.match(compactRow, /−3/);
   assert.match(compactRow, /data-variant="compact"/);
-  assert.match(compactRow, /mb-0\.5[^\"]*py-1(?:\s|\")/);
+  assert.match(compactRow, /mb-1[^\"]*rounded-lg/);
+  assert.match(compactRow, /px-2 py-1/);
 });
 
 test('Worktree overview renders branch and path without duplicate creation actions', () => {
