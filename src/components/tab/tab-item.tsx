@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useRef, useState } from 'react';
 import { cva } from 'class-variance-authority';
-import { X } from 'lucide-react';
+import { Columns2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import { usePanelStore, selectActiveTab } from '@/stores/panel-store';
@@ -59,18 +59,9 @@ export interface TabItemProps {
 // Exported Pure Functions (testable without mounting component)
 // ---------------------------------------------------------------------------
 
-/**
- * Counts panels in the given panels map that have a non-null sessionId.
- */
-export function deriveSessionCount(panels: Record<string, import('@/types/panel').Panel>): number {
-  return Object.values(panels).filter((p) => p.sessionId !== null && !isSpecialSession(p.sessionId ?? '')).length;
-}
-
-/**
- * Adds a count suffix only when a tab contains multiple chat sessions.
- */
-export function formatTabLabel(displayTitle: string, sessionCount: number): string {
-  return sessionCount > 1 ? `${displayTitle} (${sessionCount})` : displayTitle;
+/** Counts every panel, including empty and terminal-only panels. */
+export function derivePanelCount(panels: Record<string, Panel>): number {
+  return Object.keys(panels).length;
 }
 
 export function getTabDragSessionId(
@@ -204,12 +195,12 @@ export const TabItem = memo(function TabItem({
     ),
   );
 
-  const liveSessionCount = usePanelStore(
+  const livePanelCount = usePanelStore(
     useCallback(
       (state) => {
         if (!isActive) return 0;
         const panels = selectActiveTab(state)?.panels ?? {};
-        return Object.values(panels).filter(p => p.sessionId !== null).length;
+        return derivePanelCount(panels);
       },
       [isActive],
     ),
@@ -258,8 +249,11 @@ export const TabItem = memo(function TabItem({
       ? activePanelSessionId
       : null;
 
-  const sessionCount = isActive ? liveSessionCount : deriveSessionCount(inactiveTabData?.panels ?? {});
-  const label = formatTabLabel(displayTitle, sessionCount);
+  const panelCount = isActive
+    ? livePanelCount
+    : derivePanelCount(inactiveTabData?.panels ?? {});
+  const isMultiPanel = panelCount > 1;
+  const multiPanelLabel = t('chat.multiPanelTab', { count: panelCount });
 
   // --- Generating indicator ---
   // Active tab: read live panel sessions from panel-store
@@ -546,18 +540,19 @@ export const TabItem = memo(function TabItem({
 
   return (
     <ShortcutTooltip
-      id="previous-tab"
-      label={t('shortcut.previousTab')}
-      secondaryShortcut={{ id: 'next-tab', label: t('shortcut.nextTab') }}
+      id="prev-tab"
+      label={t('shortcut.prevTab')}
+      secondaryId="next-tab"
+      secondaryLabel={t('shortcut.nextTab')}
     >
-    <div
+      <div
       data-telemetry-ignore="manual_capture"
       draggable={!isEditingTitle}
       role="tab"
       aria-selected={isActive}
       aria-controls={`${tab.id}-panel`}
       id={tab.id}
-      title={displayTitle}
+      title={isMultiPanel ? `${displayTitle} · ${multiPanelLabel}` : displayTitle}
       style={style}
       className={cn(
         tabItemVariants({ active: isActive, dragOver: isDragOver && !isSessionDragHover, preview: isPreview }),
@@ -629,8 +624,21 @@ export const TabItem = memo(function TabItem({
           autoFocus
         />
       ) : (
-        <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
-          {label}
+        <span className="flex min-w-0 flex-1 items-center">
+          {isMultiPanel ? (
+            <span
+              aria-label={multiPanelLabel}
+              className="mr-1.5 flex shrink-0 items-center gap-1 text-[11px] font-semibold leading-none text-(--accent-light)"
+              data-testid="tab-item-panel-count"
+              data-panel-count={panelCount}
+            >
+              <Columns2 aria-hidden="true" size={11} strokeWidth={2} />
+              <span>{panelCount}</span>
+            </span>
+          ) : null}
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+            {displayTitle}
+          </span>
         </span>
       )}
 
@@ -645,7 +653,7 @@ export const TabItem = memo(function TabItem({
         >
           <X size={12} />
         </button>
-    </div>
+      </div>
     </ShortcutTooltip>
   );
 });

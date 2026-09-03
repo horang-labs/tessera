@@ -79,6 +79,7 @@ import {
   sanitizeXtermGeneratedData,
   type TerminalKeyboardOwner,
 } from './terminal-input-policy';
+import { subscribeSessionRestart } from '@/lib/session/session-restart-lifecycle';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
@@ -370,6 +371,7 @@ export class TerminalSurface {
   private autoConnect = true;
   private sessionWasPresent = false;
   private readonly unsubscribeSessionStore: (() => void) | null;
+  private readonly unsubscribeSessionRestart: (() => void) | null;
 
   constructor(private readonly options: TerminalSurfaceOptions) {
     this.theme = { ...options.theme };
@@ -393,6 +395,16 @@ export class TerminalSurface {
             return;
           }
           if (present) this.sessionWasPresent = true;
+        })
+      : null;
+    this.unsubscribeSessionRestart = options.sessionId
+      ? subscribeSessionRestart(options.sessionId, (succeeded, message) => {
+          if (!succeeded) {
+            this.autoConnect = false;
+            this.updateState('error', message ?? 'Session restart failed');
+            return;
+          }
+          void this.restart();
         })
       : null;
   }
@@ -825,6 +837,7 @@ export class TerminalSurface {
     }
     this.unsubscribeMessages();
     this.unsubscribeSessionStore?.();
+    this.unsubscribeSessionRestart?.();
     this.releaseRenderResources();
     if (surfaces.get(this.options.registryKey) === this) {
       surfaces.delete(this.options.registryKey);

@@ -610,6 +610,23 @@ export interface I18nMessages {
     dropSessionReference: string;
     closeSession: string;
     branchLabel: string;
+    projectViewBranchFilterLabel: string;
+    projectViewBranchFilterAriaLabel: string;
+    projectViewBranchFilterHint: string;
+    projectViewBranchFilterMenuLabel: string;
+    projectViewAllBranches: string;
+    projectViewBranchSearchPlaceholder: string;
+    projectViewBranchNoMatches: string;
+    checkoutBranchLabel: string;
+    checkoutBranchAriaLabel: string;
+    checkoutBranchAction: string;
+    checkoutBranchSwitching: string;
+    checkoutBranchLoading: string;
+    checkoutBranchUnavailable: string;
+    checkoutBranchSearchPlaceholder: string;
+    checkoutBranchNoMatches: string;
+    checkoutBranchCurrent: string;
+    checkoutBranchSwitchFailed: string;
     worktreeDeleted: string;
     askUserTitle: string;
     askUserKeyboardHint: string;
@@ -668,6 +685,9 @@ export interface I18nMessages {
     viewAsChat: string;
     viewAsTerminal: string;
     imageOriginalView: string;
+    imageZoomIn: string;
+    imageZoomOut: string;
+    imageZoomReset: string;
     generateTitle: string;
     generatingTitle: string;
     showOriginal: string;
@@ -691,6 +711,7 @@ export interface I18nMessages {
     newTabDefault: string;
     openGitPanel: string;
     closeGitPanel: string;
+    multiPanelTab: string;
     renameTab: string;
     closeTab: string;
     closeOtherTabs: string;
@@ -798,7 +819,7 @@ export interface I18nMessages {
   shortcut: {
     newTab: string;
     closeTab: string;
-    previousTab: string;
+    prevTab: string;
     nextTab: string;
     toggleSidebar: string;
     toggleView: string;
@@ -961,6 +982,7 @@ export interface I18nMessages {
     error: string;
     stopped: string;
     stopProcess: string;
+    restartSession: string;
     processing: string;
     inputRequired: string;
     unreadNotification: string;
@@ -1090,6 +1112,7 @@ export interface I18nMessages {
       files: string;
       scripts: string;
       context: string;
+      images: string;
     };
     empty: {
       noWorktreeTitle: string;
@@ -1267,6 +1290,40 @@ export interface I18nMessages {
       stdoutLabel: string;
       noOutput: string;
     };
+  };
+  imagePanel: {
+    selectSession: string;
+    loading: string;
+    loadFailed: string;
+    retry: string;
+    empty: string;
+    generation: string;
+    inputs: string;
+    recentImagesCount: string;
+    inputNumber: string;
+    openInput: string;
+    openResult: string;
+    downloadInput: string;
+    downloadResult: string;
+    showMore: string;
+    showLess: string;
+    copyPrompt: string;
+    promptCopied: string;
+    copyPromptFailed: string;
+    source: {
+      conversation: string;
+      generated: string;
+      file: string;
+      'explicit-path': string;
+    };
+    unresolved: string;
+    prompt: string;
+    revised: string;
+    codexPrompt: string;
+    showCodexPrompt: string;
+    hideCodexPrompt: string;
+    result: string;
+    status: { running: string; completed: string; error: string };
   };
   memoryPanel: {
     sections: {

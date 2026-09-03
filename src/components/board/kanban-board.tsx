@@ -869,6 +869,11 @@ export const KanbanBoard = memo(function KanbanBoard() {
     projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
+  const handleCardRestartProcess = useCallback((sessionId: string) => {
+    wsClient.restartSession(sessionId);
+    projectViewWorkspaceState.markSessionRead(sessionId);
+  }, []);
+
   // Card click handler
   const handleChatClick = useCallback((session: UnifiedSession, event?: React.MouseEvent) => {
     handleSessionClick(session, event);
@@ -1030,6 +1035,21 @@ export const KanbanBoard = memo(function KanbanBoard() {
     setTaskMenuAnchor(null);
   }, [taskMenuAnchor]);
 
+  const handleTaskRestartProcess = useCallback(() => {
+    if (!taskMenuAnchor) return;
+    for (const session of taskMenuAnchor.task.sessions) {
+      const liveSession = projectViewWorkspaceState.resolveSession(
+        session.id,
+        taskMenuAnchor.task.projectViewId,
+      );
+      if (resolveSessionRuntimePresentation(liveSession ?? session).canStop) {
+        wsClient.restartSession(session.id);
+        projectViewWorkspaceState.markSessionRead(session.id);
+      }
+    }
+    setTaskMenuAnchor(null);
+  }, [taskMenuAnchor]);
+
   const handleChatMoveToCollection = useCallback((sessionId: string, collectionId: string | null) => {
     useSessionStore.getState().updateSessionCollection(
       sessionId,
@@ -1155,6 +1175,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
                 onSessionOpenInNewTab={handleCardOpenInNewTab}
                 onSessionGenerateTitle={handleCardGenerateTitle}
                 onSessionStopProcess={handleCardStopProcess}
+                onSessionRestartProcess={handleCardRestartProcess}
                 renamingTaskId={renamingTaskId}
                 onTaskRenameComplete={handleTaskRenameComplete}
               />
@@ -1196,6 +1217,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
               onCardGenerateTitle={handleCardGenerateTitle}
               onCardMoveToCollection={handleChatMoveToCollection}
               onCardStopProcess={handleCardStopProcess}
+              onCardRestartProcess={handleCardRestartProcess}
             />
         </div>
       </div>
@@ -1219,6 +1241,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
           onGenerateTitle={handleTaskGenerateTitle}
           isRunning={taskMenuIsRunning}
           onStopProcess={taskMenuIsRunning ? handleTaskStopProcess : undefined}
+          onRestartProcess={taskMenuIsRunning ? handleTaskRestartProcess : undefined}
           onRunPreparation={
             canPrepareTask(taskMenuAnchor.task, taskMenuProjectHasScript)
               ? handleTaskRunPreparation

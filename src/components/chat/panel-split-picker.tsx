@@ -13,9 +13,7 @@ import type { ShortcutId } from '@/lib/keyboard/registry';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
 import { detectPlatform, formatShortcut } from '@/lib/keyboard/format';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
-
-const MIN_PANEL_WIDTH = 250;
-const MIN_PANEL_HEIGHT = 150;
+import { isPanelLargeEnoughToSplit } from '@/lib/panel/panel-split';
 
 interface FixedPopoverPosition {
   right: number;
@@ -148,16 +146,9 @@ export function PanelSplitPicker({ sessionId, compact = false }: PanelSplitPicke
     }
 
     const rect = getPanelRect(currentPanelId);
-    if (rect) {
-      if (direction === 'horizontal' && rect.width / 2 < MIN_PANEL_WIDTH) {
-        toast.warning(t('panel.tooSmallToSplit'));
-        return;
-      }
-
-      if (direction === 'vertical' && rect.height / 2 < MIN_PANEL_HEIGHT) {
-        toast.warning(t('panel.tooSmallToSplit'));
-        return;
-      }
+    if (rect && !isPanelLargeEnoughToSplit(rect, direction)) {
+      toast.warning(t('panel.tooSmallToSplit'));
+      return;
     }
 
     setActivePanelId(currentPanelId);

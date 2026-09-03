@@ -59,6 +59,7 @@ import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { ProjectBranchFilter } from '@/components/worktree/project-branch-filter';
 import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
@@ -488,6 +489,11 @@ export function Sidebar() {
     projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
+  const handleTaskRestartProcess = useCallback((sessionId: string) => {
+    wsClient.restartSession(sessionId);
+    projectViewWorkspaceState.markSessionRead(sessionId);
+  }, []);
+
   const prevActivePanelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -793,6 +799,7 @@ export function Sidebar() {
                   onSessionOpenInNewTab={handleTaskOpenInNewTab}
                   onSessionGenerateTitle={handleTaskGenerateTitle}
                   onSessionStopProcess={handleTaskStopProcess}
+                  onSessionRestartProcess={handleTaskRestartProcess}
                 />
               )}
               <AllProjectsList
@@ -807,6 +814,7 @@ export function Sidebar() {
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
+                onSessionRestartProcess={handleTaskRestartProcess}
               />
             </>
           )
@@ -822,6 +830,10 @@ export function Sidebar() {
                   name={selectedProject.displayName}
                   displayPath={selectedProject.projectWorktree.displayPath}
                   onSelect={handleProjectWorktreeSelect}
+                />
+                <ProjectBranchFilter
+                  projectId={selectedProject.encodedDir}
+                  branches={selectedProject.creationBranches ?? []}
                 />
                 {selectedProject.branchRenameWarning ? (
                   <BranchRenameWarning
@@ -873,6 +885,7 @@ export function Sidebar() {
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
+                onSessionRestartProcess={handleTaskRestartProcess}
                 disableDnd
                 allowPanelSessionDnd
                 hideHeader
@@ -898,6 +911,7 @@ export function Sidebar() {
                     onSessionOpenInNewTab={handleTaskOpenInNewTab}
                     onSessionGenerateTitle={handleTaskGenerateTitle}
                     onSessionStopProcess={handleTaskStopProcess}
+                    onSessionRestartProcess={handleTaskRestartProcess}
                   />
                 )}
                 {visibleCollectionGroups.map((group, groupIdx) => {
@@ -956,6 +970,7 @@ export function Sidebar() {
                       onSessionOpenInNewTab={handleTaskOpenInNewTab}
                       onSessionGenerateTitle={handleTaskGenerateTitle}
                       onSessionStopProcess={handleTaskStopProcess}
+                      onSessionRestartProcess={handleTaskRestartProcess}
                       disableDnd={isRunningFilterActive}
                     />
                   );

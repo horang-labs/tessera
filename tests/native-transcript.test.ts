@@ -5,7 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { parseClaudeNativeTranscript } from '@/lib/cli/providers/claude-code/native-transcript';
 import { parseCodexNativeTranscript } from '@/lib/cli/providers/codex/native-transcript';
-import { resolveCodexAccountTranscriptPath } from '@/lib/codex-home';
+import {
+  resolveCodexAccountOverlayPath,
+  resolveCodexAccountTranscriptPath,
+} from '@/lib/codex-home';
 import { wslDisplayPathToWindowsFilesystemPath } from '@/lib/filesystem/path-environment';
 
 function codexMessageLine(role: string, text: string): string {
@@ -116,6 +119,27 @@ test('codex rollout path under a removed overlay resolves to the account home', 
     );
 
     assert.equal(resolveCodexAccountTranscriptPath(overlayPath), accountPath);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a generated image under a Codex overlay resolves to the account home', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-image-'));
+  try {
+    const relativeParts = ['generated_images', 'thread', 'result.png'];
+    const accountPath = path.join(root, '.codex', ...relativeParts);
+    fs.mkdirSync(path.dirname(accountPath), { recursive: true });
+    fs.writeFileSync(accountPath, 'image');
+    const overlayPath = path.join(
+      root,
+      '.tessera',
+      'codex-overlay',
+      'session-e0f1',
+      ...relativeParts,
+    );
+
+    assert.equal(resolveCodexAccountOverlayPath(overlayPath), accountPath);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -68,3 +68,47 @@ test('opening a session preserves an occupied selected tab', () => {
     'session-2',
   );
 });
+
+test('opening a session from another tab replaces the inactive session preview', () => {
+  const previewTabId = 'session-preview-tab';
+  const previewPanelId = 'session-preview-panel';
+  const archiveTabId = 'archive-tab';
+  const archivePanelId = 'archive-panel';
+
+  useTabStore.setState({
+    tabs: [
+      { id: previewTabId, projectDir: null, title: null, isPreview: true },
+      { id: archiveTabId, projectDir: null, title: 'Archive', isPreview: false },
+    ],
+    activeTabId: archiveTabId,
+    lruTabIds: [archiveTabId, previewTabId],
+  });
+  usePanelStore.setState({
+    tabPanels: {
+      [previewTabId]: {
+        layout: { type: 'leaf', panelId: previewPanelId },
+        panels: {
+          [previewPanelId]: { id: previewPanelId, sessionId: 'session-a' },
+        },
+        activePanelId: previewPanelId,
+      },
+      [archiveTabId]: {
+        layout: { type: 'leaf', panelId: archivePanelId },
+        panels: {
+          [archivePanelId]: { id: archivePanelId, sessionId: 'archive-dashboard' },
+        },
+        activePanelId: archivePanelId,
+      },
+    },
+    activeTabId: archiveTabId,
+  });
+
+  useTabStore.getState().openPreview('session-b');
+
+  assert.equal(useTabStore.getState().activeTabId, previewTabId);
+  assert.equal(usePanelStore.getState().activeTabId, previewTabId);
+  assert.equal(
+    usePanelStore.getState().tabPanels[previewTabId]?.panels[previewPanelId]?.sessionId,
+    'session-b',
+  );
+});

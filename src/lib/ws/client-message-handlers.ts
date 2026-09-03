@@ -49,6 +49,11 @@ import {
   retainPendingTerminalRebounds,
   takePendingTerminalReboundsForDestination,
 } from '@/lib/terminal/terminal-session-rebound-reservations';
+import {
+  beginSessionRestart,
+  finishSessionRestart,
+  isSessionRestarting,
+} from '@/lib/session/session-restart-lifecycle';
 
 interface HandleIncomingServerMessageOptions {
   msg: ServerTransportMessage;
@@ -149,11 +154,33 @@ export function handleIncomingServerMessage({
       // PTY surfaces retire on terminal_session_runtime so a provider session
       // rebound can transfer the existing panel first. GUI sessions have no
       // later runtime event, so stopping one must retire its surface here.
-      if (stoppedKind && stoppedKind !== 'terminal') {
+      if (stoppedKind && stoppedKind !== 'terminal' && !isSessionRestarting(msg.sessionId)) {
         retireProjectViewSessionSurfaces(msg.sessionId);
       }
       return { wasReconnect };
     }
+
+    case 'session_restarting':
+      beginSessionRestart(msg.sessionId);
+      finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
+      void captureTelemetryPromptTurnFinished(msg.sessionId, 'stopped');
+      chatStore.settleRunningWorkflows(msg.sessionId, 'failed');
+      chatStore.setTodoSnapshot(msg.sessionId, []);
+      chatStore.setCompacting(msg.sessionId, null);
+      sessionStore.setSessionWorkflowRunning(msg.sessionId, false);
+      useCommandStore.getState().clearSession(msg.sessionId);
+      return { wasReconnect };
+
+    case 'session_restarted':
+      finishSessionRestart(msg.sessionId, true);
+      return { wasReconnect };
+
+    case 'session_restart_failed':
+      finishSessionRestart(msg.sessionId, false, msg.message);
+      sessionStore.markSessionStopped(msg.sessionId);
+      useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, false);
+      useNotificationStore.getState().showToast(msg.message, 'error');
+      return { wasReconnect };
 
     case 'replay_events':
       sessionStore.touchSessionActivity(msg.sessionId, getLatestReplayEventTimestamp(msg.events));
@@ -227,7 +254,9 @@ export function handleIncomingServerMessage({
       } else {
         useTerminalSessionStore.getState().markRuntimeStopped(msg.sessionId);
         cancelPendingTerminalReboundsForDestination(msg.sessionId);
-        retireStoppedTerminalSessionSurface(msg.sessionId);
+        if (!isSessionRestarting(msg.sessionId)) {
+          retireStoppedTerminalSessionSurface(msg.sessionId);
+        }
       }
       return { wasReconnect };
 
@@ -347,6 +376,7 @@ export function handleIncomingServerMessage({
     }
 
     case 'cli_down':
+      if (isSessionRestarting(msg.sessionId)) return { wasReconnect };
       applySessionReplayEventsToStores(msg.sessionId, serverMessageToReplayEvents(msg));
       finalizeInFlightTurn(msg.sessionId, { clearPrompt: true });
       void captureTelemetryPromptTurnFinished(msg.sessionId, 'failed');

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useMemo } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, CircleStop, Pencil, RefreshCw, Trash2, ExternalLink, Sparkles } from 'lucide-react';
+import { Archive, ArchiveRestore, CircleStop, Pencil, RefreshCw, RotateCcw, Trash2, ExternalLink, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { SIDEBAR_STATUS_GROUP_CONFIG, SIDEBAR_STATUS_GROUP_ORDER } from '@/types/task';
@@ -30,6 +30,7 @@ export interface TaskContextMenuProps {
   onOpenInNewTab?: () => void;
   onGenerateTitle?: () => void;
   onStopProcess?: () => void;
+  onRestartProcess?: () => void;
   /** Runs the project's preparation script again on this task's worktree. */
   onRunPreparation?: () => void;
   onClose: () => void;
@@ -56,6 +57,7 @@ export function TaskContextMenu({
   onOpenInNewTab,
   onGenerateTitle,
   onStopProcess,
+  onRestartProcess,
   onRunPreparation,
   onClose,
 }: TaskContextMenuProps) {
@@ -76,11 +78,12 @@ export function TaskContextMenu({
       ? SIDEBAR_STATUS_GROUP_ORDER.filter((s) => (allowChatStatus || s !== 'chat') && s !== currentStatus).length
       : 0;
     const optionalItems = (isRunning && onStopProcess ? 1 : 0)
+      + (isRunning && onRestartProcess ? 1 : 0)
       + (onMoveToCollection ? 1 : 0)
       + (onGenerateTitle ? 1 : 0)
       + (onOpenInNewTab ? 1 : 0);
     const statusSectionHeight = statusCount > 0 ? 20 + statusCount * ITEM_HEIGHT + 8 : 0;
-    const stopProcessDividerHeight = isRunning && onStopProcess ? 8 : 0;
+    const stopProcessDividerHeight = isRunning && (onStopProcess || onRestartProcess) ? 8 : 0;
     const upperActionDividerHeight = onGenerateTitle || onMoveToCollection ? 8 : 0;
     const deleteDividerHeight = 8;
     const archiveItemCount = hasArchiveAction ? 1 : 0;
@@ -113,6 +116,7 @@ export function TaskContextMenu({
     onOpenInNewTab,
     onStatusChange,
     onStopProcess,
+    onRestartProcess,
     hasArchiveAction,
   ]);
 
@@ -211,6 +215,11 @@ export function TaskContextMenu({
     onClose();
   }, [onClose, onStopProcess]);
 
+  const handleRestartProcess = useCallback(() => {
+    onRestartProcess?.();
+    onClose();
+  }, [onClose, onRestartProcess]);
+
   if (typeof document === 'undefined' || !menuPos) return null;
 
   const otherStatuses = currentStatus && onStatusChange
@@ -236,24 +245,32 @@ export function TaskContextMenu({
       onContextMenu={stopEventPropagation}
       data-testid="task-context-menu"
     >
-      {isRunning && onStopProcess && (
+      {isRunning && (onStopProcess || onRestartProcess) && (
         <>
-          <button
-            role="menuitem"
-            className={cn(
-              'w-full flex items-center gap-2 px-3 h-8 text-[12px] text-left rounded-md',
-              'text-(--error) transition-colors',
-              'hover:bg-[color-mix(in_srgb,var(--error)_10%,transparent)]',
-              'focus:bg-[color-mix(in_srgb,var(--error)_10%,transparent)] focus:outline-none',
-              'cursor-default'
-            )}
-            onClick={handleStopProcess}
-            {...telemetryClickAttributes('task.stop', 'task_menu')}
-            data-testid="ctx-stop-process"
-          >
-            <CircleStop className="w-3.5 h-3.5 shrink-0" />
-            <span>Stop Process</span>
-          </button>
+          {onStopProcess && (
+            <button
+              role="menuitem"
+              className={cn(menuItemClass, 'text-(--error)')}
+              onClick={handleStopProcess}
+              {...telemetryClickAttributes('task.stop', 'task_menu')}
+              data-testid="ctx-stop-process"
+            >
+              <CircleStop className="w-3.5 h-3.5 shrink-0" />
+              <span>Stop Process</span>
+            </button>
+          )}
+          {onRestartProcess && (
+            <button
+              role="menuitem"
+              className={menuItemClass}
+              onClick={handleRestartProcess}
+              {...telemetryClickAttributes('task.restart', 'task_menu')}
+              data-testid="ctx-restart-process"
+            >
+              <RotateCcw className="w-3.5 h-3.5 shrink-0 text-(--text-muted)" />
+              <span>{t('status.restartSession')}</span>
+            </button>
+          )}
           <div className="my-1 h-px bg-(--divider) opacity-40" />
         </>
       )}

@@ -217,6 +217,10 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
     wsClient.stopSession(sessionId);
   }, [sessionId]);
 
+  const handleRestartProcess = useCallback(() => {
+    wsClient.restartSession(sessionId);
+  }, [sessionId]);
+
   const branchPresentation = resolveSessionBranchPresentation({
     worktreeBranch: session?.worktreeBranch,
     scopeBranch: session?.scopeBranch,
@@ -516,6 +520,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
           onDelete={handleDelete}
           onGenerateTitle={() => generateTitle(sessionId)}
           onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
+          onRestartProcess={runtimePresentation.canStop ? handleRestartProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}

@@ -12,18 +12,26 @@ import type { ShortcutId } from '@/lib/keyboard/registry';
 export interface ShortcutTooltipProps {
   id: ShortcutId;
   label: string;
-  /** An optional second command, used for controls such as the tab strip. */
-  secondaryShortcut?: { id: ShortcutId; label: string };
+  secondaryId?: ShortcutId;
+  secondaryLabel?: string;
   /** Override platform detection. Used in tests. */
   platform?: Platform;
   children: ReactElement;
 }
 
-export function ShortcutTooltip({ id, label, secondaryShortcut, platform, children }: ShortcutTooltipProps) {
+export function ShortcutTooltip({
+  id,
+  label,
+  secondaryId,
+  secondaryLabel,
+  platform,
+  children,
+}: ShortcutTooltipProps) {
   const { t } = useI18n();
   const electronPlatform = useElectronPlatform();
   const isWebMode = !electronPlatform;
   const key = useEffectiveShortcut(id);
+  const secondaryKey = useEffectiveShortcut(secondaryId ?? id);
   const plat = platform ?? detectPlatform();
   const tooltipId = useId();
   const [open, setOpen] = useState(false);
@@ -31,8 +39,11 @@ export function ShortcutTooltip({ id, label, secondaryShortcut, platform, childr
 
   const formatted = key ? formatShortcut(key, plat) : '';
   const conflict = isWebMode && key !== null && isBrowserConflict(key);
-  const secondaryKey = useEffectiveShortcut(secondaryShortcut?.id ?? id);
-  const formattedSecondary = secondaryShortcut && secondaryKey
+  const secondaryConflict = secondaryId
+    && isWebMode
+    && secondaryKey !== null
+    && isBrowserConflict(secondaryKey);
+  const secondaryFormatted = secondaryId && secondaryKey
     ? formatShortcut(secondaryKey, plat)
     : '';
 
@@ -55,7 +66,7 @@ export function ShortcutTooltip({ id, label, secondaryShortcut, platform, childr
     // so only our ShortcutTooltip shows. An empty `title` on the hovered element
     // stops the browser from walking up to a parent's title.
     title: '',
-    'aria-keyshortcuts': key ?? undefined,
+    'aria-keyshortcuts': [key, secondaryId ? secondaryKey : null].filter(Boolean).join(' ') || undefined,
     'aria-describedby': open ? tooltipId : undefined,
     onMouseEnter: (e: MouseEvent<HTMLElement>) => {
       positionFromTrigger(e.currentTarget);
@@ -89,10 +100,11 @@ export function ShortcutTooltip({ id, label, secondaryShortcut, platform, childr
         {formatted && <kbd className="font-mono text-[10px] text-white/65">{formatted}</kbd>}
         {conflict && <span className="text-(--warning)" title={t('shortcut.browserConflict')}>⚠</span>}
       </div>
-      {secondaryShortcut && (
+      {secondaryId && secondaryLabel && (
         <div className="flex items-center justify-between gap-5 whitespace-nowrap px-1 py-0.5">
-          <span>{secondaryShortcut.label}</span>
-          {formattedSecondary && <kbd className="font-mono text-[10px] text-white/65">{formattedSecondary}</kbd>}
+          <span>{secondaryLabel}</span>
+          {secondaryFormatted && <kbd className="font-mono text-[10px] text-white/65">{secondaryFormatted}</kbd>}
+          {secondaryConflict && <span className="text-(--warning)" title={t('shortcut.browserConflict')}>⚠</span>}
         </div>
       )}
     </div>
