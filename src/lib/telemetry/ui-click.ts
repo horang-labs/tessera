@@ -334,6 +334,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'message.load_more',
   'message.scroll_bottom',
   'list.selection.done',
+  'list.selection.stop',
   'list.selection.archive',
   'list.selection.delete',
   'list.selection.clear',

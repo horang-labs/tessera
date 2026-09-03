@@ -10,6 +10,7 @@ import type { RecentWorkItem } from '../src/lib/chat/recent-work';
 import { useSelectionStore } from '../src/stores/selection-store';
 import { useSessionStore } from '../src/stores/session-store';
 import { useTaskStore } from '../src/stores/task-store';
+import { wsClient } from '../src/lib/ws/client';
 import type { ProjectGroup, UnifiedSession } from '../src/types/chat';
 import type { TaskEntity } from '../src/types/task-entity';
 
@@ -197,4 +198,21 @@ test('bulk delete removes selected child Sessions from both Project and Worktree
   assert.deepEqual(useTaskStore.getState().tasksByProject['project-a'][0]?.sessions, []);
   assert.deepEqual(useSessionStore.getState().projects[0]?.sessions, []);
   assert.equal(useSessionStore.getState().projects[0]?.totalSessions, 0);
+});
+
+test('bulk stop requests a stop for every selected session', (t) => {
+  const originalStopSession = wsClient.stopSession;
+  const stoppedIds: string[] = [];
+  t.after(() => {
+    wsClient.stopSession = originalStopSession;
+    useSelectionStore.getState().clearSelection();
+  });
+  wsClient.stopSession = (sessionId: string) => {
+    stoppedIds.push(sessionId);
+  };
+  useSelectionStore.setState({ selectedIds: new Set(['session-a', 'session-b']) });
+
+  useSelectionStore.getState().bulkStop();
+
+  assert.deepEqual(stoppedIds, ['session-a', 'session-b']);
 });

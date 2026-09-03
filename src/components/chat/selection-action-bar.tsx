@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, Archive, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Archive, CircleStop, Trash2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useSelectionStore } from '@/stores/selection-store';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
@@ -20,7 +20,7 @@ const VIEWPORT_PADDING = 8;
 
 function computePosition(anchorEl: Element): { top: number; left: number } {
   const rect = anchorEl.getBoundingClientRect();
-  const barWidth = 340; // approximate max width
+  const barWidth = 290; // approximate max width
   const barHeight = 44;
 
   // Try right side first
@@ -45,7 +45,9 @@ interface SelectionActionBarContentProps {
   clearSelection: () => void;
   bulkMarkDone: () => void;
   bulkArchive: () => void;
+  bulkStop: () => void;
   bulkDelete: () => void;
+  contentRef: RefObject<HTMLDivElement | null>;
 }
 
 function SelectionActionBarContent({
@@ -54,7 +56,9 @@ function SelectionActionBarContent({
   clearSelection,
   bulkMarkDone,
   bulkArchive,
+  bulkStop,
   bulkDelete,
+  contentRef,
 }: SelectionActionBarContentProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -69,28 +73,29 @@ function SelectionActionBarContent({
 
   return createPortal(
     <div
+      ref={contentRef}
       style={{ top: position.top, left: position.left }}
       className={cn(
         'fixed z-[9998]',
-        'flex items-center gap-2 px-4 py-2.5 rounded-xl',
+        'flex items-center gap-1.5 px-2 py-1.5 rounded-xl',
         'bg-(--sidebar-bg) border border-(--divider)',
         'shadow-[0_8px_32px_rgba(0,0,0,0.3),0_2px_8px_rgba(0,0,0,0.2)]',
         'animate-in fade-in duration-150',
       )}
       data-testid="selection-action-bar"
     >
-      <span className="text-[13px] font-semibold text-(--text-primary) whitespace-nowrap tabular-nums">
+      <span className="px-1.5 text-[12px] font-semibold text-(--text-primary) whitespace-nowrap tabular-nums">
         {selectedCount}
         <span className="text-(--text-muted) font-normal ml-1">selected</span>
       </span>
 
-      <div className="w-px h-5 bg-(--divider) mx-1" />
+      <div className="w-px h-5 bg-(--divider) mx-0.5" />
 
       <button
         {...telemetryClickAttributes('list.selection.done', 'workspace_list')}
         onClick={bulkMarkDone}
         className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium',
+          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] font-medium',
           'bg-[color-mix(in_srgb,var(--success)_12%,transparent)]',
           'text-(--success) hover:bg-[color-mix(in_srgb,var(--success)_20%,transparent)]',
           'transition-colors whitespace-nowrap',
@@ -102,36 +107,54 @@ function SelectionActionBarContent({
       </button>
 
       <button
+        {...telemetryClickAttributes('list.selection.stop', 'workspace_list')}
+        onClick={bulkStop}
+        className={cn(
+          'flex items-center justify-center size-7 rounded-md text-[12px] font-medium',
+          'text-(--error) hover:bg-[color-mix(in_srgb,var(--error)_12%,transparent)]',
+          'transition-colors',
+        )}
+        aria-label="Stop selected sessions"
+        title="Stop sessions"
+        data-testid="bulk-stop"
+      >
+        <CircleStop className="w-3.5 h-3.5" />
+      </button>
+
+      <button
         {...telemetryClickAttributes('list.selection.archive', 'workspace_list')}
         onClick={bulkArchive}
         className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium',
+          'flex items-center justify-center size-7 rounded-md text-[12px] font-medium',
           'text-(--text-secondary) hover:bg-(--sidebar-hover)',
-          'transition-colors whitespace-nowrap',
+          'transition-colors',
         )}
+        aria-label="Archive selected sessions"
+        title="Archive sessions"
         data-testid="bulk-archive"
       >
         <Archive className="w-3.5 h-3.5" />
-        Archive
       </button>
 
       <button
         {...telemetryClickAttributes('list.selection.delete', 'workspace_list')}
         onClick={handleDelete}
         className={cn(
-          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium',
+          'flex items-center justify-center size-7 rounded-md text-[12px] font-medium',
           'transition-colors whitespace-nowrap',
           confirmDelete
             ? 'bg-(--error) text-white hover:bg-[color-mix(in_srgb,var(--error)_85%,black)]'
             : 'text-(--error) hover:bg-[color-mix(in_srgb,var(--error)_12%,transparent)]',
         )}
+        aria-label={confirmDelete ? 'Confirm delete selected sessions' : 'Delete selected sessions'}
+        title={confirmDelete ? 'Confirm delete' : 'Delete sessions'}
         data-testid="bulk-delete"
       >
         <Trash2 className="w-3.5 h-3.5" />
-        {confirmDelete ? 'Confirm' : 'Delete'}
+        {confirmDelete && <span className="sr-only">Confirm</span>}
       </button>
 
-      <div className="w-px h-5 bg-(--divider) mx-1" />
+      <div className="w-px h-5 bg-(--divider) mx-0.5" />
 
       <button
         {...telemetryClickAttributes('list.selection.clear', 'workspace_list')}
@@ -158,7 +181,9 @@ export function SelectionActionBar() {
   const clearSelection = useSelectionStore((state) => state.clearSelection);
   const bulkMarkDone = useSelectionStore((state) => state.bulkMarkDone);
   const bulkArchive = useSelectionStore((state) => state.bulkArchive);
+  const bulkStop = useSelectionStore((state) => state.bulkStop);
   const bulkDelete = useSelectionStore((state) => state.bulkDelete);
+  const contentRef = useRef<HTMLDivElement>(null);
   const position = useMemo(() => {
     if (!barAnchorId || selectedCount === 0 || typeof document === 'undefined') {
       return null;
@@ -180,6 +205,21 @@ export function SelectionActionBar() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [selectedCount, clearSelection]);
 
+  // Selection is a transient list mode. Clicking anywhere except another
+  // session row or the action bar should return the workspace to its normal state.
+  useEffect(() => {
+    if (selectedCount === 0) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (contentRef.current?.contains(target)) return;
+      if (target.closest('[data-session-id]')) return;
+      clearSelection();
+    }
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [selectedCount, clearSelection]);
+
   if (selectedCount === 0 || typeof document === 'undefined' || !position) return null;
 
   return (
@@ -190,7 +230,9 @@ export function SelectionActionBar() {
       clearSelection={clearSelection}
       bulkMarkDone={bulkMarkDone}
       bulkArchive={bulkArchive}
+      bulkStop={bulkStop}
       bulkDelete={bulkDelete}
+      contentRef={contentRef}
     />
   );
 }
