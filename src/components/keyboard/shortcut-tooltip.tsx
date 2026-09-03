@@ -92,27 +92,19 @@ export function ShortcutTooltip({
     <div
       id={tooltipId}
       role="tooltip"
-      className="fixed z-[2147483647] rounded-md bg-(--tooltip-bg) px-2.5 py-1 text-xs text-white shadow-md pointer-events-none -translate-x-1/2 whitespace-nowrap"
+      className="fixed z-[2147483647] min-w-[190px] rounded-lg border border-white/10 bg-(--tooltip-bg) p-1.5 text-xs text-white shadow-xl pointer-events-none -translate-x-1/2"
       style={{ top: position.top, left: position.left }}
     >
-      <div>
-        {label}
-        {formatted && <span className="ml-1.5 opacity-60">{formatted}</span>}
-        {conflict && (
-          <span className="ml-1.5 text-(--warning)" title={t('shortcut.browserConflict')}>
-            ⚠
-          </span>
-        )}
+      <div className="flex items-center justify-between gap-5 whitespace-nowrap px-1 py-0.5">
+        <span>{label}</span>
+        {formatted && <kbd className="font-mono text-[10px] text-white/65">{formatted}</kbd>}
+        {conflict && <span className="text-(--warning)" title={t('shortcut.browserConflict')}>⚠</span>}
       </div>
       {secondaryId && secondaryLabel && (
-        <div>
-          {secondaryLabel}
-          {secondaryFormatted && <span className="ml-1.5 opacity-60">{secondaryFormatted}</span>}
-          {secondaryConflict && (
-            <span className="ml-1.5 text-(--warning)" title={t('shortcut.browserConflict')}>
-              ⚠
-            </span>
-          )}
+        <div className="flex items-center justify-between gap-5 whitespace-nowrap px-1 py-0.5">
+          <span>{secondaryLabel}</span>
+          {secondaryFormatted && <kbd className="font-mono text-[10px] text-white/65">{secondaryFormatted}</kbd>}
+          {secondaryConflict && <span className="text-(--warning)" title={t('shortcut.browserConflict')}>⚠</span>}
         </div>
       )}
     </div>

@@ -539,7 +539,13 @@ export const TabItem = memo(function TabItem({
   );
 
   return (
-    <div
+    <ShortcutTooltip
+      id="prev-tab"
+      label={t('shortcut.prevTab')}
+      secondaryId="next-tab"
+      secondaryLabel={t('shortcut.nextTab')}
+    >
+      <div
       data-telemetry-ignore="manual_capture"
       draggable={!isEditingTitle}
       role="tab"
@@ -584,7 +590,6 @@ export const TabItem = memo(function TabItem({
           data-testid="tab-item-status"
           data-status={statusKind}
           aria-label={statusLabel}
-          title={statusLabel}
         >
           <ItemStatusIndicator
             isProcessing={isGenerating}
@@ -619,34 +624,25 @@ export const TabItem = memo(function TabItem({
           autoFocus
         />
       ) : (
-        <ShortcutTooltip
-          id="prev-tab"
-          label={t('shortcut.prevTab')}
-          secondaryId="next-tab"
-          secondaryLabel={t('shortcut.nextTab')}
-        >
-          <span className="flex min-w-0 flex-1 items-center">
-            {isMultiPanel ? (
-              <span
-                aria-label={multiPanelLabel}
-                className="mr-1.5 flex shrink-0 items-center gap-1 text-[11px] font-semibold leading-none text-(--accent-light)"
-                data-testid="tab-item-panel-count"
-                data-panel-count={panelCount}
-                title={multiPanelLabel}
-              >
-                <Columns2 aria-hidden="true" size={11} strokeWidth={2} />
-                <span>{panelCount}</span>
-              </span>
-            ) : null}
-            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-              {displayTitle}
+        <span className="flex min-w-0 flex-1 items-center">
+          {isMultiPanel ? (
+            <span
+              aria-label={multiPanelLabel}
+              className="mr-1.5 flex shrink-0 items-center gap-1 text-[11px] font-semibold leading-none text-(--accent-light)"
+              data-testid="tab-item-panel-count"
+              data-panel-count={panelCount}
+            >
+              <Columns2 aria-hidden="true" size={11} strokeWidth={2} />
+              <span>{panelCount}</span>
             </span>
+          ) : null}
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+            {displayTitle}
           </span>
-        </ShortcutTooltip>
+        </span>
       )}
 
       {/* Close button — always visible (BR-UI-024) */}
-      <ShortcutTooltip id="close-tab" label={t('shortcut.closeTab')}>
         <button
           data-telemetry-ignore="manual_capture"
           className="ml-1.5 shrink-0 rounded hover:bg-(--sidebar-hover) p-0.5"
@@ -657,7 +653,7 @@ export const TabItem = memo(function TabItem({
         >
           <X size={12} />
         </button>
-      </ShortcutTooltip>
-    </div>
+      </div>
+    </ShortcutTooltip>
   );
 });

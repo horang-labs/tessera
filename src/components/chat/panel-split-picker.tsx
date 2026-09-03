@@ -10,6 +10,8 @@ import { cn } from '@/lib/utils';
 import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { ShortcutId } from '@/lib/keyboard/registry';
+import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
+import { detectPlatform, formatShortcut } from '@/lib/keyboard/format';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { isPanelLargeEnoughToSplit } from '@/lib/panel/panel-split';
 
@@ -101,6 +103,17 @@ function SplitPreview({ direction }: { direction: 'horizontal' | 'vertical' }) {
   );
 }
 
+function ShortcutKeycap({ id }: { id: ShortcutId }) {
+  const shortcut = useEffectiveShortcut(id);
+  if (!shortcut) return null;
+
+  return (
+    <kbd className="rounded border border-(--divider) bg-(--chat-header-bg) px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-tight text-(--text-secondary) shadow-[0_1px_0_rgba(255,255,255,0.06)]">
+      {formatShortcut(shortcut, detectPlatform())}
+    </kbd>
+  );
+}
+
 export function PanelSplitPicker({ sessionId, compact = false }: PanelSplitPickerProps) {
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
@@ -184,15 +197,16 @@ export function PanelSplitPicker({ sessionId, compact = false }: PanelSplitPicke
           ref={menuRef}
           data-testid="panel-split-menu"
           data-side="top"
-          className="fixed z-[10001] w-[296px] rounded-lg border border-(--chat-header-border) bg-(--chat-header-bg) p-2 shadow-lg"
+          className="fixed z-[10001] w-[320px] rounded-xl border border-(--chat-header-border) bg-(--chat-header-bg) p-2.5 shadow-[0_18px_44px_rgba(0,0,0,0.28),0_3px_10px_rgba(0,0,0,0.16)]"
           style={{
             right: position.right,
             bottom: position.bottom,
             maxHeight: Math.min(position.maxHeight, 320),
           }}
         >
-          <div className="mb-2 px-1">
-            <strong className="text-[12px] text-(--text-primary)">{t('panel.splitCurrentPanel')}</strong>
+          <div className="mb-2.5 flex items-center justify-between px-1">
+            <strong className="text-[13px] font-semibold text-(--text-primary)">{t('panel.splitCurrentPanel')}</strong>
+            <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-(--text-muted)">Panel</span>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
@@ -207,17 +221,20 @@ export function PanelSplitPicker({ sessionId, compact = false }: PanelSplitPicke
                 )}
                 disabled={disableSplit}
                 className={cn(
-                  'rounded-lg border bg-(--input-bg) p-2 text-left transition-colors',
-                  'border-(--divider) hover:border-(--accent)/40 hover:bg-(--chat-bg)',
+                  'group rounded-lg border bg-(--input-bg) p-2.5 text-left transition-all duration-150',
+                  'border-(--divider) hover:-translate-y-px hover:border-(--accent)/45 hover:bg-(--chat-bg) hover:shadow-sm',
                   disableSplit && 'cursor-not-allowed opacity-50',
                 )}
                 data-testid={item.testId}
                 aria-label={t(item.labelKey)}
               >
                 <SplitPreview direction={item.direction} />
-                <div className="mt-2">
-                  <div className="text-[12px] font-medium text-(--text-primary)">{t(item.labelKey)}</div>
-                  <div className="mt-0.5 text-[10px] leading-4 text-(--text-muted)">{t(item.hintKey)}</div>
+                <div className="mt-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-(--text-primary)">{t(item.labelKey)}</div>
+                    <ShortcutKeycap id={item.shortcutId} />
+                  </div>
+                  <div className="mt-1 text-[10px] leading-4 text-(--text-muted)">{t(item.hintKey)}</div>
                 </div>
               </button>
               </ShortcutTooltip>
