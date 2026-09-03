@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useSessionNavigation } from "@/hooks/use-session-navigation";
@@ -14,7 +14,7 @@ import { MessageInput } from "./message-input";
 import { WorkflowStatusBar } from "./workflow/workflow-status-bar";
 import { CompactStatusBar } from "./compact-status-bar";
 import { TodoStatusBar } from "./todo/todo-status-bar";
-import { TerminalChatComposer } from "./terminal-chat-composer";
+import { TerminalChatComposer, type TerminalChatComposerHandle } from "./terminal-chat-composer";
 import { InteractivePromptOverlay } from "./interactive-prompt-overlay";
 import { MessageSquare, AlertCircle, LoaderCircle, X as XIcon } from "lucide-react";
 import { ChatAreaSkeleton } from "./chat-area-skeleton";
@@ -36,6 +36,15 @@ import {
 import { sendTerminalChatInterrupt } from '@/lib/terminal/terminal-chat-send';
 import { toast } from '@/stores/notification-store';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import {
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
+  hasWorkspaceFileDragData,
+} from '@/lib/dnd/panel-session-drag';
+import {
+  getNativeFileDropAbsolutePaths,
+  isNativeFileDrag,
+} from '@/lib/dnd/native-file-drop';
 
 interface ChatAreaProps {
   sessionId: string;
@@ -158,6 +167,7 @@ export const ChatArea = memo(function ChatArea({
   // 전환 순간에만 걸리도록 ref로 가드 — forceReload가 매 렌더 반복되면 안 된다.
   const reloadedChatViewKeyRef = useRef<string | null>(null);
   const terminalChatOverlayRef = useRef<HTMLDivElement>(null);
+  const terminalChatComposerRef = useRef<TerminalChatComposerHandle>(null);
   useEffect(() => {
     if (!session || !isTerminalChatView) {
       if (!isTerminalChatView) {
@@ -183,6 +193,31 @@ export const ChatArea = memo(function ChatArea({
         ?.focus();
     });
   }, [sessionId, t]);
+
+  const acceptsTerminalChatPathDrop = useCallback((dataTransfer: DataTransfer) => (
+    isNativeFileDrag(dataTransfer)
+    || hasWorkspaceFileDragData(dataTransfer)
+    || hasPathInsertDragData(dataTransfer)
+  ), []);
+
+  const handleTerminalChatOverlayDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsTerminalChatPathDrop(event.dataTransfer)) return;
+    // Keep bubbling so PanelWrapper continues to show its existing
+    // “Insert path into terminal” whole-pane affordance.
+    event.preventDefault();
+    event.dataTransfer.dropEffect = isNativeFileDrag(event.dataTransfer) ? 'copy' : 'move';
+  }, [acceptsTerminalChatPathDrop]);
+
+  const handleTerminalChatOverlayDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (!acceptsTerminalChatPathDrop(event.dataTransfer)) return;
+    event.preventDefault();
+    // The ChatView draft, rather than the hidden PTY, owns whole-overlay drops.
+    event.stopPropagation();
+    const paths = isNativeFileDrag(event.dataTransfer)
+      ? getNativeFileDropAbsolutePaths(event.dataTransfer)
+      : getInternalPathDropPaths(event.dataTransfer);
+    terminalChatComposerRef.current?.insertPaths(paths);
+  }, [acceptsTerminalChatPathDrop]);
 
   const handleTerminalChatKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -257,7 +292,14 @@ export const ChatArea = memo(function ChatArea({
     connectionStatus !== "connected" || sessionStatus === "error";
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-(--chat-bg)">
+    <div
+      className="flex-1 flex flex-col h-full bg-(--chat-bg)"
+      data-terminal-session-panel-id={isTerminalSession ? panelId : undefined}
+      data-terminal-chat-view-available={canToggleTerminalChatView ? 'true' : undefined}
+      data-terminal-view-mode={canToggleTerminalChatView
+        ? (isTerminalChatView ? 'chat' : 'terminal')
+        : undefined}
+    >
       {!isPeek && shouldShowSessionHeader({
         isTerminalSession,
         isSinglePanel,
@@ -307,6 +349,7 @@ export const ChatArea = memo(function ChatArea({
               directInputDrop={isPeek}
               startupOverlay={shouldShowPeekLoading ? <SessionPeekLoading /> : undefined}
               launch={{ providerId: sessionProvider, sessionId }}
+              chatViewAvailable={canToggleTerminalChatView}
             />
           ) : null
         ) : (
@@ -335,6 +378,8 @@ export const ChatArea = memo(function ChatArea({
             className="absolute inset-0 z-10 flex flex-col bg-(--chat-bg)"
             data-testid="terminal-chat-overlay"
             onKeyDownCapture={handleTerminalChatKeyDown}
+            onDragOver={handleTerminalChatOverlayDragOver}
+            onDrop={handleTerminalChatOverlayDrop}
           >
             {/* MessageList는 h-full이라 높이를 부모가 확정해줘야 한다. flex 아이템의
                 기본 min-height:auto 때문에 min-h-0이 없으면 목록이 자연 높이로
@@ -360,6 +405,7 @@ export const ChatArea = memo(function ChatArea({
               />
             </div>
             <TerminalChatComposer
+              ref={terminalChatComposerRef}
               sessionId={sessionId}
               isSinglePanel={isSinglePanel}
               onInterrupt={interruptTerminalChat}

@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  clearPathInsertDragData,
+  getInternalPathDropPaths,
+  getPathInsertDragPaths,
   getWorkspaceFileDragPath,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
   isSessionReferenceDragData,
   parseWorkspaceFileDragData,
+  setPathInsertDragData,
   setWorkspaceFileDragData,
 } from '../src/lib/dnd/panel-session-drag';
 import {
+  PATH_INSERT_DRAG_MIME,
   SESSION_DRAG_MIME,
   WORKSPACE_FILE_DRAG_MIME,
 } from '../src/types/panel';
@@ -16,6 +22,7 @@ import {
   formatWorkspaceFileReference,
   insertWorkspaceFileReferenceAtCursor,
 } from '../src/lib/chat/workspace-file-reference';
+import { isNativeFileDrag } from '../src/lib/dnd/native-file-drop';
 
 class FakeDataTransfer {
   effectAllowed = 'uninitialized';
@@ -73,6 +80,61 @@ test('workspace file drags preserve the host absolute path when supplied', () =>
     parseWorkspaceFileDragData(transfer)?.absolutePath,
     '/workspace/docs/readme.md',
   );
+});
+
+test('path insertion drags carry agent-readable paths without a panel session payload', () => {
+  const transfer = new FakeDataTransfer();
+  assert.equal(setPathInsertDragData(transfer, ['/home/work/generated image.png']), true);
+
+  assert.equal(hasPathInsertDragData(transfer), true);
+  assert.deepEqual(getPathInsertDragPaths(transfer), ['/home/work/generated image.png']);
+  assert.deepEqual(getInternalPathDropPaths(transfer), ['/home/work/generated image.png']);
+  assert.equal(transfer.getData(SESSION_DRAG_MIME), '');
+  assert.equal(transfer.getData('text/plain'), '/home/work/generated image.png');
+  assert.equal(transfer.effectAllowed, 'copyMove');
+  clearPathInsertDragData();
+});
+
+test('path insertion drags reject empty and NUL-containing paths', () => {
+  const transfer = new FakeDataTransfer();
+  assert.equal(setPathInsertDragData(transfer, ['', '/tmp/bad\0name.png']), false);
+  assert.equal(hasPathInsertDragData(transfer), false);
+});
+
+test('path insertion falls back to text/plain when Chromium strips the custom MIME value', () => {
+  const transfer = new FakeDataTransfer();
+  transfer.setData('text/plain', '/home/work/generated image.png');
+
+  Object.defineProperty(transfer, 'types', {
+    get: () => [PATH_INSERT_DRAG_MIME, 'text/plain'],
+  });
+
+  assert.deepEqual(getInternalPathDropPaths(transfer), ['/home/work/generated image.png']);
+});
+
+test('path insertion falls back to the live renderer drag when Chromium strips all transfer values', () => {
+  const path = '/home/work/.tessera/generated image.png';
+  const source = new FakeDataTransfer();
+  setPathInsertDragData(source, [path]);
+
+  const dropped = new FakeDataTransfer();
+  assert.deepEqual(getInternalPathDropPaths(dropped), [path]);
+  clearPathInsertDragData();
+});
+
+test('generated image drags are not misclassified when Chromium retains the native Files type', () => {
+  const path = '/home/work/.tessera/generated image.png';
+  const source = new FakeDataTransfer();
+  setPathInsertDragData(source, [path]);
+
+  const crossedRendererSurface = new FakeDataTransfer();
+  Object.defineProperty(crossedRendererSurface, 'types', {
+    get: () => ['Files'],
+  });
+
+  assert.equal(isNativeFileDrag(crossedRendererSurface), false);
+  assert.deepEqual(getInternalPathDropPaths(crossedRendererSurface), [path]);
+  clearPathInsertDragData();
 });
 
 test('workspace file drag parser rejects malformed payloads', () => {

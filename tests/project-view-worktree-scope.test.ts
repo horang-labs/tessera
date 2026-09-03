@@ -31,7 +31,7 @@ function createRepository(): string {
   return repository;
 }
 
-test('Project View projects branch-scoped immediate Worktrees independently from Start Point', async () => {
+test('Project View projects folder-owned Worktrees independently from Start Point', async () => {
   const [database, projects, projection, worktreeSource, worktrees, tasks, sessions, persistence] =
     await Promise.all([
       import('@/lib/db/database'),
@@ -116,6 +116,12 @@ test('Project View projects branch-scoped immediate Worktrees independently from
     providerId: 'codex',
     executionMode: 'gui',
   });
+  sessions.createSession('mismatched-linked-session', 'project-a', 'Mismatched C session', 'codex', {
+    workDir: linkedPath,
+    worktreeId: rootC!.id,
+    taskId: linked.taskId,
+    scopeBranch: 'not-feature/c',
+  });
 
   await createScopedWorktree({
     projectId: 'project-c',
@@ -196,6 +202,12 @@ test('Project View projects branch-scoped immediate Worktrees independently from
     projection.getProjectViewProjection('project-c').sessions.map((session) => session.id).sort(),
     ['direct-c-session', 'linked-session'],
   );
+  assert.equal(
+    projection.getProjectViewProjection('project-c').sessions.some(
+      (session) => session.id === 'mismatched-linked-session',
+    ),
+    false,
+  );
   assert.deepEqual(
     projection.getProjectViewProjection('project-c').linkedWorktrees.map((item) => item.title),
     ['Descendant D'],
@@ -204,7 +216,12 @@ test('Project View projects branch-scoped immediate Worktrees independently from
   git(repository, ['checkout', '-b', 'other']);
   assert.deepEqual(
     projection.getProjectViewProjection('project-a').linkedWorktrees.map((item) => item.title),
-    ['Legacy Worktree'],
+    ['Legacy Worktree', 'Existing branch', 'Linked C'],
+  );
+  assert.deepEqual(
+    projection.getProjectViewProjection('project-a', { creationBranch: 'main' })
+      .linkedWorktrees.map((item) => item.title),
+    ['Existing branch', 'Linked C'],
   );
   assert.ok(sessions.getSession('direct-c-session'));
   git(repository, ['checkout', 'main']);

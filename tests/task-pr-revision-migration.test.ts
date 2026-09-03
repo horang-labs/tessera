@@ -13,7 +13,11 @@ test('v33 migration conservatively backfills PR relation and knownness', async (
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-pr-migration-'));
   try {
     await writeV33Fixture(dataDir);
-    await runDatabaseStartup(dataDir);
+    const legacyBytes = await fs.readFile(path.join(dataDir, 'tessera.db'));
+    await runConcurrentDatabaseStartups(dataDir, 4);
+
+    const backupBytes = await fs.readFile(path.join(dataDir, 'tessera.db.pre-native-sqlite.bak'));
+    assert.deepEqual(backupBytes, legacyBytes);
 
     const rows = await readRows(dataDir);
     assert.deepEqual(rows, [
@@ -67,19 +71,40 @@ async function writeV33Fixture(dataDir: string): Promise<void> {
   db.close();
 }
 
-function runDatabaseStartup(dataDir: string): Promise<void> {
-  return new Promise((resolve, reject) => {
+async function runConcurrentDatabaseStartups(dataDir: string, count: number): Promise<void> {
+  const startups = Array.from({ length: count }, () => createDatabaseStartup(dataDir));
+  await Promise.all(startups.map((startup) => startup.ready));
+  startups.forEach((startup) => startup.start());
+  await Promise.all(startups.map((startup) => startup.done));
+}
+
+function createDatabaseStartup(dataDir: string): {
+  ready: Promise<void>;
+  start: () => void;
+  done: Promise<void>;
+} {
+  let markReady: () => void;
+  const ready = new Promise<void>((resolve) => { markReady = resolve; });
+  let start = () => {};
+  const done = new Promise<void>((resolve, reject) => {
     const child = spawn(process.execPath, [
       '--import', 'tsx',
       '--eval',
-      `(async () => { const database = await import('./src/lib/db/database.ts'); const init = database.initDatabase ?? database.default?.initDatabase; await init(); })().catch((error) => { console.error(error); process.exitCode = 1; })`,
+      `process.stdout.write('READY\\n'); process.stdin.once('data', async () => { try { const database = await import('./src/lib/db/database.ts'); const init = database.initDatabase ?? database.default?.initDatabase; await init(); } catch (error) { console.error(error); process.exitCode = 1; } });`,
     ], {
       cwd: REPO_ROOT,
       env: { ...process.env, TESSERA_DATA_DIR: dataDir, TESSERA_PRODUCTION_DB: '1' },
-      stdio: ['ignore', 'ignore', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
+    start = () => { child.stdin.end('START\n'); };
+    let stdout = '';
     let stderr = '';
+    child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (stdout.includes('READY\n')) markReady();
+    });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);
     child.on('close', (code) => {
@@ -87,6 +112,7 @@ function runDatabaseStartup(dataDir: string): Promise<void> {
       else reject(new Error(stderr || `database startup exited ${code}`));
     });
   });
+  return { ready, start: () => start(), done };
 }
 
 async function readRows(dataDir: string): Promise<Array<{

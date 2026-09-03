@@ -28,6 +28,7 @@ import {
 import { resolveWorkspaceTarget } from '@/types/worktree';
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { MemoryPanel } from "@/components/memory/memory-panel";
+import { ImageGenerationsPanel } from "@/components/image-generation/image-generations-panel";
 import { cn } from "@/lib/utils";
 import { PHONE_TOUCH_TARGET } from "@/lib/ui/touch-target";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
@@ -297,6 +298,13 @@ export function GitPanel({
             {t("gitPanel.tabs.git")}
           </GitPanelTabButton>
           <GitPanelTabButton
+            active={effectivePanelTab === "images"}
+            onClick={() => handlePanelTabChange("images")}
+            telemetryControl="right_panel.tab.images"
+          >
+            {t("gitPanel.tabs.images")}
+          </GitPanelTabButton>
+          <GitPanelTabButton
             active={effectivePanelTab === "files"}
             onClick={() => handlePanelTabChange("files")}
             telemetryControl="right_panel.tab.files"
@@ -340,7 +348,7 @@ export function GitPanel({
         ) : null}
       </div>
 
-      {effectivePanelTab === "scripts"
+      {effectivePanelTab === "scripts" || effectivePanelTab === "images"
         || (isPhoneViewport && effectivePanelTab === "git")
         ? null
         : summarySection}
@@ -360,6 +368,10 @@ export function GitPanel({
       ) : effectivePanelTab === "memory" ? (
         <div className="min-h-0 flex-1">
           <MemoryPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+        </div>
+      ) : effectivePanelTab === "images" ? (
+        <div className="min-h-0 flex-1">
+          <ImageGenerationsPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
         </div>
       ) : (
         <>

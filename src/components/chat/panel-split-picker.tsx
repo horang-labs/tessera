@@ -11,9 +11,7 @@ import { useAnchoredPopover } from '@/hooks/use-anchored-popover';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { ShortcutId } from '@/lib/keyboard/registry';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
-
-const MIN_PANEL_WIDTH = 250;
-const MIN_PANEL_HEIGHT = 150;
+import { isPanelLargeEnoughToSplit } from '@/lib/panel/panel-split';
 
 interface FixedPopoverPosition {
   right: number;
@@ -135,16 +133,9 @@ export function PanelSplitPicker({ sessionId, compact = false }: PanelSplitPicke
     }
 
     const rect = getPanelRect(currentPanelId);
-    if (rect) {
-      if (direction === 'horizontal' && rect.width / 2 < MIN_PANEL_WIDTH) {
-        toast.warning(t('panel.tooSmallToSplit'));
-        return;
-      }
-
-      if (direction === 'vertical' && rect.height / 2 < MIN_PANEL_HEIGHT) {
-        toast.warning(t('panel.tooSmallToSplit'));
-        return;
-      }
+    if (rect && !isPanelLargeEnoughToSplit(rect, direction)) {
+      toast.warning(t('panel.tooSmallToSplit'));
+      return;
     }
 
     setActivePanelId(currentPanelId);

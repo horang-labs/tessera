@@ -36,6 +36,52 @@ function findFirstLeafId(node: PanelNode): string {
   return findFirstLeafId(node.children[0]);
 }
 
+/**
+ * Build a near-square, row-major panel grid.  The short first column keeps
+ * incomplete grids balanced while preserving the supplied panel order.
+ */
+export function buildBalancedPanelLayout(panelIds: readonly string[]): PanelNode | null {
+  if (panelIds.length === 0) return null;
+
+  function buildVerticalStack(ids: readonly string[]): PanelNode {
+    if (ids.length === 1) return { type: 'leaf', panelId: ids[0]! };
+    const splitIndex = Math.ceil(ids.length / 2);
+    return {
+      type: 'vsplit',
+      children: [
+        buildVerticalStack(ids.slice(0, splitIndex)),
+        buildVerticalStack(ids.slice(splitIndex)),
+      ],
+      ratio: splitIndex / ids.length,
+    };
+  }
+
+  const columnCount = Math.ceil(Math.sqrt(panelIds.length));
+  const columnSizes = Array.from({ length: columnCount }, (_, index) =>
+    Math.floor((panelIds.length + index) / columnCount),
+  ).filter((size) => size > 0);
+  let offset = 0;
+  const columns = columnSizes.map((size) => {
+    const columnPanelIds = panelIds.slice(offset, offset + size);
+    offset += size;
+    return buildVerticalStack(columnPanelIds);
+  });
+
+  function joinColumns(nodes: readonly PanelNode[]): PanelNode {
+    if (nodes.length === 1) return nodes[0]!;
+    const splitIndex = Math.ceil(nodes.length / 2);
+    const left = joinColumns(nodes.slice(0, splitIndex));
+    const right = joinColumns(nodes.slice(splitIndex));
+    return {
+      type: 'hsplit',
+      children: [left, right],
+      ratio: splitIndex / nodes.length,
+    };
+  }
+
+  return columns.length > 1 ? joinColumns(columns) : columns[0]!;
+}
+
 /** LRU 목록에 새 ID를 프론트에 추가하고 LRU_LIMIT를 초과하면 잘라냄 (BR-002, BR-003) */
 function computeNewLru(currentLru: string[], promotedId: string): string[] {
   return [promotedId, ...currentLru.filter(id => id !== promotedId)].slice(0, LRU_LIMIT);
@@ -982,6 +1028,56 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     get().createTab(sessionId);
   },
 
+  createTabWithSessions: (sessionIds: string[]): string | null => {
+    const orderedSessionIds = [...new Set(sessionIds)];
+    if (orderedSessionIds.length === 0) return null;
+    const sessionProjectDirs = orderedSessionIds.map((sessionId) =>
+      inferTabProjectDir(sessionId, null)
+    );
+    const destinationProjectDir = sessionProjectDirs.every(
+      (projectDir) => projectDir === sessionProjectDirs[0],
+    )
+      ? sessionProjectDirs[0]!
+      : null;
+
+    // Create an empty destination first. This prevents retireSessionSurface
+    // from introducing a temporary last-tab placeholder while source tabs close.
+    const destinationTabId = get().createTab();
+    // A cross-project selection belongs to the global tab scope. A selection
+    // from one Project retains that Project's normal tab ownership.
+    get().setTabProject(destinationTabId, destinationProjectDir);
+
+    for (const sessionId of orderedSessionIds) {
+      get().retireSessionSurface(sessionId);
+    }
+
+    const panelIds = orderedSessionIds.map(() => uuidv4());
+    const layout = buildBalancedPanelLayout(panelIds);
+    if (!layout) return null;
+    const panels = Object.fromEntries(panelIds.map((panelId, index) => {
+      const sessionId = orderedSessionIds[index]!;
+      return [panelId, {
+        id: panelId,
+        sessionId,
+        worktreeId: inferSessionWorktreeId(
+          sessionId,
+          sessionProjectDirs[index] ?? destinationProjectDir,
+        ),
+      }];
+    }));
+
+    const panelStore = usePanelStore.getState();
+    panelStore.initTab(destinationTabId, {
+      layout,
+      panels,
+      activePanelId: panelIds[0]!,
+    });
+    get().setActiveTab(destinationTabId);
+    panelStore.setActiveTabId(destinationTabId);
+
+    return destinationTabId;
+  },
+
   openPreview: (sessionId: string): void => {
     const state = get();
     const panelStore = usePanelStore.getState();
@@ -1007,9 +1103,12 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         get().setActiveTab(existingPreview.id);
       }
       // 활성 패널의 세션을 교체
-      const tabData = panelStore.tabPanels[panelStore.activeTabId];
+      // setActiveTab() replaces the Zustand state object, so the snapshot read
+      // before the switch still points at the previously active tab.
+      const activePanelStore = usePanelStore.getState();
+      const tabData = activePanelStore.tabPanels[activePanelStore.activeTabId];
       if (tabData) {
-        panelStore.assignSession(
+        activePanelStore.assignSession(
           tabData.activePanelId,
           sessionId,
           inferSessionWorktreeId(sessionId, existingPreview.projectDir),
@@ -1149,7 +1248,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     });
   },
 
-  setTabProject: (tabId: string, projectDir: string): void => {
+  setTabProject: (tabId: string, projectDir: string | null): void => {
     const state = get();
     if (!state.tabs.some((item) => item.id === tabId)) return;
 

@@ -6,6 +6,7 @@ import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { resolveSessionWorktreeLifecycleTarget } from '@/lib/session/session-worktree-lifecycle';
 import { wsClient } from '@/lib/ws/client';
+import { useTabStore } from './tab-store';
 
 interface SelectionState {
   /** Set of selected session IDs */
@@ -38,6 +39,8 @@ interface SelectionState {
   bulkStop: () => void;
   /** Delete all selected sessions */
   bulkDelete: () => Promise<void>;
+  /** Open selected sessions together in a new split-view tab. */
+  openInSplitView: () => void;
 }
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -150,6 +153,11 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
       projectViewWorkspaceState.markSessionRead(id);
     }
     toast.success(`${selectedIds.size}개 세션에 중지 요청을 보냈습니다`);
+  },
+
+  openInSplitView: () => {
+    const tabId = useTabStore.getState().createTabWithSessions([...get().selectedIds]);
+    if (tabId) set({ selectedIds: new Set(), lastClickedId: null, barAnchorId: null });
   },
 
   bulkDelete: async () => {

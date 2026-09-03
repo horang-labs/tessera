@@ -26,6 +26,7 @@ import {
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { ProjectBranchFilter } from '@/components/worktree/project-branch-filter';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { selectActiveTab, usePanelStore } from '@/stores/panel-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
@@ -46,6 +47,7 @@ interface AllProjectsListProps {
   onSessionOpenInNewTab: (sessionId: string) => void;
   onSessionGenerateTitle: (sessionId: string) => void;
   onSessionStopProcess: (sessionId: string) => void;
+  onSessionRestartProcess: (sessionId: string) => void;
   onChatStatusChange: (sessionId: string, status: string) => void;
 }
 
@@ -60,6 +62,7 @@ export function AllProjectsList({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   onChatStatusChange,
 }: AllProjectsListProps) {
   const representation = useOriginProjectRepresentation();
@@ -95,6 +98,7 @@ export function AllProjectsList({
           onSessionOpenInNewTab={onSessionOpenInNewTab}
           onSessionGenerateTitle={onSessionGenerateTitle}
           onSessionStopProcess={onSessionStopProcess}
+          onSessionRestartProcess={onSessionRestartProcess}
           onChatStatusChange={onChatStatusChange}
         />
       ))}
@@ -122,6 +126,7 @@ function AllProjectSection({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   onChatStatusChange,
 }: AllProjectSectionProps) {
   const { t } = useI18n();
@@ -310,13 +315,19 @@ function AllProjectSection({
       {isExpanded && (
         <div className="ml-2">
           {project.projectWorktree ? (
-            <CompactProjectWorktreeRow
-              active={activeWorktreeId === project.projectWorktree.id}
-              branch={project.projectWorktree.currentBranch}
-              diffStats={project.projectWorktree.diffStats}
-              displayPath={project.projectWorktree.displayPath}
-              onSelect={handleProjectWorktreeSelect}
-            />
+            <>
+              <CompactProjectWorktreeRow
+                active={activeWorktreeId === project.projectWorktree.id}
+                branch={project.projectWorktree.currentBranch}
+                diffStats={project.projectWorktree.diffStats}
+                displayPath={project.projectWorktree.displayPath}
+                onSelect={handleProjectWorktreeSelect}
+              />
+              <ProjectBranchFilter
+                projectId={project.encodedDir}
+                branches={project.creationBranches ?? []}
+              />
+            </>
           ) : null}
           {shouldShowLoading ? (
             <div className="px-4 py-3 text-[0.6875rem] text-(--text-muted)">
@@ -362,6 +373,7 @@ function AllProjectSection({
               onSessionOpenInNewTab={onSessionOpenInNewTab}
               onSessionGenerateTitle={onSessionGenerateTitle}
               onSessionStopProcess={onSessionStopProcess}
+              onSessionRestartProcess={onSessionRestartProcess}
               disableDnd
               allowPanelSessionDnd
               hideHeader
@@ -414,6 +426,7 @@ function AllProjectSection({
                   onSessionOpenInNewTab={onSessionOpenInNewTab}
                   onSessionGenerateTitle={onSessionGenerateTitle}
                   onSessionStopProcess={onSessionStopProcess}
+                  onSessionRestartProcess={onSessionRestartProcess}
                 />
               );
             })
