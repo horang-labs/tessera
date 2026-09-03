@@ -418,6 +418,48 @@ test('an event names a directory to re-read, not the index contents', async () =
   }
 });
 
+test('a bridge event for content written to an existing file notifies root listeners', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-content-change-'));
+  const manager = new WorkspaceFileWatchManager();
+  const internals = managerInternals(manager);
+  writeFileSync(path.join(root, 'test.md'), '');
+  let changeCount = 0;
+  let resolvePrimed!: () => void;
+  const primed = new Promise<void>((resolve) => { resolvePrimed = resolve; });
+
+  const dispose = await manager.subscribeRootChanges({
+    listenerId: 'terminal:content-change',
+    root,
+    onChange: () => {
+      changeCount += 1;
+      if (changeCount === 1) resolvePrimed();
+    },
+  });
+  const entry = internals.entriesByRoot.get(realpathSync(root))!;
+  await entry.readyPromise;
+  await waitFor(primed);
+  await silenceChokidar(entry);
+
+  try {
+    writeFileSync(path.join(root, 'test.md'), 'one\ntwo\nthree\n');
+    internals.handleBridgeEvent(entry, {
+      eventName: 'change',
+      relativePath: 'test.md',
+    });
+    await waitUntil(() => changeCount === 2);
+    // Let the real debounce window fully drain so a leftover timer cannot hide
+    // an accidental duplicate notification from this assertion.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    assert.equal(changeCount, 2, 'content-only changes must refresh terminal diff stats');
+  } finally {
+    dispose();
+    if (entry.closeTimer) clearTimeout(entry.closeTimer);
+    internals.closeEntryNow(entry);
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test('a removed directory takes its subtree out of the index', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-unlink-dir-'));
   const manager = new WorkspaceFileWatchManager();
