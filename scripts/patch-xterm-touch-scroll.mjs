@@ -43,14 +43,14 @@ const JS_TOUCH_CHANGE_FIXED =
 
 // esbuild (lib/xterm.mjs) keeps the source's early-return shape.
 const MJS_TOUCH_CHANGE_BUGGY =
-  '_handleTouchChange(i,e){if(e.preventDefault(),e.stopPropagation(),i.requestedEvents.wheel)'
-  + '{this._handleTouchScrollAsWheel(i,e);return}'
+  '_handleTouchChange(t,e){if(e.preventDefault(),e.stopPropagation(),t.requestedEvents.wheel)'
+  + '{this._handleTouchScrollAsWheel(t,e);return}'
   + 'if(!this._bufferService.buffer.hasScrollback){this._handleTouchScrollAsKeys(e);return}'
-  + 'i.target.handleTouchScroll?.(e.translationY)}';
+  + 't.target.handleTouchScroll?.(e.translationY)}';
 const MJS_TOUCH_CHANGE_FIXED =
-  '_handleTouchChange(i,e){if(e.preventDefault(),e.stopPropagation(),i.requestedEvents.wheel)'
-  + '{this._handleTouchScrollAsWheel(i,e);return}'
-  + 'i.target.handleTouchScroll?.(e.translationY)}';
+  '_handleTouchChange(t,e){if(e.preventDefault(),e.stopPropagation(),t.requestedEvents.wheel)'
+  + '{this._handleTouchScrollAsWheel(t,e);return}'
+  + 't.target.handleTouchScroll?.(e.translationY)}';
 
 const TARGETS = [
   {

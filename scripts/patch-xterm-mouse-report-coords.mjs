@@ -37,11 +37,11 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 // esbuild (lib/xterm.mjs): `t` is the [x, y] pair from getCoordsRelativeToElement.
 const MJS_REPORT_COORDS_BUGGY =
-  'getMouseReportCoords(i,e){let t=qt(se(e),i,e);'
+  'getMouseReportCoords(t,e){let i=qt(se(e),t,e);'
   + 'if(this._charSizeService.hasValidSize)return';
 const MJS_REPORT_COORDS_FIXED =
-  'getMouseReportCoords(i,e){let t=qt(se(e),i,e);'
-  + 'if(this._charSizeService.hasValidSize&&Number.isFinite(t[0])&&Number.isFinite(t[1]))return';
+  'getMouseReportCoords(t,e){let i=qt(se(e),t,e);'
+  + 'if(this._charSizeService.hasValidSize&&Number.isFinite(i[0])&&Number.isFinite(i[1]))return';
 
 // terser (lib/xterm.js): same shape, with the pair in `i` and the helpers still namespaced.
 const JS_REPORT_COORDS_BUGGY =

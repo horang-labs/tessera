@@ -86,7 +86,7 @@
     "electron:build:all": "npm run electron:prebuild && npm run electron:prepare-native && electron-builder build --publish never",
     "npm:prepack": "npm run build && npm run server:compile",
     "prepack": "npm run npm:prepack",
-    "prepare": "node scripts/patch-xterm-webgl-atlas.mjs && node scripts/patch-xterm-webgl-device-pixel.mjs && node scripts/patch-xterm-touch-scroll.mjs && node scripts/patch-xterm-mouse-report-coords.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
+    "prepare": "node scripts/patch-xterm-ime.mjs && node scripts/patch-xterm-webgl-atlas.mjs && node scripts/patch-xterm-webgl-device-pixel.mjs && node scripts/patch-xterm-touch-scroll.mjs && node scripts/patch-xterm-mouse-report-coords.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
@@ -96,8 +96,8 @@
     "@xterm/addon-unicode11": "0.10.0-beta.289",
     "@xterm/addon-web-links": "0.13.0-beta.289",
     "@xterm/addon-webgl": "0.20.0-beta.288",
-    "@xterm/headless": "6.1.0-beta.289",
-    "@xterm/xterm": "6.1.0-beta.289",
+    "@xterm/headless": "6.1.0-beta.303",
+    "@xterm/xterm": "6.1.0-beta.303",
     "agentation": "^3.0.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "12.10.0",
