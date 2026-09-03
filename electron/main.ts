@@ -54,6 +54,7 @@ import {
   resolveTerminalPanelAtPoint,
 } from './web-contents-context-menu';
 import type { PanelSplitPlacement } from '../src/lib/panel/panel-split';
+import { isLinuxWaylandSession } from '../src/lib/terminal/linux-wayland-rendering';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -709,12 +710,27 @@ if (!gotLock) {
 // Electron enables GPU acceleration by default. Keep an escape hatch for
 // unstable virtual/driver environments without penalizing normal Windows use.
 // Must be called before app.whenReady().
+const linuxWaylandSession = isLinuxWaylandSession({
+  platform: process.platform,
+  env: process.env,
+  ozonePlatform: app.commandLine.getSwitchValue('ozone-platform'),
+});
+if (linuxWaylandSession) {
+  process.env.TESSERA_LINUX_WAYLAND = '1';
+}
+
 if (process.env.TESSERA_DISABLE_GPU === '1') {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-gpu-compositing');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
 } else {
+  if (linuxWaylandSession) {
+    // Wayland can lose Chromium's GPU channel and stall the renderer while a
+    // terminal is accepting input. Keep acceleration available for the rest of
+    // the UI, but let Chromium establish this channel outside the GPU sandbox.
+    app.commandLine.appendSwitch('disable-gpu-sandbox');
+  }
   // Blink force-loses the oldest WebGL context past 16 per renderer, and every
   // attached terminal surface holds one. Inactive tabs stay mounted (LRU) and
   // parked surfaces keep their terminal alive, so a busy workspace exceeds 16

@@ -68,7 +68,9 @@ import { forceRepaintThroughRenderPause } from './terminal-render-pause-release'
 import {
   writeForegroundTerminalChunk,
   discardForegroundRenderSettle,
+  refreshForegroundTerminalViewport,
 } from './terminal-foreground-render-settle';
+import { TerminalCompositionRenderGate } from './terminal-composition-render-gate';
 import {
   attachTerminalMouseWheelMultiplier,
   isTerminalTuiOwnedWheelEvent,
@@ -332,6 +334,8 @@ export class TerminalSurface {
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
+  private compositionRenderGate: TerminalCompositionRenderGate | null = null;
+  private compositionDeferredRefresh = false;
   private osc52Disposable: { dispose(): void } | null = null;
   private suppressNextNativePaste = false;
   private pasteSuppressionTimerId: number | null = null;
@@ -895,6 +899,9 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
+    this.compositionRenderGate?.dispose();
+    this.compositionRenderGate = null;
+    this.compositionDeferredRefresh = false;
     this.osc52Disposable?.dispose();
     this.osc52Disposable = null;
     this.suppressNextNativePaste = false;
@@ -995,7 +1002,7 @@ export class TerminalSurface {
       // sequence itself, so route it to the desktop clipboard here.
       this.osc52Disposable = installTerminalOsc52Handler(terminal);
 
-      // Renderer choice. WebGL everywhere by default — the postinstall patch
+      // Renderer choice. WebGL is the default outside Linux Wayland — the postinstall patch
       // (scripts/patch-xterm-webgl-atlas.mjs) fixes the addon's atlas-wipe
       // no-op and propagates wipes to every renderer sharing the atlas, which
       // were what garbled Windows/ANGLE. 'dom' stays available as an escape
@@ -1009,8 +1016,16 @@ export class TerminalSurface {
         // storage unavailable (private mode) — keep the default renderer
       }
 
+      const electronRuntime = (
+        window as Window & {
+          electronAPI?: Partial<ElectronTerminalClipboardApi> & { linuxWayland?: boolean };
+        }
+      ).electronAPI;
+      const useDomRenderer = rendererOverride === 'dom'
+        || (rendererOverride !== 'webgl' && electronRuntime?.linuxWayland === true);
+
       this.webglCtor =
-        rendererOverride === 'dom' ? null : (WebglAddon as new () => WebglAddonLike);
+        useDomRenderer ? null : (WebglAddon as new () => WebglAddonLike);
       this.attachWebglRenderer();
 
       this.root = root;
@@ -1026,9 +1041,7 @@ export class TerminalSurface {
       const inputContext = {
         platform: detectTerminalClientPlatform(navigator.userAgent),
       } as const;
-      const electronClipboard = (
-        window as Window & { electronAPI?: Partial<ElectronTerminalClipboardApi> }
-      ).electronAPI;
+      const electronClipboard = electronRuntime;
       terminal.attachCustomKeyEventHandler((event) => {
         // App-level shortcuts must bubble to the window listener instead of
         // being cancelled by xterm or encoded into PTY input.
@@ -1159,6 +1172,10 @@ export class TerminalSurface {
         if (this.keyboardOwner === 'xterm' && event.data) this.notifyTerminalInput();
       };
       root.addEventListener('compositionend', this.compositionEndListener, true);
+      this.compositionRenderGate = new TerminalCompositionRenderGate(
+        root,
+        () => this.flushCompositionDeferredRefresh(),
+      );
     } catch (error) {
       this.updateState(
         'error',
@@ -1488,8 +1505,10 @@ export class TerminalSurface {
     const restorePoint = this.scrollController?.captureRestorePoint();
     const shouldRecoverRenderer = this.backgroundSgrDetector.consume(data);
     if (!this.terminal) return;
+    const composing = this.compositionRenderGate?.isActive() ?? false;
+    if (composing) this.compositionDeferredRefresh = true;
     writeForegroundTerminalChunk(this.terminal, data, {
-      forceViewportRefresh: true,
+      forceViewportRefresh: !composing,
       shouldRefreshViewportSynchronously: () => !this.webglAddon,
       onParsed: () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
@@ -1498,6 +1517,14 @@ export class TerminalSurface {
         if (shouldRecoverRenderer) this.recoverRendererPresentation();
       },
     });
+  }
+
+  private flushCompositionDeferredRefresh(): void {
+    if (!this.compositionDeferredRefresh) return;
+    this.compositionDeferredRefresh = false;
+    if (this.terminal) {
+      refreshForegroundTerminalViewport(this.terminal, !this.webglAddon);
+    }
   }
 
   private cancelSnapshotReplay(): void {

@@ -12,6 +12,7 @@ function isPanelSplitPlacement(value: unknown): value is PanelSplitPlacement {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
+  linuxWayland: process.env.TESSERA_LINUX_WAYLAND === '1',
   isElectron: true,
   // Renderer console mirroring. The main process only registers these channels in a debug
   // build, so on a release send() lands on no listener and costs nothing. See

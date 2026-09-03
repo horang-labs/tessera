@@ -171,3 +171,10 @@ export function writeForegroundTerminalChunk(
 export function discardForegroundRenderSettle(terminal: ForegroundTerminalOutputTarget): void {
   cancelScheduledViewportSettleRefresh(terminal);
 }
+
+export function refreshForegroundTerminalViewport(
+  terminal: ForegroundTerminalOutputTarget,
+  synchronously: boolean,
+): void {
+  refreshVisibleRows(terminal, synchronously);
+}
