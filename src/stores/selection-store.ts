@@ -5,6 +5,7 @@ import { toast } from './notification-store';
 import { fetchWithClientId } from '@/lib/api/fetch-with-client-id';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { resolveSessionWorktreeLifecycleTarget } from '@/lib/session/session-worktree-lifecycle';
+import { wsClient } from '@/lib/ws/client';
 import { useTabStore } from './tab-store';
 
 interface SelectionState {
@@ -34,6 +35,8 @@ interface SelectionState {
   bulkMarkDone: () => Promise<void>;
   /** Archive all selected sessions */
   bulkArchive: () => Promise<void>;
+  /** Stop the runtimes for all selected sessions */
+  bulkStop: () => void;
   /** Delete all selected sessions */
   bulkDelete: () => Promise<void>;
   /** Open selected sessions together in a new split-view tab. */
@@ -139,6 +142,17 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     }
     set({ selectedIds: new Set(), lastClickedId: null, barAnchorId: null });
     toast.success(`${successCount}개 항목을 아카이브했습니다`);
+  },
+
+  bulkStop: () => {
+    const { selectedIds } = get();
+    if (selectedIds.size === 0) return;
+
+    for (const id of selectedIds) {
+      wsClient.stopSession(id);
+      projectViewWorkspaceState.markSessionRead(id);
+    }
+    toast.success(`${selectedIds.size}개 세션에 중지 요청을 보냈습니다`);
   },
 
   openInSplitView: () => {
