@@ -10,13 +10,14 @@ import { useSessionStore } from '@/stores/session-store';
 interface ProjectBranchFilterProps {
   projectId: string;
   branches: string[];
+  compact?: boolean;
 }
 
 const SEARCH_THRESHOLD = 7;
 const MENU_WIDTH = 264;
 
 /** Filters the folder-owned Project View; it never changes the checkout branch. */
-export function ProjectBranchFilter({ projectId, branches }: ProjectBranchFilterProps) {
+export function ProjectBranchFilter({ projectId, branches, compact = false }: ProjectBranchFilterProps) {
   const { t } = useI18n();
   const selectedBranch = useSessionStore((state) => state.projectCreationBranchFilters[projectId]);
   const setBranchFilter = useSessionStore((state) => state.setProjectCreationBranchFilter);
@@ -88,8 +89,7 @@ export function ProjectBranchFilter({ projectId, branches }: ProjectBranchFilter
     triggerRef.current?.focus();
   };
 
-  return (
-    <div className="mx-2 mb-1" data-testid="project-branch-view-filter">
+  const trigger = (
       <button
         ref={triggerRef}
         type="button"
@@ -99,7 +99,11 @@ export function ProjectBranchFilter({ projectId, branches }: ProjectBranchFilter
         title={t('chat.projectViewBranchFilterHint')}
         onClick={() => setIsOpen((open) => !open)}
         className={cn(
-          'flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[0.75rem] transition-colors',
+          // It is scoped metadata for the project, not a toolbar competing
+          // with the worktree or the session groups below it.
+          compact
+            ? 'flex h-7 max-w-[11rem] items-center gap-1.5 rounded-md px-1.5 transition-colors'
+            : 'flex h-7 max-w-full items-center gap-1.5 rounded-md px-2 text-left transition-colors',
           'text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
           'focus-visible:bg-(--sidebar-hover) focus-visible:outline-none',
           isOpen && 'bg-(--sidebar-hover) text-(--sidebar-text-active)',
@@ -107,46 +111,59 @@ export function ProjectBranchFilter({ projectId, branches }: ProjectBranchFilter
         data-testid="project-branch-view-filter-trigger"
       >
         <Filter className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        <span className="shrink-0">{t('chat.projectViewBranchFilterLabel')}</span>
-        <span className="min-w-0 flex-1 truncate border-l border-(--divider) pl-1.5 text-(--sidebar-text-active)">{selectedLabel}</span>
-        <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', isOpen && 'rotate-180')} aria-hidden="true" />
+        {compact && selectedBranch && (
+          <span className="min-w-0 truncate text-[0.625rem] font-medium text-(--sidebar-text-active)">
+            {t('chat.projectViewBranchFilterMenuLabel')}: {selectedBranch}
+          </span>
+        )}
+        {!compact && <span className="min-w-0 flex-1 truncate text-[0.75rem] font-medium text-(--sidebar-text-active)">{selectedLabel}</span>}
+        {!compact && <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', isOpen && 'rotate-180')} aria-hidden="true" />}
       </button>
+  );
 
-      {isOpen && position && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={menuRef}
-          role="listbox"
-          aria-label={t('chat.projectViewBranchFilterAriaLabel')}
-          className="fixed z-[9999] overflow-hidden rounded-lg border border-(--divider) bg-(--sidebar-bg) p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.16)]"
-          style={{ top: position.top, left: position.left, width: MENU_WIDTH }}
-          data-testid="project-branch-view-filter-menu"
-        >
-          {showSearch && (
-            <div className="mb-1 flex items-center gap-2 border-b border-(--divider) px-2 pb-1.5">
-              <Search className="h-3.5 w-3.5 text-(--text-muted)" aria-hidden="true" />
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t('chat.projectViewBranchSearchPlaceholder')}
-                className="h-7 min-w-0 flex-1 bg-transparent text-xs text-(--sidebar-text-active) outline-none placeholder:text-(--text-muted)"
-                data-testid="project-branch-view-filter-search"
-              />
-            </div>
-          )}
-          <p className="px-2 pb-1 pt-0.5 text-[0.625rem] font-medium uppercase tracking-[0.08em] text-(--text-muted)">
-            {t('chat.projectViewBranchFilterMenuLabel')}
-          </p>
-          <div className="max-h-72 overflow-y-auto py-0.5">
-            <BranchOption label={t('chat.projectViewAllBranches')} selected={!selectedBranch} onChoose={() => choose()} testId="all" />
-            {filteredBranches.map((branch) => (
-              <BranchOption key={branch} label={branch} selected={selectedBranch === branch} onChoose={() => choose(branch)} testId={branch} />
-            ))}
-            {filteredBranches.length === 0 && <p className="px-2 py-2 text-xs text-(--text-muted)">{t('chat.projectViewBranchNoMatches')}</p>}
-          </div>
-        </div>,
-        document.body,
+  const menu = isOpen && position && typeof document !== 'undefined' && createPortal(
+    <div
+      ref={menuRef}
+      role="listbox"
+      aria-label={t('chat.projectViewBranchFilterAriaLabel')}
+      className="fixed z-[9999] overflow-hidden rounded-lg border border-(--divider) bg-(--sidebar-bg) p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.16)]"
+      style={{ top: position.top, left: position.left, width: MENU_WIDTH }}
+      data-testid="project-branch-view-filter-menu"
+    >
+      {showSearch && (
+        <div className="mb-1 flex items-center gap-2 border-b border-(--divider) px-2 pb-1.5">
+          <Search className="h-3.5 w-3.5 text-(--text-muted)" aria-hidden="true" />
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t('chat.projectViewBranchSearchPlaceholder')}
+            className="h-7 min-w-0 flex-1 bg-transparent text-xs text-(--sidebar-text-active) outline-none placeholder:text-(--text-muted)"
+            data-testid="project-branch-view-filter-search"
+          />
+        </div>
       )}
+      <p className="px-2 pb-1 pt-0.5 text-[0.625rem] font-medium uppercase tracking-[0.08em] text-(--text-muted)">
+        {t('chat.projectViewBranchFilterMenuLabel')}
+      </p>
+      <div className="max-h-72 overflow-y-auto py-0.5">
+        <BranchOption label={t('chat.projectViewAllBranches')} selected={!selectedBranch} onChoose={() => choose()} testId="all" />
+        {filteredBranches.map((branch) => (
+          <BranchOption key={branch} label={branch} selected={selectedBranch === branch} onChoose={() => choose(branch)} testId={branch} />
+        ))}
+        {filteredBranches.length === 0 && <p className="px-2 py-2 text-xs text-(--text-muted)">{t('chat.projectViewBranchNoMatches')}</p>}
+      </div>
+    </div>,
+    document.body,
+  );
+
+  if (compact) {
+    return <div className="shrink-0" data-testid="project-branch-view-filter">{trigger}{menu}</div>;
+  }
+
+  return (
+    <div className="mb-1 flex justify-end px-2.5" data-testid="project-branch-view-filter">
+      {trigger}{menu}
     </div>
   );
 }

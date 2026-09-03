@@ -830,10 +830,13 @@ export function Sidebar() {
                   name={selectedProject.displayName}
                   displayPath={selectedProject.projectWorktree.displayPath}
                   onSelect={handleProjectWorktreeSelect}
-                />
-                <ProjectBranchFilter
-                  projectId={selectedProject.encodedDir}
-                  branches={selectedProject.creationBranches ?? []}
+                  trailingControl={(
+                    <ProjectBranchFilter
+                      compact
+                      projectId={selectedProject.encodedDir}
+                      branches={selectedProject.creationBranches ?? []}
+                    />
+                  )}
                 />
                 {selectedProject.branchRenameWarning ? (
                   <BranchRenameWarning
