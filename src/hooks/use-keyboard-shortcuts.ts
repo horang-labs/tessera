@@ -147,6 +147,14 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     closeTab(id);
   }, []);
 
+  const switchTabByOffset = useCallback((offset: -1 | 1) => {
+    const { tabs, activeTabId, setActiveTab } = useTabStore.getState();
+    if (tabs.length < 2) return;
+    const activeIndex = tabs.findIndex((tab) => tab.id === activeTabId);
+    const nextIndex = (Math.max(activeIndex, 0) + offset + tabs.length) % tabs.length;
+    setActiveTab(tabs[nextIndex].id);
+  }, []);
+
   const handleToggleSidebar = useCallback(() => {
     settingsStore.toggleSidebar();
   }, [settingsStore]);
@@ -228,6 +236,8 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   const handlers: Partial<Record<ShortcutId, () => void | Promise<void>>> = {
     'new-tab':        handleNewTab,
     'close-tab':      handleCloseTab,
+    'previous-tab':   () => switchTabByOffset(-1),
+    'next-tab':       () => switchTabByOffset(1),
     'toggle-sidebar': handleToggleSidebar,
     'toggle-view':    handleToggleView,
     'toggle-terminal-view': handleToggleTerminalView,
@@ -263,7 +273,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     overrides,
-    handleNewTab, handleCloseTab,
+    handleNewTab, handleCloseTab, switchTabByOffset,
     handleToggleSidebar, handleToggleView, handleToggleTerminalView,
     handleSplitRight, handleSplitDown,
     handleToggleTerminal, handleFocusPanel,

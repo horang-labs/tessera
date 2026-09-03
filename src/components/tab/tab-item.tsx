@@ -545,6 +545,11 @@ export const TabItem = memo(function TabItem({
   );
 
   return (
+    <ShortcutTooltip
+      id="previous-tab"
+      label={t('shortcut.previousTab')}
+      secondaryShortcut={{ id: 'next-tab', label: t('shortcut.nextTab') }}
+    >
     <div
       data-telemetry-ignore="manual_capture"
       draggable={!isEditingTitle}
@@ -590,7 +595,6 @@ export const TabItem = memo(function TabItem({
           data-testid="tab-item-status"
           data-status={statusKind}
           aria-label={statusLabel}
-          title={statusLabel}
         >
           <ItemStatusIndicator
             isProcessing={isGenerating}
@@ -631,7 +635,6 @@ export const TabItem = memo(function TabItem({
       )}
 
       {/* Close button — always visible (BR-UI-024) */}
-      <ShortcutTooltip id="close-tab" label={t('shortcut.closeTab')}>
         <button
           data-telemetry-ignore="manual_capture"
           className="ml-1.5 shrink-0 rounded hover:bg-(--sidebar-hover) p-0.5"
@@ -642,7 +645,7 @@ export const TabItem = memo(function TabItem({
         >
           <X size={12} />
         </button>
-      </ShortcutTooltip>
     </div>
+    </ShortcutTooltip>
   );
 });

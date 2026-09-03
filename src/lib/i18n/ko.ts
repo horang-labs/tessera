@@ -823,6 +823,8 @@ export const ko: I18nMessages = {
   shortcut: {
     newTab: '새 탭',
     closeTab: '탭 닫기',
+    previousTab: '이전 탭으로 전환',
+    nextTab: '다음 탭으로 전환',
     toggleSidebar: '사이드바 토글',
     toggleView: '리스트/보드 뷰 전환',
     toggleTerminalView: 'PTY 채팅/터미널 보기 전환',
