@@ -123,10 +123,11 @@ export function ImageGenerationTraceCard({
   onOpenImage: (image: LightboxImage) => void;
 }) {
   const { t } = useI18n();
-  const [readyResultUrl, setReadyResultUrl] = useState<string | null>(null);
-  const resultReady = !trace.result || readyResultUrl === trace.result.url;
-  const presentationStatus = trace.result && !resultReady ? "running" : trace.status;
-  const revisedPrompt = resultReady ? trace.revisedPrompt : undefined;
+  // Loading the thumbnail is independent from the generation lifecycle. A
+  // missing overlay file used to turn a completed generation back into a
+  // permanent "Running" card because the image's onLoad never fired.
+  const presentationStatus = trace.status;
+  const revisedPrompt = trace.revisedPrompt;
   return (
     <article className="overflow-hidden rounded-xl border border-(--chat-header-border) bg-(--background) shadow-sm">
       <section className="relative bg-(--sidebar-hover)" data-testid="image-generation-hero">
@@ -135,7 +136,6 @@ export function ImageGenerationTraceCard({
           result={trace.result}
           status={trace.status}
           onOpenImage={onOpenImage}
-          onReady={() => setReadyResultUrl(trace.result?.url ?? null)}
         />
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between bg-gradient-to-b from-black/65 to-transparent px-3 pb-6 pt-2.5 text-white">
           <span className="text-[10px] font-medium tracking-wide text-white/80">{t("imagePanel.generation")}</span>
@@ -220,15 +220,14 @@ function ResultHeroMedia({
   result,
   status,
   onOpenImage,
-  onReady,
 }: {
   result: PublicImageGenerationTrace["result"];
   status: PublicImageGenerationTrace["status"];
   onOpenImage: (image: LightboxImage) => void;
-  onReady: () => void;
 }) {
   const { t } = useI18n();
   const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [failed, setFailed] = useState(false);
   const ready = dimensions !== null;
   return (
     <div
@@ -258,8 +257,8 @@ function ResultHeroMedia({
             onLoad={(event) => {
               const image = event.currentTarget;
               setDimensions({ width: image.naturalWidth, height: image.naturalHeight });
-              onReady();
             }}
+            onError={() => setFailed(true)}
             className={cn(
               "h-full w-full object-contain transition-[opacity,transform] duration-300",
               ready ? "opacity-100 group-hover:scale-[1.015]" : "opacity-0",
@@ -276,9 +275,14 @@ function ResultHeroMedia({
           action="image_generation.result.download"
         />
       ) : null}
-      {!ready ? (
+      {!ready && !failed ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-(--text-muted)">
-          {status === "running" || result ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ImageIcon className="h-5 w-5" />}
+          {status === "running" || result ? <LoaderCircle data-testid="image-generation-loading" className="h-5 w-5 animate-spin" /> : <ImageIcon className="h-5 w-5" />}
+        </div>
+      ) : null}
+      {failed ? (
+        <div data-testid="image-generation-result-unavailable" className="pointer-events-none absolute inset-0 flex items-center justify-center text-(--text-muted)">
+          <ImageIcon className="h-5 w-5" />
         </div>
       ) : null}
     </div>
