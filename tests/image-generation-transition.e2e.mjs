@@ -69,6 +69,13 @@ try {
   );
   assert.equal(await page.getByText('Revised prompt', { exact: true }).isVisible(), true);
   if (artifactDir) await page.screenshot({ path: path.join(artifactDir, '02-image-generation-completed.png') });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('complete-with-missing-image').click();
+  await page.getByText('Completed', { exact: true }).waitFor();
+  await page.getByTestId('image-generation-result-unavailable').waitFor({ state: 'visible' });
+  assert.equal(await page.getByTestId('image-generation-loading').count(), 0);
+  if (artifactDir) await page.screenshot({ path: path.join(artifactDir, '03-image-generation-unavailable.png') });
 } catch (error) {
   if (output) process.stderr.write(`\n--- isolated server output ---\n${output}\n`);
   throw error;

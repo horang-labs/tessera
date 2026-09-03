@@ -16,6 +16,7 @@ const RUNNING_TRACE: PublicImageGenerationTrace = {
 
 export default function ImageTransitionReproPage() {
   const [completed, setCompleted] = useState(false);
+  const [broken, setBroken] = useState(false);
   const trace: PublicImageGenerationTrace = completed ? {
     ...RUNNING_TRACE,
     status: "completed",
@@ -23,13 +24,17 @@ export default function ImageTransitionReproPage() {
     result: {
       source: "generated",
       label: "Generated image",
-      url: "/dev-image-transition-image",
+      url: broken ? "/dev-image-transition-image-missing" : "/dev-image-transition-image",
     },
   } : RUNNING_TRACE;
 
   return (
     <main className="min-h-screen bg-neutral-950 p-8 text-white">
       <button data-testid="complete" type="button" onClick={() => setCompleted(true)}>Complete</button>
+      <button data-testid="complete-with-missing-image" type="button" onClick={() => {
+        setBroken(true);
+        setCompleted(true);
+      }}>Complete with missing image</button>
       <div className="mt-4 w-[420px]">
         <ImageGenerationTraceCard trace={trace} onOpenImage={() => {}} />
       </div>
