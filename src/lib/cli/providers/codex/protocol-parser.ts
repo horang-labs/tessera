@@ -2061,16 +2061,21 @@ export class CodexProtocolParser {
     const output = status === 'running' || isImageGeneration
       ? undefined
       : this.buildGenericCodexItemOutput(item);
+    const savedImagePath = typeof toolParams.savedPath === 'string'
+      ? toolParams.savedPath
+      : undefined;
     const generatedImageResult: FileReadImageToolResult | undefined = isImageGeneration
       && status === 'completed'
-      && typeof item.result === 'string'
-      && item.result.length > 0
-      ? {
-          kind: 'file_read',
-          contentType: 'image',
-          base64: item.result,
-          mimeType: 'image/png',
-        }
+      ? itemId && isImagePath(savedImagePath)
+        ? buildImageToolResult(sessionId, itemId)
+        : typeof item.result === 'string' && item.result.length > 0
+          ? {
+              kind: 'file_read',
+              contentType: 'image',
+              base64: item.result,
+              mimeType: 'image/png',
+            }
+          : undefined
       : undefined;
 
     // `view_image` (imageView) injects a local file into context with no image

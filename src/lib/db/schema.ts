@@ -81,6 +81,14 @@ CREATE TABLE IF NOT EXISTS session_messages (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS image_generation_cache (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  source_json TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  cards_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS terminal_provider_sessions (
   provider_id        TEXT NOT NULL,
   provider_session_id TEXT NOT NULL,

@@ -29,9 +29,19 @@ interface CacheEntry {
   state: SessionReplayState;
 }
 
+interface InFlightEntry {
+  /** Identity of the decode input being read by this promise. */
+  fingerprint: string;
+  promise: Promise<SessionReplayState | null>;
+}
+
 const CACHE_KEY = Symbol.for('tessera.terminalSessionHistoryCache');
 const cacheGlobal = globalThis as unknown as Record<symbol, Map<string, CacheEntry>>;
 const cache = cacheGlobal[CACHE_KEY] ?? (cacheGlobal[CACHE_KEY] = new Map());
+const IN_FLIGHT_KEY = Symbol.for('tessera.terminalSessionHistoryInFlight');
+const inFlightGlobal = globalThis as unknown as Record<symbol, Map<string, InFlightEntry>>;
+const inFlight = inFlightGlobal[IN_FLIGHT_KEY]
+  ?? (inFlightGlobal[IN_FLIGHT_KEY] = new Map());
 
 /**
  * Decoded transcripts are large (a busy session reduces to hundreds of
@@ -162,19 +172,37 @@ export async function readTerminalSessionReplayState(
     return cached.state;
   }
 
-  const state = await decodeReplayState(session, userId);
-  if (!state) {
-    cache.delete(session.id);
-    return null;
-  }
+  // The metadata route and every image URL can arrive together. Without a
+  // single-flight guard they all decode the same multi-megabyte transcript
+  // before the first request has populated the cache.
+  const running = inFlight.get(session.id);
+  if (running?.fingerprint === fingerprint) return running.promise;
 
-  rememberDecoded(session.id, { fingerprint, state });
-  logger.debug({
-    sessionId: session.id,
-    provider: session.provider,
-    messageCount: state.messages.length,
-  }, 'Decoded terminal session transcript');
-  return state;
+  const entry = {} as InFlightEntry;
+  entry.fingerprint = fingerprint;
+  entry.promise = (async () => {
+    const state = await decodeReplayState(session, userId);
+    // A newer fingerprint may have started decoding while this read was in
+    // progress. Return this request's result, but never overwrite newer cache.
+    if (inFlight.get(session.id) !== entry) return state;
+    if (!state) {
+      cache.delete(session.id);
+      return null;
+    }
+
+    if (fingerprint === 'unresolved') cache.delete(session.id);
+    else rememberDecoded(session.id, { fingerprint, state });
+    logger.debug({
+      sessionId: session.id,
+      provider: session.provider,
+      messageCount: state.messages.length,
+    }, 'Decoded terminal session transcript');
+    return state;
+  })().finally(() => {
+    if (inFlight.get(session.id) === entry) inFlight.delete(session.id);
+  });
+  inFlight.set(session.id, entry);
+  return entry.promise;
 }
 
 /**

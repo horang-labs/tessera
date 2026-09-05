@@ -13,7 +13,12 @@ import { ToolCallDetailPanel } from './tool-call-detail-panel';
 import { MESSAGE_BODY_OFFSET_CLASS } from './message-layout';
 import { MessageRowShell } from './message-row-shell';
 import { ImageLightbox } from './image-lightbox';
-import { buildToolImageUrl, isImagePath, resolveImageToolResultSrc } from '@/lib/tool-results/tool-image';
+import {
+  buildToolImageUrl,
+  extractImageToolPath,
+  isImagePath,
+  resolveImageToolResultSrc,
+} from '@/lib/tool-results/tool-image';
 
 // --- Layout threshold ---
 const SUMMARY_BAR_MIN = 4;
@@ -99,8 +104,8 @@ async function prefetchToolOutput(tc: ToolCallMessage): Promise<boolean> {
 function isImageToolCall(tc: ToolCallMessage): boolean {
   if (tc.status === 'error') return false;
   if (resolveImageToolResultSrc(tc.toolUseResult)) return true;
-  if (tc.toolKind !== 'file_read' && tc.toolName !== 'ViewImage') return false;
-  return isImagePath(tc.toolParams?.file_path ?? tc.toolParams?.path);
+  if (tc.toolKind !== 'file_read' && tc.toolName !== 'ViewImage' && tc.toolName !== 'ImageGeneration') return false;
+  return isImagePath(extractImageToolPath(tc.toolParams));
 }
 
 /** Renders the image inline in the chat flow (no click needed), with click-to-zoom. */
@@ -114,7 +119,7 @@ function InlineToolImage({ toolCall, alignWithMessageBody }: {
   const embeddedSrc = resolveImageToolResultSrc(toolCall.toolUseResult);
   const url = embeddedSrc ?? (toolUseId && sessionId ? buildToolImageUrl(sessionId, toolUseId) : undefined);
   if (!url) return null;
-  const filePath = toolCall.toolParams?.file_path ?? toolCall.toolParams?.path;
+  const filePath = extractImageToolPath(toolCall.toolParams);
   const caption = typeof filePath === 'string' ? filePath : shortenToolName(toolCall.toolName);
 
   const content = (

@@ -3,6 +3,7 @@ import type { EnhancedMessage } from '@/types/chat';
 
 export type ImageLocator =
   | { kind: 'inline'; data: string; mimeType: string }
+  | { kind: 'cache'; path: string }
   | { kind: 'path'; path: string };
 
 export type ImageTraceSource = 'conversation' | 'generated' | 'file' | 'explicit-path';
@@ -45,6 +46,7 @@ interface ImageGenerationInvocation {
   prompt: string;
   referencedImagePaths?: string[];
   numLastImagesToInclude?: number;
+  referencesUnresolved?: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -137,7 +139,7 @@ function readStringProperty(source: string, name: string): string | undefined {
 function readIntegerProperty(source: string, name: string): number | undefined {
   const property = findProperty(source, name);
   if (property === undefined) return undefined;
-  const match = source.slice(skipSpace(source, property)).match(/^\d+/)?.[0];
+  const match = source.slice(skipSpace(source, property)).match(/^(\d+)\s*(?=[,}])/)?.[1];
   if (!match) return undefined;
   const value = Number(match);
   return Number.isSafeInteger(value) ? value : undefined;
@@ -152,12 +154,12 @@ function readStringArrayProperty(source: string, name: string): string[] | undef
   const values: string[] = [];
   while (cursor < source.length) {
     cursor = skipSpace(source, cursor);
-    if (source[cursor] === ']') return values;
+    if (source[cursor] === ']') return /^[,}]/.test(source.slice(skipSpace(source, cursor + 1))) ? values : undefined;
     const item = readQuoted(source, cursor);
     if (!item) return undefined;
     values.push(item.value);
     cursor = skipSpace(source, item.end);
-    if (source[cursor] === ']') return values;
+    if (source[cursor] === ']') return /^[,}]/.test(source.slice(skipSpace(source, cursor + 1))) ? values : undefined;
     if (source[cursor] !== ',') return undefined;
     cursor += 1;
   }
@@ -220,13 +222,21 @@ export function parseImageGenerationInvocations(source: string): ImageGeneration
     if (source[cursor] !== '(') continue;
     cursor = skipSpace(source, cursor + 1);
     const object = extractBalancedObject(source, cursor);
-    if (!object) continue;
+    if (!object) {
+      calls.push({ prompt: 'Image generation', referencesUnresolved: true });
+      continue;
+    }
     const prompt = readStringProperty(object.source, 'prompt');
-    if (prompt !== undefined) {
+    {
       const referencedImagePaths = readStringArrayProperty(object.source, 'referenced_image_paths');
       const numLastImagesToInclude = readIntegerProperty(object.source, 'num_last_images_to_include');
       calls.push({
-        prompt,
+        prompt: prompt ?? 'Image generation',
+        ...((findProperty(object.source, 'referenced_image_paths') !== undefined && referencedImagePaths === undefined
+          && !/^\s*null\b/.test(object.source.slice(findProperty(object.source, 'referenced_image_paths'))))
+          || (findProperty(object.source, 'num_last_images_to_include') !== undefined && numLastImagesToInclude === undefined
+          && !/^\s*null\b/.test(object.source.slice(findProperty(object.source, 'num_last_images_to_include'))))
+          ? { referencesUnresolved: true } : {}),
         ...(referencedImagePaths ? { referencedImagePaths } : {}),
         ...(numLastImagesToInclude !== undefined ? { numLastImagesToInclude } : {}),
       });
@@ -255,11 +265,16 @@ function invocationSource(message: Extract<EnhancedMessage, { type: 'tool_call' 
   return undefined;
 }
 
-function imageFromTool(
+export function imageFromTool(
   message: Extract<EnhancedMessage, { type: 'tool_call' }>,
   generatedByInvocation: boolean,
 ): ResolvedTraceImage | undefined {
   const result = message.toolUseResult;
+  const cachedPath = message.toolParams._tesseraTranscriptImagePath;
+  if (typeof cachedPath === 'string') {
+    return { source: generatedByInvocation ? 'generated' : 'file', label: 'Tool image',
+      locator: { kind: 'cache', path: cachedPath }, sourceMessageId: message.id };
+  }
   if (isRecord(result) && result.kind === 'file_read' && result.contentType === 'image') {
     const source = generatedByInvocation ? 'generated' as const : 'file' as const;
     const label = generatedByInvocation
@@ -295,32 +310,35 @@ function sameImage(left: ResolvedTraceImage, right: ResolvedTraceImage): boolean
   return false;
 }
 
-function isImageGenerationResult(message: Extract<EnhancedMessage, { type: 'tool_call' }>): boolean {
+export function isImageGenerationResult(message: Extract<EnhancedMessage, { type: 'tool_call' }>): boolean {
   return message.toolName === 'ImageGeneration'
     || message.toolName === 'imageGeneration'
     || message.toolParams.itemType === 'imageGeneration';
 }
 
-function resultImage(message: Extract<EnhancedMessage, { type: 'tool_call' }>): ResolvedTraceImage | undefined {
+export function resultImage(message: Extract<EnhancedMessage, { type: 'tool_call' }>): ResolvedTraceImage | undefined {
+  if (typeof message.toolParams._tesseraTranscriptImagePath === 'string') return imageFromTool(message, true);
   const result = message.toolUseResult;
   const savedPath = typeof message.toolParams.savedPath === 'string' && message.toolParams.savedPath
     ? message.toolParams.savedPath
     : undefined;
-  if (isRecord(result) && result.kind === 'file_read' && result.contentType === 'image' && typeof result.base64 === 'string') {
-    return {
-      source: 'generated',
-      label: 'Generated image',
-      locator: { kind: 'inline', data: result.base64, mimeType: typeof result.mimeType === 'string' ? result.mimeType : 'image/png' },
-      ...(savedPath ? { agentPath: savedPath } : {}),
-      sourceMessageId: message.id,
-    };
-  }
+  // Codex has already persisted generated output at savedPath. Prefer that
+  // file over its duplicate base64 result so replay/cache objects do not pin
+  // the complete image bytes in the server heap.
   if (savedPath) {
     return {
       source: 'generated',
       label: savedPath,
       locator: { kind: 'path', path: savedPath },
       agentPath: savedPath,
+      sourceMessageId: message.id,
+    };
+  }
+  if (isRecord(result) && result.kind === 'file_read' && result.contentType === 'image' && typeof result.base64 === 'string') {
+    return {
+      source: 'generated',
+      label: 'Generated image',
+      locator: { kind: 'inline', data: result.base64, mimeType: typeof result.mimeType === 'string' ? result.mimeType : 'image/png' },
       sourceMessageId: message.id,
     };
   }
