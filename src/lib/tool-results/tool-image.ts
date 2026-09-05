@@ -111,6 +111,16 @@ export function isImagePath(filePath: unknown): boolean {
   return IMAGE_EXTENSIONS.has(extensionOf(filePath));
 }
 
+/** Read the provider-recorded image path without exposing a client-supplied path. */
+export function extractImageToolPath(toolParams: unknown): string | undefined {
+  if (!isRecord(toolParams)) return undefined;
+  for (const key of ['path', 'file_path', 'savedPath']) {
+    const value = toolParams[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return undefined;
+}
+
 /** Best-effort image MIME type from a file path; undefined when not an image. */
 export function inferImageMime(filePath: string): string | undefined {
   return IMAGE_MIME_BY_EXT[extensionOf(filePath)];

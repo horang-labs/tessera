@@ -109,7 +109,7 @@ test('Codex response user messages retain inline input images', () => {
   ]);
 });
 
-test('image_gen completion keeps image bytes out of textual output', () => {
+test('image_gen completion uses the saved file instead of retaining image bytes', () => {
   const events = decodeCodexTranscript([
     line('session_meta', { cli_version: '0.147.0' }),
     line('event_msg', {
@@ -140,10 +140,33 @@ test('image_gen completion keeps image bytes out of textual output', () => {
     toolUseResult: {
       kind: 'file_read',
       contentType: 'image',
-      base64: 'a-very-large-base64-value',
+      path: '/tmp/output.png',
       mimeType: 'image/png',
     },
     toolUseId: 'image-1',
+  });
+});
+
+test('image_gen completion keeps inline bytes only when no saved file exists', () => {
+  const events = decodeCodexTranscript([
+    line('session_meta', { cli_version: '0.147.0' }),
+    line('event_msg', {
+      type: 'item_completed',
+      item: {
+        type: 'Extension',
+        kind: 'image_gen.generation',
+        id: 'image-inline',
+        status: 'completed',
+        result: 'fallback-base64-value',
+      },
+    }),
+  ]);
+
+  assert.deepEqual((events[0] as any).toolUseResult, {
+    kind: 'file_read',
+    contentType: 'image',
+    base64: 'fallback-base64-value',
+    mimeType: 'image/png',
   });
 });
 

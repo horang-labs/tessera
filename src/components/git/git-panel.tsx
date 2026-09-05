@@ -82,6 +82,7 @@ function GitPanelTabButton({
 
 export function GitPanel({
   sessionId,
+  isActive = true,
   worktreeId = null,
   width,
   className,
@@ -89,6 +90,7 @@ export function GitPanel({
   onClose,
 }: {
   sessionId: string | null;
+  isActive?: boolean;
   worktreeId?: string | null;
   width: number | string;
   className?: string;
@@ -371,7 +373,7 @@ export function GitPanel({
         </div>
       ) : effectivePanelTab === "images" ? (
         <div className="min-h-0 flex-1">
-          <ImageGenerationsPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+          <ImageGenerationsPanel key={sessionId ?? "no-session"} sessionId={sessionId} isActive={isActive} />
         </div>
       ) : (
         <>

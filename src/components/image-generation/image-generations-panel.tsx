@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- Authenticated, session-scoped image routes cannot use Next's unauthenticated optimizer. */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Copy, Download, ImageIcon, LoaderCircle, RefreshCw } from "lucide-react";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { clearPathInsertDragData, setPathInsertDragData } from "@/lib/dnd/panel-session-drag";
@@ -13,81 +13,92 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/stores/notification-store";
 
 const REFRESH_INTERVAL_MS = 2_000;
+// Small URL/metadata-only cache; persistence and authoritative state live on the server.
+const panelCache = new Map<string, PublicImageGenerationTrace[]>();
 
 interface LightboxImage {
   src: string;
   alt: string;
 }
 
-export function ImageGenerationsPanel({ sessionId }: { sessionId: string | null }) {
+export function ImageGenerationsPanel({ sessionId, isActive = true }: { sessionId: string | null; isActive?: boolean }) {
   const { t } = useI18n();
-  const [traces, setTraces] = useState<PublicImageGenerationTrace[]>([]);
-  const [loading, setLoading] = useState(Boolean(sessionId));
+  const [traces, setTraces] = useState<PublicImageGenerationTrace[]>(() => sessionId ? panelCache.get(sessionId) ?? [] : []);
+  const [loading, setLoading] = useState(Boolean(sessionId && !panelCache.has(sessionId)));
   const [error, setError] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<LightboxImage | null>(null);
-  const requestInFlightRef = useRef(false);
+  const [retry, setRetry] = useState(0);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
+  const load = useCallback(async (signal: AbortSignal, sync: boolean) => {
     if (!sessionId) {
       setTraces([]);
       setLoading(false);
       return;
     }
-    if (requestInFlightRef.current) return;
-    requestInFlightRef.current = true;
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/image-generations`, {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/image-generations${sync ? '?sync=1' : ''}`, {
         signal,
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json() as { traces?: PublicImageGenerationTrace[] };
+      const body = await response.json() as { traces?: PublicImageGenerationTrace[]; more?: boolean };
+      if (signal.aborted) return;
       const nextTraces = Array.isArray(body.traces) ? body.traces : [];
+      panelCache.delete(sessionId);
+      panelCache.set(sessionId, nextTraces);
+      while (panelCache.size > 8) panelCache.delete(panelCache.keys().next().value!);
       setTraces((current) => (
         JSON.stringify(current) === JSON.stringify(nextTraces) ? current : nextTraces
       ));
       setError(false);
+      if (nextTraces.length || (sync && !body.more)) setLoading(false);
+      return Boolean(body.more);
     } catch (loadError) {
-      if ((loadError as Error).name !== "AbortError") setError(true);
-    } finally {
-      requestInFlightRef.current = false;
-      if (!signal?.aborted) setLoading(false);
+      if (!signal.aborted && (loadError as Error).name !== "AbortError") {
+        setError(true);
+        setLoading(false);
+      }
     }
   }, [sessionId]);
 
-  useEffect(function loadImageGenerationTraces() {
+  useEffect(function synchronizeActiveImageTab() {
     const controller = new AbortController();
-    setLoading(Boolean(sessionId));
-    void load(controller.signal);
-    return () => controller.abort();
-  }, [load, sessionId]);
-
-  useEffect(function refreshImageGenerationTracesWhileOpen() {
-    if (!sessionId) return;
-    const refresh = () => {
-      if (document.visibilityState === "visible") void load();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let busy = false;
+    const refresh = async () => {
+      if (busy || controller.signal.aborted || !isActive || document.visibilityState !== 'visible') return;
+      clearTimeout(timer);
+      busy = true;
+      const more = await load(controller.signal, true);
+      busy = false;
+      if (!controller.signal.aborted) timer = setTimeout(() => void refresh(), more ? 0 : REFRESH_INTERVAL_MS);
     };
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refresh();
+    const resume = () => { void refresh(); };
+    const start = async () => {
+      busy = true;
+      await load(controller.signal, false); // Never wait for transcript I/O to show saved cards.
+      busy = false;
+      await refresh();
     };
-    const timer = window.setInterval(refresh, REFRESH_INTERVAL_MS);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
+    void start();
+    window.addEventListener('focus', resume);
+    document.addEventListener('visibilitychange', resume);
     return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      controller.abort();
+      clearTimeout(timer);
+      window.removeEventListener('focus', resume);
+      document.removeEventListener('visibilitychange', resume);
     };
-  }, [load, sessionId]);
+  }, [isActive, load, retry]);
 
   if (!sessionId) return <EmptyState text={t("imagePanel.selectSession")} />;
   if (loading) return <EmptyState loading text={t("imagePanel.loading")} />;
-  if (error) {
+  if (error && traces.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-5 text-center text-xs text-(--text-muted)">
         <AlertTriangle className="h-5 w-5" />
         <p>{t("imagePanel.loadFailed")}</p>
-        <button {...telemetryClickAttributes("image_generation.retry", "right_panel")} type="button" onClick={() => void load()} className="flex items-center gap-1 rounded border px-2 py-1 text-(--text-primary)">
+        <button {...telemetryClickAttributes("image_generation.retry", "right_panel")} type="button" onClick={() => setRetry((value) => value + 1)} className="flex items-center gap-1 rounded border px-2 py-1 text-(--text-primary)">
           <RefreshCw className="h-3 w-3" /> {t("imagePanel.retry")}
         </button>
       </div>
@@ -253,7 +264,7 @@ function ResultHeroMedia({
             src={result.url}
             draggable={false}
             alt=""
-            loading="eager"
+            loading="lazy"
             onLoad={(event) => {
               const image = event.currentTarget;
               setDimensions({ width: image.naturalWidth, height: image.naturalHeight });
