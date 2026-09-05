@@ -1793,7 +1793,13 @@ export class TerminalSurface {
       : null;
     // A ResizeObserver/activation fit can race snapshot parsing. Preserve the
     // exact source grid until the replay write callback establishes a barrier.
-    if (this.snapshotReplay?.phase === 'parsing') return;
+    if (this.snapshotReplay?.phase === 'parsing') {
+      // Activation may reach this barrier after requestStableFit consumed its
+      // pending claim. Carry it into the post-parse fit so a hidden surface
+      // cannot keep ownership of the PTY's old, smaller viewport.
+      this.pendingFitClaim ||= claim;
+      return;
+    }
     let didFit = false;
     let fitCompleted = !shouldFit;
     let restorePoint: TerminalScrollRestorePoint | null = null;
