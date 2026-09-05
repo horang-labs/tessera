@@ -7,6 +7,8 @@ import { useTabStore } from '@/stores/tab-store';
 import { TAB_STORE_KEY } from '@/types/tab';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { reconcileActiveSessionSurface } from '@/lib/session/reconcile-active-session-surface';
 
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, 'window', {
@@ -85,6 +87,83 @@ function openSharedSession(projectDir: string): string {
   return useTabStore.getState().activeTabId;
 }
 
+test('A -> All Projects -> A preserves session panels and the project selection', () => {
+  resetWorkspace();
+  useSessionStore.setState({
+    projects: [{
+      ...project('project-a'),
+      sessions: ['a1', 'a2', 'a3'].map((id) => ({ ...sharedSession, id })),
+    }],
+  });
+  useTabStore.getState().switchProject('project-a');
+  for (const id of ['a1', 'a2', 'a3']) useTabStore.getState().createTabWithSession(id);
+  const tabs = [...useTabStore.getState().tabs];
+  const panels = structuredClone(usePanelStore.getState().tabPanels);
+  const selectedInA = tabs[2].id;
+
+  for (let round = 0; round < 3; round++) {
+    useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+    assert.deepEqual(useTabStore.getState().tabs, tabs);
+    // ChatLayout runs this bridge after changing the visible project scope.
+    for (const index of [2, 1, 0]) {
+      useTabStore.getState().setActiveTab(tabs[index].id);
+      reconcileActiveSessionSurface(`a${index + 1}`);
+    }
+    useTabStore.getState().switchProject('project-a');
+    assert.deepEqual(useTabStore.getState().tabs, tabs);
+    assert.deepEqual(usePanelStore.getState().tabPanels, panels, 'session panels must never become blank');
+    assert.equal(useTabStore.getState().activeTabId, selectedInA, 'A remembers its own selection');
+  }
+});
+
+test('All Projects shares open/close and panel edits while each scope retains order and selection after reload', () => {
+  resetWorkspace();
+  useSessionStore.setState({
+    projects: ['a', 'b'].map((name) => ({
+      ...project(`project-${name}`),
+      sessions: [1, 2, 3, 4].map((index) => ({
+        ...sharedSession,
+        id: `${name}${index}`,
+        projectDir: `project-${name}`,
+        originProjectId: `project-${name}`,
+      })),
+    })),
+  });
+  useTabStore.getState().switchProject('project-a');
+  for (const id of ['a1', 'a2']) useTabStore.getState().createTabWithSession(id);
+  const tabsA = [...useTabStore.getState().tabs];
+  useTabStore.getState().switchProject('project-b');
+  for (const id of ['b1', 'b2', 'b3']) useTabStore.getState().createTabWithSession(id);
+  const tabsB = [...useTabStore.getState().tabs];
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  assert.equal(useTabStore.getState().tabs.length, 5);
+  useTabStore.getState().createTabWithSession('a3');
+  const tabA3 = useTabStore.getState().activeTabId;
+  assert.equal(useTabStore.getState().tabs.find((tab) => tab.id === tabA3)?.projectDir, 'project-a');
+  useTabStore.getState().createTabWithSession('a3');
+  assert.equal(useTabStore.getState().tabs.length, 6, 'opening an existing session focuses its tab');
+  useTabStore.getState().reorderTab(tabA3, tabsA[0].id);
+  useTabStore.getState().closeTab(tabsB[0].id);
+  const activePanelId = usePanelStore.getState().getTabPanelData(tabA3)!.activePanelId;
+  assert.ok(usePanelStore.getState().splitPanel(activePanelId, 'horizontal', 'a4'));
+  const split = structuredClone(usePanelStore.getState().getTabPanelData(tabA3));
+  const allOrder = useTabStore.getState().tabs.map((tab) => tab.id);
+  useTabStore.getState().persistToLocalStorage();
+  resetWorkspace(false);
+  useTabStore.getState().restoreFromLocalStorage();
+  assert.equal(useTabStore.getState().activeTabId, tabA3);
+  assert.deepEqual(useTabStore.getState().tabs.map((tab) => tab.id), allOrder);
+  useTabStore.getState().switchProject('project-a');
+  assert.deepEqual(useTabStore.getState().tabs.map((tab) => tab.id), [...tabsA.map((tab) => tab.id), tabA3]);
+  assert.equal(useTabStore.getState().activeTabId, tabsA[1].id);
+  assert.deepEqual(usePanelStore.getState().getTabPanelData(tabA3), split);
+  useTabStore.getState().switchProject('project-b');
+  assert.deepEqual(useTabStore.getState().tabs.map((tab) => tab.id), tabsB.slice(1).map((tab) => tab.id));
+  assert.equal(useTabStore.getState().activeTabId, tabsB[2].id);
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  assert.equal(useTabStore.getState().activeTabId, tabA3);
+});
+
 test('the same canonical Session has independent tabs and active targets in A and C', () => {
   resetWorkspace();
   const tabA = openSharedSession('project-a');
@@ -108,6 +187,16 @@ test('the same canonical Session has independent tabs and active targets in A an
   useTabStore.getState().switchProject('project-c');
   assert.equal(useTabStore.getState().findSessionLocation(sharedSession.id)?.tabId, tabC);
   assert.equal(usePanelStore.getState().activeTabId, tabC);
+});
+
+test('viewing a linked Session in All Projects keeps its existing Project View ownership', () => {
+  resetWorkspace();
+  const tabC = openSharedSession('project-c');
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  reconcileActiveSessionSurface(sharedSession.id);
+  useTabStore.getState().switchProject('project-c');
+  assert.equal(useTabStore.getState().activeTabId, tabC);
+  assert.equal(useTabStore.getState().tabs[0].projectDir, 'project-c');
 });
 
 test('Project switching preserves the visible order of interleaved global and Project tabs', () => {
