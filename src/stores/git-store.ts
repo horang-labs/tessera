@@ -15,7 +15,10 @@ interface GitPanelUIState {
    * send the user to a particular tab — a preparation badge, a worktree that
    * has just been created — can open the panel on it.
    */
+  /** Selection for a panel without a session; also reads legacy persisted state. */
   panelTab: GitPanelTab
+  panelTabsBySessionId: Record<string, GitPanelTab>
+  getPanelTab: (sessionId: string | null) => GitPanelTab
   /** Monotonic request used to focus recovery even when the panel is open. */
   conflictRecoveryFocusRequest: number
 
@@ -26,16 +29,16 @@ interface GitPanelUIState {
   setDrawerOpen: (open: boolean) => void
   toggleDrawer: () => void
   setDrawerHeight: (height: number) => void
-  setPanelTab: (tab: GitPanelTab) => void
+  setPanelTab: (tab: GitPanelTab, sessionId?: string | null) => void
   /** Open the panel and show one tab, whatever was showing before. */
-  openTab: (tab: GitPanelTab) => void
+  openTab: (tab: GitPanelTab, sessionId?: string | null) => void
   /** Open the Git tab and focus its conflict-recovery surface. */
-  openConflictRecovery: () => void
+  openConflictRecovery: (sessionId?: string | null) => void
 }
 
 type PersistedGitPanelUIState = Pick<
   GitPanelUIState,
-  'isOpen' | 'panelWidth' | 'drawerHeight' | 'panelTab'
+  'isOpen' | 'panelWidth' | 'drawerHeight' | 'panelTab' | 'panelTabsBySessionId'
 >
 
 export const useGitStore = create<GitPanelUIState>()(
@@ -46,6 +49,10 @@ export const useGitStore = create<GitPanelUIState>()(
       drawerOpen: false,
       drawerHeight: 320,
       panelTab: 'git',
+      panelTabsBySessionId: {},
+      getPanelTab: (sessionId) => sessionId
+        ? get().panelTabsBySessionId[sessionId] ?? 'git'
+        : get().panelTab,
       conflictRecoveryFocusRequest: 0,
 
       toggle: () => set({ isOpen: !get().isOpen }),
@@ -55,13 +62,20 @@ export const useGitStore = create<GitPanelUIState>()(
       setDrawerOpen: (open) => set({ drawerOpen: open }),
       toggleDrawer: () => set({ drawerOpen: !get().drawerOpen }),
       setDrawerHeight: (height) => set({ drawerHeight: height }),
-      setPanelTab: (tab) => set({ panelTab: tab }),
-      openTab: (tab) => set({ isOpen: true, panelTab: tab }),
-      openConflictRecovery: () => set((state) => ({
-        isOpen: true,
-        panelTab: 'git',
-        conflictRecoveryFocusRequest: state.conflictRecoveryFocusRequest + 1,
-      })),
+      setPanelTab: (tab, sessionId) => set((state) => sessionId
+        ? { panelTabsBySessionId: { ...state.panelTabsBySessionId, [sessionId]: tab } }
+        : { panelTab: tab }),
+      openTab: (tab, sessionId) => {
+        get().setPanelTab(tab, sessionId);
+        set({ isOpen: true });
+      },
+      openConflictRecovery: (sessionId) => {
+        get().setPanelTab('git', sessionId);
+        set((state) => ({
+          isOpen: true,
+          conflictRecoveryFocusRequest: state.conflictRecoveryFocusRequest + 1,
+        }));
+      },
     }),
     {
       name: 'tessera:git-panel',
@@ -71,6 +85,7 @@ export const useGitStore = create<GitPanelUIState>()(
         panelWidth: state.panelWidth,
         drawerHeight: state.drawerHeight,
         panelTab: state.panelTab,
+        panelTabsBySessionId: state.panelTabsBySessionId,
       }),
     }
   )

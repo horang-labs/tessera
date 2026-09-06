@@ -504,6 +504,7 @@ export const ja: I18nMessages = {
     save: '保存',
     cancel: 'キャンセル',
     close: '閉じる',
+    closePeek: 'Peek を閉じる',
     reset: 'リセット',
     loading: '読み込み中...',
     or: 'または',

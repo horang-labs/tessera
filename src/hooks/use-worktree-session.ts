@@ -283,7 +283,7 @@ export function useWorktreeSession() {
           if (project?.hasPreparationScript) {
             const { useGitStore } = await import('@/stores/git-store');
             const git = useGitStore.getState();
-            if (git.isOpen) git.setPanelTab('scripts');
+            if (git.isOpen) git.setPanelTab('scripts', sessionId);
           }
         }
         return {

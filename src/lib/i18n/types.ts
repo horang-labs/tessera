@@ -481,6 +481,7 @@ export interface I18nMessages {
     save: string;
     cancel: string;
     close: string;
+    closePeek: string;
     reset: string;
     loading: string;
     or: string;
