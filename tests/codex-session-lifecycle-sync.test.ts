@@ -122,6 +122,48 @@ test('archive RPC failure preserves local state and task partial success is comp
   assert.equal(dbTasks.getTask('task-archive')?.archived, false);
 });
 
+for (const scope of ['session', 'task'] as const) {
+  test(`${scope} archive waits for live Codex writers to exit before the archive RPC`, async (t) => {
+    const taskId = `writer-${scope}-task`;
+    if (scope === 'task') {
+      dbTasks.createTask({ id: taskId, projectId: 'project-lifecycle', title: 'Live writers' });
+    }
+    const sessionIds = scope === 'task'
+      ? ['writer-task-1', 'writer-task-2']
+      : ['writer-session'];
+    const liveWriters = new Set(sessionIds);
+    for (const sessionId of sessionIds) {
+      dbSessions.createSession(sessionId, 'project-lifecycle', sessionId, 'codex', {
+        workDir: dataDir,
+        ...(scope === 'task' ? { taskId } : {}),
+        providerState: JSON.stringify({ threadId: `thread-${sessionId}` }),
+      });
+    }
+    const closes: string[] = [];
+    t.mock.method(processManager, 'closeSession', async (sessionId: string) => {
+      assert.equal(dbSessions.getSession(sessionId)?.archived, 0);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      liveWriters.delete(sessionId);
+      closes.push(sessionId);
+    });
+    const archives: unknown[] = [];
+    setCodexThreadControlRequestExecutorForTests(async (_context, method, params) => {
+      assert.equal(method, 'thread/archive');
+      if (liveWriters.size) throw new Error('thread already has an active writer');
+      archives.push(params.threadId);
+      return {};
+    });
+
+    if (scope === 'task') await setTaskArchived(taskId, true, 'user-1');
+    else await archiveSession(sessionIds[0], true, 'user-1');
+
+    assert.deepEqual(closes.sort(), [...sessionIds].sort());
+    assert.equal(archives.length, sessionIds.length);
+    if (scope === 'task') assert.equal(dbTasks.getTask(taskId)?.archived, true);
+    else assert.equal(dbSessions.getSession(sessionIds[0])?.archived, 1);
+  });
+}
+
 test('archive falls back to the project work dir when the session worktree is gone', async () => {
   const missingWorkDir = path.join(dataDir, 'worktrees', 'deleted-branch');
   dbTasks.createTask({ id: 'task-missing-worktree', projectId: 'project-lifecycle', title: 'Missing worktree' });
