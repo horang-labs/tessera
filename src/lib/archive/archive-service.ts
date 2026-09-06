@@ -378,6 +378,13 @@ export async function setTaskArchived(taskId: string, archived: boolean, userId?
       }
     }
 
+    // Release every Codex writer before the first archive RPC, including when
+    // multiple live sessions belong to the same task.
+    if (archived) {
+      await Promise.all(sessionRows
+        .filter((session) => session.provider === 'codex')
+        .map((session) => closeSessionRuntimes(session.id, userId)));
+    }
     await syncCodexThreadsArchived(sessionRows, archived, userId);
     try {
       dbTasks.setTaskArchived(taskId, archived);
@@ -392,7 +399,9 @@ export async function setTaskArchived(taskId: string, archived: boolean, userId?
 
     if (archived) {
       await Promise.all(
-        task.sessions.map((session) => closeSessionRuntimes(session.id, userId)),
+        sessionRows
+          .filter((session) => session.provider !== 'codex')
+          .map((session) => closeSessionRuntimes(session.id, userId)),
       );
     }
   });

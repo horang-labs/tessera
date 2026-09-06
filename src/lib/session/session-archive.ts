@@ -30,6 +30,11 @@ export async function archiveSession(
       throw new Error('Sessions of an archived task must be handled through their task');
     }
 
+    // The archive RPC uses a separate app-server. Release the live writer first
+    // or Codex rejects it with "already has an active writer".
+    if (archived && session.provider === 'codex') {
+      await closeSessionRuntimes(sessionId, userId);
+    }
     await syncCodexThreadsArchived([session], archived, userId);
     try {
       const archivedAt = archived ? new Date().toISOString() : null;
@@ -46,7 +51,7 @@ export async function archiveSession(
       throw error;
     }
 
-    if (archived) {
+    if (archived && session.provider !== 'codex') {
       await closeSessionRuntimes(sessionId, userId);
     }
 
