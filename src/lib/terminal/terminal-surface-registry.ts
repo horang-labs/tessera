@@ -1,6 +1,7 @@
 'use client';
 
 import type { ITheme, IUnicodeHandling } from '@xterm/xterm';
+import { useLinuxTerminalIme } from './terminal-ime-platform';
 import { v4 as uuidv4 } from 'uuid';
 import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
@@ -945,7 +946,11 @@ export class TerminalSurface {
         { SearchAddon },
         { SerializeAddon },
       ] = await Promise.all([
-        import('@xterm/xterm'),
+        useLinuxTerminalIme(navigator.userAgent, (
+          window as Window & { electronAPI?: { platform?: string } }
+        ).electronAPI?.platform)
+          ? import('./vendor/xterm-linux-ime.mjs')
+          : import('@xterm/xterm'),
         import('@xterm/addon-fit'),
         import('@xterm/addon-webgl'),
         import('@xterm/addon-unicode11'),
