@@ -493,7 +493,7 @@ export function buildProviderSessionDefaultsUpdate(
 
   const nextClaudeModel =
     providerId === 'claude-code' && patch.model !== undefined
-      ? normalizeClaudeModel(patch.model) || settings.defaultModel
+      ? normalizeClaudeModel(patch.model)
       : settings.defaultModel;
 
   return {

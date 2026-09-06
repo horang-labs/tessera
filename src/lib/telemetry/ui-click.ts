@@ -231,6 +231,8 @@ export const TELEMETRY_UI_CONTROLS = [
   'settings.models.custom_input',
   'settings.models.custom_add',
   'settings.models.custom_remove',
+  'settings.models.default_model',
+  'settings.models.default_reasoning_effort',
   'settings.remote.firewall_configure',
   'settings.remote.address_candidate',
   'settings.remote.address_input',
