@@ -157,10 +157,13 @@ export function TerminalPanel({
   const assignTerminal = usePanelStore((state) => state.assignTerminal);
   const connectionStatus = useChatStore((state) => state.connectionStatus);
   const sessionOwned = runtimeOwnership !== 'standalone';
-  const previewOwnsRuntimeRef = useRef(runtimeOwnership === 'session-preview');
+  const isPreviewRuntime = runtimeOwnership === 'session-preview' || runtimeOwnership === 'session-peek';
+  const previewOwnsRuntimeRef = useRef(isPreviewRuntime);
   const handleTerminalInput = useCallback(() => {
-    if (runtimeOwnership === 'standalone' || runtimeOwnership === 'session-peek') return;
+    if (runtimeOwnership === 'standalone') return;
+    // Peek input retains the runtime without pinning the unrelated active tab.
     previewOwnsRuntimeRef.current = false;
+    if (runtimeOwnership === 'session-peek') return;
     useTabStore.getState().pinTab(tabId);
   }, [runtimeOwnership, tabId]);
   const isTabActive = useTabStore((state) => surfaceActive || state.activeTabId === tabId);
@@ -177,12 +180,12 @@ export function TerminalPanel({
     cwd: getInitialTerminalCwd(terminalSessionId, terminalCwd),
     sessionId: getSessionSelectionId(terminalSessionId),
     launch,
-    previewOwned: runtimeOwnership === 'session-preview',
+    previewOwned: isPreviewRuntime,
   }), [
     isDark,
     launch,
     panelId,
-    runtimeOwnership,
+    isPreviewRuntime,
     selectedThemePreset,
     tabId,
     terminalFontSize,
@@ -346,8 +349,8 @@ export function TerminalPanel({
   }, [handleTerminalInput, surface]);
 
   useEffect(() => {
-    if (runtimeOwnership !== 'session-preview') previewOwnsRuntimeRef.current = false;
-  }, [runtimeOwnership]);
+    if (!isPreviewRuntime) previewOwnsRuntimeRef.current = false;
+  }, [isPreviewRuntime]);
 
   useEffect(() => {
     if (runtimeOwnership === 'session-preview' && terminalSessionId) {
