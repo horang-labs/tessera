@@ -1,4 +1,5 @@
 import type { EnhancedMessage } from '@/types/chat';
+import { parseImageReferenceScript, type ImageReferenceBindings } from './reference-script';
 import { imageFromTool, isImageGenerationResult, parseImageGenerationInvocations, resultImage,
   type ImageGenerationTrace, type ResolvedTraceImage } from './traces';
 
@@ -7,6 +8,7 @@ export interface ImageIndexState {
   traces: ImageGenerationTrace[];
   pending: string[];
   seenResults: string[];
+  referenceBindings?: ImageReferenceBindings;
 }
 
 export function createImageIndex(): ImageIndexState {
@@ -55,7 +57,11 @@ export function applyImageTool(state: ImageIndexState, message: Extract<Enhanced
   const source = ['input', 'source', 'code', 'command', 'arguments']
     .map((key) => message.toolParams[key])
     .find((value): value is string => typeof value === 'string' && value.includes('image_gen__imagegen'));
-  const invocations = source ? parseImageGenerationInvocations(source) : [];
+  const script = message.toolParams._tesseraImageReferenceScript === true && typeof message.toolParams.input === 'string'
+    ? message.toolParams.input : undefined;
+  const invocations = script && message.status === 'running'
+    ? parseImageReferenceScript(script, state.referenceBindings ??= { stored: [] })
+    : source ? parseImageGenerationInvocations(source) : [];
   for (const [index, invocation] of invocations.entries()) {
     const id = `${message.toolUseId ?? message.id}-${index}`;
     // A tool result repeats its call parameters. It must never create another card.
@@ -73,6 +79,8 @@ export function applyImageTool(state: ImageIndexState, message: Extract<Enhanced
     state.pending.push(id);
   }
   if (message.status === 'error') {
+    // The executed cell may have failed before a predicted store() write.
+    if (message.toolParams._tesseraImageReferenceScript) state.referenceBindings = { stored: [] };
     for (const trace of state.traces.filter((entry) => entry.invocationMessageId === message.id && entry.status === 'running')) {
       trace.status = 'error';
       trace.error = message.error;

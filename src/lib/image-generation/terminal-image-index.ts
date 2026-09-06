@@ -57,7 +57,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
   const scanned = await readImageTranscriptBatch(filePath, checkpoint, () => {
     index = createImageIndex(); decoder = createCodexTranscriptDecoderState(); rebuilding = Boolean(cached); reset = true;
   }, async (line, offset) => {
-    for (const event of decodeCodexTranscriptLine(line, decoder, { preferInlineImages: true })) {
+    for (const event of decodeCodexTranscriptLine(line, decoder, { preferInlineImages: true, includeImageReferenceScripts: true })) {
       if (event.type === 'user_message' && Array.isArray(event.content)) {
         for (const [ordinal, block] of event.content.entries()) {
           if (block.type !== 'image') continue;
@@ -94,7 +94,15 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
       if (event.toolUseId && event.status === 'running') {
         const params = event.toolParams;
         const relevant = Object.values(params).some((value) => typeof value === 'string' && value.includes('image_gen__imagegen'));
-        if (!relevant) decoder.pendingToolCalls.delete(event.toolUseId);
+        if (!relevant) {
+          if (params._tesseraImageReferenceScript) {
+            // Keep the marker to invalidate predicted bindings on failure, but
+            // never persist unrelated exec source/output in the image index.
+            const pending = decoder.pendingToolCalls.get(event.toolUseId);
+            if (pending) decoder.pendingToolCalls.set(event.toolUseId, { ...pending,
+              toolParams: { _tesseraImageReferenceScript: true } });
+          } else decoder.pendingToolCalls.delete(event.toolUseId);
+        }
       }
     }
   }, signal);
