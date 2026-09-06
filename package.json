@@ -56,6 +56,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "vendor:xterm-linux-ime": "node scripts/build-xterm-linux-ime.mjs",
     "dev": "cross-env NODE_ENV=development tsx server.ts",
     "build": "cross-env TURBOPACK= __NEXT_DEV_SERVER= __NEXT_PROCESSED_ENV= NODE_ENV=production next build --webpack",
     "build:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run build",
@@ -149,6 +150,7 @@
     "cross-env": "^7.0.3",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
+    "esbuild": "0.28.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.3",
     "pino-pretty": "^10.3.0",
