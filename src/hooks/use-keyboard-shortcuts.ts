@@ -29,6 +29,9 @@ import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-supp
 import { v4 as uuidv4 } from 'uuid';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
 import { getAdjacentTabId, type TabNavigationDirection } from '@/lib/tab/adjacent-tab';
+import { wsClient } from '@/lib/ws/client';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export interface UseKeyboardShortcutsOptions {
@@ -182,6 +185,21 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     viewModeStore.setMode(sessionId, currentMode === 'chat' ? 'terminal' : 'chat');
   }, [activePanelId, panels]);
 
+  const handleSessionAction = useCallback((action: 'stop' | 'archive') => {
+    const { peekSessionId, peekFileRef } = useBoardStore.getState();
+    if (!peekSessionId && peekFileRef) return;
+    const sessionId = peekSessionId ?? panels[activePanelId]?.sessionId;
+    if (!sessionId) return;
+    const session = projectViewWorkspaceState.resolveSession(sessionId);
+    if (!session) return;
+
+    if (action === 'stop') {
+      if (resolveSessionRuntimePresentation(session).canStop) wsClient.stopSession(sessionId);
+    } else if (!session.archived || !session.taskId) {
+      requestSessionArchive(sessionId, !session.archived);
+    }
+  }, [activePanelId, panels]);
+
   const handleSplitRight = useCallback(() => {
     if (!panels[activePanelId]) return;
     const size = getActivePanelSize(activePanelId);
@@ -240,6 +258,8 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     'toggle-sidebar': handleToggleSidebar,
     'toggle-view':    handleToggleView,
     'toggle-terminal-view': handleToggleTerminalView,
+    'stop-session': () => handleSessionAction('stop'),
+    'archive-session': () => handleSessionAction('archive'),
     'split-right':    handleSplitRight,
     'split-down':     handleSplitDown,
     'toggle-terminal': handleToggleTerminal,
@@ -273,7 +293,7 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   }, [
     overrides,
     handleNewTab, handleCloseTab, handleNavigateTab,
-    handleToggleSidebar, handleToggleView, handleToggleTerminalView,
+    handleToggleSidebar, handleToggleView, handleToggleTerminalView, handleSessionAction,
     handleSplitRight, handleSplitDown,
     handleToggleTerminal, handleFocusPanel,
   ]);

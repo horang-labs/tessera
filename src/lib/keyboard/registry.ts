@@ -16,6 +16,8 @@ export const SHORTCUT_REGISTRY = {
   'toggle-sidebar': { default: '$mod+Alt+b',          category: 'view',  descKey: 'shortcut.toggleSidebar' },
   'toggle-view':    { default: '$mod+Alt+k',          category: 'view',  descKey: 'shortcut.toggleView' },
   'toggle-terminal-view': { default: '$mod+Alt+g',    category: 'view',  descKey: 'shortcut.toggleTerminalView' },
+  'stop-session': { default: '$mod+Alt+s', category: 'panel', descKey: 'status.stopProcess' },
+  'archive-session': { default: '$mod+Alt+a', category: 'panel', descKey: 'task.contextMenu.archive' },
   'split-right':    { default: '$mod+Alt+\\',         category: 'panel', descKey: 'shortcut.splitRight' },
   'split-down':     { default: '$mod+Alt+-',          category: 'panel', descKey: 'shortcut.splitDown' },
   'toggle-terminal': { default: 'Control+`',          category: 'panel', descKey: 'shortcut.toggleTerminal' },
