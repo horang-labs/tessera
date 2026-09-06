@@ -45,7 +45,7 @@ import {
   getNativeFileDropAbsolutePaths,
   isNativeFileDrag,
 } from '@/lib/dnd/native-file-drop';
-import { insertFilePathIntoTerminal } from '@/lib/terminal/terminal-file-path-insert';
+import { escapeShellPath } from '@/lib/terminal/shell-path-escape';
 import { insertSessionReferenceIntoTerminal } from '@/lib/session/session-reference';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { toast } from '@/stores/notification-store';
@@ -306,7 +306,8 @@ export function TerminalPanel({
         : getInternalPathDropPaths(event.dataTransfer);
       let inserted = false;
       for (const path of paths) {
-        if (insertFilePathIntoTerminal(terminalId, path)) inserted = true;
+        const escaped = escapeShellPath(path);
+        if (escaped && surface.sendUserInput(`${escaped} `)) inserted = true;
       }
       if (inserted) surface.activate();
       return;

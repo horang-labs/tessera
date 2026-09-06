@@ -21,3 +21,14 @@ The September 2026 Peek context-menu regression happened because native menu det
 `data-panel-wrapper`, which Session Peek does not mount. See
 `electron/web-contents-context-menu.ts`, `src/components/chat/chat-area.tsx`, and
 `tests/electron-terminal-context-menu.test.ts`.
+
+Peek path drops must call the mounted surface's `sendUserInput` directly, without
+looking up another surface by session/terminal ID. Test this while the old normal
+panel is still attached, so shared lookup cannot accidentally pass the test.
+File-drop QA must also include opening a session in a normal panel, switching to Peek,
+and waiting for the old surface's `terminal_detach` (cold parking occurs after 30 seconds).
+The PTY can still be running while that surface is no longer an attached subscriber.
+Assert that the dropped path appears in PTY output, not merely that a WebSocket send
+succeeded. `tests/terminal-file-drop-routing.test.ts` covers the actual cold-park and
+shared input route; `tests/terminal-file-drop-routing.e2e.mjs` exercises this sequence
+with native file payloads in the isolated packaged Windows app.

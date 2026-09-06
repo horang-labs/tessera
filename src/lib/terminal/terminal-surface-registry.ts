@@ -585,6 +585,10 @@ export class TerminalSurface {
   sendInput(data: string): boolean {
     if (
       this.disposed
+      // A cold-parked surface still reflects the running PTY, but the server
+      // no longer accepts its subscriber ID. Let shared input routing try the
+      // attached surface (for example Peek) instead of reporting a lost send.
+      || this.attachedConnectionGeneration === 0
       || this.snapshotReplay?.phase === 'parsing'
       || this.state.status === 'exited'
     ) return false;
