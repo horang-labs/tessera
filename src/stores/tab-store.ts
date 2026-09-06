@@ -229,9 +229,13 @@ function inferPersistedTabProjectDir(t: PersistedTab, fallbackProjectDir: string
 }
 
 function inferTabProjectDir(initialSessionId: string | null | undefined, currentProjectDir: string | null): string | null {
+  // All Projects is a display scope, never a Session's Project View.
+  const projectViewId = currentProjectDir && !isAllProjectsScope(currentProjectDir)
+    ? currentProjectDir
+    : undefined;
   const sourceSessionId = initialSessionId ? getSpecialSessionSourceSessionId(initialSessionId) : null;
   if (sourceSessionId) {
-    return projectViewWorkspaceState.resolveSession(sourceSessionId, currentProjectDir ?? undefined)
+    return projectViewWorkspaceState.resolveSession(sourceSessionId, projectViewId)
       ?.projectDir ?? null;
   }
   if (initialSessionId && isSpecialSession(initialSessionId)) return null;
@@ -239,7 +243,7 @@ function inferTabProjectDir(initialSessionId: string | null | undefined, current
   if (initialSessionId) {
     const session = projectViewWorkspaceState.resolveSession(
       initialSessionId,
-      currentProjectDir ?? undefined,
+      projectViewId,
     );
     if (session?.projectDir) return session.projectDir;
   }
@@ -274,6 +278,11 @@ function normalizeTabOrderIdsByScope(value: unknown): Record<string, string[]> {
 
 function getStateTabs(projectState: ProjectTabState | null | undefined): Tab[] {
   return projectState?.tabs ?? [];
+}
+
+function normalizeActiveTabIdsByScope(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry) => typeof entry[1] === 'string'));
 }
 
 function getVisibleTabs(
@@ -564,6 +573,7 @@ function saveVisibleTabsToScopedStates(
   projectTabStates: Record<string, ProjectTabState>;
   globalTabState: ProjectTabState | null;
   tabOrderIdsByScope: Record<string, string[]>;
+  activeTabIdsByScope: Record<string, string>;
 } {
   const projectTabs = new Map<string, Tab[]>();
   const globalTabs: Tab[] = [];
@@ -605,6 +615,9 @@ function saveVisibleTabsToScopedStates(
   return {
     projectTabStates,
     globalTabState,
+    activeTabIdsByScope: state.currentProjectDir
+      ? { ...state.activeTabIdsByScope, [state.currentProjectDir]: state.activeTabId }
+      : state.activeTabIdsByScope,
     tabOrderIdsByScope: state.currentProjectDir
       ? {
           ...state.tabOrderIdsByScope,
@@ -703,6 +716,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   projectTabStates: {},
   globalTabState: null,
   tabOrderIdsByScope: {},
+  activeTabIdsByScope: {},
   currentProjectDir: null,
 
   // --- 액션 ---
@@ -1009,6 +1023,13 @@ export const useTabStore = create<TabStore>()((set, get) => ({
   createTabWithSession: (sessionId: string): void => {
     const state = get();
     const panelStore = usePanelStore.getState();
+    const existing = state.findSessionLocation(sessionId);
+    if (existing) {
+      get().setActiveTab(existing.tabId);
+      panelStore.setActivePanelId(existing.panelId);
+      get().pinTab(existing.tabId);
+      return;
+    }
     const tabData = panelStore.tabPanels[state.activeTabId];
     const activePanel = tabData?.panels[tabData.activePanelId];
 
@@ -1448,6 +1469,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       projects,
       global,
       tabOrderIdsByScope: scopedStates.tabOrderIdsByScope,
+      activeTabIdsByScope: scopedStates.activeTabIdsByScope,
     };
 
     // Step 3: 직렬화 및 저장
@@ -1469,6 +1491,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         projectTabStates: {},
         globalTabState: null,
         tabOrderIdsByScope: {},
+        activeTabIdsByScope: {},
         currentProjectDir: null,
       });
       const panelStore = usePanelStore.getState();
@@ -1482,6 +1505,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       currentProjectDir: string | null,
       preferredActiveTabId: string | null,
       tabOrderIdsByScope: Record<string, string[]> = {},
+      activeTabIdsByScope: Record<string, string> = {},
     ) => {
       const panelStore = usePanelStore.getState();
       for (const oldTabId of Object.keys(panelStore.tabPanels)) {
@@ -1541,6 +1565,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         globalTabState: nextGlobalTabState,
         tabOrderIdsByScope,
         currentProjectDir,
+        activeTabIdsByScope,
       });
 
       for (const tab of visibleTabs) {
@@ -1624,6 +1649,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
           v3.currentProjectDir,
           v3.activeTabId,
           normalizeTabOrderIdsByScope(v3.tabOrderIdsByScope),
+          normalizeActiveTabIdsByScope(v3.activeTabIdsByScope),
         );
         return;
       }
@@ -1745,11 +1771,13 @@ export const useTabStore = create<TabStore>()((set, get) => ({
           projectTabStates: state.projectTabStates,
           globalTabState: state.globalTabState,
           tabOrderIdsByScope: state.tabOrderIdsByScope,
+          activeTabIdsByScope: state.activeTabIdsByScope,
         };
 
     let projectTabStates = scopedStates.projectTabStates;
     let globalTabState = scopedStates.globalTabState;
     const tabOrderIdsByScope = scopedStates.tabOrderIdsByScope;
+    const activeTabIdsByScope = scopedStates.activeTabIdsByScope;
     let visibleTabs = getVisibleTabs(
       projectTabStates,
       globalTabState,
@@ -1782,7 +1810,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       : undefined;
     const activeTabId = chooseActiveTabId(
       visibleTabs,
-      state.activeTabId,
+      activeTabIdsByScope[projectDir] ?? state.activeTabId,
       targetProjectState,
       globalTabState,
     );
@@ -1795,6 +1823,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       globalTabState,
       tabOrderIdsByScope,
       currentProjectDir: projectDir,
+      activeTabIdsByScope,
     });
 
     assertTabStoreInvariants(get());
@@ -1821,10 +1850,12 @@ export const useTabStore = create<TabStore>()((set, get) => ({
           projectTabStates: state.projectTabStates,
           globalTabState: state.globalTabState,
           tabOrderIdsByScope: state.tabOrderIdsByScope,
+          activeTabIdsByScope: state.activeTabIdsByScope,
         };
 
     const { [projectDir]: _, ...restProjectStates } = scopedStates.projectTabStates;
     const { [projectDir]: __, ...restTabOrderIdsByScope } = scopedStates.tabOrderIdsByScope;
+    const { [projectDir]: ___, ...restActiveTabIdsByScope } = scopedStates.activeTabIdsByScope;
     const currentProjectDir = state.currentProjectDir === projectDir ? null : state.currentProjectDir;
 
     let visibleTabs = getVisibleTabs(
@@ -1861,6 +1892,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       projectTabStates: restProjectStates,
       globalTabState,
       tabOrderIdsByScope: restTabOrderIdsByScope,
+      activeTabIdsByScope: restActiveTabIdsByScope,
       currentProjectDir,
     });
 
