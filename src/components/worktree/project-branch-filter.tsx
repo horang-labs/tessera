@@ -107,6 +107,7 @@ export function ProjectBranchFilter({ projectId, branches, compact = false }: Pr
           'text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
           'focus-visible:bg-(--sidebar-hover) focus-visible:outline-none',
           isOpen && 'bg-(--sidebar-hover) text-(--sidebar-text-active)',
+          selectedBranch && 'text-(--accent)',
         )}
         data-testid="project-branch-view-filter-trigger"
       >

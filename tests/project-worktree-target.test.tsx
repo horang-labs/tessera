@@ -34,6 +34,21 @@ const chatLayoutSource = fs.readFileSync(
   'utf8',
 );
 
+test('selecting the same Worktree toggles Peek while another Worktree replaces it', () => {
+  const store = useWorkspacePeekStore.getState();
+  store.close();
+  store.toggleWorktree('wt_a', 'project-a');
+  assert.equal(useWorkspacePeekStore.getState().target?.worktreeId, 'wt_a');
+  store.toggleWorktree('wt_a', 'project-a');
+  assert.equal(useWorkspacePeekStore.getState().target, null);
+  store.toggleWorktree('wt_a', 'project-a');
+  store.toggleWorktree('wt_b', 'project-b');
+  assert.deepEqual(useWorkspacePeekStore.getState().target, {
+    kind: 'worktree', worktreeId: 'wt_b', projectDir: 'project-b',
+  });
+  store.close();
+});
+
 test('Project Worktree rows render detailed and compact variants', () => {
   const row = renderToStaticMarkup(createElement(ProjectWorktreeRow, {
     active: true,
@@ -50,7 +65,7 @@ test('Project Worktree rows render detailed and compact variants', () => {
     },
     onSelect: () => {},
   }));
-  assert.match(row, /lucide-folder-git-2/);
+  assert.doesNotMatch(row, /lucide-folder-git-2/);
   assert.match(row, /lucide-git-branch/);
   assert.match(row, /tessera-dev/);
   assert.match(row, /\/repo\/tessera-dev/);
@@ -59,8 +74,8 @@ test('Project Worktree rows render detailed and compact variants', () => {
   assert.match(row, /−3/);
   assert.match(row, /aria-current="true"/);
   assert.match(row, /data-variant="detailed"/);
-  assert.match(row, /mb-2[^\"]*rounded-xl/);
-  assert.match(row, /px-2\.5 py-2/);
+  assert.doesNotMatch(row, /bg-\(--input-bg\)|rounded-full|border-\(--divider\)/);
+  assert.match(row, /focus-visible:ring-1/);
 
   const compactRow = renderToStaticMarkup(createElement(CompactProjectWorktreeRow, {
     active: false,
@@ -76,15 +91,15 @@ test('Project Worktree rows render detailed and compact variants', () => {
     },
     onSelect: () => {},
   }));
-  assert.match(compactRow, /lucide-folder-git-2/);
-  assert.match(compactRow, /lucide-git-branch/);
+  assert.doesNotMatch(compactRow, /lucide-folder-git-2/);
+  assert.doesNotMatch(compactRow, /lucide-git-branch/);
   assert.match(compactRow, /\/repo\/tessera-dev/);
   assert.match(compactRow, /feature\/root-target/);
   assert.match(compactRow, /\+12/);
   assert.match(compactRow, /−3/);
   assert.match(compactRow, /data-variant="compact"/);
-  assert.match(compactRow, /mb-1[^\"]*rounded-lg/);
-  assert.match(compactRow, /px-2 py-1/);
+  assert.doesNotMatch(compactRow, /bg-\(--input-bg\)|rounded-full|border-\(--divider\)/);
+  assert.match(compactRow, /focus-visible:ring-1/);
 });
 
 test('Worktree overview renders branch and path without duplicate creation actions', () => {

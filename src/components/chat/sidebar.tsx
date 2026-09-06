@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } from 'react';
-import { Check, CircleDot, CircleStop, ListCollapse, ListTree } from 'lucide-react';
+import { Check, CircleDot, CircleStop, ListCollapse, ListTree, Plus } from 'lucide-react';
+import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import { useSessionStore } from '@/stores/session-store';
 import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useSessionCrud } from '@/hooks/use-session-crud';
@@ -298,6 +299,8 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 }
 
 export function Sidebar() {
+  const [quickCreateProjectId, setQuickCreateProjectId] = useState<string | null>(null);
+  const projectQuickCreateTriggerRef = useRef<HTMLButtonElement>(null);
   const { t } = useI18n();
   const projects = useLoadedProjectViews();
   const dismissBranchRenameWarning = useSessionStore(
@@ -570,7 +573,7 @@ export function Sidebar() {
     const projectWorktree = selectedProject?.projectWorktree;
     if (!projectWorktree || !selectedProject) return;
     stepAsidePhoneSidebar();
-    useWorkspacePeekStore.getState().openWorktree(
+    useWorkspacePeekStore.getState().toggleWorktree(
       projectWorktree.id,
       selectedProject.encodedDir,
     );
@@ -830,6 +833,19 @@ export function Sidebar() {
                   name={selectedProject.displayName}
                   displayPath={selectedProject.projectWorktree.displayPath}
                   onSelect={handleProjectWorktreeSelect}
+                  headerControl={(
+                    <button
+                      ref={projectQuickCreateTriggerRef}
+                      {...telemetryClickAttributes('sidebar.project.add', 'sidebar')}
+                      type="button"
+                      aria-label={t('sidebar.createNewSession')}
+                      title={t('sidebar.createNewSession')}
+                      className="shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--accent) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)"
+                      onClick={() => setQuickCreateProjectId((current) => current === selectedProject.encodedDir ? null : selectedProject.encodedDir)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  )}
                   trailingControl={(
                     <ProjectBranchFilter
                       compact
@@ -838,6 +854,19 @@ export function Sidebar() {
                     />
                   )}
                 />
+                {quickCreateProjectId === selectedProject.encodedDir && (
+                  <CollectionQuickCreateSheet
+                    key={selectedProject.encodedDir}
+                    collection={null}
+                    collections={collections}
+                    projectDir={selectedProject.decodedPath}
+                    projectId={selectedProject.encodedDir}
+                    allowCollectionSelection
+                    anchorRef={projectQuickCreateTriggerRef}
+                    scopeId={`project-${selectedProject.encodedDir}`}
+                    onClose={() => setQuickCreateProjectId(null)}
+                  />
+                )}
                 {selectedProject.branchRenameWarning ? (
                   <BranchRenameWarning
                     warning={selectedProject.branchRenameWarning}
