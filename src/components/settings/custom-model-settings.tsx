@@ -9,6 +9,7 @@ import { settingsTelemetryClickAttributes } from '@/lib/telemetry/ui-click';
 const CUSTOM_MODEL_PROVIDERS = [
   { id: 'claude-code', label: 'Claude Code' },
   { id: 'codex', label: 'Codex' },
+  { id: 'opencode', label: 'OpenCode' },
 ] as const;
 
 interface ProviderCustomModelEditorProps {

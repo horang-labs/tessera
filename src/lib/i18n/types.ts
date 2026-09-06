@@ -325,6 +325,11 @@ export interface I18nMessages {
       label: string;
       reasoningEffortLabel: string;
       loadingOptions: string;
+      providerDefaultsTitle: string;
+      providerDefaultsHint: string;
+      providerDefault: string;
+      optionsUnavailable: string;
+      unavailableOption: string;
       customLabel: string;
       customPlaceholder: string;
       customApply: string;
