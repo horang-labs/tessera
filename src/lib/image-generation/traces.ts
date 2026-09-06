@@ -42,7 +42,7 @@ export interface PublicImageGenerationTrace extends Omit<ImageGenerationTrace, '
   result?: PublicTraceImage;
 }
 
-interface ImageGenerationInvocation {
+export interface ImageGenerationInvocation {
   prompt: string;
   referencedImagePaths?: string[];
   numLastImagesToInclude?: number;

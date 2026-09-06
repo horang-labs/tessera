@@ -147,6 +147,7 @@ function decodeToolCall(
   payload: Record<string, any>,
   state: CodexTranscriptDecoderState,
   timestamp: string,
+  includeImageReferenceScripts = false,
 ): SessionHistoryEvent | null {
   const rawName = typeof payload.name === 'string' ? payload.name.trim() : '';
   const callId = typeof payload.call_id === 'string' ? payload.call_id.trim() : '';
@@ -154,6 +155,10 @@ function decodeToolCall(
 
   const { toolName, toolKind } = normalizeToolName(rawName);
   const toolParams = buildToolParams(payload, toolKind);
+  if (includeImageReferenceScripts && payload.type === 'custom_tool_call'
+    && (rawName === 'exec' || rawName === 'functions.exec')) {
+    toolParams._tesseraImageReferenceScript = true;
+  }
   const toolDisplay = buildToolDisplay(toolName, toolKind, toolParams);
 
   state.pendingToolCalls.set(callId, {
@@ -378,7 +383,7 @@ function decodeResponseMessage(
 export function decodeCodexTranscriptLine(
   line: string,
   state: CodexTranscriptDecoderState,
-  options: { preferInlineImages?: boolean } = {},
+  options: { preferInlineImages?: boolean; includeImageReferenceScripts?: boolean } = {},
 ): SessionHistoryEvent[] {
   const trimmed = line.trim();
   if (!trimmed) return [];
@@ -414,7 +419,7 @@ export function decodeCodexTranscriptLine(
       return event ? [event] : [];
     }
     if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
-      const event = decodeToolCall(payload, state, timestamp);
+      const event = decodeToolCall(payload, state, timestamp, options.includeImageReferenceScripts);
       return event ? [event] : [];
     }
     if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {

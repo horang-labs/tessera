@@ -52,6 +52,24 @@ test('disk-backed index restores a pending call, reads only appends and serves c
     assert.equal(completed.length, 1);
     assert.equal(completed[0].status, 'completed');
     assert.deepEqual(completed[0].inputs, first[0].inputs);
+    const inputPath = path.join(directory, 'reference.png');
+    await fs.writeFile(inputPath, Buffer.from('reference-image-bytes'));
+    await fs.appendFile(file, record('response_item', { type: 'custom_tool_call', call_id: 'store-paths', name: 'exec',
+      input: `const paths=[${JSON.stringify(inputPath)}];store("refs",paths);` }));
+    while ((await syncTerminalImageIndex(session, '')).more) { /* reference-only batch */ }
+    const withBindings = readImageCache(session.id)!;
+    assert.deepEqual(JSON.parse(withBindings.state_json).index.referenceBindings.stored, [['refs', [inputPath]]]);
+    assert.equal(withBindings.state_json.includes('const paths='), false, 'reference-only source must not be retained');
+    await fs.appendFile(file, record('response_item', { type: 'custom_tool_call_output', call_id: 'store-paths', output: 'ok' })
+      + record('response_item', { type: 'custom_tool_call', call_id: 'dynamic', name: 'functions.exec',
+        input: 'const p=load("refs");tools.image_gen__imagegen({prompt:"dynamic",referenced_image_paths:[p[0]]})' }));
+    while ((await syncTerminalImageIndex(session, '')).more) { /* reload persisted bindings */ }
+    const dynamic = readImageCards(session.id)[1];
+    assert.equal(dynamic.unresolvedInputCount, 0);
+    assert.equal(dynamic.inputs.length, 1);
+    assert.equal(dynamic.inputs[0].locator.kind, 'cache');
+    await fs.unlink(inputPath);
+    assert.equal((await readTraceImageBytes(dynamic.inputs[0].locator, ''))?.bytes.toString(), 'reference-image-bytes');
     await fs.unlink(file);
     const stillCached = readImageCards(session.id);
     const bytes = await readTraceImageBytes(stillCached[0].result!.locator, '');
