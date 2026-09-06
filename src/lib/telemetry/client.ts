@@ -287,6 +287,8 @@ const allowedShortcuts = new Set([
   'toggle-sidebar',
   'toggle-view',
   'toggle-terminal-view',
+  'stop-session',
+  'archive-session',
   'split-right',
   'split-down',
   'toggle-terminal',

@@ -1,0 +1,61 @@
+/* Keep touch controls reachable on devices without hover. */
+@media (min-width: 640px) and (hover: hover) and (pointer: fine) {
+  .compact {
+    position: relative;
+    height: 22px;
+  }
+
+  .compact > div:first-child {
+    gap: 4px;
+    padding-inline: 6px;
+  }
+
+  .compact .provider {
+    height: 16px;
+    padding: 0;
+    border: 0;
+    background-color: transparent !important;
+  }
+
+  .compact .title {
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .compact input {
+    height: 20px;
+    font-size: 12px;
+  }
+
+  .compact .detail {
+    opacity: 1;
+  }
+
+  .compact .actions {
+    gap: 4px;
+  }
+
+  .compact[data-search-open='true'] {
+    height: 32px;
+  }
+
+  .compact[data-search-open='true'] .actions {
+    position: absolute;
+    z-index: 10;
+    top: 0;
+    left: 6px;
+    right: 28px;
+    height: 31px;
+    background: var(--chat-header-bg);
+  }
+
+  .compact[data-search-open='true'] .actions > div {
+    flex: 1;
+  }
+
+  .compact .actions input {
+    min-width: 0;
+    width: 100%;
+  }
+
+}

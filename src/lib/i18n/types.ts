@@ -687,6 +687,9 @@ export interface I18nMessages {
       keyEnter: string;
       keyCtrlC: string;
     };
+    viewMode: string;
+    terminalMode: string;
+    chatMode: string;
     viewAsChat: string;
     viewAsTerminal: string;
     imageOriginalView: string;
