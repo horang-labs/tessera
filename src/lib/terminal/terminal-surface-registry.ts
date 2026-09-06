@@ -68,9 +68,7 @@ import { forceRepaintThroughRenderPause } from './terminal-render-pause-release'
 import {
   writeForegroundTerminalChunk,
   discardForegroundRenderSettle,
-  refreshForegroundTerminalViewport,
 } from './terminal-foreground-render-settle';
-import { TerminalCompositionRenderGate } from './terminal-composition-render-gate';
 import {
   attachTerminalMouseWheelMultiplier,
   isTerminalTuiOwnedWheelEvent,
@@ -334,8 +332,6 @@ export class TerminalSurface {
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
-  private compositionRenderGate: TerminalCompositionRenderGate | null = null;
-  private compositionDeferredRefresh = false;
   private osc52Disposable: { dispose(): void } | null = null;
   private suppressNextNativePaste = false;
   private pasteSuppressionTimerId: number | null = null;
@@ -899,9 +895,6 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
-    this.compositionRenderGate?.dispose();
-    this.compositionRenderGate = null;
-    this.compositionDeferredRefresh = false;
     this.osc52Disposable?.dispose();
     this.osc52Disposable = null;
     this.suppressNextNativePaste = false;
@@ -1172,10 +1165,6 @@ export class TerminalSurface {
         if (this.keyboardOwner === 'xterm' && event.data) this.notifyTerminalInput();
       };
       root.addEventListener('compositionend', this.compositionEndListener, true);
-      this.compositionRenderGate = new TerminalCompositionRenderGate(
-        root,
-        () => this.flushCompositionDeferredRefresh(),
-      );
     } catch (error) {
       this.updateState(
         'error',
@@ -1505,10 +1494,8 @@ export class TerminalSurface {
     const restorePoint = this.scrollController?.captureRestorePoint();
     const shouldRecoverRenderer = this.backgroundSgrDetector.consume(data);
     if (!this.terminal) return;
-    const composing = this.compositionRenderGate?.isActive() ?? false;
-    if (composing) this.compositionDeferredRefresh = true;
     writeForegroundTerminalChunk(this.terminal, data, {
-      forceViewportRefresh: !composing,
+      forceViewportRefresh: true,
       shouldRefreshViewportSynchronously: () => !this.webglAddon,
       onParsed: () => {
         if (restorePoint) this.scrollController?.restore(restorePoint);
@@ -1517,14 +1504,6 @@ export class TerminalSurface {
         if (shouldRecoverRenderer) this.recoverRendererPresentation();
       },
     });
-  }
-
-  private flushCompositionDeferredRefresh(): void {
-    if (!this.compositionDeferredRefresh) return;
-    this.compositionDeferredRefresh = false;
-    if (this.terminal) {
-      refreshForegroundTerminalViewport(this.terminal, !this.webglAddon);
-    }
   }
 
   private cancelSnapshotReplay(): void {
@@ -1793,7 +1772,13 @@ export class TerminalSurface {
       : null;
     // A ResizeObserver/activation fit can race snapshot parsing. Preserve the
     // exact source grid until the replay write callback establishes a barrier.
-    if (this.snapshotReplay?.phase === 'parsing') return;
+    if (this.snapshotReplay?.phase === 'parsing') {
+      // Activation may reach this barrier after requestStableFit consumed its
+      // pending claim. Carry it into the post-parse fit so a hidden surface
+      // cannot keep ownership of the PTY's old, smaller viewport.
+      this.pendingFitClaim ||= claim;
+      return;
+    }
     let didFit = false;
     let fitCompleted = !shouldFit;
     let restorePoint: TerminalScrollRestorePoint | null = null;

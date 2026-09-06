@@ -163,7 +163,7 @@ test('public path inputs expose the agent path for PTY dragging', () => {
   );
 });
 
-test('inline generated results retain savedPath as the agent drag path', () => {
+test('generated results use savedPath instead of retaining duplicate inline bytes', () => {
   const generated = inlineGeneratedResult('generated', 'IMAGE_BYTES');
   generated.toolParams.savedPath = '/home/work/generated.png';
   const [trace] = projectImageGenerationTraces([
@@ -171,7 +171,10 @@ test('inline generated results retain savedPath as the agent drag path', () => {
     generated,
   ]);
 
-  assert.equal(trace.result?.locator.kind, 'inline');
+  assert.deepEqual(trace.result?.locator, {
+    kind: 'path',
+    path: '/home/work/generated.png',
+  });
   assert.equal(
     toPublicImageGenerationTraces('session', [trace])[0].result?.path,
     '/home/work/generated.png',

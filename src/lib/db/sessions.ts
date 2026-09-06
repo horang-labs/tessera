@@ -3,6 +3,7 @@
  */
 
 import fs from 'fs';
+import { imageSessionCacheDirectory } from '@/lib/image-generation/cache-files';
 import { getDb } from './database';
 import { deleteTerminalProviderSessionsForTesseraSession } from './terminal-provider-sessions';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -317,6 +318,8 @@ export function createSession(
 export function deleteSession(id: string): void {
   deleteTerminalProviderSessionsForTesseraSession(id);
   getDb().prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  // Only this server-owned, hashed per-session directory is removed.
+  void fs.promises.rm(imageSessionCacheDirectory(id), { recursive: true, force: true }).catch(() => {});
 }
 
 /**
@@ -460,6 +463,8 @@ export function clearWorktreeMetadataByWorkDir(workDir: string): void {
 export function softDeleteSession(id: string): void {
   getDb().prepare('UPDATE sessions SET deleted = 1, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id);
+  getDb().prepare('DELETE FROM image_generation_cache WHERE session_id = ?').run(id);
+  void fs.promises.rm(imageSessionCacheDirectory(id), { recursive: true, force: true }).catch(() => {});
 }
 
 /**

@@ -267,6 +267,19 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     resolveSessionInsertZoneBounds,
   ]);
 
+  // A child drop target (such as the PTY ChatView overlay) can intentionally
+  // stop the bubbling `drop` event after handling its own payload. Clear this
+  // pane's visual state during capture as well, so that ownership transfer
+  // never leaves the panel-level highlight behind.
+  const clearDropIndicators = useCallback(() => {
+    dragCounterRef.current = 0;
+    dropEdgeRef.current = null;
+    sessionInsertZoneRef.current = false;
+    setDropEdge(null);
+    setInsertPathHint(false);
+    setSessionInsertZone(null);
+  }, []);
+
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
     e.preventDefault();
@@ -285,12 +298,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     e.preventDefault();
     const currentEdge = dropEdgeRef.current;
     const droppedInSessionInsertZone = sessionInsertZoneRef.current;
-    dragCounterRef.current = 0;
-    dropEdgeRef.current = null;
-    sessionInsertZoneRef.current = false;
-    setDropEdge(null);
-    setInsertPathHint(false);
-    setSessionInsertZone(null);
+    clearDropIndicators();
 
     // OS (Finder/Explorer) file drop → insert each absolute path into the PTY.
     if (currentEdge === 'center' && isNativeFilePathInsertTarget(e)) {
@@ -580,6 +588,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     isNativeFilePathInsertTarget,
     isTerminalSessionRefTarget,
     resolveInsertTargetTerminalId,
+    clearDropIndicators,
   ]);
 
   return (
@@ -604,6 +613,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
+      onDropCapture={clearDropIndicators}
       onDrop={handleDrop}
     >
       {children}

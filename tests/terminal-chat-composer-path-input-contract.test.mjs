@@ -30,6 +30,17 @@ test('terminal Chat View inserts a whole-overlay path drop into the same compose
   assert.match(chatAreaSource, /event\.stopPropagation\(\)/);
 });
 
+test('terminal Chat View clears the parent panel drop highlight before consuming its drop', () => {
+  const panelWrapperSource = fs.readFileSync(
+    new URL('../src/components/panel/panel-wrapper.tsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(panelWrapperSource, /const clearDropIndicators = useCallback\(/);
+  assert.match(panelWrapperSource, /onDropCapture=\{clearDropIndicators\}/);
+  assert.match(panelWrapperSource, /const handleDrop = useCallback\([\s\S]*?clearDropIndicators\(\);/);
+});
+
 test('terminal Chat View uploads image-only paste and inserts the returned path', () => {
   assert.match(
     composerSource,

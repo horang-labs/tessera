@@ -75,6 +75,7 @@ import { updateProviderStateWithRetry } from '../../process-manager-side-effects
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
+import { materializeTerminalTranscriptImage } from '@/lib/session/terminal-transcript-image-cache';
 import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 
@@ -327,7 +328,9 @@ export class CodexAdapter implements CliProvider {
     try {
       const lines = createInterface({ input: stream, crlfDelay: Infinity });
       for await (const line of lines) {
-        events.push(...decodeCodexTranscriptLine(line, decoderState));
+        for (const event of decodeCodexTranscriptLine(line, decoderState)) {
+          events.push(await materializeTerminalTranscriptImage(options.sessionId, event));
+        }
       }
     } catch (error) {
       // A rollout that vanished mid-read (overlay cleaned up) is the same

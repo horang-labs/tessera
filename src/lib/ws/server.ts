@@ -57,6 +57,21 @@ export interface WebSocketConnectionInfo extends WebSocketIdentity {
   connectionId: string;
 }
 
+export interface WebSocketOomDiagnostics {
+  connectionCount: number;
+  openConnectionCount: number;
+  sentMessages: number;
+  sentBytes: number;
+  totalBufferedBytes: number;
+  maxBufferedBytes: number;
+  topConnections: Array<{
+    connectionId: string | null;
+    kind: CredentialKind | null;
+    readyState: number;
+    bufferedBytes: number;
+  }>;
+}
+
 interface AuthenticatedWebSocket extends WebSocket {
   connectionId?: string;
   identity?: WebSocketIdentity;
@@ -111,6 +126,8 @@ export class WebSocketServer {
   private readonly rejectionGraceMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeat: WebSocketServerHeartbeat;
+  private diagnosticSentMessages = 0;
+  private diagnosticSentBytes = 0;
 
   constructor(options: WebSocketServerOptions = {}) {
     this.maxConnections = options.maxConnections ?? MAX_WS_CONNECTIONS;
@@ -272,6 +289,7 @@ export class WebSocketServer {
       try {
         const startTime = Date.now();
         ws.send(payload);
+        this.recordDiagnosticSend(payload);
         const duration = Date.now() - startTime;
 
         if (duration > 50) {
@@ -293,7 +311,9 @@ export class WebSocketServer {
       for (const ws of wsSet) {
         if (ws.connectionId !== connectionId || ws.readyState !== WebSocket.OPEN) continue;
         try {
-          ws.send(JSON.stringify(message));
+          const payload = JSON.stringify(message);
+          ws.send(payload);
+          this.recordDiagnosticSend(payload);
         } catch (error) {
           logger.error({ connectionId, error, messageType: message.type }, 'Failed to send connection message');
         }
@@ -310,7 +330,9 @@ export class WebSocketServer {
     if (ws.readyState !== WebSocket.OPEN) return;
 
     try {
-      ws.send(JSON.stringify(message));
+      const payload = JSON.stringify(message);
+      ws.send(payload);
+      this.recordDiagnosticSend(payload);
     } catch (err) {
       logger.error({
         userId,
@@ -318,6 +340,51 @@ export class WebSocketServer {
         messageType: message.type,
       }, 'Failed to send message to WebSocket connection');
     }
+  }
+
+  private recordDiagnosticSend(payload: string): void {
+    this.diagnosticSentMessages += 1;
+    this.diagnosticSentBytes += Buffer.byteLength(payload);
+  }
+
+  collectOomDiagnostics(): WebSocketOomDiagnostics {
+    const connections: WebSocketOomDiagnostics['topConnections'] = [];
+    let connectionCount = 0;
+    let openConnectionCount = 0;
+    let totalBufferedBytes = 0;
+    let maxBufferedBytes = 0;
+
+    for (const sockets of this.connections.values()) {
+      for (const socket of sockets) {
+        connectionCount += 1;
+        if (socket.readyState === WebSocket.OPEN) openConnectionCount += 1;
+        const bufferedBytes = socket.bufferedAmount;
+        totalBufferedBytes += bufferedBytes;
+        maxBufferedBytes = Math.max(maxBufferedBytes, bufferedBytes);
+        connections.push({
+          connectionId: socket.connectionId ?? null,
+          kind: socket.identity?.kind ?? null,
+          readyState: socket.readyState,
+          bufferedBytes,
+        });
+      }
+    }
+
+    const sentMessages = this.diagnosticSentMessages;
+    const sentBytes = this.diagnosticSentBytes;
+    this.diagnosticSentMessages = 0;
+    this.diagnosticSentBytes = 0;
+    connections.sort((left, right) => right.bufferedBytes - left.bufferedBytes);
+
+    return {
+      connectionCount,
+      openConnectionCount,
+      sentMessages,
+      sentBytes,
+      totalBufferedBytes,
+      maxBufferedBytes,
+      topConnections: connections.slice(0, 8),
+    };
   }
 
   /**

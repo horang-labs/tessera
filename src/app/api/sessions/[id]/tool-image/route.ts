@@ -10,7 +10,8 @@ import {
   readTerminalToolCallParams,
   supportsTerminalTranscriptHistory,
 } from '@/lib/session/terminal-session-history';
-import { inferImageMime, isImagePath } from '@/lib/tool-results/tool-image';
+import { extractImageToolPath, inferImageMime, isImagePath } from '@/lib/tool-results/tool-image';
+import { extractCachedTerminalTranscriptImagePath } from '@/lib/session/terminal-transcript-image-cache';
 
 // Codex screenshots / large reads can be a few MB; cap to avoid serving huge files.
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -52,12 +53,11 @@ export async function GET(
       return jsonError('not_found', 'Tool call not found', 404);
     }
 
-    // `path` for Codex view_image, `file_path` for Claude Code Read.
-    const rawPath = typeof toolParams.path === 'string'
-      ? toolParams.path
-      : typeof toolParams.file_path === 'string'
-        ? toolParams.file_path
-        : '';
+    // `path` for Codex view_image, `file_path` for Claude Code Read, and
+    // `savedPath` for Codex imageGeneration.
+    const rawPath = extractCachedTerminalTranscriptImagePath(toolParams)
+      ?? extractImageToolPath(toolParams)
+      ?? '';
 
     if (!rawPath.trim() || rawPath.includes('\0')) {
       return jsonError('invalid_file_path', 'Tool call has no image path', 422);

@@ -119,6 +119,7 @@ const allowedProperties = new Set([
   'github_available',
   'has_collection',
   'has_changes',
+  'images_tab_visible',
   'has_pr',
   'is_git_repo',
   'has_task',
@@ -170,7 +171,7 @@ const allowedSources = new Set([
   'pty_direct',
 ]);
 const allowedViews = new Set(['list', 'kanban']);
-const allowedGitTabs = new Set(['git', 'files', 'scripts', 'memory']);
+const allowedGitTabs = new Set(['git', 'files', 'images', 'scripts', 'memory']);
 const allowedGitActions = new Set([
   'commit',
   'fetch',

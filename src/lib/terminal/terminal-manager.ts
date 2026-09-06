@@ -200,6 +200,8 @@ interface TerminalRuntime {
   viewportOwner: string | null;
   outputBuffer: string[];
   outputBufferSize: number;
+  diagnosticOutputChunks: number;
+  diagnosticOutputChars: number;
   // 출력 coalescing(M0): 한 event-loop tick에 도착한 청크를 모아 setImmediate에서
   // 1회 WS 전송한다. replay 버퍼/prefill 감지와는 독립.
   pendingSend: string[];
@@ -280,8 +282,43 @@ export type TerminalHeadlessModelLike = Pick<
   'write' | 'resize' | 'snapshot' | 'readVisibleText' | 'dispose'
 > & Partial<Pick<
   TerminalHeadlessModel,
-  'whenSettled' | 'cursorPosition' | 'isAlternateScreen'
+  'whenSettled' | 'cursorPosition' | 'isAlternateScreen' | 'diagnostics'
 >>;
+
+export interface TerminalManagerOomDiagnostics {
+  runtimeCount: number;
+  outputChunks: number;
+  outputChars: number;
+  headlessPendingWrites: number;
+  headlessPendingChars: number;
+  replayBufferChars: number;
+  pendingSendChunks: number;
+  pendingSendChars: number;
+  pendingFrameCount: number;
+  pendingFrameChars: number;
+  pendingSessionSnapshots: number;
+  subscribers: number;
+  unreadySubscribers: number;
+  topRuntimes: Array<{
+    terminalId: string;
+    sessionId: string | null;
+    generation: number;
+    outputChunks: number;
+    outputChars: number;
+    headlessPendingWrites: number;
+    headlessPendingChars: number;
+    headlessTotalWrites: number;
+    headlessTotalChars: number;
+    replayBufferChars: number;
+    pendingSendChunks: number;
+    pendingSendChars: number;
+    pendingFrameCount: number;
+    pendingFrameChars: number;
+    pendingSessionSnapshots: number;
+    subscribers: number;
+    unreadySubscribers: number;
+  }>;
+}
 
 export interface TerminalManagerOptions {
   closeExitGraceMs?: number;
@@ -854,6 +891,8 @@ export class TerminalManager {
         viewportOwner: null,
         outputBuffer: [],
         outputBufferSize: 0,
+        diagnosticOutputChunks: 0,
+        diagnosticOutputChars: 0,
         pendingSend: [],
         pendingSendTimer: null,
         handoffSessionId,
@@ -960,6 +999,8 @@ export class TerminalManager {
 
       const emitOutput = (data: string) => {
         if (data.length === 0) return;
+        runtime.diagnosticOutputChunks += 1;
+        runtime.diagnosticOutputChars += data.length;
         // replay 버퍼: 원본 청크 순서/내용 그대로 즉시 누적 — coalescing과 독립.
         this.appendBufferedOutput(runtime, data);
         runtime.model.write(data);
@@ -2043,6 +2084,94 @@ export class TerminalManager {
       sessionCount: runtimes.filter((runtime) => runtime.sessionId !== null).length
         + openingEntries.filter((key) => this.openingSessionByTerminalKey.get(key) != null).length,
     };
+  }
+
+  /**
+   * Lightweight counters for the packaged debug build's periodic OOM probe.
+   * No PTY output is copied into the result; interval counters are reset only
+   * after the sample has captured them.
+   */
+  collectOomDiagnostics(): TerminalManagerOomDiagnostics {
+    const totals: Omit<TerminalManagerOomDiagnostics, 'topRuntimes'> = {
+      runtimeCount: this.terminals.size,
+      outputChunks: 0,
+      outputChars: 0,
+      headlessPendingWrites: 0,
+      headlessPendingChars: 0,
+      replayBufferChars: 0,
+      pendingSendChunks: 0,
+      pendingSendChars: 0,
+      pendingFrameCount: 0,
+      pendingFrameChars: 0,
+      pendingSessionSnapshots: 0,
+      subscribers: 0,
+      unreadySubscribers: 0,
+    };
+    const runtimes: TerminalManagerOomDiagnostics['topRuntimes'] = [];
+
+    for (const runtime of this.terminals.values()) {
+      const headless = runtime.model.diagnostics?.() ?? {
+        pendingWrites: 0,
+        pendingChars: 0,
+        totalWrites: 0,
+        totalChars: 0,
+      };
+      let pendingFrameCount = 0;
+      let pendingFrameChars = 0;
+      let unreadySubscribers = 0;
+      for (const subscriber of runtime.subscribers.values()) {
+        if (!subscriber.ready) unreadySubscribers += 1;
+        pendingFrameCount += subscriber.pendingFrames.length;
+        for (const frame of subscriber.pendingFrames) pendingFrameChars += frame.data.length;
+      }
+      let pendingSendChars = 0;
+      for (const chunk of runtime.pendingSend) pendingSendChars += chunk.length;
+
+      const sample = {
+        terminalId: runtime.terminalId,
+        sessionId: runtime.sessionId,
+        generation: runtime.generation,
+        outputChunks: runtime.diagnosticOutputChunks,
+        outputChars: runtime.diagnosticOutputChars,
+        headlessPendingWrites: headless.pendingWrites,
+        headlessPendingChars: headless.pendingChars,
+        headlessTotalWrites: headless.totalWrites,
+        headlessTotalChars: headless.totalChars,
+        replayBufferChars: runtime.outputBufferSize,
+        pendingSendChunks: runtime.pendingSend.length,
+        pendingSendChars,
+        pendingFrameCount,
+        pendingFrameChars,
+        pendingSessionSnapshots: runtime.pendingSessionSnapshots.size,
+        subscribers: runtime.subscribers.size,
+        unreadySubscribers,
+      };
+      runtimes.push(sample);
+
+      totals.outputChunks += sample.outputChunks;
+      totals.outputChars += sample.outputChars;
+      totals.headlessPendingWrites += sample.headlessPendingWrites;
+      totals.headlessPendingChars += sample.headlessPendingChars;
+      totals.replayBufferChars += sample.replayBufferChars;
+      totals.pendingSendChunks += sample.pendingSendChunks;
+      totals.pendingSendChars += sample.pendingSendChars;
+      totals.pendingFrameCount += sample.pendingFrameCount;
+      totals.pendingFrameChars += sample.pendingFrameChars;
+      totals.pendingSessionSnapshots += sample.pendingSessionSnapshots;
+      totals.subscribers += sample.subscribers;
+      totals.unreadySubscribers += sample.unreadySubscribers;
+
+      runtime.diagnosticOutputChunks = 0;
+      runtime.diagnosticOutputChars = 0;
+    }
+
+    runtimes.sort((left, right) => (
+      (right.headlessPendingChars + right.pendingFrameChars + right.pendingSendChars)
+      - (left.headlessPendingChars + left.pendingFrameChars + left.pendingSendChars)
+      || right.outputChars - left.outputChars
+    ));
+
+    return { ...totals, topRuntimes: runtimes.slice(0, 8) };
   }
 
   getActiveSessionIds(userId?: string): Set<string> {

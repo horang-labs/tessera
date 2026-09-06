@@ -37,6 +37,13 @@ export interface TerminalHeadlessSnapshot {
   pendingEscapeTailAnsi?: string;
 }
 
+export interface TerminalHeadlessDiagnostics {
+  pendingWrites: number;
+  pendingChars: number;
+  totalWrites: number;
+  totalChars: number;
+}
+
 /**
  * Server-side xterm model used only for cold surface reattachment.
  *
@@ -49,6 +56,10 @@ export class TerminalHeadlessModel {
   private readonly serializer: SerializeAddon;
   private writeTail: Promise<void> = Promise.resolve();
   private readonly pendingWriteCompletions = new Set<() => void>();
+  private pendingWriteCount = 0;
+  private pendingWriteChars = 0;
+  private totalWriteCount = 0;
+  private totalWriteChars = 0;
   private readonly activeSnapshotOnlyDecModes = new Set<number>();
   private pendingEscapeTail = '';
   private disposed = false;
@@ -163,9 +174,22 @@ export class TerminalHeadlessModel {
   write(data: string): void {
     if (this.disposed || data.length === 0) return;
 
+    this.pendingWriteCount += 1;
+    this.pendingWriteChars += data.length;
+    this.totalWriteCount += 1;
+    this.totalWriteChars += data.length;
+    let pending = true;
+    const settlePendingWrite = () => {
+      if (!pending) return;
+      pending = false;
+      this.pendingWriteCount = Math.max(0, this.pendingWriteCount - 1);
+      this.pendingWriteChars = Math.max(0, this.pendingWriteChars - data.length);
+    };
+
     this.writeTail = this.writeTail
       .then(() => new Promise<void>((resolve) => {
         if (this.disposed) {
+          settlePendingWrite();
           resolve();
           return;
         }
@@ -173,9 +197,13 @@ export class TerminalHeadlessModel {
         const complete = () => {
           if (completed) return;
           completed = true;
-          this.pendingEscapeTail = advancePartialEscapeTail(this.pendingEscapeTail, data);
-          this.pendingWriteCompletions.delete(complete);
-          resolve();
+          try {
+            this.pendingEscapeTail = advancePartialEscapeTail(this.pendingEscapeTail, data);
+          } finally {
+            this.pendingWriteCompletions.delete(complete);
+            settlePendingWrite();
+            resolve();
+          }
         };
         this.pendingWriteCompletions.add(complete);
         try {
@@ -185,9 +213,19 @@ export class TerminalHeadlessModel {
         }
       }))
       .catch(() => {
+        settlePendingWrite();
         // Keep later writes/snapshots usable after one parser failure. The
         // caller retains a bounded raw replay buffer as a fallback.
       });
+  }
+
+  diagnostics(): TerminalHeadlessDiagnostics {
+    return {
+      pendingWrites: this.pendingWriteCount,
+      pendingChars: this.pendingWriteChars,
+      totalWrites: this.totalWriteCount,
+      totalChars: this.totalWriteChars,
+    };
   }
 
   /**

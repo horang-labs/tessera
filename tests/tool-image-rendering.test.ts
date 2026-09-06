@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   buildImageToolResult,
   buildToolImageUrl,
+  extractImageToolPath,
   inferImageMime,
   isImagePath,
   resolveImageToolResultSrc,
@@ -41,6 +42,11 @@ test('buildToolImageUrl / buildImageToolResult encode session + toolUseId', () =
   });
 });
 
+test('extractImageToolPath accepts generated-image savedPath', () => {
+  assert.equal(extractImageToolPath({ savedPath: '/tmp/generated.png' }), '/tmp/generated.png');
+  assert.equal(extractImageToolPath({ path: '/tmp/view.png', savedPath: '/tmp/generated.png' }), '/tmp/view.png');
+});
+
 // --- the route reads through the host filesystem, not the CLI's path ---
 
 test('tool-image route resolves the recorded path for the host filesystem', () => {
@@ -68,6 +74,8 @@ test('tool-image route reads a PTY session\'s tool call from the provider transc
   // inline image 404s. The transcript the chat view decodes is the only source.
   assert.match(routeSource, /supportsTerminalTranscriptHistory\(session\)/);
   assert.match(routeSource, /readTerminalToolCallParams\(session, toolUseId/);
+  assert.match(routeSource, /extractCachedTerminalTranscriptImagePath\(toolParams\)/);
+  assert.match(routeSource, /extractImageToolPath\(toolParams\)/);
 });
 
 // --- codex view_image (imageView) end-to-end through the parser ---
@@ -155,7 +163,7 @@ test('Codex dynamic tool image output is preserved for inline rendering', () => 
   assert.equal(resolveImageToolResultSrc(toolCall.toolUseResult), 'data:image/png;base64,QUJDRA==');
 });
 
-test('Codex imageGeneration keeps durable image bytes out of textual output', () => {
+test('Codex imageGeneration serves the saved file without retaining duplicate image bytes', () => {
   const parsed = codexProtocolParser.parseStdout(
     'codex-generated-image',
     JSON.stringify({
@@ -181,8 +189,7 @@ test('Codex imageGeneration keeps durable image bytes out of textual output', ()
   assert.deepEqual(toolCall.toolUseResult, {
     kind: 'file_read',
     contentType: 'image',
-    base64: 'QUJDRA==',
-    mimeType: 'image/png',
+    url: '/api/sessions/codex-generated-image/tool-image?toolUseId=generated_image_1',
   });
   assert.equal(toolCall.toolParams.savedPath, '/tmp/generated.png');
 });

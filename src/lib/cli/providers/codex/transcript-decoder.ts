@@ -258,21 +258,32 @@ function decodeEventMessage(
 function decodeImageGenerationCompleted(
   payload: Record<string, any>,
   timestamp: string,
+  preferInlineImages = false,
 ): SessionHistoryEvent | null {
   if (payload.type !== 'item_completed' || !isRecord(payload.item)) return null;
   const item = payload.item;
   if (item.kind !== 'image_gen.generation' && item.type !== 'imageGeneration') return null;
   const id = typeof item.id === 'string' && item.id ? item.id : `image-generation-${timestamp}`;
   const status = item.status === 'failed' || item.failure ? 'error' : 'completed';
+  const savedPath = typeof item.savedPath === 'string' && item.savedPath
+    ? item.savedPath
+    : undefined;
   const imageResult: FileReadImageToolResult | undefined = status === 'completed'
-    && typeof item.result === 'string'
-    && item.result.length > 0
-    ? {
+    ? savedPath && !(preferInlineImages && typeof item.result === 'string' && item.result.length > 0)
+      ? {
+          kind: 'file_read',
+          contentType: 'image',
+          path: savedPath,
+          mimeType: 'image/png',
+        }
+      : typeof item.result === 'string' && item.result.length > 0
+        ? {
         kind: 'file_read',
         contentType: 'image',
         base64: item.result,
         mimeType: 'image/png',
       }
+        : undefined
     : undefined;
   return {
     v: HISTORY_VERSION,
@@ -282,7 +293,7 @@ function decodeImageGenerationCompleted(
     toolParams: {
       itemType: 'imageGeneration',
       ...(typeof item.revisedPrompt === 'string' ? { revisedPrompt: item.revisedPrompt } : {}),
-      ...(typeof item.savedPath === 'string' ? { savedPath: item.savedPath } : {}),
+      ...(savedPath ? { savedPath } : {}),
       ...(typeof item.transparentBackground === 'boolean'
         ? { transparentBackground: item.transparentBackground }
         : {}),
@@ -367,6 +378,7 @@ function decodeResponseMessage(
 export function decodeCodexTranscriptLine(
   line: string,
   state: CodexTranscriptDecoderState,
+  options: { preferInlineImages?: boolean } = {},
 ): SessionHistoryEvent[] {
   const trimmed = line.trim();
   if (!trimmed) return [];
@@ -388,7 +400,7 @@ export function decodeCodexTranscriptLine(
   }
 
   if (record.type === 'event_msg') {
-    const imageGeneration = decodeImageGenerationCompleted(payload, timestamp);
+    const imageGeneration = decodeImageGenerationCompleted(payload, timestamp, options.preferInlineImages);
     if (imageGeneration) return [imageGeneration];
     if (state.readResponseItemConversation) return [];
     const event = decodeEventMessage(payload, timestamp);

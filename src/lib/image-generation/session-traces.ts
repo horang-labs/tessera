@@ -18,6 +18,7 @@ import {
 } from '@/lib/session/terminal-session-history';
 import { inferImageMime, isImagePath } from '@/lib/tool-results/tool-image';
 import logger from '@/lib/logger';
+import { readImageCards } from '@/lib/db/image-generation-cache';
 import {
   projectImageGenerationTraces,
   type ImageGenerationTrace,
@@ -40,6 +41,7 @@ export async function readSessionImageGenerationTraces(
   session: dbSessions.SessionRow,
   userId: string,
 ): Promise<ImageGenerationTrace[]> {
+  if (session.provider === 'codex' && supportsTerminalTranscriptHistory(session)) return readImageCards(session.id);
   const replay = supportsTerminalTranscriptHistory(session)
     ? await readTerminalSessionReplayState(session, userId)
     : reduceSessionReplayEvents(session.id, await sessionHistory.readEvents(session.id), {
@@ -61,8 +63,12 @@ export async function ensureTraceInputAgentPaths(
   const userKey = createHash('sha256').update(userId).digest('hex').slice(0, 16);
   const inputDir = join(tmpdir(), 'tessera-image-generation-inputs', userKey);
 
-  await Promise.all(traces.flatMap((trace) => trace.inputs.map(async (input) => {
+  await Promise.all(traces.flatMap((trace) => [...trace.inputs, ...(trace.result ? [trace.result] : [])].map(async (input) => {
     if (input.agentPath) return;
+    if (input.locator.kind === 'cache') {
+      input.agentPath = normalizeCwdForCliEnvironment(input.locator.path, environment);
+      return;
+    }
     if (input.locator.kind === 'path') {
       input.agentPath = input.locator.path;
       return;
@@ -102,6 +108,13 @@ export async function readTraceImageBytes(
     return { bytes, mimeType: locator.mimeType };
   }
   if (locator.path.includes('\0') || !isImagePath(locator.path)) return null;
+  if (locator.kind === 'cache') {
+    try {
+      const stat = await fs.stat(locator.path);
+      if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES) return null;
+      return { bytes: await fs.readFile(locator.path), mimeType: inferImageMime(locator.path) ?? 'application/octet-stream' };
+    } catch { return null; }
+  }
   const environment = await getAgentEnvironment(userId);
   const reportedHostPath = await resolveAgentReportedPath(locator.path, environment);
   const hostPath = resolveCodexAccountOverlayPath(reportedHostPath, isBridgedAgentEnvironment(environment)
