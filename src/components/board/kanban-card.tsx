@@ -1070,6 +1070,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
               />
               <span className="ml-auto inline-flex items-center gap-1.5">
                 <TaskPreparationBadge
+                  sessionId={primarySessionId ?? null}
                   status={task.preparationStatus}
                 />
                 <TaskPrBadge

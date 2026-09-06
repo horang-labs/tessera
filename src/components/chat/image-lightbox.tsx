@@ -2,7 +2,7 @@
 
 import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Minus, Plus, RotateCcw } from 'lucide-react';
 import { useCloseOnEscape } from '@/hooks/use-close-on-escape';
@@ -19,6 +19,10 @@ export interface ImageLightboxProps {
 export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   const { t } = useI18n();
   const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panRef = useRef<{ pointerId: number; x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+  const suppressClickRef = useRef(false);
   const electronPlatform = useElectronPlatform();
   // On Windows the window controls are a native titleBarOverlay the page can
   // never paint above, so a close button in the top-right corner sits *under*
@@ -52,6 +56,10 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   }, []);
 
   const handleOverlayClick = useCallback(() => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     closeLightbox();
   }, [closeLightbox]);
 
@@ -64,6 +72,37 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
     zoomBy(event.deltaY < 0 ? 0.25 : -0.25);
   }, [zoomBy]);
 
+  const handlePanStart = (event: React.PointerEvent<HTMLImageElement>) => {
+    suppressClickRef.current = false;
+    if (event.button !== 0 || panRef.current) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panRef.current = {
+      pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+      offsetX: offset.x, offsetY: offset.y,
+    };
+    setIsPanning(true);
+  };
+
+  const handlePanMove = (event: React.PointerEvent<HTMLImageElement>) => {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    const dx = event.clientX - pan.x;
+    const dy = event.clientY - pan.y;
+    if (!suppressClickRef.current && Math.hypot(dx, dy) < 4) return;
+    suppressClickRef.current = true;
+    setOffset({ x: pan.offsetX + dx, y: pan.offsetY + dy });
+  };
+
+  const handlePanEnd = (event: React.PointerEvent<HTMLImageElement>) => {
+    if (panRef.current?.pointerId !== event.pointerId) return;
+    panRef.current = null;
+    setIsPanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
   if (typeof document === 'undefined') {
     return null;
   }
@@ -71,8 +110,11 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   return createPortal(
     <div
       {...telemetryClickAttributes('message.image.close', 'message')}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/80"
       onClick={handleOverlayClick}
+      onPointerDownCapture={() => {
+        if (!panRef.current) suppressClickRef.current = false;
+      }}
       style={{ touchAction: 'none' }}
       onWheel={handleWheel}
       role="dialog"
@@ -84,25 +126,25 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
         type="button"
         onClick={closeLightbox}
         className={cn(
-          'absolute right-4 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors text-xl',
+          'absolute z-10 right-4 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors text-xl',
           avoidsWindowControls ? 'top-12' : 'top-4',
         )}
         aria-label={t('common.close')}
       >
         ×
       </button>
-      {/*
-        Nothing swallows the click: clicking anywhere — the backdrop or the
-        picture itself — dismisses. The old wrapper was sized to the viewport
-        and stopped propagation, so the click that opened the image could not
-        close it again anywhere the user would naturally aim.
-      */}
       {/* eslint-disable-next-line @next/next/no-img-element -- dynamic local image, dimensions unknown */}
       <img
         src={src}
         alt=""
-        className="max-h-[82vh] max-w-[90vw] rounded-lg object-contain shadow-2xl transition-transform duration-150"
-        style={{ transform: `scale(${zoom})` }}
+        draggable={false}
+        onPointerDown={handlePanStart}
+        onPointerMove={handlePanMove}
+        onPointerUp={handlePanEnd}
+        onPointerCancel={handlePanEnd}
+        onLostPointerCapture={handlePanEnd}
+        className={cn('max-h-[82vh] max-w-[90vw] select-none rounded-lg object-contain shadow-2xl', isPanning ? 'cursor-grabbing' : 'cursor-grab')}
+        style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
       />
       <div
         {...telemetryIgnoreAttributes('event_boundary')}
@@ -135,7 +177,7 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
         <button
           {...telemetryClickAttributes('message.image.zoom_reset', 'message')}
           type="button"
-          onClick={() => setZoom(1)}
+          onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }}
           className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-white/15"
           aria-label={t('chat.imageZoomReset')}
           title={t('chat.imageZoomReset')}
