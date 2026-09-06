@@ -87,6 +87,74 @@ function openSharedSession(projectDir: string): string {
   return useTabStore.getState().activeTabId;
 }
 
+test('All Projects collapses disposable New Tabs and keeps occupied tabs through reload and round trips', () => {
+  resetWorkspace();
+  for (const projectDir of ['project-a', 'project-c']) {
+    openSharedSession(projectDir);
+    useTabStore.getState().openNewTab();
+  }
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  const countEmpty = () => useTabStore.getState().tabs.filter((tab) => {
+    const data = usePanelStore.getState().getTabPanelData(tab.id)!;
+    return Object.values(data.panels).every((panel) => panel.sessionId === null);
+  }).length;
+  assert.equal(countEmpty(), 1);
+  assert.equal(useTabStore.getState().tabs.length, 3);
+  useTabStore.getState().persistToLocalStorage();
+  resetWorkspace(false);
+  useTabStore.getState().restoreFromLocalStorage();
+  assert.equal(countEmpty(), 1);
+  assert.equal(useTabStore.getState().tabs.length, 3);
+  for (const projectDir of ['project-a', 'project-c']) {
+    useTabStore.getState().switchProject(projectDir);
+    assert.ok(useTabStore.getState().findSessionLocation(sharedSession.id));
+    useTabStore.getState().openNewTab();
+  }
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  assert.equal(countEmpty(), 1);
+  assert.equal(useTabStore.getState().tabs.length, 3);
+});
+
+test('All Projects keeps named, split, worktree and terminal surfaces when collapsing New Tabs', () => {
+  resetWorkspace();
+  useTabStore.getState().switchProject('project-a');
+  const named = useTabStore.getState().createTab();
+  useTabStore.getState().renameTab(named, 'Scratch');
+  const split = useTabStore.getState().createTab();
+  usePanelStore.getState().splitPanel(usePanelStore.getState().getTabPanelData(split)!.activePanelId, 'horizontal');
+  const worktree = useTabStore.getState().createTab();
+  usePanelStore.getState().assignWorktree(usePanelStore.getState().getTabPanelData(worktree)!.activePanelId, 'worktree-1');
+  const terminal = useTabStore.getState().createTab();
+  usePanelStore.getState().assignTerminal(usePanelStore.getState().getTabPanelData(terminal)!.activePanelId, 'terminal-1');
+  const expectedPanels = structuredClone(usePanelStore.getState().tabPanels);
+  useTabStore.getState().switchProject('project-c');
+  const activeEmpty = useTabStore.getState().activeTabId;
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  assert.deepEqual(new Set(useTabStore.getState().tabs.map((tab) => tab.id)), new Set([activeEmpty, named, split, worktree, terminal]));
+  for (const id of [named, split, worktree, terminal]) {
+    assert.deepEqual(usePanelStore.getState().getTabPanelData(id), expectedPanels[id]);
+  }
+});
+
+test('collapsing New Tabs keeps the active empty surface and the preceding Session project', () => {
+  resetWorkspace();
+  useSessionStore.setState({projects: ['a', 'b'].map((name) => ({
+    ...project(`project-${name}`),
+    sessions: [{...sharedSession, id: name, projectDir: `project-${name}`}],
+  }))});
+  for (const name of ['a', 'b']) {
+    useTabStore.getState().switchProject(`project-${name}`);
+    useTabStore.getState().createTabWithSession(name);
+    useTabStore.getState().openNewTab();
+  }
+  const emptyB = useTabStore.getState().activeTabId;
+  assert.equal(useSessionStore.getState().lastActiveProjectDir, 'project-b');
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  assert.equal(useTabStore.getState().activeTabId, emptyB);
+  assert.equal(useSessionStore.getState().activeSessionId, null);
+  assert.equal(useSessionStore.getState().lastActiveProjectDir, 'project-b');
+});
+
 test('A -> All Projects -> A preserves session panels and the project selection', () => {
   resetWorkspace();
   useSessionStore.setState({

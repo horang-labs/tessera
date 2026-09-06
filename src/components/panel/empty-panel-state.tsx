@@ -84,16 +84,8 @@ export function resolveEmptyPanelProjectId(
 
 export function resolveAllProjectsDefaultProjectId(
   projects: ReadonlyArray<{ encodedDir: string }>,
-  tabProjectDir: string | null,
   lastActiveProjectDir: string | null,
 ): string | null {
-  if (
-    tabProjectDir
-    && tabProjectDir !== ALL_PROJECTS_SENTINEL
-    && projects.some((project) => project.encodedDir === tabProjectDir)
-  ) {
-    return tabProjectDir;
-  }
   return resolveLastActiveProjectDir(projects, lastActiveProjectDir);
 }
 
@@ -145,9 +137,6 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const isActivePanel = usePanelStore((state) => state.tabPanels[tabId]?.activePanelId === panelId);
   const panelCount = usePanelStore((state) => Object.keys(state.tabPanels[tabId]?.panels ?? EMPTY_PANELS).length);
   const selectedProjectDir = useBoardStore((state) => state.selectedProjectDir);
-  const tabProjectDir = useTabStore((state) =>
-    state.tabs.find((tab) => tab.id === tabId)?.projectDir ?? null
-  );
   const branchPrefix = useSettingsStore((state) => state.settings.gitConfig.branchPrefix);
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
@@ -169,7 +158,6 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const requiresProjectSelection = selectedProjectDir === ALL_PROJECTS_SENTINEL;
   const defaultAllProjectsProjectId = resolveAllProjectsDefaultProjectId(
     projects,
-    tabProjectDir,
     lastActiveProjectDir,
   );
   const allProjectsProjectId = allProjectsProjectOverride === undefined

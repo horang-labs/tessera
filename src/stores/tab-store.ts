@@ -165,9 +165,12 @@ function isPristineEmptyTab(
   tab: Tab,
   panelStore: ReturnType<typeof usePanelStore.getState>,
 ): boolean {
+  return isPristineEmptyTabData(tab, panelStore.tabPanels[tab.id]);
+}
+
+function isPristineEmptyTabData(tab: Tab, tabData: TabPanelData | undefined): boolean {
   if (tab.title !== null) return false;
 
-  const tabData = panelStore.tabPanels[tab.id];
   if (!tabData || tabData.layout.type !== 'leaf') return false;
   if (Object.keys(tabData.panels).length !== 1) return false;
 
@@ -175,6 +178,8 @@ function isPristineEmptyTab(
   return Boolean(
     panel
     && panel.sessionId === null
+    && !panel.worktreeId
+    && !panel.creationMode
     && !panel.terminalId
     && !panel.terminalSessionId
     && !panel.terminalCwd,
@@ -290,6 +295,7 @@ function getVisibleTabs(
   globalState: ProjectTabState | null,
   projectDir: string | null,
   tabOrderIdsByScope: Record<string, string[]> = {},
+  preferredActiveTabId?: string | null,
 ): Tab[] {
   const globalTabs = getStateTabs(globalState);
   const visibleTabs = isAllProjectsScope(projectDir)
@@ -307,7 +313,21 @@ function getVisibleTabs(
   const orderedTabs = (tabOrderIdsByScope[projectDir] ?? [])
     .flatMap((tabId) => tabsById.get(tabId) ?? []);
   const orderedIds = new Set(orderedTabs.map((tab) => tab.id));
-  return [...orderedTabs, ...visibleTabs.filter((tab) => !orderedIds.has(tab.id))];
+  const ordered = [...orderedTabs, ...visibleTabs.filter((tab) => !orderedIds.has(tab.id))];
+  if (!isAllProjectsScope(projectDir)) return ordered;
+
+  // Empty start screens are disposable placeholders, not separate work.
+  // Keep one in All Projects; named, split, and terminal tabs stay independent.
+  const isEmpty = (tab: Tab) => {
+    const data = tab.projectDir === null
+      ? globalState?.tabPanelSnapshots?.[tab.id]
+      : projectStates[tab.projectDir]?.tabPanelSnapshots?.[tab.id];
+    return isPristineEmptyTabData(tab, data);
+  };
+  const emptyTabs = ordered.filter(isEmpty);
+  const retained = emptyTabs.find((tab) => tab.id === preferredActiveTabId) ?? emptyTabs[0];
+  const discarded = new Set(emptyTabs.filter((tab) => tab !== retained).map((tab) => tab.id));
+  return ordered.filter((tab) => !discarded.has(tab.id));
 }
 
 function getVisibleLruTabIds(
@@ -1519,6 +1539,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         nextGlobalTabState,
         currentProjectDir,
         tabOrderIdsByScope,
+        preferredActiveTabId,
       );
 
       if (visibleTabs.length === 0) {
@@ -1783,6 +1804,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       globalTabState,
       projectDir,
       tabOrderIdsByScope,
+      activeTabIdsByScope[projectDir] ?? state.activeTabId,
     );
 
     if (visibleTabs.length === 0) {
