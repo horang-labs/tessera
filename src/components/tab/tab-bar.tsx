@@ -118,15 +118,15 @@ export const TabBar = memo(function TabBar() {
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
-  const openGitPanelTab = useGitStore((state) => state.openTab);
+  const openGitPanel = useGitStore((state) => state.open);
   const isPhoneViewport = usePhoneViewport();
   const handlePhoneGitToggle = useCallback(() => {
     if (gitPanelOpen) {
       toggleGitPanel();
       return;
     }
-    openGitPanelTab('git');
-  }, [gitPanelOpen, openGitPanelTab, toggleGitPanel]);
+    openGitPanel();
+  }, [gitPanelOpen, openGitPanel, toggleGitPanel]);
 
   // Scrollable container ref
   const containerRef = useRef<HTMLDivElement>(null);

@@ -347,6 +347,7 @@ function attachWebContentsContextMenu(win: BrowserWindow): void {
         terminalPanel
           ? {
               panelId: terminalPanel.panelId,
+              canSplit: terminalPanel.canSplit,
               onSplit: (targetPanelId, placement) => {
                 sendTerminalPanelSplitCommand(win, targetPanelId, placement);
               },

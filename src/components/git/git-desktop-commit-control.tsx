@@ -187,8 +187,8 @@ function GitDesktopCommitControlView({
 
   const openChangedFiles = useCallback(() => {
     closeComposer();
-    useGitStore.getState().openTab("git");
-  }, [closeComposer]);
+    useGitStore.getState().openTab("git", controller.sessionId);
+  }, [closeComposer, controller.sessionId]);
 
   const openComposer = useCallback(() => {
     if (!canOpenComposer) {

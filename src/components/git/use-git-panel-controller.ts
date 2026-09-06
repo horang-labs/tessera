@@ -1143,7 +1143,7 @@ export function useGitPanelController(
   const runPrimaryAction = useCallback(() => {
     if (!primaryAction.enabled) return;
     if (primaryAction.action === "resolve_conflicts") {
-      useGitStore.getState().openConflictRecovery();
+      useGitStore.getState().openConflictRecovery(sessionId);
       return;
     }
     if (primaryAction.action === "commit") return commitSelectedFiles();
@@ -1173,6 +1173,7 @@ export function useGitPanelController(
     commitSelectedFiles,
     handleArchiveClick,
     primaryAction,
+    sessionId,
     runBranchAction,
     stateSnapshot,
     viewPullRequest,
@@ -1206,7 +1207,7 @@ export function useGitPanelController(
 
     if (id === "commit") return commitSelectedFiles();
     if (id === "open_source_control") {
-      return useGitStore.getState().openTab("git");
+      return useGitStore.getState().openTab("git", sessionId);
     }
     if (chosen.kind === "view_pr") return viewPullRequest();
 
@@ -1234,6 +1235,7 @@ export function useGitPanelController(
     commitDraftBlocked,
     commitSelectedFiles,
     menuActions,
+    sessionId,
     runBranchAction,
     runCommitAndPush,
     stateSnapshot,
@@ -1363,6 +1365,7 @@ export function useGitPanelController(
 
 
   return {
+    sessionId,
     hasActiveSession: Boolean(target),
     changedFileCount,
     commitSelectionKey: worktreeKey,

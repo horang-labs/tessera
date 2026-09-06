@@ -25,9 +25,11 @@ import {
  */
 export function TaskPreparationBadge({
   status,
+  sessionId,
   presentation = 'label',
 }: {
   status: PreparationStatus | undefined;
+  sessionId: string | null;
   presentation?: 'label' | 'icon';
 }) {
   const { t } = useI18n();
@@ -54,7 +56,7 @@ export function TaskPreparationBadge({
         // The click is left to bubble on purpose: the row it sits in opens the
         // session, and the panel then shows that worktree's scripts rather
         // than whichever worktree happened to be open before.
-        openTab('scripts');
+        openTab('scripts', sessionId);
       }}
       title={tooltip}
       aria-label={label}
