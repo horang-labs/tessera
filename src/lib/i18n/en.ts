@@ -504,6 +504,7 @@ export const en: I18nMessages = {
     save: 'Save',
     cancel: 'Cancel',
     close: 'Close',
+    closePeek: 'Close Peek',
     reset: 'Reset',
     loading: 'Loading...',
     or: 'or',

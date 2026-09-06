@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, SquareTerminal, Terminal, X } from 'lucide-react';
+import { PeekContextMenu } from './peek-context-menu';
 import { ChatArea } from '@/components/chat/chat-area';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
@@ -68,6 +69,8 @@ export function SessionPeek({
   const setPersistedFileWidth = useBoardStore((state) => state.setPeekFileSidecarWidth);
   const terminalViewMode = useTerminalViewMode(sessionId);
   const setTerminalViewMode = useTerminalViewModeStore((state) => state.setMode);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const dismissContextMenu = useCallback(() => setContextMenuPosition(null), []);
   const dialogRef = useRef<HTMLDivElement>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -278,6 +281,16 @@ export function SessionPeek({
         aria-labelledby={showSessionContent ? titleId : undefined}
         aria-label={isFileOnly ? peekFileLabel : undefined}
         tabIndex={-1}
+        onContextMenuCapture={(event) => {
+          const target = event.target as HTMLElement;
+          // Keep editors and their own menus intact; capture PTY events before
+          // xterm consumes them, suppressing the native browser/Electron menu.
+          if (target.closest('[role="menu"], aside, input, [contenteditable="true"]')
+            || (target.closest('textarea') && !target.closest('.xterm'))) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setContextMenuPosition({ x: event.clientX, y: event.clientY });
+        }}
         onKeyDown={handleDialogKeyDown}
         className="flex min-h-0 overflow-hidden rounded-xl border border-(--divider) bg-(--chat-bg) shadow-[0_28px_90px_rgba(0,0,0,0.42)]"
         style={{
@@ -417,6 +430,17 @@ export function SessionPeek({
           </div>
         </div>
       </div>
+      {contextMenuPosition ? (
+        <PeekContextMenu
+          position={contextMenuPosition}
+          onDismiss={dismissContextMenu}
+          onClosePeek={onClose}
+          onToggleView={canToggleTerminalView ? () => setTerminalViewMode(
+            sessionId, isTerminalChatView ? 'terminal' : 'chat',
+          ) : undefined}
+          toggleViewLabel={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+        />
+      ) : null}
     </div>
   );
 }

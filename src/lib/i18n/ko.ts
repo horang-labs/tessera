@@ -506,6 +506,7 @@ export const ko: I18nMessages = {
     save: '저장',
     cancel: '취소',
     close: '닫기',
+    closePeek: 'Peek 닫기',
     reset: '초기화',
     loading: '로딩 중...',
     or: '또는',
