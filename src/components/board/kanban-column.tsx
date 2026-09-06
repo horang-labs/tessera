@@ -137,7 +137,7 @@ function PortfolioProjectHeader({
 }) {
   return (
     <div
-      className="sticky top-0 z-10 -mx-0.5 flex items-center gap-1.5 bg-(--board-bg) px-1 py-0"
+      className="sticky top-0 z-10 -mx-0.5 flex cursor-default items-center gap-1.5 bg-(--board-bg) px-1 py-0"
       data-testid={`kanban-project-group-${project.encodedDir}`}
     >
       <span
