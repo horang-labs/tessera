@@ -150,7 +150,7 @@
     "concurrently": "^9.0.0",
     "cross-env": "^7.0.3",
     "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
+    "electron-builder": "27.0.0-alpha.8",
     "esbuild": "0.28.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.3",
@@ -170,16 +170,17 @@
     "productName": "Tessera",
     "copyright": "Copyright (c) 2026 Horang Labs, Inc.",
     "afterPack": "scripts/electron-after-pack.cjs",
-    "npmRebuild": false,
-    "asar": true,
-    "asarUnpack": [
-      "**/node_modules/better-sqlite3/**",
-      "**/sql.js/**",
-      "**/node_modules/sql.js/**",
-      "**/node_modules/node-pty/prebuilds/**",
-      "**/node_modules/node-pty/build/Release/*.node",
-      "**/node_modules/node-pty/build/Debug/*.node"
-    ],
+    "allowMissingDependencies": true,
+    "asar": {
+      "unpack": [
+        "**/node_modules/better-sqlite3/**",
+        "**/sql.js/**",
+        "**/node_modules/sql.js/**",
+        "**/node_modules/node-pty/prebuilds/**",
+        "**/node_modules/node-pty/build/Release/*.node",
+        "**/node_modules/node-pty/build/Debug/*.node"
+      ]
+    },
     "files": [
       "**/*",
       "!**/.next/cache{,/**/*}",
@@ -210,9 +211,11 @@
       "target": "dmg",
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",
-      "hardenedRuntime": true,
-      "entitlements": "scripts/entitlements.mac.plist",
-      "entitlementsInherit": "scripts/entitlements.mac.plist"
+      "sign": {
+        "entitlements": "scripts/entitlements.mac.plist",
+        "entitlementsInherit": "scripts/entitlements.mac.plist",
+        "hardenedRuntime": true
+      }
     },
     "dmg": {
       "artifactName": "Tessera-${version}-macos-${arch}.${ext}",
@@ -225,6 +228,9 @@
       "packageName": "tessera",
       "artifactName": "Tessera-${version}-linux-${arch}.${ext}",
       "afterInstall": "scripts/linux-deb-after-install.tpl"
+    },
+    "nativeModules": {
+      "npmRebuild": false
     }
   }
 }

@@ -243,6 +243,10 @@ async function copyTurbopackExternalAliases() {
 }
 
 async function writeRuntimePackageJson() {
+  // This is a file-traced runtime, not a complete npm install: nested package
+  // manifests still list dependencies already bundled by Next.js or unused at
+  // runtime. build.allowMissingDependencies preserves electron-builder <=26's
+  // warning behavior for those declarations; NFT selects the shipped files.
   const sourcePackageJson = JSON.parse(
     await fs.readFile(path.join(rootDir, 'package.json'), 'utf8')
   );
