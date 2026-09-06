@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useCallback, useContext, useEffect, useMemo, useRef, type DragEvent, type MouseEvent } from 'react';
-import { X as XIcon, KeyboardIcon, FolderGit2, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, ChevronDown, GitBranch } from 'lucide-react';
+import { X as XIcon, KeyboardIcon, FolderGit2, MessageSquare, AlertCircle, GripVertical, Plus, Terminal, GitBranch } from 'lucide-react';
 import { usePanelStore, TabIdContext, EMPTY_PANELS } from '@/stores/panel-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useBoardStore } from '@/stores/board-store';
 import { useTabStore } from '@/stores/tab-store';
+import { useTaskStore } from '@/stores/task-store';
 import { useCollectionStore } from '@/stores/collection-store';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useWorktreeBaseRefs } from '@/hooks/use-worktree-base-refs';
@@ -23,6 +24,7 @@ import {
   normalizeManagedWorktreeSlug,
 } from '@/lib/worktrees/naming';
 import { CliProviderChipSelector } from '@/components/chat/cli-provider-chip-selector';
+import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useProvidersStore } from '@/stores/providers-store';
@@ -30,6 +32,7 @@ import { useFolderBrowserStore } from '@/stores/folder-browser-store';
 import type { Collection } from '@/types/collection';
 import { setPanelNodeDragData } from '@/lib/dnd/panel-session-drag';
 import { v4 as uuidv4 } from 'uuid';
+import { SessionLocationSelector, useSessionLocation } from '@/components/session/session-location-selector';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 import { resolveLastActiveProjectDir } from '@/lib/session/last-active-project';
@@ -63,7 +66,8 @@ function getEmptyPanelShortcutTargetKind(target: EventTarget | null): EmptyPanel
     return 'execution-mode-radio';
   }
   if (
-    target.tagName === 'INPUT'
+    target.closest('[data-session-location-selector], [data-custom-select]')
+    || target.tagName === 'INPUT'
     || target.tagName === 'TEXTAREA'
     || target.tagName === 'SELECT'
     || target.isContentEditable
@@ -183,6 +187,8 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     return projects[0] ?? null;
   }, [projects, requiresProjectSelection, resolvedProjectId, selectionSession]);
   const activeProjectId = activeProject?.encodedDir ?? null;
+  const sessionLocation = useSessionLocation(activeProjectId, activeProject?.decodedPath ?? '');
+  const selectedWorktree = sessionLocation.selectedWorktree;
   const collections = useCollectionStore((state) =>
     activeProjectId ? state.collectionsByProject?.[activeProjectId] ?? EMPTY_COLLECTIONS : EMPTY_COLLECTIONS
   );
@@ -298,13 +304,19 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     }
 
     if (mode === 'chat') {
-      await createSession({
-        workDir: activeProject.decodedPath,
+      if (!sessionLocation.canSubmit) return;
+      const sessionId = await createSession({
+        workDir: selectedWorktree?.workDir ?? activeProject.decodedPath,
         parentProjectId: activeProject.encodedDir,
+        taskId: selectedWorktree?.id,
+        worktreeBranch: selectedWorktree?.worktreeBranch,
         providerId: selectedProvider,
-        collectionId: selectedCollectionId ?? undefined,
+        collectionId: selectedWorktree ? selectedWorktree.collectionId : selectedCollectionId ?? undefined,
         executionMode,
       });
+      if (sessionId && selectedWorktree) {
+        await useTaskStore.getState().loadTasks(activeProject.encodedDir, { setCurrent: false });
+      }
       return;
     }
 
@@ -360,6 +372,8 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     }
   }, [
     activeProject,
+    selectedWorktree,
+    sessionLocation.canSubmit,
     assignTerminal,
     createSession,
     createWorktreeSession,
@@ -399,6 +413,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
   const isSubmitting = isCreating || isSubmittingTask;
   const isLaunchDisabled = isSubmitting
     || !activeProject
+    || (mode === 'chat' && !sessionLocation.canSubmit)
     || (mode === 'task' && !worktreeSourceForCreate)
     || (mode !== 'shell' && (!isSelectedProviderReady || !isSelectedExecutionModeSupported));
   const branchPreview = activeProject
@@ -408,12 +423,14 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
     ? buildManagedWorktreePreviewPath(activeProject.decodedPath, branchPrefix, branchSlug, pathTemplate)
     : '';
   const normalizedBranchPrefix = normalizeManagedWorktreeBranchPrefix(branchPrefix);
-  const sessionLocationPath = activeProject
+  const sessionLocationPath = selectedWorktree?.workDir ?? (activeProject
     ? activeProject.projectWorktree?.displayPath
       ?? activeProject.displayPath
       ?? activeProject.decodedPath
-    : '';
-  const sessionLocationBranch = activeProject?.projectWorktree?.currentBranch ?? null;
+    : '');
+  const sessionLocationBranch = selectedWorktree
+    ? selectedWorktree.worktreeBranch ?? null
+    : activeProject?.projectWorktree?.currentBranch ?? null;
   const panelControls = panelCount >= 2 ? (
     <>
       <button
@@ -510,26 +527,17 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                     <FolderGit2 className="h-4 w-4 text-(--text-muted)" />
                   )}
                 </span>
-                <select
+                <Select
                   {...telemetryClickAttributes('creation.project.select', 'new_session')}
                   id={`empty-panel-project-${panelId}`}
                   value={activeProjectId ?? ''}
-                  onChange={(event) => handleProjectChange(event.target.value)}
-                  className="h-10 w-full appearance-none rounded-xl border border-(--divider) bg-(--input-bg) py-2 pl-11 pr-10 text-sm font-medium text-(--sidebar-text-active) outline-none transition-colors hover:border-(--text-muted)/50 focus:border-(--accent) focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_16%,transparent)]"
+                  onValueChange={handleProjectChange}
+                  className="h-10 pl-11 text-sm font-medium"
                   data-testid="empty-panel-project-select"
                   aria-describedby={`empty-panel-project-help-${panelId}`}
-                >
-                  <option value="">{t('task.creation.projectPlaceholder')}</option>
-                  {projects.map((project) => (
-                    <option key={project.encodedDir} value={project.encodedDir}>
-                      {project.displayName}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--text-muted)"
-                  aria-hidden="true"
+                  options={[{ value: '', label: t('task.creation.projectPlaceholder') }, ...projects.map((project) => ({ value: project.encodedDir, label: project.displayName }))]}
                 />
+
               </div>
               <p
                 id={`empty-panel-project-help-${panelId}`}
@@ -604,7 +612,7 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 <span className="mt-1 block text-[11px] leading-4 text-(--text-muted)">
                   {!activeProject && requiresProjectSelection
                     ? t('task.creation.selectProjectHint')
-                    : t('task.creation.chatCreatesHere')}
+                    : t('task.creation.chatInstantHint')}
                 </span>
               </button>
 
@@ -654,14 +662,12 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
             <div className="mt-4 max-w-xl space-y-4 border-l-2 border-[color-mix(in_srgb,var(--accent)_16%,transparent)] pl-4">
               {mode === 'chat' && activeProject ? (
                 <div className="space-y-1.5">
-                  <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
-                    {t('task.creation.sessionLocationLabel')}
-                  </span>
-                  <DetailedSessionLocationIdentity
-                    projectName={activeProject.displayName}
+                  <SessionLocationSelector location={sessionLocation} disabled={isSubmitting} showPath={false} />
+                  {(sessionLocation.locationKind === 'project' || selectedWorktree) && <DetailedSessionLocationIdentity
+                    projectName={selectedWorktree?.title ?? activeProject.displayName}
                     branch={sessionLocationBranch}
                     path={sessionLocationPath}
-                  />
+                  />}
                 </div>
               ) : null}
 
@@ -759,42 +765,44 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                 </>
               )}
 
-              <div className="space-y-1.5">
-                <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
-                  {t('task.creation.collectionLabel')}
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCollectionId(null)}
-                    {...telemetryClickAttributes('creation.collection.select', 'new_session')}
-                    className={cn(
-                      'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                      selectedCollectionId === null
-                        ? 'border-[color-mix(in_srgb,var(--accent)_24%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--accent-hover)'
-                        : 'border-(--divider) bg-(--input-bg) text-(--text-secondary) hover:border-(--text-muted)/40 hover:text-(--text-primary)',
-                    )}
-                  >
-                    {t('task.creation.noCollection')}
-                  </button>
-                  {collections.map((collection) => (
+              {!(mode === 'chat' && sessionLocation.locationKind === 'worktree') && (
+                <div className="space-y-1.5">
+                  <span className="block text-[10px] font-semibold uppercase leading-4 tracking-[0.08em] text-(--text-muted)">
+                    {t('task.creation.collectionLabel')}
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
                     <button
-                      key={collection.id}
                       type="button"
-                      onClick={() => setSelectedCollectionId(collection.id)}
+                      onClick={() => setSelectedCollectionId(null)}
                       {...telemetryClickAttributes('creation.collection.select', 'new_session')}
                       className={cn(
                         'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                        selectedCollectionId === collection.id
+                        selectedCollectionId === null
                           ? 'border-[color-mix(in_srgb,var(--accent)_24%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--accent-hover)'
                           : 'border-(--divider) bg-(--input-bg) text-(--text-secondary) hover:border-(--text-muted)/40 hover:text-(--text-primary)',
                       )}
                     >
-                      {collection.label}
+                      {t('task.creation.noCollection')}
                     </button>
-                  ))}
+                    {collections.map((collection) => (
+                      <button
+                        key={collection.id}
+                        type="button"
+                        onClick={() => setSelectedCollectionId(collection.id)}
+                        {...telemetryClickAttributes('creation.collection.select', 'new_session')}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                          selectedCollectionId === collection.id
+                            ? 'border-[color-mix(in_srgb,var(--accent)_24%,transparent)] bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--accent-hover)'
+                            : 'border-(--divider) bg-(--input-bg) text-(--text-secondary) hover:border-(--text-muted)/40 hover:text-(--text-primary)',
+                        )}
+                      >
+                        {collection.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </section>
 
@@ -807,6 +815,8 @@ export function EmptyPanelState({ panelId }: EmptyPanelStateProps) {
                       ? t('task.creation.taskWorktreeDescription')
                     : mode === 'shell'
                         ? t('task.creation.shellDescription')
+                        : sessionLocation.locationKind === 'worktree' && !selectedWorktree
+                          ? t('task.creation.chooseWorktree')
                         : (
                           <span>
                             {t('task.creation.chatLocationDescription')}{' '}

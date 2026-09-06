@@ -481,6 +481,7 @@ export interface I18nMessages {
     save: string;
     cancel: string;
     close: string;
+    closePeek: string;
     reset: string;
     loading: string;
     or: string;
@@ -1560,6 +1561,13 @@ export interface I18nMessages {
       chatInstantHint: string;
       chatCreatesHere: string;
       sessionLocationLabel: string;
+      projectFolder: string;
+      existingWorktrees: string;
+      noExistingWorktrees: string;
+      searchWorktrees: string;
+      chooseWorktree: string;
+      noMatchingWorktrees: string;
+
       chatLocationDescription: string;
       taskWorktreeHint: string;
       taskWorktreeDescription: string;
