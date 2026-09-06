@@ -48,6 +48,10 @@ interface HeaderProps {
   panelId: string;
   projectViewDir?: string | null;
   isSinglePanel?: boolean;
+  peek?: {
+    onClose: () => void;
+    closeButtonRef: React.RefObject<HTMLButtonElement | null>;
+  };
   search?: {
     isOpen: boolean;
     query: string;
@@ -62,7 +66,7 @@ interface HeaderProps {
   };
 }
 
-export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search }: HeaderProps) {
+export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search, peek }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
   const session = useProjectViewSession(sessionId, projectViewDir);
@@ -259,6 +263,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
         // being restated, so it stays right if the floor ever moves (#259).
         'max-sm:h-auto',
       )}
+      data-peek={peek ? "true" : undefined}
       data-search-open={Boolean(search?.isOpen)}
       onContextMenu={handleContextMenu}
     >
@@ -548,25 +553,29 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
 
           {/* 세션 닫기 / 패널 닫기 버튼 */}
           {/* 세션 열림 → 세션 해제(빈 패널), 멀티패널 빈 상태 → 패널 닫기, 싱글패널 빈 상태 → 숨김 */}
-          {(panelCount >= 2 || panel?.sessionId) && (
+          {(peek || panelCount >= 2 || panel?.sessionId) && (
             <button
+              ref={peek?.closeButtonRef}
               onClick={() => {
-                if (panel?.sessionId) {
+                if (peek) {
+                  peek.onClose();
+                } else if (panel?.sessionId) {
                   assignSession(panelId, null);
                 } else {
                   closePanel(panelId);
                 }
               }}
               {...telemetryClickAttributes('chat_header.close_panel', 'chat_header')}
-              title={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
-              aria-label={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
-              data-testid="panel-close-button"
+              title={peek ? t('common.close') : panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
+              aria-label={peek ? t('common.close') : panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
+              data-testid={peek ? "kanban-session-peek-close" : "panel-close-button"}
               className={cn(
                 'rounded p-0.5 transition-colors hover:bg-(--sidebar-hover)',
                 PHONE_TOUCH_TARGET,
+                peek && 'flex h-11 w-11 shrink-0 items-center justify-center',
               )}
             >
-              <XIcon className="h-3.5 w-3.5 text-(--text-muted)" />
+              <XIcon className={cn('text-(--text-muted)', peek ? 'h-4 w-4' : 'h-3.5 w-3.5')} />
             </button>
           )}
         </div>

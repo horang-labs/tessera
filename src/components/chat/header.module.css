@@ -59,3 +59,9 @@
   }
 
 }
+
+/* Peek needs a reachable dismiss target even with a mouse. */
+.compact[data-peek='true'] {
+  height: auto;
+  min-height: 44px;
+}
