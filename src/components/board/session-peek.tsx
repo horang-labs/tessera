@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, SquareTerminal, Terminal, X } from 'lucide-react';
 import { PeekContextMenu } from './peek-context-menu';
+import { Header } from '@/components/chat/header';
 import { ChatArea } from '@/components/chat/chat-area';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
@@ -316,8 +317,8 @@ export function SessionPeek({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={showSessionContent ? titleId : undefined}
-        aria-label={isFileOnly ? peekFileLabel : undefined}
+        aria-labelledby={showSessionContent && !isTerminal ? titleId : undefined}
+        aria-label={isFileOnly ? peekFileLabel : isTerminal ? session.title : undefined}
         tabIndex={-1}
         onContextMenuCapture={(event) => {
           const target = event.target as HTMLElement;
@@ -339,7 +340,19 @@ export function SessionPeek({
         data-session-kind={isTerminal ? 'terminal' : 'chat'}
       >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {showSessionContent ? (
+          {showSessionContent && isTerminal ? (
+            <div className="shrink-0">
+              <TabIdContext.Provider value={PEEK_TAB_ID}>
+                <Header
+                  sessionId={sessionId}
+                  panelId={PEEK_PANEL_ID}
+                  projectViewDir={projectViewDir}
+                  isSinglePanel
+                  peek={{ onClose, closeButtonRef }}
+                />
+              </TabIdContext.Provider>
+            </div>
+          ) : showSessionContent ? (
             <header className="flex h-11 shrink-0 items-center gap-2 border-b border-(--chat-header-border) bg-(--chat-header-bg) px-3">
               <SessionIcon className="h-4 w-4 shrink-0 text-(--accent)" aria-hidden="true" />
               <h2
