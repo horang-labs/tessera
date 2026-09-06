@@ -37,7 +37,8 @@ test('terminal Chat View clears the parent panel drop highlight before consuming
   );
 
   assert.match(panelWrapperSource, /const clearDropIndicators = useCallback\(/);
-  assert.match(panelWrapperSource, /onDropCapture=\{clearDropIndicators\}/);
+  assert.match(panelWrapperSource, /onDropCapture=\{handleDropCapture\}/);
+  assert.match(panelWrapperSource, /const handleDropCapture = useCallback\([\s\S]*?clearDropIndicators\(\);/);
   assert.match(panelWrapperSource, /const handleDrop = useCallback\([\s\S]*?clearDropIndicators\(\);/);
 });
 
