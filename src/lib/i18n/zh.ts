@@ -504,6 +504,7 @@ export const zh: I18nMessages = {
     save: '保存',
     cancel: '取消',
     close: '关闭',
+    closePeek: '关闭 Peek',
     reset: '重置',
     loading: '加载中...',
     or: '或',
