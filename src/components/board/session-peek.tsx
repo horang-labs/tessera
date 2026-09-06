@@ -72,6 +72,7 @@ export function SessionPeek({
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const dismissContextMenu = useCallback(() => setContextMenuPosition(null), []);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const sessionContentRef = useRef<HTMLDivElement>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -147,6 +148,43 @@ export function SessionPeek({
       });
     };
   }, []);
+
+  useEffect(function focusPeekInputWhenReady() {
+    const content = sessionContentRef.current;
+    if (!showSessionContent || !content) return;
+    const selector = isTerminalChatView
+      ? '[data-testid="terminal-chat-composer-input"]:not([disabled])'
+      : isTerminal
+        ? '.xterm-helper-textarea:not([disabled])'
+        : 'textarea:not([disabled])';
+    let frame: number | null = null;
+    let stopped = false;
+    const stop = () => {
+      stopped = true;
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+      document.removeEventListener('pointerdown', stop, true);
+      document.removeEventListener('keydown', stop, true);
+    };
+    const scheduleFocus = () => {
+      if (stopped || frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const input = content.querySelector<HTMLTextAreaElement>(selector);
+        if (!input || input.getClientRects().length === 0) return;
+        input.focus({ preventScroll: true });
+        stop();
+      });
+    };
+    // History and xterm load asynchronously. Observe readiness rather than
+    // guessing a delay, and yield if the user chooses a control or file pane.
+    const observer = new MutationObserver(scheduleFocus);
+    observer.observe(content, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    document.addEventListener('pointerdown', stop, true);
+    document.addEventListener('keydown', stop, true);
+    scheduleFocus();
+    return stop;
+  }, [isTerminal, isTerminalChatView, sessionId, showSessionContent]);
 
   useEffect(() => {
     if (!session) onClose();
@@ -357,7 +395,7 @@ export function SessionPeek({
             data-testid="kanban-peek-split-container"
           >
             {showSessionContent ? (
-              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+              <div ref={sessionContentRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
                 <TabIdContext.Provider value={PEEK_TAB_ID}>
                   <ChatArea
                     key={sessionId}

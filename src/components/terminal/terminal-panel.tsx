@@ -76,6 +76,8 @@ interface TerminalPanelProps {
   runtimeOwnership?: 'standalone' | 'session-preview' | 'session-retained' | 'session-peek';
   /** Treat a transient surface as visible/focused without borrowing panel-store state. */
   surfaceActive?: boolean;
+  /** A transcript overlay owns focus while the backing PTY stays connected. */
+  autoFocus?: boolean;
   /** Accept prompt-input drops directly when no PanelWrapper surrounds this surface. */
   directInputDrop?: boolean;
   /**
@@ -126,6 +128,7 @@ export function TerminalPanel({
   terminalCwd = null,
   runtimeOwnership = 'standalone',
   surfaceActive = false,
+  autoFocus = true,
   directInputDrop = false,
   detachOnUnmount = false,
   startupOverlay,
@@ -453,10 +456,12 @@ export function TerminalPanel({
   useEffect(() => {
     const shouldRestoreRetainedSession = runtimeOwnership === 'session-retained';
     if (connectionStatus !== 'connected' || (!isTabActive && !shouldRestoreRetainedSession)) return;
+    let cancelled = false;
     void surface.ensureConnected().then((connected) => {
-      if (connected && isPanelActive) surface.activate();
+      if (!cancelled && connected && isPanelActive && autoFocus) surface.activate();
     });
-  }, [connectionStatus, isPanelActive, isPhoneViewport, isTabActive, runtimeOwnership, surface]);
+    return () => { cancelled = true; };
+  }, [autoFocus, connectionStatus, isPanelActive, isPhoneViewport, isTabActive, runtimeOwnership, surface]);
 
   const canRestart = status === 'exited' || status === 'error';
   const handleThemeRestart = useCallback(() => {
