@@ -105,7 +105,9 @@ export function GitPanel({
   const controller = useSharedGitPanelController();
   // The selection lives in the store so a preparation badge can send the user
   // straight to the Scripts tab.
-  const activePanelTab = useGitStore((state) => state.panelTab);
+  const activePanelTab = useGitStore((state) => sessionId
+    ? state.panelTabsBySessionId[sessionId] ?? 'git'
+    : state.panelTab);
   const setActivePanelTab = useGitStore((state) => state.setPanelTab);
   const openedTelemetryRef = useRef(false);
   const resolvedCloseLabel = closeLabel ?? t("chat.closeGitPanel");
@@ -131,7 +133,7 @@ export function GitPanel({
 
   // Derive the visible tab instead of forcing state: if the stored selection
   // is one this session can't show, fall back to Git for rendering while
-  // preserving the selection for sessions that can.
+  // preserving this session's selection while its capabilities are loading.
   const tabUnavailable =
     (!showMemoryTab && activePanelTab === "memory")
     || (!showImagesTab && activePanelTab === "images")
@@ -177,7 +179,7 @@ export function GitPanel({
 
   const handlePanelTabChange = useCallback((tab: GitPanelTab) => {
     if (activePanelTab === tab) return;
-    setActivePanelTab(tab);
+    setActivePanelTab(tab, sessionId);
     void captureTelemetryEvent("git_panel_tab_changed", {
       source: "git_panel",
       provider_id: sessionProvider,
@@ -191,6 +193,7 @@ export function GitPanel({
     });
   }, [
     activePanelTab,
+    sessionId,
     sessionProvider,
     sessionKind,
     showImagesTab,
