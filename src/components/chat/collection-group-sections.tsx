@@ -1127,6 +1127,7 @@ export function TaskItemRow({
         <span className={SIDEBAR_TREE_LEADING_SLOT}>
           {hasPreparationBadge ? (
             <TaskPreparationBadge
+              sessionId={density === 'composite' ? primarySessionId ?? null : null}
               status={task.preparationStatus}
               presentation="icon"
             />
