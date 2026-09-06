@@ -118,6 +118,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   >(null);
   const sessionInsertZoneRef = useRef(false);
   const dropEdgeRef = useRef<DropEdge | null>(null);
+  const capturedDropRef = useRef<{ edge: DropEdge | null; sessionInsert: boolean } | null>(null);
   const dragCounterRef = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -280,6 +281,16 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     setSessionInsertZone(null);
   }, []);
 
+  const handleDropCapture = useCallback(() => {
+    // Capture runs before handleDrop. Preserve its routing decision before
+    // clearing the highlight, including when a child stops propagation.
+    capturedDropRef.current = {
+      edge: dropEdgeRef.current,
+      sessionInsert: sessionInsertZoneRef.current,
+    };
+    clearDropIndicators();
+  }, [clearDropIndicators]);
+
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
     e.preventDefault();
@@ -296,8 +307,9 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    const currentEdge = dropEdgeRef.current;
-    const droppedInSessionInsertZone = sessionInsertZoneRef.current;
+    const currentEdge = capturedDropRef.current?.edge ?? dropEdgeRef.current;
+    const droppedInSessionInsertZone = capturedDropRef.current?.sessionInsert ?? sessionInsertZoneRef.current;
+    capturedDropRef.current = null;
     clearDropIndicators();
 
     // OS (Finder/Explorer) file drop → insert each absolute path into the PTY.
@@ -613,7 +625,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
-      onDropCapture={clearDropIndicators}
+      onDropCapture={handleDropCapture}
       onDrop={handleDrop}
     >
       {children}
