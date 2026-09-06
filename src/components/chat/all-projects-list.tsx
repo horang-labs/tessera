@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Pin, Plus } from 'lucide-react';
+import { ChevronRight, GitBranch, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useSessionStore } from '@/stores/session-store';
@@ -245,7 +245,7 @@ function AllProjectSection({
   const handleProjectWorktreeSelect = useCallback(() => {
     const projectWorktree = project.projectWorktree;
     if (!projectWorktree) return;
-    useWorkspacePeekStore.getState().openWorktree(
+    useWorkspacePeekStore.getState().toggleWorktree(
       projectWorktree.id,
       project.encodedDir,
     );
@@ -273,15 +273,30 @@ function AllProjectSection({
         >
           {project.displayName.charAt(0).toUpperCase()}
         </div>
-        <Tooltip content={project.displayName} delay={400} wrapperClassName="min-w-0 flex-1">
+        <Tooltip content={project.displayName} delay={400} wrapperClassName="min-w-0">
           <span className="block truncate text-[0.625rem] font-semibold uppercase tracking-widest text-(--text-muted)">
             {project.displayName}
           </span>
         </Tooltip>
-        <span className="shrink-0 tabular-nums text-[0.625rem] text-(--text-muted)">
+        {project.projectWorktree && (
+          <button
+            {...telemetryClickAttributes('worktree.select', 'worktree')}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              handleProjectWorktreeSelect();
+            }}
+            className="ml-1 inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1 rounded font-mono text-[11px] font-medium text-(--sidebar-text-active) transition-colors hover:bg-(--sidebar-bg) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)"
+            title={project.projectWorktree.currentBranch ?? 'unknown'}
+            aria-label={`${project.displayName}, ${project.projectWorktree.displayPath}, branch ${project.projectWorktree.currentBranch ?? 'unknown'}`}
+          >
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-(--accent)" />
+            <span className="truncate">{project.projectWorktree.currentBranch ?? 'unknown'}</span>
+          </button>
+        )}
+        <span className="ml-auto shrink-0 tabular-nums text-[0.625rem] text-(--text-muted)">
           {sectionSessionCount}
         </span>
-        {project.isCurrent ? <Pin className="h-3 w-3 shrink-0 text-(--accent)" /> : null}
         <button
           ref={projectQuickCreateTriggerRef}
           {...telemetryClickAttributes('sidebar.project.add', 'sidebar')}
@@ -298,7 +313,6 @@ function AllProjectSection({
           <Plus className="h-3 w-3" />
         </button>
       </div>
-
       {isProjectQuickCreateOpen && (
         <CollectionQuickCreateSheet
           collection={null}

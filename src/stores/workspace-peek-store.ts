@@ -9,6 +9,7 @@ export interface WorktreePeekTarget {
 interface WorkspacePeekState {
   target: WorktreePeekTarget | null;
   openWorktree: (worktreeId: string, projectDir: string) => void;
+  toggleWorktree: (worktreeId: string, projectDir: string) => void;
   close: () => void;
 }
 
@@ -18,4 +19,9 @@ export const useWorkspacePeekStore = create<WorkspacePeekState>()((set) => ({
     target: { kind: 'worktree', worktreeId, projectDir },
   }),
   close: () => set({ target: null }),
+  toggleWorktree: (worktreeId, projectDir) => set((state) => ({
+    target: state.target?.worktreeId === worktreeId && state.target.projectDir === projectDir
+      ? null
+      : { kind: 'worktree', worktreeId, projectDir },
+  })),
 }));
