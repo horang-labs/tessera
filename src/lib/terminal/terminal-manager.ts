@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
+import type { Socket } from 'node:net';
 import { createRequire } from 'module';
 import logger from '@/lib/logger';
 import { buildSpawnEnv, getAgentEnvironment } from '@/lib/cli/spawn-cli';
@@ -822,6 +823,16 @@ export class TerminalManager {
         terminalProcess = spawnPtyProcess({});
       }
       const processHandle = terminalProcess;
+      // node-pty 1.2's Windows input pipe can emit EPIPE before onExit arrives.
+      // It has no error listener (the public PTY events cover the output pipe).
+      // Handle only this pipe's EPIPE; leave output draining and exit unchanged.
+      const inputPipe = (processHandle as TerminalProcessHandle & {
+        _agent?: { inSocket?: Socket };
+      })._agent?.inSocket;
+      inputPipe?.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EPIPE') throw error;
+        logger.debug({ terminalId: options.terminalId }, 'Terminal input pipe closed (EPIPE)');
+      });
       traceTerminalStage('spawn:after', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal PTY spawned');
 

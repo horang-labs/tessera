@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -109,6 +110,37 @@ function createOptions(overrides: Partial<TerminalCreateOptions> = {}): Terminal
 function nextImmediate(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
+
+test('Windows input pipe EPIPE preserves output and normal exit without closing other terminals', async () => {
+  const delivered: ServerTransportMessage[] = [];
+  const inputPipe = new EventEmitter();
+  const exiting = Object.assign(new FakePty(), { _agent: { inSocket: inputPipe } });
+  const other = new FakePty();
+  const pending = [exiting, other];
+  const manager = new TerminalManager(
+    (_connectionId, message) => delivered.push(message),
+    async () => ({ spawn: () => pending.shift()! }),
+  );
+  try {
+    await manager.create(createOptions());
+    await manager.create(createOptions({ terminalId: 'terminal-b', sessionId: 'session-two' }));
+    await nextImmediate();
+    assert.doesNotThrow(() => inputPipe.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })));
+    assert.equal(exiting.killCount, 0);
+    exiting.emitData('final output');
+    await nextImmediate();
+    assert.ok(delivered.some(message => message.type === 'terminal_output' && message.data === 'final output'));
+    exiting.emitExit(1);
+    assert.equal(delivered.filter(message => message.type === 'terminal_exit' && message.terminalId === 'terminal-a').length, 1);
+    manager.write('terminal-b', 'user-a', 'connection-a', 'surface-a', 'still running');
+    assert.deepEqual(other.writes, ['still running']);
+    assert.equal(other.killCount, 0);
+    const unexpected = Object.assign(new Error('unexpected pipe error'), { code: 'EIO' });
+    assert.throws(() => inputPipe.emit('error', unexpected), error => error === unexpected);
+  } finally {
+    await manager.closeAllForUser('user-a');
+  }
+});
 
 test('concurrent session opens spawn once and disconnect only detaches its surface', async () => {
   const delivered: Array<{ connectionId: string; message: ServerTransportMessage }> = [];
