@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 import type { ContextMenuParams, MenuItemConstructorOptions } from 'electron';
 import {
   buildWebContentsContextMenuTemplate,
@@ -93,4 +94,50 @@ test('resolves only panel ids returned by the matching terminal wrapper query', 
   assert.match(evaluated, /terminalChatViewAvailable/);
   assert.match(evaluated, /data-terminal-session-panel-id/);
   assert.equal(await resolveTerminalPanelAtPoint(null, 42, 84), null);
+});
+
+test('Peek PTY resolves to a view-only menu instead of native edit actions', async () => {
+  class Element {
+    dataset: Record<string, string> = {
+      terminalSessionPanelId: 'kanban-session-peek-panel',
+      terminalChatViewAvailable: 'true',
+      terminalViewMode: 'terminal',
+      terminalPeek: 'true',
+    };
+    closest(selector: string) {
+      return selector === '[data-terminal-session-panel-id]' ? this : null;
+    }
+  }
+  const surface = new Element();
+  const frame = {
+    isDestroyed: () => false,
+    executeJavaScript: async (script: string) => runInNewContext(script, {
+      document: { elementFromPoint: () => surface }, Element, HTMLElement: Element,
+    }),
+  };
+  const resolved = await resolveTerminalPanelAtPoint(frame, 10, 20);
+  assert.ok(resolved, 'Peek must be recognized without a workspace panel wrapper');
+  assert.equal(resolved.viewMode, 'terminal');
+  assert.equal(resolved.canSplit, false);
+  const template = buildWebContentsContextMenuTemplate(editableParams(), {
+    ...resolved,
+    viewMode: resolved.viewMode ?? undefined,
+    onSplit: () => assert.fail('Peek cannot split'),
+    onSwitchView: () => undefined,
+  });
+  assert.deepEqual(template.map((item) => item.label), ['Switch to Chat View']);
+  surface.dataset.terminalViewMode = 'chat';
+  const chat = await resolveTerminalPanelAtPoint(frame, 10, 20);
+  assert.equal(chat?.viewMode, 'chat');
+  const reverse = buildWebContentsContextMenuTemplate(editableParams(), {
+    panelId: resolved.panelId,
+    canSplit: chat?.canSplit,
+    viewMode: chat?.viewMode ?? undefined,
+    onSplit: () => assert.fail('Peek cannot split'),
+    onSwitchView: () => undefined,
+  });
+  assert.deepEqual(reverse.map((item) => item.label), ['Switch to PTY View']);
+  delete surface.dataset.terminalPeek;
+  assert.equal(await resolveTerminalPanelAtPoint(frame, 10, 20), null);
+
 });

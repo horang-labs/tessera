@@ -3,6 +3,7 @@ import type { PanelSplitPlacement } from '../src/lib/panel/panel-split';
 
 interface TerminalPanelContextMenuOptions {
   panelId: string;
+  canSplit?: boolean;
   onSplit: (panelId: string, placement: PanelSplitPlacement) => void;
   viewMode?: 'terminal' | 'chat';
   onSwitchView?: (panelId: string, mode: 'terminal' | 'chat') => void;
@@ -46,15 +47,15 @@ export function buildWebContentsContextMenuTemplate(
               terminalPanel.panelId,
               terminalPanel.viewMode === 'chat' ? 'terminal' : 'chat',
             ),
-          }, { type: 'separator' as const }]
+          }, ...(terminalPanel.canSplit !== false ? [{ type: 'separator' as const }] : [])]
         : []),
-      {
+      ...(terminalPanel.canSplit !== false ? [{
         label: TERMINAL_PANEL_MENU_COPY.splitPanel,
         submenu: SPLIT_PLACEMENTS.map((placement) => ({
           label: TERMINAL_PANEL_MENU_COPY.placements[placement],
           click: () => terminalPanel.onSplit(terminalPanel.panelId, placement),
         })),
-      },
+      }] : []),
     ];
   }
 
@@ -89,13 +90,14 @@ export function buildWebContentsContextMenuTemplate(
 /**
  * Resolve the terminal panel at the native-menu coordinates without replacing
  * Electron's edit-aware context menu with a renderer imitation. The matching
- * wrapper check excludes embedded log/preview terminals that cannot be split.
+ * wrapper check excludes embedded log/preview terminals. Peek session surfaces
+ * opt in explicitly and expose view switching without workspace splitting.
  */
 export async function resolveTerminalPanelAtPoint(
   frame: FrameScriptRunner | null,
   x: number,
   y: number,
-): Promise<{ panelId: string; viewMode: 'terminal' | 'chat' | null } | null> {
+): Promise<{ panelId: string; viewMode: 'terminal' | 'chat' | null; canSplit?: boolean } | null> {
   if (!frame || frame.isDestroyed()) return null;
 
   const script = `(() => {
@@ -116,9 +118,12 @@ export async function resolveTerminalPanelAtPoint(
     const wrapperPanelId = wrapper instanceof HTMLElement
       ? wrapper.dataset.panelId
       : undefined;
-    return terminalPanelId && terminalPanelId === wrapperPanelId
+    const isPeek = sessionSurface instanceof HTMLElement
+      && sessionSurface.dataset.terminalPeek === 'true';
+    return terminalPanelId && (terminalPanelId === wrapperPanelId || isPeek)
       ? {
           panelId: terminalPanelId,
+          ...(isPeek ? { canSplit: false } : {}),
           viewMode: sessionSurface instanceof HTMLElement
             && sessionSurface.dataset.terminalChatViewAvailable === 'true'
             && (sessionSurface.dataset.terminalViewMode === 'terminal'
@@ -135,14 +140,15 @@ export async function resolveTerminalPanelAtPoint(
   try {
     const result = await frame.executeJavaScript(script);
     if (!result || typeof result !== 'object') return null;
-    const candidate = result as { panelId?: unknown; viewMode?: unknown };
+    const candidate = result as { panelId?: unknown; viewMode?: unknown; canSplit?: unknown };
     return typeof candidate.panelId === 'string'
       && candidate.panelId.length > 0
       && candidate.panelId.length <= 128
       && (candidate.viewMode === null
         || candidate.viewMode === 'terminal'
         || candidate.viewMode === 'chat')
-      ? { panelId: candidate.panelId, viewMode: candidate.viewMode }
+      ? { panelId: candidate.panelId, viewMode: candidate.viewMode,
+          ...(candidate.canSplit === false ? { canSplit: false } : {}) }
       : null;
   } catch {
     return null;
