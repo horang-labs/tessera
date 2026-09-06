@@ -493,6 +493,17 @@ export const KanbanBoard = memo(function KanbanBoard() {
     return scopeData.projects.find((project) => project.encodedDir === focusedProjectId) ?? null;
   }, [focusedProjectId, scopeData.projects]);
 
+  const portfolioFilterProjects = useMemo(() => {
+    const items = selectKanbanProjectionItems(scopeData, null);
+    const projectIds = new Set([
+      ...items.chats.map((session) => session.projectDir),
+      ...items.tasks.map((task) => task.projectId),
+    ]);
+    return scopeData.projects.filter((project) =>
+      projectIds.has(project.encodedDir) || project.encodedDir === portfolioProjectFilter
+    );
+  }, [scopeData, portfolioProjectFilter]);
+
   const visibleProjects = useMemo(() => {
     if (!isAllProjects || !portfolioProjectFilter) return scopeData.projects;
     return scopeData.projects.filter((project) => project.encodedDir === portfolioProjectFilter);
@@ -1112,7 +1123,7 @@ export const KanbanBoard = memo(function KanbanBoard() {
     >
       {isAllProjects ? (
         <PortfolioFilterBar
-          projects={scopeData.projects}
+          projects={portfolioFilterProjects}
           activeProjectId={portfolioProjectFilter}
           onProjectFilter={handlePortfolioProjectFilter}
           trailingControls={headerControls}
