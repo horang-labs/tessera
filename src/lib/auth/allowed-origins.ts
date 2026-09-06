@@ -24,6 +24,17 @@ export async function getAllowedOrigins(): Promise<Set<string>> {
     origins.add(machineSettings.advertisedAddress);
   }
 
+  // Concurrent worktree dev servers share machine settings. Keep each explicit
+  // browser origin process-local so configuring one port cannot disconnect another.
+  if (process.env.NODE_ENV === 'development' && process.env.TESSERA_DEV_ORIGIN) {
+    try {
+      const devAddress = normalizeAdvertisedAddress(process.env.TESSERA_DEV_ORIGIN);
+      if (devAddress) origins.add(devAddress.origin);
+    } catch {
+      // An invalid development override must not expand the allowlist.
+    }
+  }
+
   return origins;
 }
 
