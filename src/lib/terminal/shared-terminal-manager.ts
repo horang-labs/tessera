@@ -1,5 +1,6 @@
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import logger from '@/lib/logger';
+import { recordSessionRuntime } from '@/lib/session/session-runtime-recovery';
 import { getManagedSessionWorkDir } from '@/lib/git/session-diff-refresh';
 import { forkTerminalSessionForProviderReset } from './provider-session-reset';
 import { scheduleRecompute } from '@/lib/git/worktree-diff-stats-cache';
@@ -39,6 +40,7 @@ function createSharedState(): SharedTerminalManagerState {
     },
     {
       onSessionRuntimeStateChange: ({ sessionId, terminalId, userId, running }) => {
+        recordSessionRuntime({ sessionId, userId, running });
         state.sendToUser?.(userId, {
           type: 'terminal_session_runtime',
           sessionId,
@@ -67,6 +69,8 @@ function createSharedState(): SharedTerminalManagerState {
         }
       },
       onSessionRuntimeRebound: ({ previousSessionId, sessionId, terminalId, userId }) => {
+        recordSessionRuntime({ sessionId: previousSessionId, userId, running: false });
+        recordSessionRuntime({ sessionId, userId, running: true });
         state.sendToUser?.(userId, {
           type: 'terminal_session_rebound',
           previousSessionId,

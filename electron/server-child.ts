@@ -28,6 +28,9 @@ import { ensureRemoteModelConfigLoaded } from '../src/lib/model-config/remote-co
 import logger from '../src/lib/logger';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import { terminalManager } from '../src/lib/terminal/shared-terminal-manager';
+import { providerLaunchModule } from '../src/lib/terminal/shared-provider-launch-module';
+import { restoreSessionRuntimes } from '../src/lib/session/session-runtime-recovery';
+import { markServerShuttingDown } from '../src/lib/server-lifecycle';
 import { handleHookRequest } from '../src/lib/cli/hook-receiver';
 import { CONTROL_ROUTE_PREFIX } from '../src/lib/control/http-handler';
 import { readAppVersion } from '../src/lib/app-version';
@@ -268,6 +271,7 @@ initDatabase().then(async () => {
       });
 
       wsServer.start(server);
+      void restoreSessionRuntimes((request) => providerLaunchModule.launch(request));
       startOomDiagnostics();
       // Only now can a direct listener serve /ws, so bind it after the
       // WebSocket server exists rather than alongside the loopback listen.
@@ -332,6 +336,7 @@ initDatabase().then(async () => {
   const shutdown = async (reason = 'requested') => {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    markServerShuttingDown();
     if (parentWatchdog) {
       clearInterval(parentWatchdog);
       parentWatchdog = null;
