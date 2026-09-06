@@ -265,7 +265,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
       <div
         className={cn(
           'group/header flex h-full w-full items-center justify-between gap-2.5',
-          isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5',
+          isSinglePanel && !isCompact ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5',
           // 44px targets take 176px of the 283px this row has at 360px. The
           // slack is taken back from the padding and the gap rather than from
           // the four controls, because the title is what is left to lose (#259).
