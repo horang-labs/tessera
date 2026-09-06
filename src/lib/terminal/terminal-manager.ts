@@ -1495,6 +1495,8 @@ export class TerminalManager {
     runtime.semanticPromptPending = true;
     try {
       runtime.process.write(bracketSemanticPrompt(body));
+      // A submitted prompt retains work even if its Peek closes during delayed Enter.
+      runtime.previewOwnerToken = undefined;
       const delayMs = this.managerOptions.semanticPromptSubmitDelayMs ?? 500;
       await new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, delayMs)));
       if (

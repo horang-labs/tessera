@@ -2078,3 +2078,22 @@ test('a cursor report reflects where the program actually left the cursor', asyn
   // Row 5, column 9 plus the six characters written there.
   assert.deepEqual(spawned[0].writes, ['\x1b[5;15R']);
 });
+
+
+test('closing Peek during a chat submission retains its preview-created runtime', async () => {
+  const spawned: FakePty[] = [];
+  const manager = new TerminalManager(() => {}, async () => createFactory(spawned), undefined, {
+    semanticPromptSubmitDelayMs: 20,
+  });
+  await manager.startDetached({ ...createOptions(), previewOwnerToken: 'peek-owner' });
+  manager.recordSessionState({
+    type: 'session_state', sessionId: 'session-a', terminalId: 'terminal-a',
+    status: 'completed', hookEvent: 'Stop', stateAt: 100,
+  }, 'user-a');
+  const submission = manager.submitSessionChatPrompt('session-a', 'user-a', 'continue work', 'peek-submit');
+  const outcome = submission.then(() => true, () => false);
+  await manager.releasePreview('terminal-a', 'user-a', 'session-a', 'peek-owner');
+  assert.equal(await outcome, true);
+  assert.equal(spawned[0].killCount, 0);
+  await manager.close('terminal-a', 'user-a');
+});
