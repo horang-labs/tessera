@@ -35,6 +35,7 @@ test('user input notifies only the exact surface that owns the input bar', () =>
     sentSurfaceIds.push(surfaceId);
     return true;
   };
+  Reflect.set(first, 'attachedConnectionGeneration', 1);
 
   try {
     assert.equal(first.sendUserInput('from the first bar'), true);
