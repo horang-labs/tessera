@@ -147,6 +147,9 @@ async function addNextTraceFiles(files) {
 }
 
 async function addTracedEntrypointFiles(files) {
+  // Parcel selects its platform binary through a computed require. File tracing
+  // alone can omit the installed optional native package.
+  await addDirectory('node_modules/@parcel', files);
   const { fileList } = await nodeFileTrace(ELECTRON_ENTRYPOINTS, {
     base: rootDir,
     processCwd: rootDir,
