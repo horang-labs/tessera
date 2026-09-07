@@ -14,6 +14,7 @@ import {
 import { ArrowUp, ImagePlus, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { cn } from '@/lib/utils';
+import { isPhoneViewport } from '@/lib/viewport/phone-viewport';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/stores/notification-store';
@@ -152,7 +153,7 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
     requestAnimationFrame(() => {
       const input = textareaRef.current;
       input?.setSelectionRange(edit.nextCursorPos, edit.nextCursorPos);
-      input?.focus();
+      if (!isPhoneViewport()) input?.focus();
     });
   }, []);
 
@@ -212,7 +213,9 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
       toast.error(t('chat.terminalInputBar.imageAttachFailed'));
     } finally {
       setPendingImageUploads((count) => Math.max(0, count - imageFiles.length));
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => {
+        if (!isPhoneViewport()) textareaRef.current?.focus();
+      });
     }
   }, [insertPaths, t]);
 
@@ -241,6 +244,8 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
     const text = value;
     if (!text.trim() || isBlocked || isUploadingImage || submittingRef.current) return;
 
+    // Dismiss the mobile keyboard in the user gesture, before awaiting delivery.
+    if (isPhoneViewport()) textareaRef.current?.blur();
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
@@ -269,7 +274,9 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
     } finally {
       submittingRef.current = false;
       setIsSubmitting(false);
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => {
+        if (!isPhoneViewport()) textareaRef.current?.focus();
+      });
     }
   }, [isBlocked, isUploadingImage, sessionId, t, value]);
 

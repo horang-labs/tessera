@@ -1,5 +1,7 @@
 "use client";
 
+import { isPhoneViewport } from '@/lib/viewport/phone-viewport';
+
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { selectIsTurnInFlight, useChatStore } from "@/stores/chat-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -188,6 +190,7 @@ export const ChatArea = memo(function ChatArea({
       return;
     }
     requestAnimationFrame(() => {
+      if (isPhoneViewport()) return;
       terminalChatOverlayRef.current
         ?.querySelector<HTMLTextAreaElement>('[data-testid="terminal-chat-composer-input"]')
         ?.focus();
