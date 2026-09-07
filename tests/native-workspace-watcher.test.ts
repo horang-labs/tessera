@@ -1,6 +1,56 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createRequire } from 'node:module';
 import { startNativeWorkspaceWatcher, workspaceWatcherOptions } from '@/lib/workspace-files/native-workspace-watcher';
+
+test('workspace watching selects OS backends without probing the Watchman executable', async () => {
+  for (const [platform, backend] of [['win32', 'windows'], ['linux', 'inotify'], ['darwin', 'fs-events']] as const) {
+    assert.equal(workspaceWatcherOptions(platform).backend, backend);
+  }
+  let observedBackend: string | undefined;
+  const watcher = startNativeWorkspaceWatcher('/repo', () => {}, async (_root, _callback, options) => {
+    observedBackend = options.backend;
+    return { unsubscribe: async () => {} };
+  });
+  await watcher.ready;
+  assert.equal(observedBackend, workspaceWatcherOptions().backend);
+  assert.ok(observedBackend);
+  await watcher.close();
+});
+
+test('Windows native subscription never executes the Watchman discovery command', { skip: process.platform !== 'win32' }, async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const os = await import('node:os');
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-watchman-probe-'));
+  const marker = path.join(root, 'probed.txt');
+  const script = path.join(root, 'subscribe.cjs');
+  try {
+    await fs.writeFile(path.join(root, 'watchman.cmd'), '@echo off\r\necho probed>"%TESSERA_WATCHMAN_PROBE_FILE%"\r\nexit /b 1\r\n');
+    await fs.writeFile(script, `
+      const watcher = require(process.argv[2]);
+      watcher.subscribe(process.cwd(), () => {}, JSON.parse(process.argv[3]))
+        .then(subscription => subscription.unsubscribe())
+        .catch(error => { console.error(error); process.exitCode = 1; });
+    `);
+    const env: NodeJS.ProcessEnv = { ...process.env, WATCHMAN_SOCK: '', TESSERA_WATCHMAN_PROBE_FILE: marker };
+    const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') ?? 'PATH';
+    env[pathKey] = `${root};${env[pathKey] ?? ''}`;
+    const modulePath = createRequire(path.resolve('package.json')).resolve('@parcel/watcher');
+    for (const options of [{}, workspaceWatcherOptions()]) {
+      await fs.rm(marker, { force: true });
+      await promisify(execFile)(process.execPath, [script, modulePath, JSON.stringify(options)], {
+        cwd: root, env, windowsHide: true, timeout: 10_000,
+      });
+      const probed = await fs.access(marker).then(() => true, () => false);
+      assert.equal(probed, !('backend' in options));
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 test('closing during native startup releases the late subscription once and suppresses callbacks', async () => {
   let complete!: (value: { unsubscribe(): Promise<void> }) => void;
