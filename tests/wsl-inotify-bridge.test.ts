@@ -158,6 +158,9 @@ test('buildInotifyExcludeRegex skips high-churn descendants without excluding a 
   assert.ok(regex.test('/home/work/proj/.git/HEAD'));
   assert.ok(regex.test('/home/work/proj/.next/'));
   assert.ok(regex.test('/home/work/proj/dist'));
+  assert.ok(regex.test('/home/work/proj/tools/seed-vc/.venv/lib/pkg/index.py'));
+  assert.ok(regex.test('/home/work/proj/tools/seed-vc/__pycache__/app.pyc'));
+  assert.ok(regex.test('/home/work/proj/crates/worker/target/debug/worker'));
   assert.equal(regex.test('/home/work/proj/src/.hidden/file.ts'), false);
   assert.equal(regex.test('/home/work/proj/.env.example'), false);
   assert.equal(regex.test('/home/work/proj/src/app/route.ts'), false);
