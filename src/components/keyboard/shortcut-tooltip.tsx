@@ -2,6 +2,7 @@
 
 import { ReactElement, cloneElement, useState, useId, type MouseEvent, type FocusEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { useTooltipsEnabled } from '@/hooks/use-tooltips-enabled';
 import { useEffectiveShortcut } from '@/hooks/use-effective-shortcut';
 import { formatShortcut, detectPlatform, type Platform } from '@/lib/keyboard/format';
 import { isBrowserConflict } from '@/lib/keyboard/conflicts';
@@ -28,6 +29,7 @@ export function ShortcutTooltip({
   children,
 }: ShortcutTooltipProps) {
   const { t } = useI18n();
+  const tooltipsEnabled = useTooltipsEnabled();
   const electronPlatform = useElectronPlatform();
   const isWebMode = !electronPlatform;
   const key = useEffectiveShortcut(id);
@@ -48,6 +50,7 @@ export function ShortcutTooltip({
     : '';
 
   type ChildProps = {
+    onClick?: (e: MouseEvent<HTMLElement>) => void;
     onMouseEnter?: (e: MouseEvent<HTMLElement>) => void;
     onMouseLeave?: (e: MouseEvent<HTMLElement>) => void;
     onFocus?: (e: FocusEvent<HTMLElement>) => void;
@@ -67,19 +70,29 @@ export function ShortcutTooltip({
     // stops the browser from walking up to a parent's title.
     title: '',
     'aria-keyshortcuts': [key, secondaryId ? secondaryKey : null].filter(Boolean).join(' ') || undefined,
-    'aria-describedby': open ? tooltipId : undefined,
+    'aria-describedby': tooltipsEnabled && open ? tooltipId : undefined,
     onMouseEnter: (e: MouseEvent<HTMLElement>) => {
-      positionFromTrigger(e.currentTarget);
-      setOpen(true);
+      if (tooltipsEnabled) {
+        positionFromTrigger(e.currentTarget);
+        setOpen(true);
+      }
       childProps.onMouseEnter?.(e);
     },
     onMouseLeave: (e: MouseEvent<HTMLElement>) => {
       setOpen(false);
       childProps.onMouseLeave?.(e);
     },
+    onClick: (e: MouseEvent<HTMLElement>) => {
+      setOpen(false);
+      childProps.onClick?.(e);
+    },
     onFocus: (e: FocusEvent<HTMLElement>) => {
-      positionFromTrigger(e.currentTarget);
-      setOpen(true);
+      // Touch/click focus can persist after activation; only keyboard focus
+      // should open a tooltip without hover.
+      if (tooltipsEnabled && e.currentTarget.matches(':focus-visible')) {
+        positionFromTrigger(e.currentTarget);
+        setOpen(true);
+      }
       childProps.onFocus?.(e);
     },
     onBlur: (e: FocusEvent<HTMLElement>) => {
@@ -88,7 +101,7 @@ export function ShortcutTooltip({
     },
   } as Record<string, unknown>);
 
-  const tooltipNode = open && position ? (
+  const tooltipNode = tooltipsEnabled && open && position ? (
     <div
       id={tooltipId}
       role="tooltip"
