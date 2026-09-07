@@ -18,6 +18,9 @@ export const IGNORED_WORKSPACE_DIR_NAMES = new Set([
   ".idea",
   ".vscode",
   "out",
+  "target",
+  ".venv",
+  "__pycache__",
 ]);
 
 export type WorkspaceFileWalkResult = {
