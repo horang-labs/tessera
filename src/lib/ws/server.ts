@@ -498,8 +498,9 @@ export class WebSocketServer {
 
     // Send cached rate limit data to new connection
     const cachedRateLimit = getCachedRateLimitData();
+    const polledSnapshots = rateLimitPoller.getCachedSnapshots();
     const sentProviders = new Set<string>();
-    if (cachedRateLimit) {
+    if (cachedRateLimit && !polledSnapshots.some((snapshot) => snapshot.providerId === 'claude-code')) {
       this.sendToUser(userId, {
         type: 'rate_limit_update',
         ...buildClaudeRateLimitSnapshot(cachedRateLimit),
@@ -507,7 +508,7 @@ export class WebSocketServer {
       sentProviders.add('claude-code');
     }
 
-    for (const snapshot of rateLimitPoller.getCachedSnapshots()) {
+    for (const snapshot of polledSnapshots) {
       if (sentProviders.has(snapshot.providerId)) continue;
       this.sendToUser(userId, {
         type: 'rate_limit_update',

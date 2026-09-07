@@ -12,6 +12,7 @@ test('reads Codex limits through an isolated app-server request without a sessio
   let observedMethod = '';
   let observedParams: Record<string, unknown> | null = null;
   setCodexAppServerRequestExecutorForTests(async (context, method, params) => {
+    if (method === 'account/read') return { account: { type: 'chatgpt' }, requiresOpenaiAuth: true };
     observedEnvironment = context.environment ?? '';
     observedMethod = method;
     observedParams = params;
@@ -40,3 +41,21 @@ test('reads Codex limits through an isolated app-server request without a sessio
   assert.equal(snapshot?.windows[0]?.usedPercent, 48);
   assert.equal(snapshot?.windows[0]?.windowDurationMins, 10080);
 });
+
+for (const account of [
+  { account: { type: 'apiKey' }, requiresOpenaiAuth: true },
+  { account: null, requiresOpenaiAuth: false },
+  { account: { type: 'chatgpt' }, requiresOpenaiAuth: false },
+]) {
+  test(`clears subscription windows without fetching quotas: ${JSON.stringify(account)}`, async () => {
+    const methods: string[] = [];
+    setCodexAppServerRequestExecutorForTests(async (context, method) => {
+      assert.equal(context.environment, 'wsl');
+      methods.push(method);
+      return account;
+    });
+    const snapshot = await fetchCodexRateLimitSnapshot('wsl');
+    assert.deepEqual(snapshot?.windows, []);
+    assert.deepEqual(methods, ['account/read']);
+  });
+}

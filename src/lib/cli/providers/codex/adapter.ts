@@ -77,6 +77,8 @@ import logger from '@/lib/logger';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { materializeTerminalTranscriptImage } from '@/lib/session/terminal-transcript-image-cache';
 import { fetchCodexRateLimitSnapshot } from './rate-limit-client';
+import { executeCodexAppServerRequest } from './app-server-request-client';
+import type { CodexAccountStatus } from '../../subscription-auth';
 import { codexScreenShowsConversationReset } from '@/lib/terminal/terminal-conversation-reset-screen';
 
 const CLI_TIMEOUT_MS = 120_000;
@@ -419,7 +421,22 @@ export class CodexAdapter implements CliProvider {
     }
 
     const version = parseVersion(versionResult.stdout);
-    const finalStatus = synthesizeRunnableStatus(versionResult, classifyAuthStatus(loginResult));
+    let authStatus = classifyAuthStatus(loginResult);
+    if (authStatus.status === 'needs_login') {
+      try {
+        const account = await executeCodexAppServerRequest<CodexAccountStatus>(
+          { environment: options.environment, userId: options.userId },
+          'account/read',
+          { refreshToken: false },
+        );
+        if (account.requiresOpenaiAuth === false || account.account?.type) {
+          authStatus = { status: 'connected', detectionReason: 'connected' };
+        }
+      } catch {
+        // Older CLIs may not expose account/read. Keep the CLI login verdict.
+      }
+    }
+    const finalStatus = synthesizeRunnableStatus(versionResult, authStatus);
 
     return {
       status: finalStatus.status,
