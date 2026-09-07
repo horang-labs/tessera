@@ -493,6 +493,9 @@ export class WorkspaceFileWatchManager {
       for (const event of events) {
         const relativePath = toWorkspaceRelativePath(entry.root, event.path);
         if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) continue;
+        if (event.type === "update") {
+          this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
+        }
         // Parcel does not attach stat information. Reconcile create/delete
         // subtrees too: moved-in directories may arrive without child events.
         if (event.type !== "update" && !isIgnoredWorkspacePath(
@@ -520,6 +523,9 @@ export class WorkspaceFileWatchManager {
     relativePath: string,
   ): void {
     const parentDir = workspaceRelativeDirname(relativePath);
+    if (eventName === "change") {
+      this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
+    }
     switch (eventName) {
       case "add":
       case "change":
@@ -597,9 +603,13 @@ export class WorkspaceFileWatchManager {
 
     if (!changed) {
       // The index only records paths, so writing new content to an existing
-      // file leaves the rescan unchanged. Root listeners still need the raw
-      // watch invalidation to refresh Git diff stats.
-      if (!rootChangeNotified) this.notifyRootChangeListeners(entry);
+      // file leaves the rescan unchanged. Open editors still need the changed
+      // path, while Git listeners need invalidation even without a path delta.
+      if (entry.pendingChangedPaths.size > 0 || entry.pendingHasMoreChangedPaths) {
+        this.flushChanges(entry);
+      } else if (!rootChangeNotified) {
+        this.notifyRootChangeListeners(entry);
+      }
       return;
     }
     entry.pendingTreeChanged = true;

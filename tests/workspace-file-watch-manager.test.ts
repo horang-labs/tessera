@@ -536,3 +536,30 @@ test('a UI subscriber receives a tree refresh when the initial index becomes rea
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+for (const delivery of ['native', 'bridge'] as const) test(`content-only ${delivery} changes notify open file subscribers with the changed path`, async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-content-'));
+  writeFileSync(path.join(root, 'existing.txt'), 'before');
+  const manager = new WorkspaceFileWatchManager();
+  (manager as unknown as { resolveRootForSession(): Promise<string> }).resolveRootForSession = async () => root;
+  const messages: Array<{ type: string; changedPaths?: string[]; treeChanged?: boolean; status?: string }> = [];
+  try {
+    await manager.subscribe({
+      agentEnvironment: 'native', connectionId: 'content-test', sessionId: 'content-session', subscriberId: 'file-tab', userId: 'test',
+      sendToUser: (_userId, message) => messages.push(message),
+    });
+    await waitUntil(() => messages.some((message) => message.status === 'active'));
+    const entry = managerInternals(manager).entriesByRoot.get(root)!;
+    if (delivery === 'bridge') await silenceNativeWatcher(entry);
+    messages.length = 0;
+    writeFileSync(path.join(root, 'existing.txt'), 'after external edit');
+    if (delivery === 'bridge') {
+      managerInternals(manager).handleBridgeEvent(entry, { eventName: 'change', relativePath: 'existing.txt' });
+    }
+    await waitUntil(() => messages.some((message) => message.changedPaths?.includes('existing.txt')));
+    assert.equal(messages.find((message) => message.changedPaths?.includes('existing.txt'))?.treeChanged, false);
+  } finally {
+    manager.unsubscribeConnection('content-test');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
