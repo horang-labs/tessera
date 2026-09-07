@@ -90,7 +90,7 @@
     "prepare": "node scripts/patch-xterm-webgl-atlas.mjs && node scripts/patch-xterm-webgl-device-pixel.mjs && node scripts/patch-xterm-touch-scroll.mjs && node scripts/patch-xterm-mouse-report-coords.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
-    "acorn": "^8.16.0",
+    "@parcel/watcher": "2.5.6",
     "@tanstack/react-virtual": "^3.13.24",
     "@xterm/addon-fit": "0.12.0-beta.289",
     "@xterm/addon-search": "0.17.0-beta.289",
@@ -100,6 +100,7 @@
     "@xterm/addon-webgl": "0.20.0-beta.288",
     "@xterm/headless": "6.1.0-beta.289",
     "@xterm/xterm": "6.1.0-beta.289",
+    "acorn": "^8.16.0",
     "agentation": "^3.0.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "12.10.0",
@@ -173,6 +174,7 @@
     "allowMissingDependencies": true,
     "asar": {
       "unpack": [
+        "**/node_modules/@parcel/watcher*/**",
         "**/node_modules/better-sqlite3/**",
         "**/sql.js/**",
         "**/node_modules/sql.js/**",

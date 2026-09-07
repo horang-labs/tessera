@@ -1,3 +1,4 @@
+import { prepareParcelWatcherRuntime } from './prepare-parcel-watcher-runtime.mjs';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -57,6 +58,8 @@ const nativeModule = path.join(runtimePackageDir, 'build', 'Release', 'better_sq
 if (!fs.existsSync(nativeModule)) {
   throw new Error(`better-sqlite3 prebuild was not installed at ${nativeModule}`);
 }
+
+prepareParcelWatcherRuntime(rootDir, platform, arch);
 
 const preparedTarget = readNativeTarget(nativeModule);
 if (preparedTarget.platform !== platform || preparedTarget.arch !== arch) {

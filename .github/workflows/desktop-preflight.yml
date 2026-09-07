@@ -36,6 +36,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify native workspace watcher
+        run: npx tsx --test tests/native-workspace-watcher.test.ts
+
       - name: Isolate Windows user profile for build
         shell: pwsh
         run: |
@@ -92,6 +95,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify native workspace watcher
+        run: npx tsx --test tests/native-workspace-watcher.test.ts
 
       - name: Print runner architecture
         run: |
@@ -190,6 +196,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify native workspace watcher
+        run: npx tsx --test tests/native-workspace-watcher.test.ts
 
       - name: Build desktop package
         run: npm run electron:build:linux
