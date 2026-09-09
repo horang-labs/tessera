@@ -12,6 +12,7 @@ import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state"
 import { isOptimisticSessionId } from '@/lib/session/session-id';
 import { useSessionPrStore } from "@/stores/session-pr-store";
 import { useTaskStore } from "@/stores/task-store";
+import { useArchiveConfirm } from '@/hooks/use-archive-confirm';
 import { useGitStore } from "@/stores/git-store";
 import { useChatStore } from "@/stores/chat-store";
 import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace-state-client";
@@ -177,9 +178,6 @@ export function useGitPanelController(
   );
   const setWorktreeCommitMessage = useGitPanelStore(
     (state) => state.setCommitMessage,
-  );
-  const toggleWorktreeCommitFile = useGitPanelStore(
-    (state) => state.toggleCommitFile,
   );
   const setWorktreeCommitFilesSelected = useGitPanelStore(
     (state) => state.setCommitFilesSelected,
@@ -472,6 +470,7 @@ export function useGitPanelController(
 
     return {
       ...data,
+      ...(liveTaskId ? { taskId: liveTaskId } : {}),
       diffStats: storeDiffStats !== undefined ? storeDiffStats : data.diffStats,
       // The presence of a live entry is authoritative even when its PR is
       // undefined: that is the WebSocket representation of confirmed none.
@@ -481,7 +480,7 @@ export function useGitPanelController(
       remoteBranchExists:
         livePr ? livePr.remoteBranchExists : data.remoteBranchExists,
     };
-  }, [data, liveSessionPr, livePrStatus, sessionSnapshot?.diffStats, taskSnapshot]);
+  }, [data, liveSessionPr, livePrStatus, liveTaskId, sessionSnapshot?.diffStats, taskSnapshot]);
 
   useEffect(() => {
     const files = panelData?.changedFiles ?? [];
@@ -615,10 +614,13 @@ export function useGitPanelController(
     [deselectedPaths],
   );
 
-  const toggleCommitFile = useCallback((path: string) => {
+  const setCommitFilesSelected = useCallback((
+    paths: readonly string[],
+    selected: boolean,
+  ) => {
     if (!worktreeKey) return;
-    toggleWorktreeCommitFile(worktreeKey, path);
-  }, [toggleWorktreeCommitFile, worktreeKey]);
+    setWorktreeCommitFilesSelected(worktreeKey, paths, selected);
+  }, [setWorktreeCommitFilesSelected, worktreeKey]);
 
   const setAllCommitFilesSelected = useCallback((selected: boolean) => {
     if (!worktreeKey) return;
@@ -724,15 +726,45 @@ export function useGitPanelController(
    * yet. Folding those into "clean tree" is what would make the button flash
    * through Publish Branch on every session switch (ADR 0007).
    */
+  const canArchiveTask = Boolean(
+    target?.kind === 'session'
+      && liveTaskId
+      && taskSnapshot?.id === liveTaskId,
+  );
   const stateSnapshot = useMemo<GitStateSnapshot | null>(
-    () => (!target || loading || error ? null : gitStateSnapshotFromPanel(panelData)),
-    [error, loading, panelData, target],
+    () => (!target || loading || error
+      ? null
+      : gitStateSnapshotFromPanel(panelData, { canArchiveTask })),
+    [canArchiveTask, error, loading, panelData, target],
   );
 
-  const primaryAction = useMemo(
+  const derivedPrimaryAction = useMemo(
     () => derivePrimaryGitAction(stateSnapshot),
     [stateSnapshot],
   );
+  const archiveTask = useCallback(() => {
+    if (!liveTaskId) return;
+    void useTaskStore.getState().toggleTaskArchive(liveTaskId, true);
+  }, [liveTaskId]);
+  const {
+    isConfirmingArchive,
+    handleArchiveClick,
+    resetArchiveConfirm,
+  } = useArchiveConfirm(archiveTask, 3000, liveTaskId);
+  const primaryAction = useMemo(
+    () => derivedPrimaryAction.kind === 'archive_worktree' && isConfirmingArchive
+      ? { ...derivedPrimaryAction, labelKey: 'gitPanel.pr.archiveConfirmButton' as const }
+      : derivedPrimaryAction,
+    [derivedPrimaryAction, isConfirmingArchive],
+  );
+
+  useEffect(() => {
+    resetArchiveConfirm();
+  }, [liveTaskId, resetArchiveConfirm]);
+
+  useEffect(() => {
+    if (derivedPrimaryAction.kind !== 'archive_worktree') resetArchiveConfirm();
+  }, [derivedPrimaryAction.kind, resetArchiveConfirm]);
   const pullRequestUrl =
     panelData?.prStatus?.url ?? panelData?.github.pullRequest?.url ?? null;
   const viewPullRequest = useCallback(() => {
@@ -908,6 +940,91 @@ export function useGitPanelController(
   }, [markWorktreePending, pendingHere, requestCommit, worktreeKey]);
 
   /**
+   * Reverting the selected changed files: their working trees are restored to
+   * HEAD, or deleted outright when they have no HEAD version (untracked).
+   * The selection is the same list the commit uses (§7), so "these files" means
+   * the same set to both actions. Filters revert-ineligible files out client-side
+   * (conflicted, or only staged) — the server refuses any that slip through.
+   */
+  const requestRevert = useCallback(
+    async (paths: readonly string[]): Promise<boolean> => {
+      if (!target || paths.length === 0) return false;
+
+      const files = [...paths];
+      try {
+        const response = await fetch(
+          `${workspaceTargetApiPath(target)}/git/action`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "revert", files }),
+          },
+        );
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            extractGitPanelErrorMessage(payload, "Failed to revert files."),
+          );
+        }
+
+        const result = payload as GitActionResult;
+        reportAction(describeGitActionToast(result, commitOrigin, "revert"));
+        if (!result.ok && worktreeKey) {
+          setWorktreeActionFailure(
+            worktreeKey,
+            describeGitActionFailure(result.failure, commitOrigin, "revert"),
+          );
+        }
+        void captureTelemetryEvent("git_action_triggered", {
+          source: "git_panel",
+          action: "revert",
+          target: "revert",
+          result: result.ok ? "success" : "failed",
+          ...(result.ok ? {} : { failure_kind: result.failure.kind }),
+          file_count: files.length,
+        });
+        void loadPanel({ silent: true });
+        return result.ok;
+      } catch (nextError) {
+        const message =
+          nextError instanceof Error ? nextError.message : "Failed to revert files.";
+        reportAction(
+          describeGitRequestFailureToast(message, commitOrigin, "revert"),
+        );
+        if (worktreeKey) {
+          setWorktreeActionFailure(
+            worktreeKey,
+            describeGitRequestFailure(message, commitOrigin, "revert"),
+          );
+        }
+        return false;
+      }
+    },
+    [
+      commitOrigin,
+      loadPanel,
+      reportAction,
+      setWorktreeActionFailure,
+      target,
+      worktreeKey,
+    ],
+  );
+
+  const revertSelectedFiles = useCallback(async () => {
+    if (!worktreeKey || pendingHere) return false;
+    if (commitFiles.length === 0) return false;
+    const ownerKey = worktreeKey;
+
+    markWorktreePending(ownerKey, "revert");
+    try {
+      return await requestRevert(commitFiles.map((file) => file.path));
+    } finally {
+      markWorktreePending(ownerKey, null);
+    }
+  }, [markWorktreePending, pendingHere, requestRevert, commitFiles, worktreeKey]);
+
+  /**
    * The actions whose whole request is the verb: Push, Publish Branch — the same
    * request, differing only in what the button said before it — Pull, and Create
    * PR. None of them takes a parameter, because which branch moves to or from
@@ -1031,6 +1148,7 @@ export function useGitPanelController(
     }
     if (primaryAction.action === "commit") return commitSelectedFiles();
     if (primaryAction.action === "view_pr") return viewPullRequest();
+    if (primaryAction.action === "archive_worktree") return handleArchiveClick();
     if (!primaryAction.action) return;
     // §8: a push at the default branch is asked about before anything runs,
     // and the panel is left exactly as it was until the answer comes back.
@@ -1051,7 +1169,14 @@ export function useGitPanelController(
       primaryAction.action,
       primaryAction.kind === "publish" ? "publish" : primaryAction.action,
     );
-  }, [commitSelectedFiles, primaryAction, runBranchAction, stateSnapshot, viewPullRequest]);
+  }, [
+    commitSelectedFiles,
+    handleArchiveClick,
+    primaryAction,
+    runBranchAction,
+    stateSnapshot,
+    viewPullRequest,
+  ]);
 
   /**
    * The menu, derived independently of the ladder over the same snapshot (§4).
@@ -1240,6 +1365,7 @@ export function useGitPanelController(
   return {
     hasActiveSession: Boolean(target),
     changedFileCount,
+    commitSelectionKey: worktreeKey,
     commitMessage,
     commitTotals,
     /**
@@ -1287,9 +1413,10 @@ export function useGitPanelController(
     selectedFileIndex,
     selectedPath,
     setAllCommitFilesSelected,
+    setCommitFilesSelected,
     setCommitMessage: changeCommitMessage,
     setSelectedPath,
-    toggleCommitFile,
+    revertSelectedFiles,
   };
 }
 

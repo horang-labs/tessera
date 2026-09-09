@@ -3,6 +3,7 @@ import * as path from "path";
 import * as dbProjects from "@/lib/db/projects";
 import * as dbSessions from "@/lib/db/sessions";
 import { isAbsoluteFilesystemPath } from "@/lib/filesystem/host-path";
+import { areCrossEnvironmentFilesystemPathsEquivalent } from "@/lib/filesystem/path-equivalence";
 import { resolveClaudeConfigDirForEnvironment } from "@/lib/skill/skill-loader";
 import { normalizeCwdForCliEnvironment } from "@/lib/cli/spawn-cli";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
@@ -181,7 +182,10 @@ export async function resolveSessionMemoryDir(
   const projectId = session.project_id?.trim();
   const projectRoot = projectPath
     || (projectId && isAbsoluteFilesystemPath(projectId) ? projectId : null);
-  if (projectRoot && projectRoot !== workDir) {
+  if (
+    projectRoot
+    && (!workDir || !areCrossEnvironmentFilesystemPathsEquivalent(projectRoot, workDir))
+  ) {
     candidates.push({ root: "project", workspaceRoot: projectRoot });
   }
   if (candidates.length === 0) return null;

@@ -1174,6 +1174,9 @@ export interface I18nMessages {
       createButton: string;
       createButtonPending: string;
       viewButton: string;
+      archiveButton: string;
+      archiveConfirmButton: string;
+      archiveButtonPending: string;
       defaultBranch: string;
       statusUnknown: string;
       unavailable: string;
@@ -1224,12 +1227,29 @@ export interface I18nMessages {
       pending: string;
       openSourceControl: string;
     };
+    revert: {
+      fileAction: string;
+      selectAction: string;
+      selectActionPending: string;
+      confirmTitle: string;
+      confirmTitleOne: string;
+      confirmBody: string;
+      confirmBodyUntracked: string;
+      confirmBodyMixed: string;
+      confirm: string;
+      confirmOne: string;
+      successToast: string;
+      failureToast: string;
+      nothingSelected: string;
+      ineligible: string;
+    };
     failure: {
       commitTitle: string;
       pushTitle: string;
       pullTitle: string;
       createPrTitle: string;
       abortTitle: string;
+      revertTitle: string;
       showDetails: string;
       hideDetails: string;
       dismiss: string;

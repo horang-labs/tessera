@@ -1,11 +1,12 @@
 "use client";
 
-import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, LoaderCircle, RefreshCw, Save, X } from "lucide-react";
+import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, Image as ImageIcon, LoaderCircle, RefreshCw, Save, X } from "lucide-react";
 import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
+import { WorkspaceImageViewer } from '@/components/workspace/workspace-image-viewer';
 import { WorkspaceMonacoEditor } from "@/components/workspace/workspace-monaco-editor";
 import {
   canUseElectronFileActions,
@@ -18,17 +19,16 @@ import type { WorkspaceFileData } from "@/types/workspace-file";
 import type { WorkspaceTarget } from '@/types/worktree';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import { formatBytes } from '@/lib/format-bytes';
+import {
+  buildWorkspaceRawFileUrl,
+  isWorkspaceImageMimeType,
+} from '@/lib/workspace-files/workspace-file-preview';
 
 type MarkdownViewMode = "preview" | "source";
 
 const subscribeToStaticClientValue = () => () => {};
 const getNoElectronFileActions = () => false;
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} MB`;
-}
 
 function dirname(filePath: string): string {
   const slashIndex = filePath.lastIndexOf("/");
@@ -83,11 +83,6 @@ function isBrowserImageSrc(src: string): boolean {
     || protocol === "blob:"
     || (protocol === "data:" && trimmedSrc.toLowerCase().startsWith("data:image/"))
   );
-}
-
-function buildWorkspaceRawFileUrl(target: WorkspaceTarget, filePath: string): string {
-  const collection = target.kind === 'worktree' ? 'worktrees' : 'sessions';
-  return `/api/${collection}/${encodeURIComponent(target.id)}/file?path=${encodeURIComponent(filePath)}&raw=1`;
 }
 
 function useCanUseElectronFileActions(): boolean {
@@ -273,6 +268,12 @@ export function WorkspaceCodeView({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const canOpenOnHost = useCanUseElectronFileActions();
   const isMarkdownFile = mode === "file" && fileData?.language === "markdown";
+  const isImageFile = mode === 'file'
+    && Boolean(sourceTarget)
+    && isWorkspaceImageMimeType(fileData?.mimeType);
+  const imageRawUrl = isImageFile && sourceTarget && fileData
+    ? buildWorkspaceRawFileUrl(sourceTarget, path, `${fileData.mtimeMs}-${fileData.size}`)
+    : null;
   const markdownViewMode = isMarkdownFile && markdownModeState.path === path ? markdownModeState.mode : "preview";
   const shouldRenderMarkdownPreview = isMarkdownFile && markdownViewMode === "preview";
   const showOpenButton = canOpenOnHost && Boolean(absolutePath);
@@ -360,7 +361,7 @@ export function WorkspaceCodeView({
     );
   }
 
-  if (fileData?.binary) {
+  if (fileData?.binary && !isImageFile) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
         <PendingStateHeader mode={mode} path={path} onClose={onClose} />
@@ -378,6 +379,8 @@ export function WorkspaceCodeView({
         <div className="flex min-w-0 items-center gap-2">
           {mode === "diff" ? (
             <GitCompare className="h-4 w-4 shrink-0 text-(--text-muted)" />
+          ) : isImageFile ? (
+            <ImageIcon className="h-4 w-4 shrink-0 text-(--text-muted)" />
           ) : isMarkdownFile ? (
             <FileText className="h-4 w-4 shrink-0 text-(--text-muted)" />
           ) : (
@@ -405,9 +408,9 @@ export function WorkspaceCodeView({
               ) : null}
             </p>
             <p className="truncate text-[10px] uppercase tracking-[0.14em] text-(--text-muted)">
-              {mode === "diff" ? "Diff" : fileData?.language || "text"}
+              {mode === "diff" ? "Diff" : isImageFile ? fileData?.mimeType : fileData?.language || "text"}
               {fileData ? ` · ${formatBytes(fileData.size)}` : ""}
-              {fileData?.truncated || diffData?.truncated ? " · truncated" : ""}
+              {(!isImageFile && fileData?.truncated) || diffData?.truncated ? " · truncated" : ""}
             </p>
           </div>
         </div>
@@ -451,7 +454,7 @@ export function WorkspaceCodeView({
               </Button>
             </Tooltip>
           ) : null}
-          <Tooltip content={copied ? "Copied" : "Copy"}>
+          {!isImageFile ? <Tooltip content={copied ? "Copied" : "Copy"}>
             <Button
               {...telemetryClickAttributes('workspace_editor.copy_content', 'workspace_editor')}
               type="button"
@@ -464,7 +467,7 @@ export function WorkspaceCodeView({
             >
               <Copy className="h-4 w-4" />
             </Button>
-          </Tooltip>
+          </Tooltip> : null}
           <Tooltip content="Copy absolute path">
             <Button
               {...telemetryClickAttributes('workspace_editor.copy_path', 'workspace_editor')}
@@ -543,7 +546,14 @@ export function WorkspaceCodeView({
         </div>
       ) : null}
       <div className={shouldRenderMarkdownPreview ? "min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}>
-        {shouldRenderMarkdownPreview ? (
+        {imageRawUrl && fileData ? (
+          <WorkspaceImageViewer
+            key={imageRawUrl}
+            path={path}
+            rawUrl={imageRawUrl}
+            size={fileData.size}
+          />
+        ) : shouldRenderMarkdownPreview ? (
           <div className="mx-auto w-full max-w-5xl px-6 py-8 text-base">
             <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} variant="document" />
           </div>

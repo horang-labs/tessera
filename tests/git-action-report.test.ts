@@ -42,6 +42,36 @@ test('a completed action names where it came from', () => {
   assert.equal(toast.params.origin, 'feature/0806-t230');
 });
 
+test('a revert names how many files were restored and pluralises', () => {
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: { action: 'revert', files: ['a.ts', 'b.ts'] },
+    },
+    'feature/0806-t230',
+  );
+
+  assert.equal(toast.tone, 'success');
+  assert.equal(toast.messageKey, 'gitPanel.revert.successToast');
+  assert.equal(toast.params.origin, 'feature/0806-t230');
+  assert.equal(toast.params.count, 2);
+  assert.equal(toast.params.s, 's');
+  assert.equal(toast.clearsDraft, false);
+});
+
+test('a single-file revert leaves the plural suffix empty', () => {
+  const toast = describeGitActionToast(
+    {
+      ok: true,
+      outcome: { action: 'revert', files: ['a.ts'] },
+    },
+    'main',
+  );
+
+  assert.equal(toast.params.count, 1);
+  assert.equal(toast.params.s, '');
+});
+
 test('provenance is the branch, and the worktree only when there is no branch', () => {
   assert.equal(
     describeGitActionOrigin({ branch: 'feature/0806-t230', worktreeName: '0806-t230' }),

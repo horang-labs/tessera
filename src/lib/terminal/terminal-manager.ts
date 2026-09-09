@@ -1550,15 +1550,23 @@ export class TerminalManager {
     const runtime = this.getOwnedTerminal(message.terminalId, userId);
     if (!runtime || runtime.sessionId !== message.sessionId || runtime.ended) return false;
     message.interruptInputPolicy = runtime.interruptInputPolicy;
-    this.clearInterruptInference(runtime);
+    // Codex can emit the interrupted tool's PostToolUse before the Escape
+    // settle timer fires. Keep that timer alive; otherwise the stale running
+    // hook cancels the only idle signal and leaves the UI spinning forever.
     if (
-      runtime.interruptInferredAt
-      && message.status === 'running'
+      message.status === 'running'
       && message.hookEvent !== 'UserPromptSubmit'
-      && Date.now() - runtime.interruptInferredAt <= INTERRUPTED_LATE_RUNNING_SUPPRESSION_MS
+      && (
+        runtime.interruptInferenceTimer !== undefined
+        || (
+          runtime.interruptInferredAt !== undefined
+          && Date.now() - runtime.interruptInferredAt <= INTERRUPTED_LATE_RUNNING_SUPPRESSION_MS
+        )
+      )
     ) {
       return false;
     }
+    this.clearInterruptInference(runtime);
     runtime.interruptInferredAt = undefined;
     runtime.lastSessionState = message;
     runtime.runtimeStateAt = message.stateAt ?? Date.now();
