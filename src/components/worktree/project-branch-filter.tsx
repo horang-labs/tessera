@@ -6,6 +6,8 @@ import { createPortal } from 'react-dom';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ProjectBranchFilterProps {
   projectId: string;
@@ -84,6 +86,12 @@ export function ProjectBranchFilter({ projectId, branches, compact = false }: Pr
   const selectedLabel = selectedBranch ?? t('chat.projectViewAllBranches');
   const choose = (branch?: string) => {
     setBranchFilter(projectId, branch);
+    if (branch !== selectedBranch) {
+      void captureTelemetryEvent('project_branch_filter_changed', {
+        surface: 'worktree',
+        filter_mode: branch === undefined ? 'all' : 'branch',
+      });
+    }
     setQuery('');
     setIsOpen(false);
     triggerRef.current?.focus();
@@ -91,6 +99,7 @@ export function ProjectBranchFilter({ projectId, branches, compact = false }: Pr
 
   const trigger = (
       <button
+        {...telemetryClickAttributes('project.branch_filter.open', 'worktree')}
         ref={triggerRef}
         type="button"
         aria-label={t('chat.projectViewBranchFilterAriaLabel')}
@@ -135,6 +144,7 @@ export function ProjectBranchFilter({ projectId, branches, compact = false }: Pr
         <div className="mb-1 flex items-center gap-2 border-b border-(--divider) px-2 pb-1.5">
           <Search className="h-3.5 w-3.5 text-(--text-muted)" aria-hidden="true" />
           <input
+            {...telemetryClickAttributes('project.branch_filter.search', 'worktree')}
             ref={searchRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -172,6 +182,7 @@ export function ProjectBranchFilter({ projectId, branches, compact = false }: Pr
 function BranchOption({ label, selected, onChoose, testId }: { label: string; selected: boolean; onChoose: () => void; testId: string }) {
   return (
     <button
+      {...telemetryClickAttributes('project.branch_filter.select', 'worktree')}
       role="option"
       type="button"
       aria-selected={selected}
