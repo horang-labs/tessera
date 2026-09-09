@@ -53,6 +53,7 @@ export async function GET(
     const limit = parseInt(searchParams.get('limit') || '20', 10);
     const cursor = searchParams.get('cursor') || undefined;
     const statusGroup = searchParams.get('statusGroup') || undefined;
+    const creationBranch = searchParams.get('creationBranch') || undefined;
 
     if (limit < 1 || limit > 100000) {
       return NextResponse.json(
@@ -73,8 +74,12 @@ export async function GET(
     const runtimeConfigs = processManager.getSessionRuntimeConfigs();
 
     const result = statusGroup
-      ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor })
-      : getProjectViewSessions(encodedDir, { limit, cursor });
+      ? getProjectViewSessionsByStatus(encodedDir, statusGroup, { limit, cursor, creationBranch })
+      : getProjectViewSessions(encodedDir, { limit, cursor, creationBranch });
+
+    const project = dbProjects.getProject(encodedDir);
+    const projectWorktree = dbProjects.getProjectWorktree(encodedDir);
+    const projectDiffWorkDir = projectWorktree?.filesystemPath ?? project?.decoded_path;
 
     const mapped = result.sessions.map((row) => ({
       ...dbSessions.mapSessionRowToApi(row, activeSessionIds, generatingSessionIds),
@@ -82,20 +87,18 @@ export async function GET(
       lastModified: maxActivityTimestamp(row.updated_at, getSessionHistoryModifiedAt(row.id)),
       ...(runtimeConfigs.get(row.id) ?? {}),
     }));
-    // Diff badge shows for any session whose work dir is a git worktree —
-    // standalone chats included, not just worktree-branch-bound sessions. A
-    // chat created inside a worktree directory has a workDir but no
-    // worktreeBranch, yet still produces a real diff. computeWorktreeDiffStats
-    // returns null for non-git paths, so this stays safe for plain dirs.
+    // Direct chats share one Project checkout. A focused page schedules that
+    // checkout once, regardless of how many Session rows the page contains.
     const diffStatsByWorkDir = getCachedOrScheduleBulk(
-      mapped.map((s) => s.workDir ?? undefined),
+      [projectDiffWorkDir],
       userId,
     );
+    const projectDiffStats = projectDiffWorkDir
+      ? diffStatsByWorkDir.get(projectDiffWorkDir) ?? undefined
+      : undefined;
     const sessions = mapped.map((s) => ({
       ...s,
-      diffStats: s.workDir
-        ? diffStatsByWorkDir.get(s.workDir) ?? undefined
-        : undefined,
+      diffStats: projectDiffStats,
     }));
 
     const hasMore = result.nextCursor !== null;

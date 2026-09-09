@@ -56,6 +56,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "vendor:xterm-linux-ime": "node scripts/build-xterm-linux-ime.mjs",
     "dev": "cross-env NODE_ENV=development tsx server.ts",
     "build": "cross-env TURBOPACK= __NEXT_DEV_SERVER= __NEXT_PROCESSED_ENV= NODE_ENV=production next build --webpack",
     "build:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run build",
@@ -67,27 +68,29 @@
     "server:compile": "node -e \"require('fs').rmSync('dist-server',{recursive:true,force:true})\" && tsc -p tsconfig.server.json",
     "electron:compile": "node -e \"require('fs').rmSync('dist-electron',{recursive:true,force:true})\" && tsc -p electron/tsconfig.json",
     "electron:prepare-runtime": "node scripts/prepare-electron-runtime.mjs",
+    "electron:prepare-native": "node scripts/prepare-better-sqlite3-runtime.mjs",
     "electron:dev": "npm run electron:compile && concurrently -k -n SERVER,ELECTRON -c cyan,yellow \"cross-env NODE_ENV=development PORT=3100 TESSERA_ELECTRON_RUNTIME=1 npx tsx server.ts\" \"wait-on http://localhost:3100 && cross-env TESSERA_DEV_PORT=3100 electron dist-electron/electron/main.js\"",
     "electron:prebuild": "npm run build && npm run electron:compile && npm run electron:prepare-runtime",
     "electron:prebuild:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run electron:prebuild",
-    "electron:build:win": "npm run electron:prebuild && electron-builder --win portable --x64 --publish never",
-    "electron:build:win:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && electron-builder --win portable --x64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
+    "electron:build:win": "npm run electron:prebuild && npm run electron:prepare-native -- --platform win32 --arch x64 && electron-builder --win portable --x64 --publish never",
+    "electron:build:win:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && npm run electron:prepare-native -- --platform win32 --arch x64 && electron-builder --win portable --x64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
     "electron:build:win:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run electron:build:win",
-    "electron:build:linux": "npm run electron:prebuild && electron-builder --linux deb --x64 --publish never",
-    "electron:build:linux:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && electron-builder --linux deb --x64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
-    "electron:build:mac-x64": "npm run electron:prebuild && electron-builder --mac --x64 --publish never",
-    "electron:build:mac-x64:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && electron-builder --mac --x64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
-    "electron:build:mac-arm64": "npm run electron:prebuild && electron-builder --mac --arm64 --publish never",
-    "electron:build:mac-arm64:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && electron-builder --mac --arm64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
-    "electron:build:mac-x64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64",
-    "electron:build:mac-arm64:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --arm64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs arm64",
-    "electron:build:mac:signed": "npm run electron:prebuild && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --arm64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64 arm64",
-    "electron:build:all": "npm run electron:prebuild && electron-builder build --publish never",
+    "electron:build:linux": "npm run electron:prebuild && npm run electron:prepare-native -- --platform linux --arch x64 && electron-builder --linux deb --x64 --publish never",
+    "electron:build:linux:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && npm run electron:prepare-native -- --platform linux --arch x64 && electron-builder --linux deb --x64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
+    "electron:build:mac-x64": "npm run electron:prebuild && npm run electron:prepare-native -- --platform darwin --arch x64 && electron-builder --mac --x64 --publish never",
+    "electron:build:mac-x64:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && npm run electron:prepare-native -- --platform darwin --arch x64 && electron-builder --mac --x64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
+    "electron:build:mac-arm64": "npm run electron:prebuild && npm run electron:prepare-native -- --platform darwin --arch arm64 && electron-builder --mac --arm64 --publish never",
+    "electron:build:mac-arm64:debug": "cross-env NEXT_PUBLIC_TESSERA_LOG_LEVEL=debug TESSERA_TELEMETRY_DISABLED=1 npm run electron:prebuild && npm run electron:prepare-native -- --platform darwin --arch arm64 && electron-builder --mac --arm64 --publish never -c.extraMetadata.tesseraLogLevel=debug -c.extraMetadata.tesseraTelemetryDisabled=true",
+    "electron:build:mac-x64:signed": "npm run electron:prebuild && npm run electron:prepare-native -- --platform darwin --arch x64 && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64",
+    "electron:build:mac-arm64:signed": "npm run electron:prebuild && npm run electron:prepare-native -- --platform darwin --arch arm64 && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --arm64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs arm64",
+    "electron:build:mac:signed": "npm run electron:prebuild && npm run electron:prepare-native -- --platform darwin --arch x64 && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --x64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && npm run electron:prepare-native -- --platform darwin --arch arm64 && TESSERA_MAC_DISTRIBUTION=1 electron-builder --mac dmg --arm64 --publish never --config.forceCodeSigning=true --config.mac.notarize=false && node scripts/notarize-mac-dmg.cjs x64 arm64",
+    "electron:build:all": "npm run electron:prebuild && npm run electron:prepare-native && electron-builder build --publish never",
     "npm:prepack": "npm run build && npm run server:compile",
     "prepack": "npm run npm:prepack",
     "prepare": "node scripts/patch-xterm-webgl-atlas.mjs && node scripts/patch-xterm-webgl-device-pixel.mjs && node scripts/patch-xterm-touch-scroll.mjs && node scripts/patch-xterm-mouse-report-coords.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
+    "@parcel/watcher": "2.5.6",
     "@tanstack/react-virtual": "^3.13.24",
     "@xterm/addon-fit": "0.12.0-beta.289",
     "@xterm/addon-search": "0.17.0-beta.289",
@@ -97,8 +100,10 @@
     "@xterm/addon-webgl": "0.20.0-beta.288",
     "@xterm/headless": "6.1.0-beta.289",
     "@xterm/xterm": "6.1.0-beta.289",
+    "acorn": "^8.16.0",
     "agentation": "^3.0.2",
     "bcryptjs": "^3.0.3",
+    "better-sqlite3": "12.10.0",
     "chokidar": "^4.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -146,7 +151,8 @@
     "concurrently": "^9.0.0",
     "cross-env": "^7.0.3",
     "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
+    "electron-builder": "27.0.0-alpha.8",
+    "esbuild": "0.28.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.3",
     "pino-pretty": "^10.3.0",
@@ -157,7 +163,7 @@
     "wait-on": "^8.0.0"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=20.9.0 <21.0.0 || >=22.0.0 <27.0.0",
     "npm": ">=10.0.0"
   },
   "build": {
@@ -165,15 +171,18 @@
     "productName": "Tessera",
     "copyright": "Copyright (c) 2026 Horang Labs, Inc.",
     "afterPack": "scripts/electron-after-pack.cjs",
-    "npmRebuild": false,
-    "asar": true,
-    "asarUnpack": [
-      "**/sql.js/**",
-      "**/node_modules/sql.js/**",
-      "**/node_modules/node-pty/prebuilds/**",
-      "**/node_modules/node-pty/build/Release/*.node",
-      "**/node_modules/node-pty/build/Debug/*.node"
-    ],
+    "allowMissingDependencies": true,
+    "asar": {
+      "unpack": [
+        "**/node_modules/@parcel/watcher*/**",
+        "**/node_modules/better-sqlite3/**",
+        "**/sql.js/**",
+        "**/node_modules/sql.js/**",
+        "**/node_modules/node-pty/prebuilds/**",
+        "**/node_modules/node-pty/build/Release/*.node",
+        "**/node_modules/node-pty/build/Debug/*.node"
+      ]
+    },
     "files": [
       "**/*",
       "!**/.next/cache{,/**/*}",
@@ -204,9 +213,11 @@
       "target": "dmg",
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",
-      "hardenedRuntime": true,
-      "entitlements": "scripts/entitlements.mac.plist",
-      "entitlementsInherit": "scripts/entitlements.mac.plist"
+      "sign": {
+        "entitlements": "scripts/entitlements.mac.plist",
+        "entitlementsInherit": "scripts/entitlements.mac.plist",
+        "hardenedRuntime": true
+      }
     },
     "dmg": {
       "artifactName": "Tessera-${version}-macos-${arch}.${ext}",
@@ -219,6 +230,9 @@
       "packageName": "tessera",
       "artifactName": "Tessera-${version}-linux-${arch}.${ext}",
       "afterInstall": "scripts/linux-deb-after-install.tpl"
+    },
+    "nativeModules": {
+      "npmRebuild": false
     }
   }
 }

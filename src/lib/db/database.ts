@@ -1,5 +1,5 @@
 /**
- * SQLite database singleton using sql.js (WASM-based, no native dependencies).
+ * SQLite database singleton using a native, file-backed SQLite connection.
  *
  * Provides a better-sqlite3-compatible API wrapper so that all existing
  * query code (sessions.ts, projects.ts, etc.) works without changes.
@@ -8,26 +8,30 @@
  *   - production runtime: ${TESSERA_DATA_DIR:-~/.tessera}/tessera.db
  *   - development on main branch: ${TESSERA_DATA_DIR:-~/.tessera}/tessera.db
  *   - development on every other branch: ${TESSERA_DATA_DIR:-~/.tessera}/tessera-dev.db
- * Persistence: immediate write-through on every mutation.
+ * Persistence: SQLite WAL; mutations write changed pages instead of exporting
+ * the complete database after every statement.
  */
 
-const initSqlJs = require('sql.js') as () => Promise<{ Database: new (data?: ArrayLike<number>) => SqlJsDatabase }>;
+interface NativeRunResult {
+  changes: number;
+  lastInsertRowid: number | bigint;
+}
 
-interface SqlJsDatabase {
-  run(sql: string, params?: (string | number | null | Uint8Array)[]): void;
-  exec(sql: string): { columns: string[]; values: (string | number | null | Uint8Array)[][] }[];
-  prepare(sql: string): SqlJsStatement;
-  getRowsModified(): number;
-  export(): Uint8Array;
+interface NativeStatement {
+  run(...params: unknown[]): NativeRunResult;
+  get(...params: unknown[]): Record<string, unknown> | undefined;
+  all(...params: unknown[]): Record<string, unknown>[];
+}
+
+interface NativeDatabase {
+  prepare(sql: string): NativeStatement;
+  exec(sql: string): NativeDatabase;
+  pragma(directive: string): unknown[];
+  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T;
   close(): void;
 }
 
-interface SqlJsStatement {
-  bind(params?: (string | number | null | Uint8Array)[]): void;
-  step(): boolean;
-  getAsObject(): Record<string, string | number | null | Uint8Array>;
-  free(): void;
-}
+const BetterSqlite3 = require('better-sqlite3') as new (filename: string) => NativeDatabase;
 import fs from 'fs';
 import {
   CANONICAL_WORKTREE_BOOTSTRAP_META_KEY,
@@ -42,120 +46,73 @@ import {
 } from './worktree-identity';
 import logger from '../logger';
 
-// ── better-sqlite3 compatible wrapper ───────────────────────────────────────
+// ── Stable database interface ───────────────────────────────────────────────
 
 class PreparedStatement {
-  constructor(private wrapper: DatabaseWrapper, private sql: string) {}
+  constructor(private statement: NativeStatement) {}
 
   run(...params: unknown[]): { changes: number; lastInsertRowid: number } {
-    return this.wrapper._run(this.sql, params);
+    const result = this.statement.run(...params);
+    return {
+      changes: result.changes,
+      lastInsertRowid: Number(result.lastInsertRowid),
+    };
   }
 
   get(...params: unknown[]): any {
-    return this.wrapper._get(this.sql, params);
+    return this.statement.get(...params);
   }
 
   all(...params: unknown[]): any[] {
-    return this.wrapper._all(this.sql, params);
+    return this.statement.all(...params);
   }
 }
 
 class DatabaseWrapper {
-  private inTransaction = false;
-
-  constructor(private db: SqlJsDatabase, private dbPath: string) {}
+  constructor(private db: NativeDatabase) {}
 
   prepare(sql: string): PreparedStatement {
-    return new PreparedStatement(this, sql);
+    return new PreparedStatement(this.db.prepare(sql));
   }
 
   exec(sql: string): void {
     this.db.exec(sql);
-    if (!this.inTransaction) this.persist();
   }
 
   pragma(directive: string): unknown {
-    const results = this.db.exec(`PRAGMA ${directive}`);
-    if (results.length === 0) return undefined;
-    const { columns, values } = results[0];
-    // Single-value pragma (e.g., PRAGMA foreign_keys = ON)
-    if (values.length === 1 && columns.length === 1) {
-      return values[0][0];
+    const rows = this.db.pragma(directive);
+    if (rows.length === 0) return undefined;
+    if (rows.length === 1 && typeof rows[0] === 'object' && rows[0] !== null) {
+      const values = Object.values(rows[0]);
+      if (values.length === 1) return values[0];
     }
-    // Multi-row pragma (e.g., PRAGMA table_info)
-    return values.map((row: (string | number | null | Uint8Array)[]) => {
-      const obj: Record<string, unknown> = {};
-      columns.forEach((col: string, i: number) => { obj[col] = row[i]; });
-      return obj;
-    });
-  }
-
-  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T {
-    const wrapper = this;
-    const transactionFn = ((...args: unknown[]) => {
-      wrapper.db.run('BEGIN');
-      wrapper.inTransaction = true;
-      try {
-        const result = fn(...args);
-        wrapper.db.run('COMMIT');
-        wrapper.inTransaction = false;
-        wrapper.persist();
-        return result;
-      } catch (e) {
-        wrapper.db.run('ROLLBACK');
-        wrapper.inTransaction = false;
-        throw e;
-      }
-    }) as unknown as T;
-    return transactionFn;
-  }
-
-  /** @internal */
-  _run(sql: string, params: unknown[]): { changes: number; lastInsertRowid: number } {
-    this.db.run(sql, params as (string | number | null | Uint8Array)[]);
-    const changes = this.db.getRowsModified();
-    if (!this.inTransaction && changes > 0) this.persist();
-    return { changes, lastInsertRowid: 0 };
-  }
-
-  /** @internal */
-  _get(sql: string, params: unknown[]): Record<string, unknown> | undefined {
-    const stmt = this.db.prepare(sql);
-    if (params.length > 0) stmt.bind(params as (string | number | null | Uint8Array)[]);
-    if (stmt.step()) {
-      const row = stmt.getAsObject();
-      stmt.free();
-      return row as Record<string, unknown>;
-    }
-    stmt.free();
-    return undefined;
-  }
-
-  /** @internal */
-  _all(sql: string, params: unknown[]): Record<string, unknown>[] {
-    const stmt = this.db.prepare(sql);
-    if (params.length > 0) stmt.bind(params as (string | number | null | Uint8Array)[]);
-    const rows: Record<string, unknown>[] = [];
-    while (stmt.step()) {
-      rows.push(stmt.getAsObject() as Record<string, unknown>);
-    }
-    stmt.free();
     return rows;
   }
 
-  private persist(): void {
-    const data = this.db.export();
-    fs.writeFileSync(this.dbPath, Buffer.from(data));
+  transaction<T extends (...args: unknown[]) => unknown>(fn: T): T {
+    return this.db.transaction(fn);
+  }
+
+  immediateTransaction<T>(fn: () => T): T {
+    const transaction = this.db.transaction(fn) as typeof fn & { immediate: () => T };
+    return transaction.immediate();
+  }
+
+  close(): void {
+    this.db.close();
   }
 }
 
 // ── Singleton ───────────────────────────────────────────────────────────────
 
 const DB_KEY = Symbol.for('tessera.database');
-const _g = globalThis as unknown as Record<symbol, DatabaseWrapper>;
+const _g = globalThis as unknown as Record<symbol, DatabaseWrapper | undefined>;
+const LEGACY_BACKUP_SUFFIX = '.pre-native-sqlite.bak';
+const STARTUP_LOCK_SUFFIX = '.startup-lock';
+const TESSERA_APPLICATION_ID = 0x54455353; // "TESS"
 
 /**
- * Initialize the database (async — sql.js WASM loading).
+ * Initialize the database.
  * Must be called once at server startup before any getDb() calls.
  */
 export async function initDatabase(): Promise<void> {
@@ -165,45 +122,93 @@ export async function initDatabase(): Promise<void> {
 
   fs.mkdirSync(dbLocation.dbDir, { recursive: true, mode: 0o700 });
 
-  const SqlJs = await initSqlJs();
-
-  let db: SqlJsDatabase;
-  if (fs.existsSync(dbLocation.dbPath)) {
-    const fileBuffer = fs.readFileSync(dbLocation.dbPath);
-    db = new SqlJs.Database(fileBuffer) as unknown as SqlJsDatabase;
-  } else {
-    db = new SqlJs.Database() as unknown as SqlJsDatabase;
+  // A separate SQLite file provides a crash-safe, cross-process startup lock.
+  // This covers the legacy backup, schema migrations, and WAL transition. Once
+  // startup finishes, normal concurrency is handled by the main database WAL.
+  const startupLock = new DatabaseWrapper(
+    new BetterSqlite3(`${dbLocation.dbPath}${STARTUP_LOCK_SUFFIX}`),
+  );
+  let wrapper: DatabaseWrapper;
+  try {
+    startupLock.pragma('busy_timeout = 30000');
+    wrapper = startupLock.immediateTransaction(
+      () => openInitializedDatabase(dbLocation.dbPath),
+    );
+  } finally {
+    startupLock.close();
   }
-
-  const wrapper = new DatabaseWrapper(db, dbLocation.dbPath);
-
-  // WAL not applicable for sql.js (in-memory), but foreign_keys works
-  wrapper.pragma('foreign_keys = ON');
-
-  // Create tables
-  wrapper.exec(CREATE_TABLES);
-
-  // Check/set schema version and run migrations
-  const versionRow = wrapper.prepare('SELECT value FROM _meta WHERE key = ?').get('schema_version') as { value: string } | undefined;
-  const currentVersion = versionRow ? parseInt(String(versionRow.value), 10) : 0;
-
-  if (!versionRow) {
-    wrapper.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION));
-  } else if (currentVersion < SCHEMA_VERSION) {
-    runMigrations(wrapper, currentVersion);
-    wrapper.prepare('UPDATE _meta SET value = ? WHERE key = ?').run(String(SCHEMA_VERSION), 'schema_version');
-  }
-
-  ensureLatestSchema(wrapper);
-  wrapper.exec(CREATE_INDEXES);
 
   _g[DB_KEY] = wrapper;
+  process.once('exit', () => {
+    try {
+      _g[DB_KEY]?.close();
+    } catch {
+      // The process is exiting; SQLite WAL recovery handles an unclean close.
+    }
+    _g[DB_KEY] = undefined;
+  });
   logger.info({
     branchName: dbLocation.branchName,
     dbName: dbLocation.dbName,
     path: dbLocation.dbPath,
     source: dbLocation.source,
-  }, 'SQLite database initialized (sql.js WASM)');
+  }, 'SQLite database initialized (native WAL)');
+}
+
+function openInitializedDatabase(dbPath: string): DatabaseWrapper {
+  const databaseExists = fs.existsSync(dbPath);
+  const wrapper = new DatabaseWrapper(new BetterSqlite3(dbPath));
+
+  try {
+    // Set the lock wait before any pragma or migration that may need a database
+    // lock. Duplicate Electron/server processes then wait instead of failing at
+    // startup with SQLITE_BUSY.
+    wrapper.pragma('busy_timeout = 5000');
+    wrapper.pragma('foreign_keys = ON');
+
+    wrapper.immediateTransaction(() => {
+      if (databaseExists) {
+        const quickCheck = wrapper.pragma('quick_check');
+        if (quickCheck !== 'ok') {
+          throw new Error(`SQLite quick_check failed: ${JSON.stringify(quickCheck)}`);
+        }
+      }
+
+      const applicationId = wrapper.pragma('application_id');
+      if (databaseExists && applicationId !== TESSERA_APPLICATION_ID) {
+        const backupPath = `${dbPath}${LEGACY_BACKUP_SUFFIX}`;
+        if (!fs.existsSync(backupPath)) {
+          fs.copyFileSync(dbPath, backupPath, fs.constants.COPYFILE_EXCL);
+          logger.info({ backupPath }, 'Created pre-native-SQLite database backup');
+        }
+      }
+
+      // Create tables
+      wrapper.exec(CREATE_TABLES);
+
+      // Check/set schema version and run migrations
+      const versionRow = wrapper.prepare('SELECT value FROM _meta WHERE key = ?').get('schema_version') as { value: string } | undefined;
+      const currentVersion = versionRow ? parseInt(String(versionRow.value), 10) : 0;
+
+      if (!versionRow) {
+        wrapper.prepare('INSERT INTO _meta (key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION));
+      } else if (currentVersion < SCHEMA_VERSION) {
+        runMigrations(wrapper, currentVersion);
+        wrapper.prepare('UPDATE _meta SET value = ? WHERE key = ?').run(String(SCHEMA_VERSION), 'schema_version');
+      }
+
+      ensureLatestSchema(wrapper);
+      wrapper.exec(CREATE_INDEXES);
+      wrapper.pragma(`application_id = ${TESSERA_APPLICATION_ID}`);
+    });
+
+    wrapper.pragma('journal_mode = WAL');
+    wrapper.pragma('synchronous = NORMAL');
+  } catch (error) {
+    wrapper.close();
+    throw error;
+  }
+  return wrapper;
 }
 
 function addColumnIfMissing(

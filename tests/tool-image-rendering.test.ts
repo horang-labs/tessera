@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   buildImageToolResult,
   buildToolImageUrl,
+  extractImageToolPath,
   inferImageMime,
   isImagePath,
   resolveImageToolResultSrc,
@@ -41,6 +42,11 @@ test('buildToolImageUrl / buildImageToolResult encode session + toolUseId', () =
   });
 });
 
+test('extractImageToolPath accepts generated-image savedPath', () => {
+  assert.equal(extractImageToolPath({ savedPath: '/tmp/generated.png' }), '/tmp/generated.png');
+  assert.equal(extractImageToolPath({ path: '/tmp/view.png', savedPath: '/tmp/generated.png' }), '/tmp/view.png');
+});
+
 // --- the route reads through the host filesystem, not the CLI's path ---
 
 test('tool-image route resolves the recorded path for the host filesystem', () => {
@@ -68,6 +74,8 @@ test('tool-image route reads a PTY session\'s tool call from the provider transc
   // inline image 404s. The transcript the chat view decodes is the only source.
   assert.match(routeSource, /supportsTerminalTranscriptHistory\(session\)/);
   assert.match(routeSource, /readTerminalToolCallParams\(session, toolUseId/);
+  assert.match(routeSource, /extractCachedTerminalTranscriptImagePath\(toolParams\)/);
+  assert.match(routeSource, /extractImageToolPath\(toolParams\)/);
 });
 
 // --- codex view_image (imageView) end-to-end through the parser ---
@@ -153,6 +161,37 @@ test('Codex dynamic tool image output is preserved for inline rendering', () => 
     mimeType: 'image/png',
   });
   assert.equal(resolveImageToolResultSrc(toolCall.toolUseResult), 'data:image/png;base64,QUJDRA==');
+});
+
+test('Codex imageGeneration serves the saved file without retaining duplicate image bytes', () => {
+  const parsed = codexProtocolParser.parseStdout(
+    'codex-generated-image',
+    JSON.stringify({
+      method: 'item/completed',
+      params: {
+        item: {
+          type: 'imageGeneration',
+          id: 'generated_image_1',
+          status: 'completed',
+          result: 'QUJDRA==',
+          savedPath: '/tmp/generated.png',
+          revisedPrompt: 'revised prompt',
+        },
+      },
+    }),
+  );
+  const toolCall = parsed
+    .map((item) => item.serverMessage)
+    .find((message) => message && (message as any).toolUseId === 'generated_image_1') as any;
+
+  assert.ok(toolCall);
+  assert.equal(toolCall.output, undefined);
+  assert.deepEqual(toolCall.toolUseResult, {
+    kind: 'file_read',
+    contentType: 'image',
+    url: '/api/sessions/codex-generated-image/tool-image?toolUseId=generated_image_1',
+  });
+  assert.equal(toolCall.toolParams.savedPath, '/tmp/generated.png');
 });
 
 // --- claude code Read of an image through the live tool_result path ---

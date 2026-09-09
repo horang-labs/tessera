@@ -47,6 +47,13 @@ npm install
 npm run dev
 ```
 
+When accessing a WSL dev server from Windows through its WSL IP, set
+`TESSERA_HOST=0.0.0.0` and `TESSERA_DEV_ORIGIN=http://<wsl-ip>:<port>` on that
+server process. The origin override applies only in development and avoids
+changing the shared remote-access address used by other running worktrees.
+Verify that the provider list loads after signing in; HTTP reachability alone
+does not verify the WebSocket connection.
+
 The dev server runs through `server.ts` on port `3100` by default. Do not run `next dev` directly.
 
 ## Checks

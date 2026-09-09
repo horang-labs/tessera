@@ -51,6 +51,10 @@ const repoRoot = path.resolve(new URL('..', import.meta.url).pathname);
 const tempRoot = path.join(os.homedir(), 'tmp');
 await fs.mkdir(tempRoot, { recursive: true });
 const dataDir = await fs.mkdtemp(path.join(tempRoot, 'tessera-mobile-tab-list-'));
+const projectARoot = await fs.mkdtemp(path.join(tempRoot, 'tessera-mobile-tab-order-a-'));
+const projectBRoot = await fs.mkdtemp(path.join(tempRoot, 'tessera-mobile-tab-order-b-'));
+const screenshotDir = process.env.TESSERA_E2E_SCREENSHOT_DIR ?? null;
+if (screenshotDir) await fs.mkdir(screenshotDir, { recursive: true });
 const port = await reservePort();
 const appOrigin = `http://127.0.0.1:${port}`;
 let serverOutput = '';
@@ -95,6 +99,7 @@ try {
   if (shouldRun(3)) await testChoosingATabActivatesIt(browser, appOrigin);
   if (shouldRun(4)) await testATabCanBeClosedFromTheList(browser, appOrigin);
   if (shouldRun(5)) await testDesktopStripIsUnchanged(browser, appOrigin);
+  if (shouldRun(6)) await testProjectSwitchPreservesTabOrder(browser, appOrigin);
   console.log('mobile-tab-list: all phases passed');
 } catch (error) {
   if (serverOutput) process.stderr.write(`\n--- isolated server output ---\n${serverOutput}\n`);
@@ -110,6 +115,8 @@ try {
   }
   await waitForExit(server, 5_000);
   await fs.rm(dataDir, { recursive: true, force: true });
+  await fs.rm(projectARoot, { recursive: true, force: true });
+  await fs.rm(projectBRoot, { recursive: true, force: true });
 }
 
 async function testPhoneReplacesTheStripWithOneControl(browserInstance, origin) {
@@ -346,6 +353,40 @@ async function testDesktopStripIsUnchanged(browserInstance, origin) {
   }
 }
 
+async function testProjectSwitchPreservesTabOrder(browserInstance, origin) {
+  await fs.writeFile(path.join(projectARoot, '.gitkeep'), '');
+  await fs.writeFile(path.join(projectBRoot, '.gitkeep'), '');
+  await api('/api/settings', { method: 'PUT', body: { agentEnvironment: 'wsl' } });
+  await api('/api/projects', { method: 'POST', body: { folderPath: projectARoot } });
+  await api('/api/projects', { method: 'POST', body: { folderPath: projectBRoot } });
+
+  const { context, page } = await createSeededPage(
+    browserInstance,
+    createPhoneContext,
+    seedProjectTabOrderStore(),
+  );
+  try {
+    await openChat(page, origin);
+    await openTabList(page);
+    await assertTabListTitles(page, ['A first', 'Global middle', 'A last']);
+    await capture(page, '01-project-a-initial-interleaved-order.png');
+
+    await closeTabList(page);
+    await page.getByTestId(`project-strip-${projectBRoot}`).tap();
+    await openTabList(page);
+    await assertTabListTitles(page, ['B only', 'Global middle']);
+    await capture(page, '02-project-b-own-order.png');
+
+    await closeTabList(page);
+    await page.getByTestId(`project-strip-${projectARoot}`).tap();
+    await openTabList(page);
+    await assertTabListTitles(page, ['A first', 'Global middle', 'A last']);
+    await capture(page, '03-project-a-restored-interleaved-order.png');
+  } finally {
+    await context.close();
+  }
+}
+
 /**
  * A window with tabs already open.
  *
@@ -377,7 +418,43 @@ function seedTabStore() {
   };
 }
 
-async function createSeededPage(browserInstance, makeContext) {
+function seedProjectTabOrderStore() {
+  const makeTab = (id, title, projectDir) => {
+    const panelId = `${id}-panel`;
+    return {
+      id,
+      projectDir,
+      title,
+      isPreview: false,
+      snapshot: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: null } },
+        activePanelId: panelId,
+      },
+    };
+  };
+  const aFirst = makeTab('a-first', 'A first', projectARoot);
+  const globalMiddle = makeTab('global-middle', 'Global middle', null);
+  const aLast = makeTab('a-last', 'A last', projectARoot);
+  const bOnly = makeTab('b-only', 'B only', projectBRoot);
+
+  return {
+    version: 3,
+    currentProjectDir: projectARoot,
+    activeTabId: aFirst.id,
+    projects: {
+      [projectARoot]: { tabs: [aFirst, aLast], activeTabId: aFirst.id },
+      [projectBRoot]: { tabs: [bOnly], activeTabId: bOnly.id },
+    },
+    global: { tabs: [globalMiddle], activeTabId: globalMiddle.id },
+    tabOrderIdsByScope: {
+      [projectARoot]: [aFirst.id, globalMiddle.id, aLast.id],
+      [projectBRoot]: [bOnly.id, globalMiddle.id],
+    },
+  };
+}
+
+async function createSeededPage(browserInstance, makeContext, tabStore = seedTabStore()) {
   const context = await makeContext(browserInstance, {
     extraHTTPHeaders: { 'x-tessera-app-secret': appSecret },
   });
@@ -385,10 +462,50 @@ async function createSeededPage(browserInstance, makeContext) {
     ([key, value]) => {
       window.localStorage.setItem(key, value);
     },
-    ['tessera-tab-store', JSON.stringify(seedTabStore())],
+    ['tessera-tab-store', JSON.stringify(tabStore)],
   );
   const page = await context.newPage();
   return { context, page };
+}
+
+async function api(pathname, { method, body }) {
+  const response = await fetch(`${appOrigin}${pathname}`, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      'x-tessera-app-secret': appSecret,
+      origin: appOrigin,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  assert.ok(response.ok, `${method} ${pathname} failed (${response.status}): ${text}`);
+}
+
+async function openTabList(page) {
+  const popover = page.getByTestId('tab-list-popover');
+  if (await popover.isVisible().catch(() => false)) return;
+  await page.getByTestId('tab-list-trigger').tap();
+  await popover.waitFor({ timeout: 5_000 });
+}
+
+async function closeTabList(page) {
+  const popover = page.getByTestId('tab-list-popover');
+  if (!(await popover.isVisible().catch(() => false))) return;
+  await page.getByTestId('tab-list-trigger').tap();
+  await popover.waitFor({ state: 'detached', timeout: 5_000 });
+}
+
+async function assertTabListTitles(page, expected) {
+  assert.deepEqual(
+    (await page.getByTestId('tab-list-item').allInnerTexts()).map((text) => text.trim()),
+    expected,
+  );
+}
+
+async function capture(page, filename) {
+  if (!screenshotDir) return;
+  await page.screenshot({ path: path.join(screenshotDir, filename), fullPage: true });
 }
 
 async function openChat(page, origin) {

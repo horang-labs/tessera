@@ -1,4 +1,6 @@
 import './runtime/register-runtime-aliases';
+import { restoreSessionRuntimes } from './src/lib/session/session-runtime-recovery';
+import { providerLaunchModule } from './src/lib/terminal/shared-provider-launch-module';
 import next from 'next';
 import { loadEnvConfig } from '@next/env';
 import { createServer } from 'http';
@@ -18,7 +20,10 @@ import { ensureRSAKeys } from './src/lib/auth/keys';
 import { ensureAppSecret } from './src/lib/auth/app-secret';
 import { resolveServerDefaultUserId } from './src/lib/server-default-user';
 import { SettingsManager } from './src/lib/settings/manager';
-import { pruneExpiredArchivedWorktrees } from './src/lib/archive/archive-service';
+import {
+  configureArchivedWorktreeRetention,
+  stopArchivedWorktreeRetention,
+} from './src/lib/archive/archive-retention-runner';
 import { prewarmCliStatusSnapshot } from './src/lib/cli/provider-status-prewarm';
 import { snapshotTelemetryStartupDataState } from './src/lib/telemetry/server-state';
 import { setModelConfigBroadcast, triggerModelConfigRefresh } from './src/lib/model-config/refresh';
@@ -47,6 +52,7 @@ loadEnvConfig(dir, dev, console, true);
 snapshotTelemetryStartupDataState();
 
 async function startServer() {
+  let startupRetentionPolicy: { retentionDays: number; userId: string } | null = null;
   await initDatabase();
   // A preparation PTY does not survive the app, so any status still claiming to
   // be running describes a process that is gone — and a worktree that may be
@@ -66,7 +72,13 @@ async function startServer() {
         logger.info({ bootstrap }, 'Canonical Worktree registry bootstrapped');
       }
       if (settings.autoDeleteArchivedWorktrees) {
-        await pruneExpiredArchivedWorktrees(settings.archivedWorktreeRetentionDays);
+        // Physical cleanup is intentionally not a startup gate. A heavy archive
+        // can require many Windows->WSL Git bridges; the paced runner starts
+        // only after the server is usable and removes one Worktree per pass.
+        startupRetentionPolicy = {
+          retentionDays: settings.archivedWorktreeRetentionDays,
+          userId,
+        };
       }
     }
   } catch (error) {
@@ -130,6 +142,10 @@ async function startServer() {
 
       // Start WebSocket server on the same HTTP server
       wsServer.start(server);
+      // Resume every previously live provider independently of the selected
+      // project or mounted panels (including the all-project Running board).
+      void restoreSessionRuntimes((request) => providerLaunchModule.launch(request));
+      configureArchivedWorktreeRetention(startupRetentionPolicy);
 
       // Pay the first ConPTY spawn cost (~seconds on Windows) before the user
       // opens their first terminal.
@@ -205,6 +221,7 @@ async function startServer() {
 
       logger.info('Stopping task PR poller...');
       taskPrPoller.stop();
+      stopArchivedWorktreeRetention();
       uninstallTaskPrStatusBroadcast();
       uninstallSessionPrStatusBroadcast();
 

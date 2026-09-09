@@ -1,9 +1,11 @@
 'use client';
 
 import {
+  forwardRef,
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type ChangeEvent,
@@ -12,6 +14,7 @@ import {
 import { ArrowUp, ImagePlus, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { cn } from '@/lib/utils';
+import { isPhoneViewport } from '@/lib/viewport/phone-viewport';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { useI18n } from '@/lib/i18n';
 import { toast } from '@/stores/notification-store';
@@ -25,7 +28,8 @@ import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { sendTerminalChatMessage } from '@/lib/terminal/terminal-chat-send';
 import { registerPendingTerminalChatMessage } from '@/lib/chat/terminal-chat-live-refresh';
 import {
-  getWorkspaceFileDragAbsolutePath,
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
 } from '@/lib/dnd/panel-session-drag';
 import {
@@ -87,15 +91,19 @@ export const TerminalChatCancelButton = memo(function TerminalChatCancelButton({
  * It also carries the PTY's lifecycle state, because the overlay has no other
  * live signal — without it a quiet session is indistinguishable from a broken one.
  */
-export const TerminalChatComposer = memo(function TerminalChatComposer({
-  sessionId,
-  isSinglePanel = false,
-  onInterrupt,
-}: {
+export interface TerminalChatComposerHandle {
+  insertPaths: (paths: string[]) => boolean;
+}
+
+export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, {
   sessionId: string;
   isSinglePanel?: boolean;
   onInterrupt: () => void;
-}) {
+}>(function TerminalChatComposer({
+  sessionId,
+  isSinglePanel = false,
+  onInterrupt,
+}, ref) {
   const { t } = useI18n();
   const isProcessing = useTerminalSessionStore(selectIsTerminalTurnProcessing(sessionId));
   const isAwaitingInput = useTerminalSessionStore(selectIsTerminalAwaitingInput(sessionId));
@@ -145,12 +153,22 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     requestAnimationFrame(() => {
       const input = textareaRef.current;
       input?.setSelectionRange(edit.nextCursorPos, edit.nextCursorPos);
-      input?.focus();
+      if (!isPhoneViewport()) input?.focus();
     });
   }, []);
 
+  useImperativeHandle(ref, () => ({
+    insertPaths(paths) {
+      if (isBlocked || isSubmitting || paths.length === 0) return false;
+      insertPaths(paths);
+      return true;
+    },
+  }), [insertPaths, isBlocked, isSubmitting]);
+
   const acceptsPathDrop = useCallback((dataTransfer: DataTransfer) => (
-    isNativeFileDrag(dataTransfer) || hasWorkspaceFileDragData(dataTransfer)
+    isNativeFileDrag(dataTransfer) ||
+    hasWorkspaceFileDragData(dataTransfer) ||
+    hasPathInsertDragData(dataTransfer)
   ), []);
 
   const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
@@ -182,9 +200,7 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
 
     const paths = isNativeFileDrag(event.dataTransfer)
       ? getNativeFileDropAbsolutePaths(event.dataTransfer)
-      : [getWorkspaceFileDragAbsolutePath(event.dataTransfer)].filter(
-          (path): path is string => Boolean(path),
-        );
+      : getInternalPathDropPaths(event.dataTransfer);
     insertPaths(paths);
   }, [acceptsPathDrop, insertPaths, isBlocked, isSubmitting]);
 
@@ -197,7 +213,9 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       toast.error(t('chat.terminalInputBar.imageAttachFailed'));
     } finally {
       setPendingImageUploads((count) => Math.max(0, count - imageFiles.length));
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => {
+        if (!isPhoneViewport()) textareaRef.current?.focus();
+      });
     }
   }, [insertPaths, t]);
 
@@ -226,6 +244,8 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     const text = value;
     if (!text.trim() || isBlocked || isUploadingImage || submittingRef.current) return;
 
+    // Dismiss the mobile keyboard in the user gesture, before awaiting delivery.
+    if (isPhoneViewport()) textareaRef.current?.blur();
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
@@ -254,7 +274,9 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
     } finally {
       submittingRef.current = false;
       setIsSubmitting(false);
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      requestAnimationFrame(() => {
+        if (!isPhoneViewport()) textareaRef.current?.focus();
+      });
     }
   }, [isBlocked, isUploadingImage, sessionId, t, value]);
 
@@ -454,4 +476,4 @@ export const TerminalChatComposer = memo(function TerminalChatComposer({
       </div>
     </div>
   );
-});
+}));

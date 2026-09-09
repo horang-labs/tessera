@@ -7,14 +7,17 @@ import * as dbProjects from '@/lib/db/projects';
 import * as dbSessions from '@/lib/db/sessions';
 import { formatPathForAgentDisplay } from '@/lib/filesystem/path-environment';
 import { hasPreparationScript } from '@/lib/projects/preparation-script-policy';
-import { getProjectViewProjection } from '@/lib/projects/project-view-projection';
+import {
+  getProjectViewCreationBranches,
+  getProjectViewProjection,
+} from '@/lib/projects/project-view-projection';
 import {
   isElectronAppRuntimeProjectPath,
   shouldAutoRegisterCurrentProject,
 } from '@/lib/projects/current-project';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
-import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedBulk } from '@/lib/git/worktree-diff-stats-bulk';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -40,6 +43,18 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const limitPerStatus = parseInt(searchParams.get('limitPerStatus') || '100000', 10);
+    const projectBranchFilters = (() => {
+      try {
+        const parsed = JSON.parse(searchParams.get('creationBranchFilters') || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? Object.fromEntries(Object.entries(parsed).filter(([, branch]) =>
+            typeof branch === 'string' && branch.length > 0 && branch.length <= 1000,
+          )) as Record<string, string>
+          : {};
+      } catch {
+        return {};
+      }
+    })();
 
     // Get active/generating session IDs from process manager
     const activeSessionIds = getActiveSessionIds(userId);
@@ -61,6 +76,7 @@ export async function GET(req: NextRequest) {
       const { projectWorktree, ...result } = getProjectViewProjection(project.id, {
         limitPerStatus,
         activeSessionIds,
+        creationBranch: projectBranchFilters[project.id],
       });
 
       const mapped = result.sessions.map((row) => ({
@@ -70,20 +86,15 @@ export async function GET(req: NextRequest) {
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
       }));
-      // Diff badge for any session whose work dir is a git worktree (standalone
-      // chats included). Cache-miss workDirs schedule a compute + WS push.
-      const diffStatsByWorkDir = getCachedOrScheduleBulk(
-        [
-          ...mapped.map((s) => s.workDir ?? undefined),
-          projectWorktree?.filesystemPath ?? undefined,
-        ],
-        userId,
-      );
+      // Every direct chat in a Project shares the Project checkout. This cold
+      // cross-project request may read its cache, but must never enqueue work
+      // for every persisted Session. The focused task request warms it later.
+      const projectDiffWorkDir = projectWorktree?.filesystemPath ?? project.decoded_path;
+      const diffStatsByWorkDir = getCachedBulk([projectDiffWorkDir]);
+      const projectDiffStats = diffStatsByWorkDir.get(projectDiffWorkDir) ?? undefined;
       const sessions = mapped.map((s) => ({
         ...s,
-        diffStats: s.workDir
-          ? diffStatsByWorkDir.get(s.workDir) ?? undefined
-          : undefined,
+        diffStats: projectDiffStats,
       }));
 
       return {
@@ -100,12 +111,10 @@ export async function GET(req: NextRequest) {
               agentEnvironment,
             ),
             currentBranch: projectWorktree.currentBranch,
-            diffStats: diffStatsByWorkDir.get(projectWorktree.filesystemPath) ?? undefined,
+            diffStats: projectDiffStats,
           },
         }),
-        ...(result.branchRenameWarning && {
-          branchRenameWarning: result.branchRenameWarning,
-        }),
+        creationBranches: getProjectViewCreationBranches(project.id),
         isCurrent: shouldRegisterCurrentProject && project.id === currentProjectId,
         // Without one there is nothing to prepare, and no surface should offer
         // it — either stage having something to run counts.
@@ -132,6 +141,7 @@ export async function GET(req: NextRequest) {
     logger.info({
       endpoint: '/api/sessions/projects',
       limitPerStatus,
+      filteredProjectCount: Object.keys(projectBranchFilters).length,
       responseTime,
       projectCount: projectResults.length,
       sessionCount: projectResults.reduce((sum, p) => sum + p.sessions.length, 0),

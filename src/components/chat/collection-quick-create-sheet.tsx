@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom';
 import { FolderGit2, MessageSquare, X as XIcon } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
+import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useSessionCrud } from '@/hooks/use-session-crud';
 import { useWorktreeBaseRefs } from '@/hooks/use-worktree-base-refs';
@@ -24,6 +25,8 @@ import {
   CliProviderChipSelector,
   CliProviderRefreshButton,
 } from './cli-provider-chip-selector';
+import { SessionLocationSelector, useSessionLocation } from '@/components/session/session-location-selector';
+import { useTaskStore } from '@/stores/task-store';
 import { ExecutionModeSelector } from '@/components/session/execution-mode-selector';
 import { getProviderExecutionCapabilities } from '@/lib/session/agent-execution-mode';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
@@ -136,6 +139,7 @@ export function CollectionQuickCreateSheet({
   const pathTemplate = useSettingsStore((state) => state.settings.managedWorktreePathTemplate);
   const defaultExecutionMode = useSettingsStore((state) => state.settings.agentExecutionMode);
   const defaultNewSessionKind = useSettingsStore((state) => state.settings.defaultNewSessionKind);
+  const defaultCliProvider = useSettingsStore((state) => state.settings.defaultCliProvider);
   const resolvedInitialMode = resolveQuickCreateInitialMode({
     initialMode,
     defaultNewSessionKind,
@@ -164,6 +168,9 @@ export function CollectionQuickCreateSheet({
   const resolvedScopeId = scopeId ?? collection?.id ?? 'uncategorized';
   const executionModeInputName = `collection-execution-mode-${resolvedScopeId}`;
   const isContinuation = Boolean(continuationSourceTitle);
+  const location = useSessionLocation(projectId, projectDir);
+  const selectedWorktree = isContinuation ? null : location.selectedWorktree;
+  const canSubmitLocation = isContinuation || location.canSubmit;
   const taskTelemetrySource = resolveTaskTelemetrySource(scopeId);
   const isSelectedExecutionModeSupported = getProviderExecutionCapabilities(
     selectedProvider,
@@ -261,12 +268,17 @@ export function CollectionQuickCreateSheet({
       if (top < ANCHORED_VIEWPORT_MARGIN) top = ANCHORED_VIEWPORT_MARGIN;
     }
 
-    setAnchoredPosition({ left, top });
+    setAnchoredPosition((current) => current?.left === left && current.top === top ? current : { left, top });
   }, [anchorPlacement, anchorRef]);
 
   useLayoutEffect(() => {
     if (!useAnchoredPortal) return;
     updateAnchoredPosition();
+    const element = containerRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(updateAnchoredPosition);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [useAnchoredPortal, updateAnchoredPosition, isTaskExpanded, canSelectCollection]);
 
   useEffect(() => {
@@ -300,6 +312,7 @@ export function CollectionQuickCreateSheet({
   } = useWorktreeBaseRefs(canCreateTask ? projectDir : null);
 
   const handleCreateChat = useCallback(async () => {
+    if (!canSubmitLocation) return;
     setError(null);
     if (!selectedProvider) {
       setError(t('errors.providerRequired'));
@@ -312,14 +325,17 @@ export function CollectionQuickCreateSheet({
     setSubmittingMode('chat');
     try {
       const sessionId = await createSession({
-        workDir: projectDir,
+        workDir: selectedWorktree?.workDir ?? projectDir,
         parentProjectId: projectId,
+        taskId: selectedWorktree?.id,
+        worktreeBranch: selectedWorktree?.worktreeBranch,
         providerId: selectedProvider,
-        collectionId: selectedCollection?.id,
+        collectionId: selectedWorktree ? selectedWorktree.collectionId : selectedCollection?.id,
         executionMode,
       });
       if (!sessionId) return;
 
+      if (selectedWorktree) await useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
       await onSessionCreated?.(sessionId);
       onClose();
       // #258: creating is a stronger statement of intent than selecting —
@@ -337,7 +353,7 @@ export function CollectionQuickCreateSheet({
     } finally {
       setSubmittingMode(null);
     }
-  }, [createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, projectId, selectedCollection?.id, selectedProvider, t]);
+  }, [canSubmitLocation, selectedWorktree, createSession, executionMode, isSelectedExecutionModeSupported, onClose, onSessionCreated, projectDir, projectId, selectedCollection?.id, selectedProvider, t]);
 
   const handleCreateTask = useCallback(async () => {
     setError(null);
@@ -459,14 +475,14 @@ export function CollectionQuickCreateSheet({
         // the Phone viewport step the sheet takes the width the screen has; from
         // `sm` up nothing changes. `updateAnchoredPosition` reads the rendered
         // width, so the clamp follows on its own.
-        'fixed z-[10001] w-[calc(100vw-1.5rem)] sm:w-[17rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl',
+        'fixed z-[10001] w-[calc(100vw-1.5rem)] sm:w-[17rem] max-w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-1.5rem)] overflow-y-auto rounded-xl',
         'border border-[color-mix(in_srgb,var(--accent)_38%,var(--divider))]',
         'bg-[color-mix(in_srgb,var(--input-bg)_80%,var(--accent)_20%)]',
         'shadow-[0_24px_60px_rgba(0,0,0,0.46),0_0_0_1px_color-mix(in_srgb,var(--accent)_24%,transparent),0_0_34px_color-mix(in_srgb,var(--accent)_10%,transparent)] backdrop-blur-xl',
         className,
       )
     : cn(
-        'absolute right-2 top-10 z-40 w-[min(17rem,calc(100vw-1.5rem))] overflow-hidden rounded-xl',
+        'absolute right-2 top-10 z-40 w-[min(17rem,calc(100vw-1.5rem))] max-h-[calc(100dvh-4rem)] overflow-y-auto rounded-xl',
         'border border-[color-mix(in_srgb,var(--accent)_38%,var(--divider))]',
         'bg-[color-mix(in_srgb,var(--input-bg)_80%,var(--accent)_20%)]',
         'shadow-[0_24px_60px_rgba(0,0,0,0.46),0_0_0_1px_color-mix(in_srgb,var(--accent)_24%,transparent),0_0_34px_color-mix(in_srgb,var(--accent)_10%,transparent)] backdrop-blur-xl',
@@ -524,6 +540,7 @@ export function CollectionQuickCreateSheet({
               telemetrySurface="collection_create"
               value={selectedProvider}
               onChange={setSelectedProvider}
+              preferredProviderId={defaultCliProvider}
               executionMode={executionMode}
               showRefresh={false}
               className="gap-1"
@@ -544,25 +561,20 @@ export function CollectionQuickCreateSheet({
             />
           </div>
 
-          {canSelectCollection && (
+          {canSelectCollection && (isTaskExpanded || isContinuation || location.locationKind === 'project') && (
             <div className="space-y-1">
               <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
                 {t('task.creation.collectionLabel')}
               </span>
-              <select
+              <Select
                 {...telemetryClickAttributes('creation.collection.input', 'collection_create')}
                 value={rawSelectedCollectionId ?? ''}
-                onChange={(event) => setSelectedCollectionId(event.target.value || null)}
-                className="w-full rounded-lg border border-(--divider) bg-(--input-bg) px-2.5 py-1.5 text-[13px] text-(--sidebar-text-active) outline-none transition-colors focus:border-(--accent)"
+                onValueChange={(value) => setSelectedCollectionId(value || null)}
+                aria-label={t('task.creation.collectionLabel')}
+                className="rounded-lg px-2.5 py-1.5 text-[13px]"
                 data-testid={`collection-quick-create-select-${resolvedScopeId}`}
-              >
-                <option value="">{t('task.creation.noCollection')}</option>
-                {collections.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                options={[{ value: '', label: t('task.creation.noCollection') }, ...collections.map((item) => ({ value: item.id, label: item.label }))]}
+              />
             </div>
           )}
         </div>
@@ -577,8 +589,11 @@ export function CollectionQuickCreateSheet({
             {canCreateChat && (
               <button
                 type="button"
-                onClick={handleCreateChat}
-                {...telemetryClickAttributes('creation.submit.chat', 'collection_create')}
+                onClick={() => {
+                  if (isContinuation) void handleCreateChat();
+                  else setIsTaskExpanded(false);
+                }}
+                {...telemetryClickAttributes(isContinuation ? 'creation.submit.chat' : 'creation.mode.chat', 'collection_create')}
                 disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported}
                 className={cn(
                   'flex w-full flex-col items-start rounded-lg border px-2 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
@@ -628,6 +643,18 @@ export function CollectionQuickCreateSheet({
                 </span>
               </button>
             )}
+          </div>
+        )}
+
+        {canCreateChat && !isTaskExpanded && !isContinuation && (
+          <div className="mt-2 space-y-3 rounded-lg border border-(--divider) bg-(--sidebar-bg) p-2">
+            <SessionLocationSelector location={location} disabled={submittingMode !== null} />
+            {error && <p className="text-xs text-[color:var(--error)]" role="alert">{error}</p>}
+            <div className="flex justify-end">
+              <button type="button" {...telemetryClickAttributes('creation.submit.chat', 'collection_create')} onClick={() => void handleCreateChat()} disabled={submittingMode !== null || !selectedProvider || !isSelectedExecutionModeSupported || !canSubmitLocation} className="rounded-md bg-(--accent) px-2.5 py-1.5 text-xs font-medium text-white hover:bg-(--accent-hover) disabled:opacity-50" data-testid={`collection-chat-submit-${resolvedScopeId}`}>
+                {submittingMode === 'chat' ? t('common.loading') : t('chat.newSession')}
+              </button>
+            </div>
           </div>
         )}
 

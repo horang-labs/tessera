@@ -3,6 +3,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { signAsync } = require('@electron/osx-sign');
+const { Arch } = require('builder-util');
 
 const execFileAsync = promisify(execFile);
 const ADHOC_ENTITLEMENTS = path.join(__dirname, 'entitlements.mac.adhoc.plist');
@@ -70,7 +71,21 @@ async function assertLibraryValidationDisabled(appBundlePath) {
 }
 
 module.exports = async function afterPack(context) {
-  if (context.electronPlatformName !== 'darwin') return;
+  const platform = context.electronPlatformName;
+  const arch = Arch[context.arch];
+  const appPath = platform === 'darwin'
+    ? await findAppBundle(context.appOutDir, context.packager?.appInfo?.productFilename)
+    : null;
+  const resources = appPath
+    ? path.join(appPath, 'Contents', 'Resources')
+    : path.join(context.appOutDir, 'resources');
+  const nativePackage = `watcher-${platform}-${arch}${platform === 'linux' ? '-glibc' : ''}`;
+  const nativeBinary = path.join(resources, 'app.asar.unpacked', 'node_modules', '@parcel', nativePackage, 'watcher.node');
+  if (!(await pathExists(nativeBinary))) {
+    throw new Error(`Packaged Parcel watcher binary is missing: ${nativeBinary}`);
+  }
+  console.log(`[electron-after-pack] verified ${nativePackage} binary`);
+  if (platform !== 'darwin') return;
 
   if (process.env.TESSERA_MAC_DISTRIBUTION === '1') {
     console.log('[electron-after-pack] skipping ad-hoc signing for Developer ID distribution build');
@@ -81,10 +96,6 @@ module.exports = async function afterPack(context) {
     throw new Error('macOS ad-hoc signing requires codesign on a macOS build host');
   }
 
-  const appPath = await findAppBundle(
-    context.appOutDir,
-    context.packager?.appInfo?.productFilename
-  );
 
   console.log(`[electron-after-pack] ad-hoc signing ${appPath}`);
 

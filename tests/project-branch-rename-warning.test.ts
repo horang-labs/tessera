@@ -33,7 +33,7 @@ function snapshotScopeTables(db: { prepare(sql: string): { all(): unknown[] } })
   });
 }
 
-test('an exact direct rename warns without revealing or migrating hidden scope', async () => {
+test('a root branch rename preserves folder-owned records without mutating metadata', async () => {
   const [database, projects, projection, sessions, tasks] = await Promise.all([
     import('@/lib/db/database'),
     import('@/lib/db/projects'),
@@ -66,13 +66,9 @@ test('an exact direct rename warns without revealing or migrating hidden scope',
   const result = projection.getProjectViewProjection('direct-project');
   const after = snapshotScopeTables(database.getDb());
 
-  assert.deepEqual(result.sessions, []);
-  assert.deepEqual(result.linkedWorktrees, []);
-  assert.equal(result.branchRenameWarning?.previousBranch, 'main');
-  assert.equal(result.branchRenameWarning?.currentBranch, 'renamed');
-  assert.match(result.branchRenameWarning?.eventId ?? '', /^[a-f0-9]{16}$/);
-  assert.equal(JSON.stringify(result).includes('old-session'), false);
-  assert.equal(JSON.stringify(result).includes('old-worktree'), false);
+  assert.deepEqual(result.sessions.map((session) => session.id), ['old-session']);
+  assert.deepEqual(result.linkedWorktrees.map((task) => task.id), ['old-worktree']);
+  assert.equal(result.branchRenameWarning, undefined);
   assert.equal(after, before, 'projection and rename inspection must not mutate the database');
   assert.equal(sessions.getSession('old-session')?.scope_branch, 'main');
   assert.deepEqual(tasks.getTask('old-worktree')?.creationScope, {
@@ -90,21 +86,13 @@ test('an exact direct rename warns without revealing or migrating hidden scope',
   });
   git(repository, ['branch', '-m', 'renamed-again']);
   const multiHop = projection.getProjectViewProjection('direct-project');
-  assert.equal(multiHop.branchRenameWarning, undefined);
-  assert.deepEqual(multiHop.sessions, []);
-  assert.deepEqual(multiHop.linkedWorktrees, []);
-
-  const reflog = path.join(repository, '.git', 'logs', 'refs', 'heads', 'renamed-again');
-  const survivingHistory = fs.readFileSync(reflog, 'utf8').trim().split('\n').slice(2).join('\n');
-  fs.writeFileSync(reflog, `${survivingHistory}\n`);
-  assert.equal(
-    projection.getProjectViewProjection('direct-project').branchRenameWarning,
-    undefined,
-    'a reflog truncated after an older rename cannot prove a one-hop history',
-  );
+  assert.deepEqual(multiHop.sessions.map((session) => session.id).sort(), [
+    'intermediate-session',
+    'old-session',
+  ]);
 });
 
-test('a branch mismatch without rename evidence uses ordinary exact-name filtering', async () => {
+test('a root branch switch does not hide records created on another branch', async () => {
   const { projects, projection, sessions } = await (async () => {
     const [projects, projection, sessions] = await Promise.all([
       import('@/lib/db/projects'),
@@ -125,11 +113,11 @@ test('a branch mismatch without rename evidence uses ordinary exact-name filteri
   git(repository, ['checkout', '-b', 'different']);
 
   const result = projection.getProjectViewProjection('mismatch-project');
-  assert.deepEqual(result.sessions, []);
+  assert.deepEqual(result.sessions.map((session) => session.id), ['mismatch-session']);
   assert.equal(result.branchRenameWarning, undefined);
 });
 
-test('a valid reflog with an empty committer email still proves a direct rename', async () => {
+test('a branch rename does not require reflog inspection for Project View visibility', async () => {
   const [projects, projection, sessions] = await Promise.all([
     import('@/lib/db/projects'),
     import('@/lib/projects/project-view-projection'),
@@ -146,12 +134,13 @@ test('a valid reflog with an empty committer email still proves a direct rename'
   });
   git(repository, ['branch', '-m', 'renamed-empty-email']);
 
-  const warning = projection.getProjectViewProjection('empty-email-project').branchRenameWarning;
-  assert.equal(warning?.previousBranch, 'main');
-  assert.equal(warning?.currentBranch, 'renamed-empty-email');
+  assert.deepEqual(
+    projection.getProjectViewProjection('empty-email-project').sessions.map((session) => session.id),
+    ['empty-email-session'],
+  );
 });
 
-test('unavailable reflog history does not speculate about a real rename', async () => {
+test('deleted reflog history does not affect Project View visibility', async () => {
   const [projects, projection, sessions] = await Promise.all([
     import('@/lib/db/projects'),
     import('@/lib/projects/project-view-projection'),
@@ -172,17 +161,8 @@ test('unavailable reflog history does not speculate about a real rename', async 
   fs.rmSync(reflog);
 
   const result = projection.getProjectViewProjection('expired-project');
-  assert.deepEqual(result.sessions, []);
+  assert.deepEqual(result.sessions.map((session) => session.id), ['expired-session']);
   assert.equal(result.branchRenameWarning, undefined);
   assert.equal(sessions.getSession('expired-session')?.scope_branch, 'main');
 
-  fs.writeFileSync(reflog, [
-    'commit (initial): synthetic message without a reflog header',
-    'Branch: renamed refs/heads/main to refs/heads/renamed-without-history',
-  ].join('\n'));
-  assert.equal(
-    projection.getProjectViewProjection('expired-project').branchRenameWarning,
-    undefined,
-    'malformed message-only records are not exact rename evidence',
-  );
 });

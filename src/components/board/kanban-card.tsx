@@ -59,6 +59,10 @@ import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-present
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { captureTelemetryUiControl } from '@/lib/telemetry/client';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
+import {
+  SIDEBAR_TREE_WORKTREE_CARD_CHILD_BRANCH,
+  SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+} from '@/components/chat/sidebar-tree-layout';
 
 // --- Helpers ---
 
@@ -138,6 +142,7 @@ interface KanbanChatCardProps {
   onGenerateTitle?: (taskId: string) => void;
   onMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onStopProcess?: (sessionId: string) => void;
+  onRestartProcess?: (sessionId: string) => void;
   collections?: Collection[];
 }
 
@@ -161,6 +166,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   onGenerateTitle,
   onMoveToCollection,
   onStopProcess,
+  onRestartProcess,
   collections: scopedCollections,
 }: KanbanChatCardProps) {
   const { t } = useI18n();
@@ -251,6 +257,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [session.id, onOpenInNewTab]);
 
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [session.id, onStopProcess]);
+  const handleRestartProcess = useCallback(() => onRestartProcess?.(session.id), [session.id, onRestartProcess]);
   const {
     isConfirmingArchive,
     handleArchiveClick,
@@ -548,6 +555,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           onGenerateTitle={onGenerateTitle ? () => onGenerateTitle(session.id) : undefined}
           isRunning={runtimePresentation.showRunning}
           onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
+          onRestartProcess={runtimePresentation.canStop ? handleRestartProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}
@@ -584,6 +592,7 @@ interface KanbanTaskCardProps {
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
+  onSessionRestartProcess?: (sessionId: string) => void;
   isRenameRequested?: boolean;
   onRenameComplete?: () => void;
 }
@@ -608,6 +617,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   isRenameRequested,
   onRenameComplete,
 }: KanbanTaskCardProps) {
@@ -619,7 +629,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const sessionCount = task.sessions.length;
   const isMultiSession = sessionCount > 1;
   const expanded = isMultiSession;
-  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.id, task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const isActive = task.sessions.some((s) => s.id === activeSessionId);
   const primarySessionId = task.sessions[0]?.id;
@@ -1060,6 +1070,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
               />
               <span className="ml-auto inline-flex items-center gap-1.5">
                 <TaskPreparationBadge
+                  sessionId={primarySessionId ?? null}
                   status={task.preparationStatus}
                 />
                 <TaskPrBadge
@@ -1164,7 +1175,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
 
         {/* Expanded session list with tree connectors (matching list view SubSessionRow) */}
         {!isDragging && expanded && isMultiSession && (
-          <div className="relative ml-[22px] pl-3 mt-2 border-t border-(--divider) pt-1.5">
+          <div className={cn(
+            'relative mt-0.5 border-t border-(--divider) pt-0.5',
+            SIDEBAR_TREE_WORKTREE_CARD_CHILD_BRANCH,
+          )}>
             {/* Vertical tree line */}
             <div className="absolute left-0 top-[6px] bottom-2 w-px bg-(--divider)" />
             {visibleSessions.map((s) => (
@@ -1185,6 +1199,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 onOpenInNewTab={onSessionOpenInNewTab}
                 onGenerateTitle={onSessionGenerateTitle}
                 onStopProcess={onSessionStopProcess}
+                onRestartProcess={onSessionRestartProcess}
                 reorder={subSessionReorder}
               />
             ))}
@@ -1242,6 +1257,7 @@ function KanbanSubSessionItem({
   onOpenInNewTab,
   onGenerateTitle,
   onStopProcess,
+  onRestartProcess,
   reorder,
 }: {
   session: TaskSession;
@@ -1254,6 +1270,7 @@ function KanbanSubSessionItem({
   onOpenInNewTab?: (sessionId: string) => void;
   onGenerateTitle?: (sessionId: string) => void;
   onStopProcess?: (sessionId: string) => void;
+  onRestartProcess?: (sessionId: string) => void;
 }) {
   const [isHovered, setIsHovered] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
@@ -1278,7 +1295,7 @@ function KanbanSubSessionItem({
       onDelete ||
       onOpenInNewTab ||
       onGenerateTitle ||
-      (runtimePresentation.canStop && onStopProcess),
+      (runtimePresentation.canStop && (onStopProcess || onRestartProcess)),
   );
 
   const {
@@ -1319,6 +1336,7 @@ function KanbanSubSessionItem({
   const handleOpenInNewTab = useCallback(() => onOpenInNewTab?.(session.id), [onOpenInNewTab, session.id]);
   const handleGenerateTitle = useCallback(() => onGenerateTitle?.(session.id), [onGenerateTitle, session.id]);
   const handleStopProcess = useCallback(() => onStopProcess?.(session.id), [onStopProcess, session.id]);
+  const handleRestartProcess = useCallback(() => onRestartProcess?.(session.id), [onRestartProcess, session.id]);
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (isRenaming) {
       e.preventDefault();
@@ -1381,8 +1399,14 @@ function KanbanSubSessionItem({
           />
         )}
         {/* Tree connector line */}
-        <div className="absolute -left-3 top-1/2 w-[10px] h-px bg-(--divider)" />
-        {isActive && <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-(--accent)" />}
+        <div className={cn(
+          'absolute top-1/2 h-px w-[10px] bg-(--divider)',
+          SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+        )} />
+        {isActive && <div className={cn(
+          'absolute top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)',
+          SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+        )} />}
 
         {showProviderIcons ? (
           <span className="relative flex shrink-0 items-center">
@@ -1460,6 +1484,7 @@ function KanbanSubSessionItem({
           onGenerateTitle={onGenerateTitle ? handleGenerateTitle : undefined}
           isRunning={runtimePresentation.showRunning}
           onStopProcess={runtimePresentation.canStop && onStopProcess ? handleStopProcess : undefined}
+          onRestartProcess={runtimePresentation.canStop && onRestartProcess ? handleRestartProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}

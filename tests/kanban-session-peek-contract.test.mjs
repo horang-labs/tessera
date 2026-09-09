@@ -126,17 +126,22 @@ test('Session Peek uses a compact, accessible loading indicator instead of the f
   assert.match(terminalPanelSource, /status === 'starting' && startupOverlay/);
 });
 
-test('PTY sessions use retained Peek ownership without pinning or killing a tab runtime', () => {
+test('PTY Peek owns a temporary runtime and retains it only after user input', () => {
   assert.match(chatAreaSource, /isPeek\s*\? 'session-peek'/);
   assert.match(chatAreaSource, /surfaceActive=\{isPeek\}/);
-  assert.match(terminalPanelSource, /runtimeOwnership === 'standalone' \|\| runtimeOwnership === 'session-peek'/);
+  assert.match(terminalPanelSource, /const isPreviewRuntime = runtimeOwnership === 'session-preview' \|\| runtimeOwnership === 'session-peek'/);
+  assert.match(terminalPanelSource, /previewOwned: isPreviewRuntime/);
+  assert.match(terminalPanelSource, /useRef\(isPreviewRuntime\)/);
+  assert.match(terminalPanelSource, /if \(!isPreviewRuntime\) previewOwnsRuntimeRef\.current = false/);
+  assert.match(terminalPanelSource, /previewOwnsRuntimeRef\.current = false;\s*if \(runtimeOwnership === 'session-peek'\) return;/);
   assert.match(terminalPanelSource, /clearTimeout\(pendingSurfaceCleanupRef\.current\)/);
 });
 
 test('PTY Peek accepts every prompt-input drop supported by list-mode terminals', () => {
   assert.match(chatAreaSource, /directInputDrop=\{isPeek\}/);
   assert.match(terminalPanelSource, /directInputDrop\?: boolean/);
-  assert.match(terminalPanelSource, /getWorkspaceFileDragAbsolutePath/);
+  assert.match(terminalPanelSource, /getInternalPathDropPaths/);
+  assert.match(terminalPanelSource, /hasPathInsertDragData/);
   assert.match(terminalPanelSource, /getNativeFileDropAbsolutePaths/);
   assert.match(terminalPanelSource, /insertSessionReferenceIntoTerminal/);
   assert.match(terminalPanelSource, /onDragEnter=\{directInputDrop \? handleInputDragEnter : undefined\}/);

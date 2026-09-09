@@ -1,6 +1,7 @@
 'use client';
 
 import type { ITheme, IUnicodeHandling } from '@xterm/xterm';
+import { shouldUseLinuxTerminalIme } from './terminal-ime-platform';
 import { v4 as uuidv4 } from 'uuid';
 import { wsClient } from '@/lib/ws/client';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
@@ -39,6 +40,10 @@ import {
   type ElectronTerminalClipboardApi,
 } from './terminal-clipboard-paste';
 import {
+  installTerminalOsc52Handler,
+  type TerminalOsc52Parser,
+} from './terminal-osc52';
+import {
   scheduleTerminalScrollIntentSync,
   TerminalScrollController,
   type TerminalScrollRestorePoint,
@@ -75,6 +80,7 @@ import {
   sanitizeXtermGeneratedData,
   type TerminalKeyboardOwner,
 } from './terminal-input-policy';
+import { subscribeSessionRestart } from '@/lib/session/session-restart-lifecycle';
 
 export type TerminalSurfaceStatus = 'starting' | 'running' | 'exited' | 'error';
 
@@ -113,6 +119,7 @@ type XtermLike = TerminalScrollTarget & {
   options: { theme?: ITheme; fontSize?: number };
   unicode: IUnicodeHandling;
   modes: { sendFocusMode: boolean };
+  parser: TerminalOsc52Parser;
   textarea?: HTMLTextAreaElement;
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   attachCustomWheelEventHandler(handler: (event: WheelEvent) => boolean): void;
@@ -326,6 +333,7 @@ export class TerminalSurface {
   private readonly scrollSyncSettler = new LayoutSettleRunner();
   private pasteListener: ((event: ClipboardEvent) => void) | null = null;
   private compositionEndListener: ((event: CompositionEvent) => void) | null = null;
+  private osc52Disposable: { dispose(): void } | null = null;
   private suppressNextNativePaste = false;
   private pasteSuppressionTimerId: number | null = null;
   private clipboardPasteQueue: Promise<void> = Promise.resolve();
@@ -364,6 +372,7 @@ export class TerminalSurface {
   private autoConnect = true;
   private sessionWasPresent = false;
   private readonly unsubscribeSessionStore: (() => void) | null;
+  private readonly unsubscribeSessionRestart: (() => void) | null;
 
   constructor(private readonly options: TerminalSurfaceOptions) {
     this.theme = { ...options.theme };
@@ -387,6 +396,16 @@ export class TerminalSurface {
             return;
           }
           if (present) this.sessionWasPresent = true;
+        })
+      : null;
+    this.unsubscribeSessionRestart = options.sessionId
+      ? subscribeSessionRestart(options.sessionId, (succeeded, message) => {
+          if (!succeeded) {
+            this.autoConnect = false;
+            this.updateState('error', message ?? 'Session restart failed');
+            return;
+          }
+          void this.restart();
         })
       : null;
   }
@@ -566,6 +585,10 @@ export class TerminalSurface {
   sendInput(data: string): boolean {
     if (
       this.disposed
+      // A cold-parked surface still reflects the running PTY, but the server
+      // no longer accepts its subscriber ID. Let shared input routing try the
+      // attached surface (for example Peek) instead of reporting a lost send.
+      || this.attachedConnectionGeneration === 0
       || this.snapshotReplay?.phase === 'parsing'
       || this.state.status === 'exited'
     ) return false;
@@ -819,6 +842,7 @@ export class TerminalSurface {
     }
     this.unsubscribeMessages();
     this.unsubscribeSessionStore?.();
+    this.unsubscribeSessionRestart?.();
     this.releaseRenderResources();
     if (surfaces.get(this.options.registryKey) === this) {
       surfaces.delete(this.options.registryKey);
@@ -876,6 +900,8 @@ export class TerminalSurface {
       this.root.removeEventListener('compositionend', this.compositionEndListener, true);
     }
     this.compositionEndListener = null;
+    this.osc52Disposable?.dispose();
+    this.osc52Disposable = null;
     this.suppressNextNativePaste = false;
     if (this.pasteSuppressionTimerId !== null) {
       window.clearTimeout(this.pasteSuppressionTimerId);
@@ -924,7 +950,11 @@ export class TerminalSurface {
         { SearchAddon },
         { SerializeAddon },
       ] = await Promise.all([
-        import('@xterm/xterm'),
+        shouldUseLinuxTerminalIme(navigator.userAgent, (
+          window as Window & { electronAPI?: { platform?: string } }
+        ).electronAPI?.platform)
+          ? import('./vendor/xterm-linux-ime.mjs')
+          : import('@xterm/xterm'),
         import('@xterm/addon-fit'),
         import('@xterm/addon-webgl'),
         import('@xterm/addon-unicode11'),
@@ -970,8 +1000,11 @@ export class TerminalSurface {
       terminal.loadAddon(new WebLinksAddon(webLinkHandler));
       activateTesseraTerminalUnicodeProvider(terminal);
       attachTerminalMouseWheelMultiplier(terminal);
+      // TUI copy (OpenCode, tmux) arrives as OSC 52; xterm does not handle the
+      // sequence itself, so route it to the desktop clipboard here.
+      this.osc52Disposable = installTerminalOsc52Handler(terminal);
 
-      // Renderer choice. WebGL everywhere by default — the postinstall patch
+      // Renderer choice. WebGL is the default outside Linux Wayland — the postinstall patch
       // (scripts/patch-xterm-webgl-atlas.mjs) fixes the addon's atlas-wipe
       // no-op and propagates wipes to every renderer sharing the atlas, which
       // were what garbled Windows/ANGLE. 'dom' stays available as an escape
@@ -985,8 +1018,16 @@ export class TerminalSurface {
         // storage unavailable (private mode) — keep the default renderer
       }
 
+      const electronRuntime = (
+        window as Window & {
+          electronAPI?: Partial<ElectronTerminalClipboardApi> & { linuxWayland?: boolean };
+        }
+      ).electronAPI;
+      const useDomRenderer = rendererOverride === 'dom'
+        || (rendererOverride !== 'webgl' && electronRuntime?.linuxWayland === true);
+
       this.webglCtor =
-        rendererOverride === 'dom' ? null : (WebglAddon as new () => WebglAddonLike);
+        useDomRenderer ? null : (WebglAddon as new () => WebglAddonLike);
       this.attachWebglRenderer();
 
       this.root = root;
@@ -1002,9 +1043,7 @@ export class TerminalSurface {
       const inputContext = {
         platform: detectTerminalClientPlatform(navigator.userAgent),
       } as const;
-      const electronClipboard = (
-        window as Window & { electronAPI?: Partial<ElectronTerminalClipboardApi> }
-      ).electronAPI;
+      const electronClipboard = electronRuntime;
       terminal.attachCustomKeyEventHandler((event) => {
         // App-level shortcuts must bubble to the window listener instead of
         // being cancelled by xterm or encoded into PTY input.
@@ -1742,7 +1781,13 @@ export class TerminalSurface {
       : null;
     // A ResizeObserver/activation fit can race snapshot parsing. Preserve the
     // exact source grid until the replay write callback establishes a barrier.
-    if (this.snapshotReplay?.phase === 'parsing') return;
+    if (this.snapshotReplay?.phase === 'parsing') {
+      // Activation may reach this barrier after requestStableFit consumed its
+      // pending claim. Carry it into the post-parse fit so a hidden surface
+      // cannot keep ownership of the PTY's old, smaller viewport.
+      this.pendingFitClaim ||= claim;
+      return;
+    }
     let didFit = false;
     let fitCompleted = !shouldFit;
     let restorePoint: TerminalScrollRestorePoint | null = null;

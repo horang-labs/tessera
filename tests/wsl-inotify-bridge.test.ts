@@ -6,7 +6,62 @@ import {
   parseInotifyLine,
   parseWslRunningDistros,
   parseWslUncRoot,
+  SharedWslInotifyBridgePool,
+  type WslInotifyBridgeOptions,
 } from '@/lib/workspace-files/wsl-inotify-bridge';
+
+test('shared bridge pool retains one WSL process for identical roots', async () => {
+  let created = 0;
+  let started = 0;
+  let stopped = 0;
+  let bridgeOptions: WslInotifyBridgeOptions | undefined;
+  const pool = new SharedWslInotifyBridgePool((options) => {
+    created += 1;
+    bridgeOptions = options;
+    return {
+      start: () => {
+        started += 1;
+        options.onEstablished();
+      },
+      stop: () => { stopped += 1; },
+    };
+  });
+  const root = { distro: 'Ubuntu-24.04', posixPath: '/home/work/.codex/sessions' };
+  const received: string[] = [];
+  const established: string[] = [];
+  const first = pool.acquire({
+    root,
+    eventMask: 'create,move,close_write',
+    onEvent: ({ relativePath }) => received.push(`first:${relativePath}`),
+    onEstablished: () => { established.push('first'); },
+    onDown: () => {},
+  });
+  const second = pool.acquire({
+    root,
+    eventMask: 'create,move,close_write',
+    onEvent: ({ relativePath }) => received.push(`second:${relativePath}`),
+    onEstablished: () => { established.push('second'); },
+    onDown: () => {},
+  });
+
+  assert.equal(created, 1);
+  assert.equal(started, 1);
+  assert.equal(pool.size, 1);
+  await Promise.resolve();
+  assert.deepEqual(established, ['first', 'second']);
+  bridgeOptions?.onEvent({ eventName: 'add', relativePath: '2026/session.jsonl' });
+  assert.deepEqual(received, [
+    'first:2026/session.jsonl',
+    'second:2026/session.jsonl',
+  ]);
+
+  first.stop();
+  assert.equal(stopped, 0);
+  assert.equal(pool.size, 1);
+  second.stop();
+  assert.equal(stopped, 1);
+  assert.equal(pool.size, 0);
+});
 
 test('inotify arguments only apply workspace exclusions when the caller supplies them', () => {
   const root = { distro: 'Ubuntu-24.04', posixPath: '/home/work/.codex/sessions' };
@@ -103,6 +158,9 @@ test('buildInotifyExcludeRegex skips high-churn descendants without excluding a 
   assert.ok(regex.test('/home/work/proj/.git/HEAD'));
   assert.ok(regex.test('/home/work/proj/.next/'));
   assert.ok(regex.test('/home/work/proj/dist'));
+  assert.ok(regex.test('/home/work/proj/tools/seed-vc/.venv/lib/pkg/index.py'));
+  assert.ok(regex.test('/home/work/proj/tools/seed-vc/__pycache__/app.pyc'));
+  assert.ok(regex.test('/home/work/proj/crates/worker/target/debug/worker'));
   assert.equal(regex.test('/home/work/proj/src/.hidden/file.ts'), false);
   assert.equal(regex.test('/home/work/proj/.env.example'), false);
   assert.equal(regex.test('/home/work/proj/src/app/route.ts'), false);

@@ -19,6 +19,10 @@ import {
 
 function toErrorResponse(error: unknown, sessionId: string, action: string): NextResponse {
   if (error instanceof WorkspaceFileError) {
+    logger.error(
+      { error, sessionId, code: error.code, status: error.status },
+      `Failed to ${action} workspace file`,
+    );
     return jsonError(error.code, error.message, error.status);
   }
   logger.error({ error, sessionId }, `Failed to ${action} workspace file`);

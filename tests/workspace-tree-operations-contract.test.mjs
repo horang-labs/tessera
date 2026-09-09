@@ -6,6 +6,7 @@ const read = (relativePath) =>
   fs.readFileSync(new URL(relativePath, import.meta.url), 'utf8');
 
 const filePanelSource = read('../src/components/workspace/workspace-file-panel.tsx');
+const fileViewStoreSource = read('../src/stores/workspace-file-view-store.ts');
 const deleteDialogSource = read('../src/components/workspace/workspace-delete-dialog.tsx');
 const contextMenuSource = read('../src/components/workspace/workspace-file-context-menu.tsx');
 const inlineRowSource = read('../src/components/workspace/workspace-inline-input-row.tsx');
@@ -20,6 +21,22 @@ const worktreeDirectoryRouteSource = read('../src/app/api/worktrees/[id]/directo
 const filesRouteSource = read('../src/app/api/sessions/[id]/files/route.ts');
 const fileTabSource = read('../src/components/workspace/workspace-file-tab.tsx');
 const panelContainerSource = read('../src/components/panel/panel-container.tsx');
+const directoryRowSource = filePanelSource.slice(
+  filePanelSource.indexOf('if (node.type === "directory")'),
+  filePanelSource.indexOf('const isSelected = node.path === selectedPath'),
+);
+const fileRowSource = filePanelSource.slice(
+  filePanelSource.indexOf('const isSelected = node.path === selectedPath'),
+  filePanelSource.indexOf('if (!sessionId && !worktreeId)'),
+);
+
+test('folder expansion is restored per workspace after the file panel remounts', () => {
+  assert.match(filePanelSource, /selectExpandedWorkspacePaths\(targetKey\)/);
+  assert.match(filePanelSource, /toggleStoredPath\(targetKey, path\)/);
+  assert.doesNotMatch(filePanelSource, /useState<Set<string>>/);
+  assert.match(fileViewStoreSource, /expandedPathsByWorkspace/);
+  assert.match(fileViewStoreSource, /createUiJsonStorage<PersistedWorkspaceFileViewState>/);
+});
 
 test('every row action lives on the right-click menu, not on a hover strip', () => {
   // A file explorer is a list of names. Four icons appearing on whichever row
@@ -151,21 +168,32 @@ test('an input from another workspace cannot strand this panel', () => {
   assert.match(filePanelSource, /onRename: renameEntry,\s*\n\s*workspaceKey: targetKey,/);
 });
 
-test('a double-click gesture creates only one file tab', () => {
-  // Both clicks reach the row, but only the first is an independent open action.
-  assert.match(filePanelSource, /if \(!shouldOpenOnRowClick\(event\.detail\)\) return;/);
+test('a file click previews once and its double-click respects Kanban Peek', () => {
+  // Both clicks reach the row, but only the first is an independent preview.
+  assert.match(fileRowSource, /if \(!shouldOpenOnRowClick\(event\.detail\)\) return;/);
   assert.match(inlineStateSource, /return clickCount === 1/);
+  assert.match(
+    fileRowSource,
+    /previewWorkspaceTargetFileTab\(target, 'file', node\.path, \{\s*preferKanbanPeek: true,/,
+  );
+
+  const doubleClick = fileRowSource.match(
+    /onDoubleClick=\{\(\) => \{(?<body>[\s\S]*?)\n\s*\}\}\s*onKeyDown/,
+  );
+  assert.ok(doubleClick?.groups?.body, 'the file row owns a double-click handler');
+  assert.match(doubleClick.groups.body, /openWorkspaceTargetFileTab\(target, 'file', node\.path/);
+  assert.match(
+    doubleClick.groups.body,
+    /preferKanbanPeek: true/,
+    'double-click pins in List mode but must stay inside Kanban Peek mode',
+  );
   // F2 renames; Enter still activates the row, so the keyboard can open a file.
-  assert.match(filePanelSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
+  assert.match(fileRowSource, /if \(!canMutate \|\| event\.key !== "F2"\) return;/);
 });
 
-test('a deferred folder toggle cannot fire under an input that just opened', () => {
-  // Clicking a folder's name arms a toggle for the double-click window. Opening
-  // any input before it fires would let it collapse the folder the row sits in,
-  // taking the half-typed name with it — so both entry points disarm it.
-  assert.match(filePanelSource, /function beginRename\(node: WorkspaceTreeNode\) \{\s*if \(!canMutate\) return;\s*clearDeferredToggle\(\);/);
-  assert.match(filePanelSource, /function beginNewEntry\(kind: "file" \| "folder", parentPath: string\) \{\s*if \(!canMutate\) return;\s*clearDeferredToggle\(\);/);
-  // And nothing reaches the hook's startNew around that guard.
+test('folder toggles have no delayed timer that can fire under an input', () => {
+  assert.doesNotMatch(filePanelSource, /DIR_TOGGLE_DOUBLE_CLICK_MS/);
+  assert.doesNotMatch(filePanelSource, /deferredToggleRef/);
   const rawStartNew = filePanelSource.match(/inlineInput\.startNew\(/g) ?? [];
   assert.equal(rawStartNew.length, 1, 'startNew is only called from beginNewEntry');
 });
@@ -173,18 +201,18 @@ test('a deferred folder toggle cannot fire under an input that just opened', () 
 test('a watch reconcile cannot take the row being edited', () => {
   // The panel's live sync goes through the hook: while an input is open the
   // reload is held back and applied once, when the input closes.
-  assert.match(filePanelSource, /onRefresh: inlineInput\.handleExternalRefresh/);
+  assert.match(filePanelSource, /onRefresh: handleLiveRefresh/);
+  assert.match(filePanelSource, /handleExternalRefresh\(\)/);
   assert.match(inlineHookSource, /pendingRefreshRef\.current = true/);
   assert.match(inlineHookSource, /handlersRef\.current\.onRefreshFiles\(\)/);
 });
 
-test('double-clicking the name renames without fighting the row click', () => {
-  // The hotspot is the name text alone, and a folder holds its toggle back for
-  // the double-click window so the row does not collapse under the input.
-  assert.match(filePanelSource, /\[RENAME_HOTSPOT_ATTR\]: ""/);
-  assert.match(filePanelSource, /onDoubleClick=\{\(event\) => \{\s*if \(!canMutate\) return;\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
-  assert.match(filePanelSource, /resolveDirToggleTiming\(\{/);
-  assert.match(inlineStateSource, /return clickCount > 1 \? "skip" : "deferred"/);
+test('double-clicking a directory name renames without fighting its toggle', () => {
+  // The first click toggles immediately and the second click is ignored before
+  // the double-click handler opens rename, so no timer delays ordinary clicks.
+  assert.match(directoryRowSource, /onDoubleClick=\{\(event\) => \{\s*if \(!canMutate\) return;\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
+  assert.match(filePanelSource, /if \(!shouldToggleDirectoryOnClick\(event\.detail\)\) return;/);
+  assert.match(inlineStateSource, /return clickCount <= 1;/);
 });
 
 test('the delete confirmation survives the move to inline entry', () => {

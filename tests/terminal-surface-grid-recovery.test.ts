@@ -35,14 +35,16 @@ type FakeTerminal = {
   element?: { contains(value: unknown): boolean };
   writes: string[];
   dispose(): void;
+  focus(): void;
   reset(): void;
   resize(cols: number, rows: number): void;
   refresh(): void;
   write(data: string, callback?: () => void): void;
 };
 
-function createHarness(paneGrid: { cols: number; rows: number }) {
+function createHarness(paneGrid: { cols: number; rows: number }, deferWrites = false) {
   const animationFrames: FrameRequestCallback[] = [];
+  const writeCallbacks: Array<() => void> = [];
   const timers = new Map<number, () => void>();
   let nextTimerId = 1;
 
@@ -89,6 +91,7 @@ function createHarness(paneGrid: { cols: number; rows: number }) {
     modes: { sendFocusMode: false },
     writes: [],
     dispose() {},
+    focus() {},
     reset() {},
     resize(cols, rows) {
       this.cols = cols;
@@ -97,7 +100,8 @@ function createHarness(paneGrid: { cols: number; rows: number }) {
     refresh() {},
     write(data, callback) {
       this.writes.push(data);
-      callback?.();
+      if (callback && deferWrites) writeCallbacks.push(callback);
+      else callback?.();
     },
   };
 
@@ -130,8 +134,10 @@ function createHarness(paneGrid: { cols: number; rows: number }) {
   internals.state = { ...internals.state, status: 'running' };
 
   const forwarded: Array<{ cols: number; rows: number }> = [];
-  wsClient.resizeTerminal = (_terminalId, _surfaceId, cols, rows) => {
+  const claims: boolean[] = [];
+  wsClient.resizeTerminal = (_terminalId, _surfaceId, cols, rows, claim = false) => {
     forwarded.push({ cols, rows });
+    claims.push(claim);
     return true;
   };
   wsClient.detachTerminal = () => true;
@@ -139,8 +145,12 @@ function createHarness(paneGrid: { cols: number; rows: number }) {
 
   return {
     forwarded,
+    claims,
     surface,
     terminal,
+    finishWrites() {
+      for (const callback of writeCallbacks.splice(0)) callback();
+    },
     send: (message: ServerTransportMessage) => internals.handleServerMessage(message),
     /**
      * Swallow the post-replay fit the way a live surface can.
@@ -280,6 +290,41 @@ test('a pane already in step with its PTY settles without churning resizes', () 
     // Settling on the echo rather than running out the frame cap: the loop must
     // not keep a rAF chain alive for three seconds on every attach.
     assert.ok(frames < 60, `reconcile ran ${frames} frames before settling`);
+  } finally {
+    harness.restore();
+  }
+});
+
+test('activation during snapshot parsing claims the PTY at the reopened pane size', () => {
+  const harness = createHarness({ cols: 178, rows: 57 }, true);
+  try {
+    harness.send(startedMessage(harness.surface.surfaceId));
+    harness.send({
+      type: 'terminal_grid',
+      terminalId: 'grid-recovery-test',
+      surfaceId: harness.surface.surfaceId,
+      cols: 34,
+      rows: 44,
+      accepted: false,
+    });
+    harness.send({
+      type: 'terminal_snapshot',
+      terminalId: 'grid-recovery-test',
+      surfaceId: harness.surface.surfaceId,
+      generation: 1,
+      seq: 9,
+      data: 'narrow-snapshot',
+      cols: 34,
+      rows: 44,
+    });
+    harness.surface.activate();
+    harness.runFrames(10);
+    assert.equal(harness.forwarded.length, 0, 'must preserve the snapshot grid while parsing');
+    harness.finishWrites();
+    harness.runFrames();
+    const claimedGrids = harness.forwarded.filter((_, index) => harness.claims[index]);
+    assert.deepEqual(claimedGrids, [{ cols: 178, rows: 57 }],
+      'the hidden small panel retains PTY ownership when the activation claim is lost');
   } finally {
     harness.restore();
   }

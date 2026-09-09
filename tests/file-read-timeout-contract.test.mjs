@@ -11,6 +11,7 @@ const gitPanelSource = fs.readFileSync(new URL('../src/lib/git/git-panel.ts', im
 const gitRunnerSource = fs.readFileSync(new URL('../src/lib/worktrees/git-runner.ts', import.meta.url), 'utf8');
 const filePanelSource = fs.readFileSync(new URL('../src/components/workspace/workspace-file-panel.tsx', import.meta.url), 'utf8');
 const fileListHookSource = fs.readFileSync(new URL('../src/hooks/use-workspace-file-list.ts', import.meta.url), 'utf8');
+const liveSyncHookSource = fs.readFileSync(new URL('../src/hooks/use-workspace-files-live-sync.ts', import.meta.url), 'utf8');
 
 test('fetchWithTimeout enforces a deadline and retries only on timeout', () => {
   assert.match(fetchWithTimeoutSource, /AbortSignal\.timeout\(timeoutMs\)/);
@@ -82,6 +83,18 @@ test('worktree diff stats git runner opts into the kill timer', () => {
 
 test('file list flows use the timeout-aware fetch', () => {
   assert.match(filePanelSource, /useWorkspaceFileList/);
-  assert.match(fileListHookSource, /fetchWithTimeout\(/);
+  assert.match(fileListHookSource, /fetchJsonWithTimeout(?:<[^>]+>)?\(/);
+  assert.match(fileListHookSource, /FILE_LIST_LOAD_TIMEOUT_MS = 15_000/);
+  assert.match(fileListHookSource, /timeoutMs:\s*FILE_LIST_LOAD_TIMEOUT_MS,[\s\S]*?retries:\s*1/);
   assert.match(fileListHookSource, /isTimeoutError/);
+});
+
+test('the Files tab paints a shallow root before starting recursive live sync', () => {
+  assert.match(liveSyncHookSource, /onRefreshRef\.current\(\)/);
+  assert.match(fileListHookSource, /params\.set\("directory", directory\)/);
+  assert.match(filePanelSource, /enabled: Boolean\(sessionId\) && isDocumentVisible && !loading/);
+  assert.match(filePanelSource, /void loadDirectory\(path\)/);
+  assert.match(filePanelSource, /skipInitialLiveRefreshRef/);
+  assert.match(fileListHookSource, /target\.kind === "worktree" \|\| projectId/);
+  assert.match(fileListHookSource, /if \(!target \|\| !targetReady\) return;/);
 });

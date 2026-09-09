@@ -152,6 +152,50 @@ test('semantic telemetry transport keeps only allowlisted safe properties', () =
   });
 });
 
+test('default CLI provider changes keep their allowlisted setting name', () => {
+  assert.deepEqual(sanitizeTelemetryProperties({
+    setting: 'defaultCliProvider',
+  }), {
+    setting: 'defaultCliProvider',
+  });
+});
+
+test('branch telemetry survives transport without branch names, search text, or raw errors', () => {
+  for (const [event, properties] of [
+    ['project_branch_filter_changed', { filter_mode: 'all' }],
+    ['project_branch_filter_changed', { filter_mode: 'branch' }],
+    ['worktree_branch_switch_result', { result: 'success' }],
+    ['worktree_branch_switch_result', { result: 'failed' }],
+  ] as const) {
+    const result = prepareTelemetryCaptureForTransport(
+      {
+        event,
+        properties: {
+          ...properties,
+          surface: 'worktree',
+          branch: 'private-branch',
+          query: 'private-search',
+          worktreeId: 'private-id',
+          error: 'private-error',
+        },
+      },
+      {
+        installId: 'install-test', appSessionId: 'app-session-test',
+        appVersion: 'test', platform: 'linux', arch: 'x64', channel: 'development',
+      },
+      true,
+      'phc-public-project-token',
+    );
+    assert.equal(result?.event, event);
+    assert.equal(result?.properties?.surface, 'worktree');
+    for (const [key, value] of Object.entries(properties)) {
+      assert.equal(result?.properties?.[key], value);
+    }
+    assert.doesNotMatch(JSON.stringify(result), /private-/);
+  }
+  assert.deepEqual(sanitizeTelemetryProperties({ filter_mode: 'private-branch' }), {});
+});
+
 test('client form factor is reduced locally without transmitting raw device signals', () => {
   assert.equal(detectTelemetryClientFormFactor({
     userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit Mobile',
@@ -190,6 +234,11 @@ test('PostHog transport keeps its public project token while dropping private SD
         token: 'sdk-token-that-must-not-be-trusted',
         control: 'composer.send',
         surface: 'composer',
+        '$browser': 'Chrome',
+        '$browser_version': 130,
+        '$browser_language': 'en-US',
+        '$browser_language_prefix': 'en',
+        '$timezone': 'Asia/Singapore',
         '$el_text': 'private prompt',
         '$current_url': 'http://localhost/private',
       },
@@ -211,7 +260,41 @@ test('PostHog transport keeps its public project token while dropping private SD
   assert.equal(result?.properties?.control, 'composer.send');
   assert.equal(result?.properties?.surface, 'composer');
   assert.equal(result?.properties?.client_form_factor, 'desktop');
+  assert.equal(result?.properties?.['$browser'], 'Chrome');
+  assert.equal(result?.properties?.['$browser_version'], 130);
+  assert.equal(result?.properties?.['$browser_language'], 'en-US');
+  assert.equal(result?.properties?.['$browser_language_prefix'], 'en');
+  assert.equal(result?.properties?.['$timezone'], 'Asia/Singapore');
   assert.doesNotMatch(JSON.stringify(result), /private prompt|localhost\/private|sdk-token/);
+});
+
+test('PostHog transport preserves safe browser locale and timezone properties', () => {
+  const result = prepareTelemetryCaptureForTransport(
+    {
+      event: 'app_started',
+      properties: {
+        '$browser': 'Chrome',
+        '$browser_version': 130,
+        '$browser_language': 'en-US',
+        '$browser_language_prefix': 'en',
+        '$timezone': 'Asia/Singapore',
+        '$current_url': 'http://localhost/private',
+        '$raw_user_agent': 'private raw agent',
+      },
+    },
+    null,
+    true,
+    'phc-public-project-token',
+  );
+
+  assert.deepEqual(result?.properties, {
+    token: 'phc-public-project-token',
+    '$browser': 'Chrome',
+    '$browser_version': 130,
+    '$browser_language': 'en-US',
+    '$browser_language_prefix': 'en',
+    '$timezone': 'Asia/Singapore',
+  });
 });
 
 test('prompt submission telemetry keeps only privacy-safe composition metadata', () => {

@@ -7,3 +7,6 @@
 export const SIDEBAR_TREE_ROW_GUTTER = 'mx-0 px-2';
 export const SIDEBAR_TREE_CHILD_INDENT = 'ml-3';
 export const SIDEBAR_TREE_LEADING_SLOT = 'flex h-3.5 w-3.5 shrink-0 items-center justify-center';
+export const SIDEBAR_TREE_WORKTREE_CHILD_BRANCH = 'ml-4';
+export const SIDEBAR_TREE_WORKTREE_CARD_CHILD_BRANCH = 'ml-2';
+export const SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET = 'left-0';

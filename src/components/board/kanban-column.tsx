@@ -137,11 +137,11 @@ function PortfolioProjectHeader({
 }) {
   return (
     <div
-      className="sticky top-0 z-10 -mx-0.5 flex items-center gap-1.5 bg-(--board-bg) px-1 py-1.5"
+      className="sticky top-0 z-10 -mx-0.5 flex cursor-default items-center gap-1.5 bg-(--board-bg) px-1 py-0"
       data-testid={`kanban-project-group-${project.encodedDir}`}
     >
       <span
-        className="h-2.5 w-2.5 shrink-0 rounded-full"
+        className={cn('h-2.5 w-2.5 shrink-0 rounded-full', count === 0 && 'invisible')}
         style={{ backgroundColor: getProjectColor(project.displayName) }}
         aria-hidden="true"
       />
@@ -200,6 +200,7 @@ interface KanbanChatColumnProps {
   onCardGenerateTitle?: (taskId: string) => void;
   onCardMoveToCollection?: (taskId: string, collectionId: string | null) => void;
   onCardStopProcess?: (taskId: string) => void;
+  onCardRestartProcess?: (taskId: string) => void;
 }
 
 export const KanbanChatColumn = memo(function KanbanChatColumn({
@@ -232,6 +233,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
   onCardGenerateTitle,
   onCardMoveToCollection,
   onCardStopProcess,
+  onCardRestartProcess,
 }: KanbanChatColumnProps) {
   const { t } = useI18n();
   const isEditable = interactionMode === 'editable';
@@ -260,11 +262,6 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
         'flex items-center gap-2 mx-1 px-2.5 pt-1 pb-2.5 shrink-0 border-b',
         'border-[color-mix(in_srgb,var(--text-muted)_15%,transparent)]',
       )}>
-        {/* Accent color dot */}
-        <div
-          className="w-2 h-2 rounded-full shrink-0 opacity-60"
-          style={{ background: 'var(--text-muted)' }}
-        />
         {/* Status label */}
         <span className="flex-1 text-[0.75rem] font-bold uppercase tracking-wider truncate text-(--text-muted)">
           {t('task.status.chat')}
@@ -300,7 +297,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
         onDragLeave={isEditable ? (e) => onColumnDragLeave('chat', e) : undefined}
         onDrop={isEditable ? (e) => onColumnDrop('chat', e) : undefined}
       >
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-0.5">
           {chatGroups.map((group, groupIndex) => (
             <Fragment key={group.project?.encodedDir ?? `single-${groupIndex}`}>
               {group.project && (
@@ -316,7 +313,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
                   onCloseQuickCreate={onCloseQuickCreate}
                 />
               )}
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 empty:hidden">
                 {group.chats.map((session) => (
                   <KanbanChatCard
                     key={session.id}
@@ -341,6 +338,7 @@ export const KanbanChatColumn = memo(function KanbanChatColumn({
                     onGenerateTitle={onCardGenerateTitle}
                     onMoveToCollection={onCardMoveToCollection}
                     onStopProcess={onCardStopProcess}
+                    onRestartProcess={onCardRestartProcess}
                     collections={collectionsByProject[session.projectDir] ?? collections}
                   />
                 ))}
@@ -396,6 +394,7 @@ interface KanbanWorkflowColumnProps {
   onSessionOpenInNewTab?: (sessionId: string) => void;
   onSessionGenerateTitle?: (sessionId: string) => void;
   onSessionStopProcess?: (sessionId: string) => void;
+  onSessionRestartProcess?: (sessionId: string) => void;
   renamingTaskId?: string | null;
   onTaskRenameComplete?: (taskId: string) => void;
 }
@@ -432,6 +431,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   renamingTaskId,
   onTaskRenameComplete,
 }: KanbanWorkflowColumnProps) {
@@ -804,24 +804,6 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
           ? 'border-[color-mix(in_srgb,var(--status-color)_20%,transparent)]'
           : 'border-[color-mix(in_srgb,var(--text-muted)_15%,transparent)]',
       )}>
-        {/* Status dot */}
-        {status === 'todo' ? (
-          <div
-            className="w-2 h-2 rounded-full shrink-0 border-2 box-border"
-            style={{ borderColor: config.color }}
-          />
-        ) : status === 'done' ? (
-          <span className="text-[0.6875rem] text-(--text-muted) opacity-50 shrink-0">&#10003;</span>
-        ) : (
-          <div
-            className="w-2 h-2 rounded-full shrink-0"
-            style={{
-              background: config.color,
-              ...(status === 'in_progress' ? { boxShadow: `0 0 6px color-mix(in srgb, ${config.color} 42%, transparent)` } : {}),
-            }}
-          />
-        )}
-
         {/* Status label */}
         <span
           className={cn(
@@ -869,7 +851,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
         )}
         data-testid="kanban-column-cards"
       >
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-0.5">
           {projectGroups.map((group, groupIndex) => (
             <Fragment key={group.project?.encodedDir ?? `single-${groupIndex}`}>
               {group.project && (
@@ -885,7 +867,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                   onCloseQuickCreate={onCloseQuickCreate}
                 />
               )}
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 empty:hidden">
                 {group.tasks.map((task) => (
                   <KanbanTaskCard
                     key={task.id}
@@ -908,6 +890,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                     onSessionOpenInNewTab={onSessionOpenInNewTab}
                     onSessionGenerateTitle={onSessionGenerateTitle}
                     onSessionStopProcess={onSessionStopProcess}
+                    onSessionRestartProcess={onSessionRestartProcess}
                     isRenameRequested={renamingTaskId === task.id}
                     onRenameComplete={() => onTaskRenameComplete?.(task.id)}
                   />
@@ -942,6 +925,7 @@ export const KanbanWorkflowColumn = memo(function KanbanWorkflowColumn({
                       )
                     }
                     onStopProcess={onSessionStopProcess}
+                    onRestartProcess={onSessionRestartProcess}
                     collections={collectionsByProject[session.projectDir]}
                   />
                 ))}

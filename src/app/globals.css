@@ -1,5 +1,15 @@
 @import "tailwindcss";
 
+::highlight(workspace-file-find-match) {
+  color: inherit;
+  background-color: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+
+::highlight(workspace-file-find-active) {
+  color: inherit;
+  background-color: color-mix(in srgb, var(--warning) 72%, transparent);
+}
+
 /* Tailwind v4: Theme configuration */
 @theme {
   --color-primary: oklch(53% 0.19 27);

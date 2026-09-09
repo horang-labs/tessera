@@ -641,6 +641,7 @@ async function phaseCreatingFromTheCollectionPlusLandsOnTheSession() {
   assert.equal(before.sidebarPresent, true, 'the sidebar is open while the sheet is filled in');
 
   await createChat.tap();
+  await page.locator('[data-testid^="collection-chat-submit-"]').first().tap();
   // #279: wait for the creation, not for a row count and a timer.
   //
   // The row count never measured the creation. `[data-testid^="collection-chat-"]`

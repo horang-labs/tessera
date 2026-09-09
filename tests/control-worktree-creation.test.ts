@@ -176,14 +176,20 @@ test('Control creates exact local and remote branches through the managed path p
   git(repository.path, ['checkout', '-b', 'view/other']);
   assert.deepEqual(
     (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
-      .worktrees,
-    [],
+      .worktrees.map((worktree) => ({ id: worktree.id, branch: worktree.branch })),
+    [
+      { id: remote.taskId, branch: 'feature/exact-remote' },
+      { id: local.taskId, branch: 'feature/exact-local' },
+    ],
   );
   git(repository.path, ['checkout', 'main']);
   assert.deepEqual(
     (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
-      .worktrees.map((worktree) => worktree.branch),
-    ['feature/exact-remote', 'feature/exact-local'],
+      .worktrees.map((worktree) => ({ id: worktree.id, branch: worktree.branch })),
+    [
+      { id: remote.taskId, branch: 'feature/exact-remote' },
+      { id: local.taskId, branch: 'feature/exact-local' },
+    ],
   );
 
   await assert.rejects(
@@ -374,7 +380,7 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
     });
     assert.equal(persisted?.startPoint, 'feature/api-resume');
 
-    const refusal = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
+    const rootRefusal = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
       method: 'POST',
       headers: {
         [APP_SECRET_HEADER]: secret,
@@ -387,14 +393,48 @@ test('the Worktree API ignores naming inputs when opening an existing branch', a
         source: { mode: 'checkout-branch', branch: 'main' },
       }),
     }));
-    assert.equal(refusal.status, 409);
-    assert.deepEqual(await refusal.json(), {
+    assert.equal(rootRefusal.status, 409);
+    assert.deepEqual(await rootRefusal.json(), {
       code: 'BRANCH_ALREADY_CHECKED_OUT',
       error: `Branch 'main' is already checked out in Worktree '${repository.path}'.`,
       branchName: 'main',
       holderWorktreePath: repository.path,
     });
-    assert.equal(fs.existsSync(path.join(managedRoot, 'main')), false);
+
+    const existingCheckoutPath = path.join(testRoot, 'externally-created-main');
+    git(repository.path, ['worktree', 'add', existingCheckoutPath, '-b', 'feature/already-open', 'main']);
+    mods.tasks.createTask({
+      id: 'api-reuse-existing-checkout-task',
+      projectId: repository.path,
+      title: 'Reuse external checkout',
+    });
+    const reuse = await POST(new NextRequest('http://localhost:32123/api/worktrees', {
+      method: 'POST',
+      headers: {
+        [APP_SECRET_HEADER]: secret,
+        'content-type': 'application/json',
+        host: 'localhost:32123',
+        origin: 'http://localhost:32123',
+      },
+      body: JSON.stringify({
+        projectDir: repository.path,
+        source: { mode: 'checkout-branch', branch: 'feature/already-open' },
+        taskId: 'api-reuse-existing-checkout-task',
+      }),
+    }));
+    const reuseText = await reuse.text();
+    assert.equal(reuse.status, 200, reuseText);
+    assert.deepEqual(JSON.parse(reuseText), {
+      branchName: 'feature/already-open',
+      worktreePath: existingCheckoutPath,
+    });
+    const reusedTask = mods.tasks.getTask('api-reuse-existing-checkout-task');
+    assert.equal(reusedTask?.worktreeBranch, 'feature/already-open');
+    const persistedCheckout = mods.database.getDb().prepare(`
+      SELECT worktree_path FROM tasks WHERE id = ?
+    `).get('api-reuse-existing-checkout-task') as { worktree_path: string };
+    assert.equal(persistedCheckout.worktree_path, existingCheckoutPath);
+    assert.equal(fs.existsSync(path.join(managedRoot, 'feature/already-open')), false);
 
     mods.tasks.createTask({
       id: 'api-detached-origin-task',

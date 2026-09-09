@@ -10,6 +10,29 @@ function writeTerminal(terminal: Terminal, data: string): Promise<void> {
   return new Promise((resolve) => terminal.write(data, resolve));
 }
 
+test('headless diagnostics count queued bytes and settle back to zero', async () => {
+  const model = new TerminalHeadlessModel(80, 24);
+  const first = 'first output\n'.repeat(10_000);
+  const second = 'second output\n'.repeat(10_000);
+  model.write(first);
+  model.write(second);
+
+  const queued = model.diagnostics();
+  assert.equal(queued.totalWrites, 2);
+  assert.equal(queued.totalChars, first.length + second.length);
+  assert.equal(queued.pendingWrites, 2);
+  assert.equal(queued.pendingChars, first.length + second.length);
+
+  await model.whenSettled();
+  assert.deepEqual(model.diagnostics(), {
+    pendingWrites: 0,
+    pendingChars: 0,
+    totalWrites: 2,
+    totalChars: first.length + second.length,
+  });
+  model.dispose();
+});
+
 test('disposing during a pending xterm write releases the snapshot boundary', async () => {
   const model = new TerminalHeadlessModel(80, 24);
   model.write('output before dispose\n'.repeat(50_000));

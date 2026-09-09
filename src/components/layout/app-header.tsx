@@ -64,7 +64,10 @@ export const AppHeader = memo(function AppHeader() {
         ) : null}
         <div
           className={cn(
-            'relative z-10 flex min-w-0 flex-1 items-center gap-2 px-3',
+            'relative flex min-w-0 flex-1 items-center gap-2 px-3',
+            // Let the Git control participate in the Peek backdrop's stacking
+            // context; a z-10 parent would trap its z-60 below the backdrop.
+            !isKanbanPeekMode && 'z-10',
             isElectronTitlebar && 'pointer-events-none self-stretch',
             isMacElectron && 'pl-10',
             // Peek mode stretches the header across the window, so it has to

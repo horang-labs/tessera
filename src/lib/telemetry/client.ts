@@ -28,6 +28,9 @@ export type TelemetryEventName =
   | 'project_import_result'
   | 'git_panel_opened'
   | 'git_panel_tab_changed'
+  | 'image_generation_card_created'
+  | 'project_branch_filter_changed'
+  | 'worktree_branch_switch_result'
   | 'git_file_opened'
   | 'git_action_triggered'
   | 'ai_title_generation_result'
@@ -60,6 +63,13 @@ export interface TelemetryRuntimeContext {
 
 const MAX_STRING_LENGTH = 100;
 const MAX_ARRAY_LENGTH = 20;
+const postHogEnvironmentPropertyNames = [
+  '$browser',
+  '$browser_language',
+  '$browser_language_prefix',
+  '$browser_version',
+  '$timezone',
+] as const;
 
 const projectToken = process.env.NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN;
 const apiHost = process.env.NEXT_PUBLIC_POSTHOG_API_HOST || '/ingest';
@@ -80,6 +90,9 @@ const allowedEvents = new Set<TelemetryEventName>([
   'project_import_result',
   'git_panel_opened',
   'git_panel_tab_changed',
+  'image_generation_card_created',
+  'project_branch_filter_changed',
+  'worktree_branch_switch_result',
   'git_file_opened',
   'git_action_triggered',
   'ai_title_generation_result',
@@ -95,6 +108,7 @@ const allowedEvents = new Set<TelemetryEventName>([
 ]);
 
 const allowedProperties = new Set([
+  ...postHogEnvironmentPropertyNames,
   '$geoip_disable',
   '$process_person_profile',
   'active_seconds',
@@ -107,10 +121,12 @@ const allowedProperties = new Set([
   'environment',
   'error_code',
   'file_state',
+  'filter_mode',
   'changed_file_count',
   'github_available',
   'has_collection',
   'has_changes',
+  'images_tab_visible',
   'has_pr',
   'is_git_repo',
   'has_task',
@@ -162,7 +178,7 @@ const allowedSources = new Set([
   'pty_direct',
 ]);
 const allowedViews = new Set(['list', 'kanban']);
-const allowedGitTabs = new Set(['git', 'files', 'scripts', 'memory']);
+const allowedGitTabs = new Set(['git', 'files', 'images', 'scripts', 'memory']);
 const allowedGitActions = new Set([
   'commit',
   'fetch',
@@ -241,6 +257,7 @@ const allowedSettings = new Set([
   'agentExecutionMode',
   'terminalSessionDefaultView',
   'defaultNewSessionKind',
+  'defaultCliProvider',
   'profile',
   'notifications',
   'translate',
@@ -277,6 +294,8 @@ const allowedShortcuts = new Set([
   'toggle-sidebar',
   'toggle-view',
   'toggle-terminal-view',
+  'stop-session',
+  'archive-session',
   'split-right',
   'split-down',
   'toggle-terminal',
@@ -499,6 +518,7 @@ export function sanitizeTelemetryProperties(
 
     if (key === 'source' && (typeof value !== 'string' || !allowedSources.has(value))) continue;
     if (key === 'view' && (typeof value !== 'string' || !allowedViews.has(value))) continue;
+    if (key === 'filter_mode' && value !== 'all' && value !== 'branch') continue;
     if (key === 'tab' && (typeof value !== 'string' || !allowedGitTabs.has(value))) continue;
     if (key === 'action' && (typeof value !== 'string' || !allowedGitActions.has(value))) continue;
     if (key === 'target' && (typeof value !== 'string' || !allowedGitTargets.has(value))) continue;
@@ -553,6 +573,19 @@ export function sanitizeTelemetryProperties(
   return sanitized;
 }
 
+function sanitizePostHogEnvironmentProperties(
+  properties: TelemetryEventProperties,
+): TelemetryEventProperties {
+  const sanitized = sanitizeTelemetryProperties(properties);
+  const environmentProperties: TelemetryEventProperties = {};
+
+  for (const key of postHogEnvironmentPropertyNames) {
+    if (sanitized[key] !== undefined) environmentProperties[key] = sanitized[key];
+  }
+
+  return environmentProperties;
+}
+
 export function prepareTelemetryCaptureForTransport(
   captureResult: CaptureResult | null,
   context: TelemetryRuntimeContext | null = telemetryContext,
@@ -571,6 +604,7 @@ export function prepareTelemetryCaptureForTransport(
       properties: {
         token: transportToken,
         ...baseProperties(context),
+        ...sanitizePostHogEnvironmentProperties(captureResult.properties ?? {}),
         ...clickProperties,
       },
     };

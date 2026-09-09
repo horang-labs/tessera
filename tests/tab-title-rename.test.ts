@@ -2,7 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { useTabStore } from '@/stores/tab-store';
-import { resolveTabTitleCommit } from '@/components/tab/tab-item';
+import { derivePanelCount, resolveTabTitleCommit } from '@/components/tab/tab-item';
+
+test('panel count includes empty and terminal-only panels', () => {
+  assert.equal(derivePanelCount({
+    empty: { id: 'empty', sessionId: null },
+    terminal: { id: 'terminal', sessionId: null, terminalId: 'terminal-1' },
+    session: { id: 'session', sessionId: 'session-1' },
+  }), 3);
+});
 
 test('a tab can be given a custom title without changing its identity', () => {
   const tab = {

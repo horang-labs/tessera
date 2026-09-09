@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, useMemo, type MouseEvent } from 'react';
-import { Check, CircleDot, CircleStop, ListCollapse, ListTree } from 'lucide-react';
+import { Check, CircleDot, CircleStop, ListCollapse, ListTree, Plus } from 'lucide-react';
+import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import { useSessionStore } from '@/stores/session-store';
 import { requestSessionArchive } from '@/lib/session/session-archive-client';
 import { useSessionCrud } from '@/hooks/use-session-crud';
@@ -51,11 +52,15 @@ import {
   buildProjectViewRecentWorkItems,
   buildRecentWorkItems,
 } from '@/lib/chat/recent-work';
-import { getProjectIdsMissingTaskProjection } from '@/lib/tasks/project-task-projection-loading';
+import {
+  getProjectIdsMissingTaskProjection,
+  loadProjectTaskProjectionsSequentially,
+} from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { ProjectBranchFilter } from '@/components/worktree/project-branch-filter';
 import { BranchRenameWarning } from '@/components/worktree/branch-rename-warning';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
@@ -294,6 +299,8 @@ function SidebarRunningFilterEmpty({ label }: { label: string }) {
 }
 
 export function Sidebar() {
+  const [quickCreateProjectId, setQuickCreateProjectId] = useState<string | null>(null);
+  const projectQuickCreateTriggerRef = useRef<HTMLButtonElement>(null);
   const { t } = useI18n();
   const projects = useLoadedProjectViews();
   const dismissBranchRenameWarning = useSessionStore(
@@ -366,15 +373,22 @@ export function Sidebar() {
       allProjectsTaskLoadAttemptsRef.current.clear();
       return;
     }
-    for (const projectId of getProjectIdsMissingTaskProjection(
+    const projectIds = getProjectIdsMissingTaskProjection(
       projects,
       loadedTaskProjects,
       loadingTaskProjects,
       allProjectsTaskLoadAttemptsRef.current,
-    )) {
+    );
+    for (const projectId of projectIds) {
       allProjectsTaskLoadAttemptsRef.current.add(projectId);
-      void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
     }
+    let active = true;
+    void loadProjectTaskProjectionsSequentially(
+      projectIds,
+      (projectId) => useTaskStore.getState().loadTasks(projectId, { setCurrent: false }),
+      () => active,
+    );
+    return () => { active = false; };
   }, [loadedTaskProjects, loadingTaskProjects, projects, selectedProjectDir]);
 
   // Collection DnD (item moves between collections + group reorder)
@@ -478,6 +492,11 @@ export function Sidebar() {
     projectViewWorkspaceState.markSessionRead(taskId);
   }, []);
 
+  const handleTaskRestartProcess = useCallback((sessionId: string) => {
+    wsClient.restartSession(sessionId);
+    projectViewWorkspaceState.markSessionRead(sessionId);
+  }, []);
+
   const prevActivePanelIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -554,7 +573,7 @@ export function Sidebar() {
     const projectWorktree = selectedProject?.projectWorktree;
     if (!projectWorktree || !selectedProject) return;
     stepAsidePhoneSidebar();
-    useWorkspacePeekStore.getState().openWorktree(
+    useWorkspacePeekStore.getState().toggleWorktree(
       projectWorktree.id,
       selectedProject.encodedDir,
     );
@@ -783,6 +802,7 @@ export function Sidebar() {
                   onSessionOpenInNewTab={handleTaskOpenInNewTab}
                   onSessionGenerateTitle={handleTaskGenerateTitle}
                   onSessionStopProcess={handleTaskStopProcess}
+                  onSessionRestartProcess={handleTaskRestartProcess}
                 />
               )}
               <AllProjectsList
@@ -797,6 +817,7 @@ export function Sidebar() {
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
+                onSessionRestartProcess={handleTaskRestartProcess}
               />
             </>
           )
@@ -812,7 +833,40 @@ export function Sidebar() {
                   name={selectedProject.displayName}
                   displayPath={selectedProject.projectWorktree.displayPath}
                   onSelect={handleProjectWorktreeSelect}
+                  headerControl={(
+                    <button
+                      ref={projectQuickCreateTriggerRef}
+                      {...telemetryClickAttributes('sidebar.project.add', 'sidebar')}
+                      type="button"
+                      aria-label={t('sidebar.createNewSession')}
+                      title={t('sidebar.createNewSession')}
+                      className="shrink-0 rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--accent) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)"
+                      onClick={() => setQuickCreateProjectId((current) => current === selectedProject.encodedDir ? null : selectedProject.encodedDir)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  )}
+                  trailingControl={(
+                    <ProjectBranchFilter
+                      compact
+                      projectId={selectedProject.encodedDir}
+                      branches={selectedProject.creationBranches ?? []}
+                    />
+                  )}
                 />
+                {quickCreateProjectId === selectedProject.encodedDir && (
+                  <CollectionQuickCreateSheet
+                    key={selectedProject.encodedDir}
+                    collection={null}
+                    collections={collections}
+                    projectDir={selectedProject.decodedPath}
+                    projectId={selectedProject.encodedDir}
+                    allowCollectionSelection
+                    anchorRef={projectQuickCreateTriggerRef}
+                    scopeId={`project-${selectedProject.encodedDir}`}
+                    onClose={() => setQuickCreateProjectId(null)}
+                  />
+                )}
                 {selectedProject.branchRenameWarning ? (
                   <BranchRenameWarning
                     warning={selectedProject.branchRenameWarning}
@@ -863,6 +917,7 @@ export function Sidebar() {
                 onSessionOpenInNewTab={handleTaskOpenInNewTab}
                 onSessionGenerateTitle={handleTaskGenerateTitle}
                 onSessionStopProcess={handleTaskStopProcess}
+                onSessionRestartProcess={handleTaskRestartProcess}
                 disableDnd
                 allowPanelSessionDnd
                 hideHeader
@@ -888,6 +943,7 @@ export function Sidebar() {
                     onSessionOpenInNewTab={handleTaskOpenInNewTab}
                     onSessionGenerateTitle={handleTaskGenerateTitle}
                     onSessionStopProcess={handleTaskStopProcess}
+                    onSessionRestartProcess={handleTaskRestartProcess}
                   />
                 )}
                 {visibleCollectionGroups.map((group, groupIdx) => {
@@ -946,6 +1002,7 @@ export function Sidebar() {
                       onSessionOpenInNewTab={handleTaskOpenInNewTab}
                       onSessionGenerateTitle={handleTaskGenerateTitle}
                       onSessionStopProcess={handleTaskStopProcess}
+                      onSessionRestartProcess={handleTaskRestartProcess}
                       disableDnd={isRunningFilterActive}
                     />
                   );

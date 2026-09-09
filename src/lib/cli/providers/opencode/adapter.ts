@@ -80,6 +80,16 @@ type OpenCodePromptPart =
   | { type: 'image'; mimeType: string; data: string };
 
 export class OpenCodeAdapter implements CliProvider {
+  canResumeTerminalAfterRestart(providerState: string | null): boolean {
+    if (!providerState) return false;
+    try {
+      const resumeId = (JSON.parse(providerState) as Record<string, unknown>)
+        .opencodeTerminalSessionId;
+      return typeof resumeId === 'string' && resumeId.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
   private _nextRequestId = 3;
   private _processRuntimeConfig = new WeakMap<ChildProcess, OpenCodeRuntimeConfig>();
   private _initialConfigSent = new WeakSet<ChildProcess>();

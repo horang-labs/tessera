@@ -1,7 +1,11 @@
 'use client';
 
+import { isPhoneViewport } from '@/lib/viewport/phone-viewport';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, SquareTerminal, Terminal, X } from 'lucide-react';
+import { PeekContextMenu } from './peek-context-menu';
+import { Header } from '@/components/chat/header';
 import { ChatArea } from '@/components/chat/chat-area';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { MemoryFileTab } from '@/components/memory/memory-file-tab';
@@ -68,7 +72,10 @@ export function SessionPeek({
   const setPersistedFileWidth = useBoardStore((state) => state.setPeekFileSidecarWidth);
   const terminalViewMode = useTerminalViewMode(sessionId);
   const setTerminalViewMode = useTerminalViewModeStore((state) => state.setMode);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const dismissContextMenu = useCallback(() => setContextMenuPosition(null), []);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const sessionContentRef = useRef<HTMLDivElement>(null);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -144,6 +151,43 @@ export function SessionPeek({
       });
     };
   }, []);
+
+  useEffect(function focusPeekInputWhenReady() {
+    const content = sessionContentRef.current;
+    if (!showSessionContent || !content || isPhoneViewport()) return;
+    const selector = isTerminalChatView
+      ? '[data-testid="terminal-chat-composer-input"]:not([disabled])'
+      : isTerminal
+        ? '.xterm-helper-textarea:not([disabled])'
+        : 'textarea:not([disabled])';
+    let frame: number | null = null;
+    let stopped = false;
+    const stop = () => {
+      stopped = true;
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+      document.removeEventListener('pointerdown', stop, true);
+      document.removeEventListener('keydown', stop, true);
+    };
+    const scheduleFocus = () => {
+      if (stopped || frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const input = content.querySelector<HTMLTextAreaElement>(selector);
+        if (!input || input.getClientRects().length === 0) return;
+        input.focus({ preventScroll: true });
+        stop();
+      });
+    };
+    // History and xterm load asynchronously. Observe readiness rather than
+    // guessing a delay, and yield if the user chooses a control or file pane.
+    const observer = new MutationObserver(scheduleFocus);
+    observer.observe(content, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    document.addEventListener('pointerdown', stop, true);
+    document.addEventListener('keydown', stop, true);
+    scheduleFocus();
+    return stop;
+  }, [isTerminal, isTerminalChatView, sessionId, showSessionContent]);
 
   useEffect(() => {
     if (!session) onClose();
@@ -275,9 +319,19 @@ export function SessionPeek({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={showSessionContent ? titleId : undefined}
-        aria-label={isFileOnly ? peekFileLabel : undefined}
+        aria-labelledby={showSessionContent && !isTerminal ? titleId : undefined}
+        aria-label={isFileOnly ? peekFileLabel : isTerminal ? session.title : undefined}
         tabIndex={-1}
+        onContextMenuCapture={(event) => {
+          const target = event.target as HTMLElement;
+          // Keep editors and their own menus intact; capture PTY events before
+          // xterm consumes them, suppressing the native browser/Electron menu.
+          if (target.closest('[role="menu"], aside, input, [contenteditable="true"]')
+            || (target.closest('textarea') && !target.closest('.xterm'))) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setContextMenuPosition({ x: event.clientX, y: event.clientY });
+        }}
         onKeyDown={handleDialogKeyDown}
         className="flex min-h-0 overflow-hidden rounded-xl border border-(--divider) bg-(--chat-bg) shadow-[0_28px_90px_rgba(0,0,0,0.42)]"
         style={{
@@ -288,7 +342,19 @@ export function SessionPeek({
         data-session-kind={isTerminal ? 'terminal' : 'chat'}
       >
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {showSessionContent ? (
+          {showSessionContent && isTerminal ? (
+            <div className="shrink-0">
+              <TabIdContext.Provider value={PEEK_TAB_ID}>
+                <Header
+                  sessionId={sessionId}
+                  panelId={PEEK_PANEL_ID}
+                  projectViewDir={projectViewDir}
+                  isSinglePanel
+                  peek={{ onClose, closeButtonRef }}
+                />
+              </TabIdContext.Provider>
+            </div>
+          ) : showSessionContent ? (
             <header className="flex h-11 shrink-0 items-center gap-2 border-b border-(--chat-header-border) bg-(--chat-header-bg) px-3">
               <SessionIcon className="h-4 w-4 shrink-0 text-(--accent)" aria-hidden="true" />
               <h2
@@ -344,7 +410,7 @@ export function SessionPeek({
             data-testid="kanban-peek-split-container"
           >
             {showSessionContent ? (
-              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+              <div ref={sessionContentRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
                 <TabIdContext.Provider value={PEEK_TAB_ID}>
                   <ChatArea
                     key={sessionId}
@@ -417,6 +483,17 @@ export function SessionPeek({
           </div>
         </div>
       </div>
+      {contextMenuPosition ? (
+        <PeekContextMenu
+          position={contextMenuPosition}
+          onDismiss={dismissContextMenu}
+          onClosePeek={onClose}
+          onToggleView={canToggleTerminalView ? () => setTerminalViewMode(
+            sessionId, isTerminalChatView ? 'terminal' : 'chat',
+          ) : undefined}
+          toggleViewLabel={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+        />
+      ) : null}
     </div>
   );
 }

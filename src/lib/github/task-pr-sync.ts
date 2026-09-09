@@ -14,8 +14,10 @@ import * as dbTasks from '@/lib/db/tasks';
 import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import logger from '@/lib/logger';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import type { WorkflowStatus } from '@/types/task-entity';
 import type { TaskPrStatus } from '@/types/task-pr-status';
 import { probeTaskPrStatus } from './pr-status-provider';
+import { deriveTaskWorkflowStatusFromPr } from './task-pr-workflow-policy';
 
 export interface TaskPrUpdate {
   taskId: string;
@@ -23,6 +25,8 @@ export interface TaskPrUpdate {
   prStatusKnown: boolean;
   prUnsupported: boolean;
   remoteBranchExists?: boolean;
+  /** Present when the successful PR probe made GitHub authoritative for workflow. */
+  workflowStatus?: WorkflowStatus;
 }
 
 type Listener = (update: TaskPrUpdate) => void;
@@ -146,17 +150,21 @@ export function syncTaskPr(
 
       const nextStatus = probe.prStatus ?? null;
       const nextRemoteExists = probe.remoteBranchExists;
+      const workflowStatus = deriveTaskWorkflowStatusFromPr(nextStatus);
       const prUnchanged =
         !row.wasUnsupported
         && row.prStatusKnown
         && prStatusesEqual(row.prStatus, nextStatus ?? undefined);
       const remoteUnchanged = row.remoteBranchExists === nextRemoteExists;
-      if (prUnchanged && remoteUnchanged) return;
+      const workflowUnchanged =
+        workflowStatus === undefined || row.workflowStatus === workflowStatus;
+      if (prUnchanged && remoteUnchanged && workflowUnchanged) return;
 
-      dbTasks.setTaskPrStatus(taskId, {
+      const persistedWorkflowStatus = dbTasks.setTaskPrStatus(taskId, {
         unsupported: false,
         prStatus: nextStatus,
         remoteBranchExists: nextRemoteExists,
+        workflowStatus,
       });
       notify({
         taskId,
@@ -164,6 +172,7 @@ export function syncTaskPr(
         prStatusKnown: true,
         prUnsupported: false,
         remoteBranchExists: nextRemoteExists,
+        workflowStatus: persistedWorkflowStatus,
       });
     } catch (err) {
       logger.warn({ err, taskId }, 'Task PR sync failed');
@@ -181,10 +190,18 @@ export function syncTaskPr(
  * concurrency cap to avoid stampeding gh/GitHub.
  */
 export async function syncAllEligibleTaskPrs(
-  options: { agentEnvironment?: AgentEnvironment } = {},
+  options: {
+    agentEnvironment?: AgentEnvironment;
+    taskIds?: ReadonlySet<string>;
+  } = {},
 ): Promise<void> {
-  const rows = dbTasks.getTasksEligibleForPrSync();
-  const CONCURRENCY = 3;
+  const rows = filterEligibleTaskPrRows(
+    dbTasks.getTasksEligibleForPrSync(),
+    options.taskIds,
+  );
+  // A PR probe crosses the Windows->WSL boundary more than once. The safety
+  // sweep is background maintenance, so serial execution is the right bound.
+  const CONCURRENCY = 1;
   let cursor = 0;
 
   const worker = async () => {
@@ -198,4 +215,12 @@ export async function syncAllEligibleTaskPrs(
 
   const workers = Array.from({ length: Math.min(CONCURRENCY, rows.length) }, () => worker());
   await Promise.all(workers);
+}
+
+export function filterEligibleTaskPrRows<T extends { id: string }>(
+  rows: T[],
+  taskIds?: ReadonlySet<string>,
+): T[] {
+  if (!taskIds) return rows;
+  return rows.filter((row) => taskIds.has(row.id));
 }

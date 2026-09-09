@@ -3,6 +3,7 @@
  */
 
 import fs from 'fs';
+import { imageSessionCacheDirectory } from '@/lib/image-generation/cache-files';
 import { getDb } from './database';
 import { deleteTerminalProviderSessionsForTesseraSession } from './terminal-provider-sessions';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -12,6 +13,7 @@ import {
 } from './worktree-identity';
 import type { ProjectViewMembership } from '@/lib/projects/project-view-membership';
 import { getWorktree, resolveCanonicalWorktree } from './worktrees';
+import { areCrossEnvironmentFilesystemPathsEquivalent } from '@/lib/filesystem/path-equivalence';
 
 export interface SessionRow {
   id: string;
@@ -316,6 +318,8 @@ export function createSession(
 export function deleteSession(id: string): void {
   deleteTerminalProviderSessionsForTesseraSession(id);
   getDb().prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  // Only this server-owned, hashed per-session directory is removed.
+  void fs.promises.rm(imageSessionCacheDirectory(id), { recursive: true, force: true }).catch(() => {});
 }
 
 /**
@@ -323,10 +327,12 @@ export function deleteSession(id: string): void {
  * Used to decide whether to physically remove a managed worktree on session deletion.
  */
 export function countOtherSessionsByWorkDir(workDir: string, excludeSessionId: string): number {
-  const row = getDb()
-    .prepare('SELECT COUNT(*) AS cnt FROM sessions WHERE work_dir = ? AND id != ? AND deleted = 0')
-    .get(workDir, excludeSessionId) as { cnt: number } | undefined;
-  return row?.cnt ?? 0;
+  const rows = getDb()
+    .prepare('SELECT work_dir FROM sessions WHERE id != ? AND deleted = 0 AND work_dir IS NOT NULL')
+    .all(excludeSessionId) as Array<{ work_dir: string }>;
+  return rows.filter((row) =>
+    areCrossEnvironmentFilesystemPathsEquivalent(row.work_dir, workDir)
+  ).length;
 }
 
 /**
@@ -334,15 +340,17 @@ export function countOtherSessionsByWorkDir(workDir: string, excludeSessionId: s
  * Used to determine whether a managed worktree can be removed on archive.
  */
 export function countNonArchivedSessionsByWorkDir(workDir: string): number {
-  const row = getDb()
+  const rows = getDb()
     .prepare(`
-      SELECT COUNT(*) AS cnt
+      SELECT s.work_dir
       FROM sessions s
       LEFT JOIN tasks t ON t.id = s.task_id
-      WHERE s.work_dir = ? AND ${ACTIVE_SESSION_SCOPE_SQL}
+      WHERE s.work_dir IS NOT NULL AND ${ACTIVE_SESSION_SCOPE_SQL}
     `)
-    .get(workDir) as { cnt: number } | undefined;
-  return row?.cnt ?? 0;
+    .all() as Array<{ work_dir: string }>;
+  return rows.filter((row) =>
+    areCrossEnvironmentFilesystemPathsEquivalent(row.work_dir, workDir)
+  ).length;
 }
 
 /**
@@ -350,11 +358,15 @@ export function countNonArchivedSessionsByWorkDir(workDir: string): number {
  * Used to clear stale worktree metadata after the physical worktree is removed.
  */
 export function getSessionsByWorkDir(workDir: string): Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>> {
-  return getDb().prepare(`
-    SELECT id, task_id, worktree_branch
+  const rows = getDb().prepare(`
+    SELECT id, task_id, worktree_branch, work_dir
     FROM sessions
-    WHERE work_dir = ? AND deleted = 0
-  `).all(workDir) as Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>>;
+    WHERE work_dir IS NOT NULL AND deleted = 0
+  `).all() as Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch' | 'work_dir'>>;
+  return rows
+    .filter((row) => row.work_dir !== null
+      && areCrossEnvironmentFilesystemPathsEquivalent(row.work_dir, workDir))
+    .map(({ work_dir: _workDir, ...row }) => row);
 }
 
 /**
@@ -379,25 +391,26 @@ export function getSessionsByWorkDir(workDir: string): Array<Pick<SessionRow, 'i
 export function getActiveSessionIdsSharingWorkDir(workDir: string): string[] {
   const rows = getDb()
     .prepare(`
-      SELECT s.id AS id
-      FROM sessions s
-      LEFT JOIN tasks t ON t.id = s.task_id
-      WHERE (
-        s.work_dir = ?
-        OR (
-          s.task_id IS NOT NULL
-          AND (
+      SELECT
+        s.id AS id,
+        CASE
+          WHEN t.id IS NULL THEN s.work_dir
+          ELSE (
             SELECT ${PARENT_FIRST_WORKTREE_PATH_SQL}
             FROM tasks
             WHERE tasks.id = s.task_id
-          ) = ?
-        )
-      )
-      AND ${ACTIVE_SESSION_SCOPE_SQL}
+          )
+        END AS effective_work_dir
+      FROM sessions s
+      LEFT JOIN tasks t ON t.id = s.task_id
+      WHERE ${ACTIVE_SESSION_SCOPE_SQL}
       ORDER BY s.created_at ASC, s.id ASC
     `)
-    .all(workDir, workDir) as Array<{ id: string }>;
-  return rows.map((row) => row.id);
+    .all() as Array<{ id: string; effective_work_dir: string | null }>;
+  return rows
+    .filter((row) => row.effective_work_dir !== null
+      && areCrossEnvironmentFilesystemPathsEquivalent(row.effective_work_dir, workDir))
+    .map((row) => row.id);
 }
 
 export function getSessionsByTaskId(taskId: string): Array<Pick<SessionRow, 'id' | 'task_id' | 'worktree_branch'>> {
@@ -428,11 +441,20 @@ export function getSessionsEligibleForBareSessionPrSync(): Array<Pick<SessionRow
  * Clear worktree metadata for all sessions that reference the given work_dir.
  */
 export function clearWorktreeMetadataByWorkDir(workDir: string): void {
-  getDb().prepare(`
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT id, work_dir FROM sessions WHERE work_dir IS NOT NULL
+  `).all() as Array<{ id: string; work_dir: string }>;
+  const ids = rows
+    .filter((row) => areCrossEnvironmentFilesystemPathsEquivalent(row.work_dir, workDir))
+    .map((row) => row.id);
+  if (ids.length === 0) return;
+  const placeholders = ids.map(() => '?').join(', ');
+  db.prepare(`
     UPDATE sessions
     SET work_dir = NULL, worktree_branch = NULL, worktree_managed = 0, updated_at = ?
-    WHERE work_dir = ?
-  `).run(new Date().toISOString(), workDir);
+    WHERE id IN (${placeholders})
+  `).run(new Date().toISOString(), ...ids);
 }
 
 /**
@@ -441,6 +463,8 @@ export function clearWorktreeMetadataByWorkDir(workDir: string): void {
 export function softDeleteSession(id: string): void {
   getDb().prepare('UPDATE sessions SET deleted = 1, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id);
+  getDb().prepare('DELETE FROM image_generation_cache WHERE session_id = ?').run(id);
+  void fs.promises.rm(imageSessionCacheDirectory(id), { recursive: true, force: true }).catch(() => {});
 }
 
 /**
@@ -596,6 +620,7 @@ export function countArchivedChatSessions(projectId?: string, query?: string): n
 
 export function buildProjectViewWhere(
   membership: ProjectViewMembership,
+  creationBranch?: string,
 ): { sql: string; params: unknown[] } {
   if (membership.kind === 'non-git-project') {
     return { sql: 's.project_id = ?', params: [membership.projectId] };
@@ -606,12 +631,22 @@ export function buildProjectViewWhere(
     FROM sessions canonical INDEXED BY idx_sessions_worktree_scope
     WHERE canonical.worktree_id = ?
       AND (
-        canonical.scope_branch IS NULL
-        OR (? IS NOT NULL AND canonical.scope_branch = ?)
+        (
+          canonical.task_id IS NULL
+          ${creationBranch === undefined ? '' : 'AND canonical.scope_branch = ?'}
+        )
+        OR (
+          canonical.task_id IS NOT NULL
+          AND (
+            canonical.scope_branch IS NULL
+            OR (? IS NOT NULL AND canonical.scope_branch = ?)
+          )
+        )
       )
   `;
   const canonicalParams = [
     membership.worktreeId,
+    ...(creationBranch === undefined ? [] : [creationBranch]),
     membership.currentBranch,
     membership.currentBranch,
   ];
@@ -632,13 +667,48 @@ export function buildProjectViewWhere(
         AND project_root.worktree_id IS NULL
         AND project_root.task_id IS NULL
         AND project_root.work_dir = ?
+        ${creationBranch === undefined ? '' : 'AND project_root.scope_branch = ?'}
     )`,
     params: [
       ...canonicalParams,
       membership.projectRootFallback.projectId,
       membership.projectRootFallback.workDir,
+      ...(creationBranch === undefined ? [] : [creationBranch]),
     ],
   };
+}
+
+/** Immutable branch labels recorded when root Sessions were created. */
+export function getProjectViewSessionCreationBranches(
+  membership: ProjectViewMembership,
+): string[] {
+  if (membership.kind === 'non-git-project') return [];
+  return (getDb().prepare(`
+    SELECT DISTINCT branch
+    FROM (
+      SELECT scope_branch AS branch
+      FROM sessions INDEXED BY idx_sessions_worktree_scope
+      WHERE worktree_id = ?
+        AND task_id IS NULL
+        AND scope_branch IS NOT NULL
+      ${membership.projectRootFallback ? `
+      UNION ALL
+      SELECT scope_branch AS branch
+      FROM sessions INDEXED BY idx_sessions_project_updated
+      WHERE project_id = ?
+        AND worktree_id IS NULL
+        AND task_id IS NULL
+        AND work_dir = ?
+        AND scope_branch IS NOT NULL
+      ` : ''}
+    )
+    ORDER BY branch COLLATE NOCASE ASC
+  `).all(
+    membership.worktreeId,
+    ...(membership.projectRootFallback
+      ? [membership.projectRootFallback.projectId, membership.projectRootFallback.workDir]
+      : []),
+  ) as Array<{ branch: string }>).map(({ branch }) => branch);
 }
 
 function applyProjectRootMembershipFallback(
@@ -665,11 +735,11 @@ export function setSessionWorktreeDeletedAt(id: string, deletedAt: string): void
  */
 export function getSessionsForProjectView(
   membership: ProjectViewMembership,
-  options: { limit?: number; cursor?: string } = {}
+  options: { limit?: number; cursor?: string; creationBranch?: string } = {}
 ): SessionQueryResult {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = buildProjectViewWhere(membership);
+  const where = buildProjectViewWhere(membership, options.creationBranch);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
@@ -713,7 +783,7 @@ export function getSessionsForProjectView(
  */
 export function getSessionsForProjectViewGrouped(
   membership: ProjectViewMembership,
-  options: { limitPerStatus?: number } = {}
+  options: { limitPerStatus?: number; creationBranch?: string } = {}
 ): {
   sessions: SessionRow[];
   totalCount: number;
@@ -723,7 +793,7 @@ export function getSessionsForProjectViewGrouped(
 } {
   const db = getDb();
   const limitPerStatus = options.limitPerStatus ?? 20;
-  const where = buildProjectViewWhere(membership);
+  const where = buildProjectViewWhere(membership, options.creationBranch);
 
   // Get counts per status (exclude archived and soft-deleted)
   const statusCounts = db.prepare(`
@@ -803,11 +873,11 @@ export function getSessionsForProjectViewGrouped(
 export function getSessionsForProjectViewByStatus(
   membership: ProjectViewMembership,
   statusGroup: string,
-  options: { limit?: number; cursor?: string } = {}
+  options: { limit?: number; cursor?: string; creationBranch?: string } = {}
 ): { sessions: SessionRow[]; totalCount: number; nextCursor: string | null } {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = buildProjectViewWhere(membership);
+  const where = buildProjectViewWhere(membership, options.creationBranch);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt

@@ -27,6 +27,22 @@ export interface BridgeEvent {
   relativePath: string;
 }
 
+export interface WslInotifyBridgeOptions {
+  root: WslUncRoot;
+  /** Optional POSIX ERE applied inside the distro. */
+  excludeRegex?: string;
+  /** Optional inotifywait event mask; workspace watching uses the full default. */
+  eventMask?: string;
+  onEvent(event: BridgeEvent): void;
+  onEstablished(): void;
+  onDown(reason: string): void;
+}
+
+export interface WslInotifyBridgeHandle {
+  start(): void;
+  stop(): void;
+}
+
 const WSL_UNC_HOSTS = new Set(["wsl.localhost", "wsl$"]);
 const RESTART_DELAY_MS = 3_000;
 const MAX_RESTARTS = 2;
@@ -157,16 +173,7 @@ export class WslInotifyBridge {
   private stderrTail = "";
   private stopped = false;
 
-  constructor(private readonly options: {
-    root: WslUncRoot;
-    /** Optional POSIX ERE applied inside the distro. */
-    excludeRegex?: string;
-    /** Optional inotifywait event mask; workspace watching uses the full default. */
-    eventMask?: string;
-    onEvent(event: BridgeEvent): void;
-    onEstablished(): void;
-    onDown(reason: string): void;
-  }) {}
+  constructor(private readonly options: WslInotifyBridgeOptions) {}
 
   start(): void {
     if (this.stopped || this.child) return;
@@ -312,3 +319,118 @@ export class WslInotifyBridge {
     this.options.onDown(reason);
   }
 }
+
+interface SharedBridgeSubscriber {
+  onEvent(event: BridgeEvent): void;
+  onEstablished(): void;
+  onDown(reason: string): void;
+}
+
+interface SharedBridgeEntry {
+  bridge: WslInotifyBridgeHandle;
+  subscribers: Set<SharedBridgeSubscriber>;
+  established: boolean;
+  downReason: string | null;
+}
+
+/** Multiplexes identical inotify roots onto one permanent WSL process tree. */
+export class SharedWslInotifyBridgePool {
+  private readonly entries = new Map<string, SharedBridgeEntry>();
+
+  constructor(
+    private readonly createBridge: (options: WslInotifyBridgeOptions) => WslInotifyBridgeHandle = (
+      options,
+    ) => new WslInotifyBridge(options),
+  ) {}
+
+  acquire(options: WslInotifyBridgeOptions): { stop(): void } {
+    const key = sharedBridgeKey(options);
+    let entry = this.entries.get(key);
+    let created = false;
+    if (!entry) {
+      created = true;
+      const subscribers = new Set<SharedBridgeSubscriber>();
+      let nextEntry: SharedBridgeEntry;
+      const bridge = this.createBridge({
+        root: options.root,
+        ...(options.excludeRegex ? { excludeRegex: options.excludeRegex } : {}),
+        ...(options.eventMask ? { eventMask: options.eventMask } : {}),
+        onEvent: (event) => {
+          for (const subscriber of [...subscribers]) subscriber.onEvent(event);
+        },
+        onEstablished: () => {
+          nextEntry.established = true;
+          nextEntry.downReason = null;
+          for (const subscriber of [...subscribers]) subscriber.onEstablished();
+        },
+        onDown: (reason) => {
+          nextEntry.established = false;
+          nextEntry.downReason = reason;
+          for (const subscriber of [...subscribers]) subscriber.onDown(reason);
+        },
+      });
+      nextEntry = {
+        bridge,
+        subscribers,
+        established: false,
+        downReason: null,
+      };
+      entry = nextEntry;
+      this.entries.set(key, entry);
+    }
+
+    const subscriber: SharedBridgeSubscriber = {
+      onEvent: options.onEvent,
+      onEstablished: options.onEstablished,
+      onDown: options.onDown,
+    };
+    entry.subscribers.add(subscriber);
+    if (created) {
+      entry.bridge.start();
+    } else if (entry.established) {
+      queueMicrotask(() => {
+        if (entry?.subscribers.has(subscriber)) subscriber.onEstablished();
+      });
+    } else if (entry.downReason) {
+      const reason = entry.downReason;
+      queueMicrotask(() => {
+        if (entry?.subscribers.has(subscriber)) subscriber.onDown(reason);
+      });
+    }
+
+    let stopped = false;
+    return {
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        const current = this.entries.get(key);
+        if (!current) return;
+        current.subscribers.delete(subscriber);
+        if (current.subscribers.size > 0) return;
+        this.entries.delete(key);
+        current.bridge.stop();
+      },
+    };
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+}
+
+function sharedBridgeKey(options: Pick<WslInotifyBridgeOptions, 'root' | 'excludeRegex' | 'eventMask'>): string {
+  return JSON.stringify([
+    options.root.distro.toLowerCase(),
+    options.root.posixPath,
+    options.excludeRegex ?? '',
+    options.eventMask ?? '',
+  ]);
+}
+
+const SHARED_POOL_KEY = Symbol.for('tessera.sharedWslInotifyBridgePool');
+const sharedPoolGlobal = globalThis as unknown as {
+  [SHARED_POOL_KEY]?: SharedWslInotifyBridgePool;
+};
+
+export const sharedWslInotifyBridgePool = sharedPoolGlobal[SHARED_POOL_KEY]
+  ?? (sharedPoolGlobal[SHARED_POOL_KEY] = new SharedWslInotifyBridgePool());

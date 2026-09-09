@@ -147,6 +147,9 @@ async function addNextTraceFiles(files) {
 }
 
 async function addTracedEntrypointFiles(files) {
+  // Parcel selects its platform binary through a computed require. File tracing
+  // alone can omit the installed optional native package.
+  await addDirectory('node_modules/@parcel', files);
   const { fileList } = await nodeFileTrace(ELECTRON_ENTRYPOINTS, {
     base: rootDir,
     processCwd: rootDir,
@@ -243,6 +246,10 @@ async function copyTurbopackExternalAliases() {
 }
 
 async function writeRuntimePackageJson() {
+  // This is a file-traced runtime, not a complete npm install: nested package
+  // manifests still list dependencies already bundled by Next.js or unused at
+  // runtime. build.allowMissingDependencies preserves electron-builder <=26's
+  // warning behavior for those declarations; NFT selects the shipped files.
   const sourcePackageJson = JSON.parse(
     await fs.readFile(path.join(rootDir, 'package.json'), 'utf8')
   );
@@ -319,6 +326,7 @@ async function main() {
   await addDirectory('dist-electron', files);
   await addDirectory('node_modules/next', files);
   await addDirectory('node_modules/@next/env', files);
+  await addDirectory('node_modules/better-sqlite3', files);
   await addDirectory('node_modules/sql.js', files);
   await addDirectory('node_modules/node-pty/lib/worker', files);
   await addDirectory('node_modules/node-pty/prebuilds', files);

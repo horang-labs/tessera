@@ -13,6 +13,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Sparkles,
   Trash2,
   type LucideIcon,
@@ -75,6 +76,8 @@ import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime
 import {
   SIDEBAR_TREE_LEADING_SLOT,
   SIDEBAR_TREE_ROW_GUTTER,
+  SIDEBAR_TREE_WORKTREE_CHILD_BRANCH,
+  SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
 } from './sidebar-tree-layout';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
@@ -277,6 +280,7 @@ export function CollectionContextMenu({
   onOpenInNewTab,
   onGenerateTitle,
   onStopProcess,
+  onRestartProcess,
   onStatusChange,
   onRunPreparation,
 }: {
@@ -290,6 +294,7 @@ export function CollectionContextMenu({
   onOpenInNewTab?: () => void;
   onGenerateTitle?: () => void;
   onStopProcess?: () => void;
+  onRestartProcess?: () => void;
   onStatusChange?: (status: string) => void;
   /** Runs the project's preparation script again on this task's worktree. */
   onRunPreparation?: () => void;
@@ -380,17 +385,30 @@ export function CollectionContextMenu({
       className="animate-in fade-in-0 zoom-in-95 duration-100"
     >
       <div className="min-w-[180px] rounded-lg border border-(--divider) bg-(--sidebar-bg) py-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.24),0_2px_8px_rgba(0,0,0,0.16)]">
-        {menu.isRunning && onStopProcess && (
+        {menu.isRunning && (onStopProcess || onRestartProcess) && (
           <>
-            <button
-              {...telemetryClickAttributes('task.stop', 'workspace_list')}
-              className={cn(menuItemClass, 'text-(--error)')}
-              onClick={() => { onStopProcess(); onClose(); }}
-              data-testid="ctx-stop-process"
-            >
-              <CircleStop className="h-3.5 w-3.5 shrink-0" />
-              <span>Stop Process</span>
-            </button>
+            {onStopProcess && (
+              <button
+                {...telemetryClickAttributes('task.stop', 'workspace_list')}
+                className={cn(menuItemClass, 'text-(--error)')}
+                onClick={() => { onStopProcess(); onClose(); }}
+                data-testid="ctx-stop-process"
+              >
+                <CircleStop className="h-3.5 w-3.5 shrink-0" />
+                <span>Stop Process</span>
+              </button>
+            )}
+            {onRestartProcess && (
+              <button
+                {...telemetryClickAttributes('task.restart', 'workspace_list')}
+                className={menuItemClass}
+                onClick={() => { onRestartProcess(); onClose(); }}
+                data-testid="ctx-restart-process"
+              >
+                <RotateCcw className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+                <span>{t('status.restartSession')}</span>
+              </button>
+            )}
             <div className="mx-2 my-1 h-px bg-(--divider) opacity-40" />
           </>
         )}
@@ -663,9 +681,15 @@ function SubSessionRow({
           )}
         />
       )}
-      <div className="absolute -left-3 top-1/2 h-px w-[10px] bg-(--divider)" />
+      <div className={cn(
+        'absolute top-1/2 h-px w-[10px] bg-(--divider)',
+        SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+      )} />
       {isActive && (
-        <div className="absolute -left-3 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)" />
+        <div className={cn(
+          'absolute top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)',
+          SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+        )} />
       )}
       {showProviderIcons ? (
         <span className="relative flex shrink-0 items-center">
@@ -710,7 +734,7 @@ function SubSessionRow({
           className="min-w-0 flex-1 border-b border-(--accent) bg-transparent text-[0.75rem] text-(--sidebar-text-active) outline-none"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate pr-8">{sess.title}</span>
+        <span className="min-w-0 flex-1 truncate">{sess.title}</span>
       )}
 
       {!isRenaming && (
@@ -720,7 +744,7 @@ function SubSessionRow({
         // carries them via onContextMenu), and the kebab itself is always
         // visible. Hover on touch is unreliable and, when it does fire on tap,
         // races the row's own onClick that opens the session.
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5 sm:absolute sm:inset-y-0 sm:right-2 sm:z-10">
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               telemetryControl="task.stop"
@@ -833,7 +857,7 @@ export function TaskItemRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const density = getLinkedWorktreeDensity(task.sessions);
   const isExpanded = density === 'expanded';
-  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.sessions);
+  const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.id, task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const activeTabId = useTabStore((state) => state.activeTabId);
   const activePanelSessionId = usePanelStore((state) => {
@@ -943,7 +967,6 @@ export function TaskItemRow({
       }
     }
   }, [onStopProcess, task.projectViewId, task.sessions]);
-
   const handleDragStart = useCallback((event: React.DragEvent) => {
     if (disableDnd) {
       event.stopPropagation();
@@ -1104,6 +1127,7 @@ export function TaskItemRow({
         <span className={SIDEBAR_TREE_LEADING_SLOT}>
           {hasPreparationBadge ? (
             <TaskPreparationBadge
+              sessionId={density === 'composite' ? primarySessionId ?? null : null}
               status={task.preparationStatus}
               presentation="icon"
             />
@@ -1272,7 +1296,7 @@ export function TaskItemRow({
 
       {isExpanded && (
         <div
-          className="relative ml-[30px] pl-3"
+          className={cn('relative', SIDEBAR_TREE_WORKTREE_CHILD_BRANCH)}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes(COLLECTION_ITEM_DND_MIME)) return;
 

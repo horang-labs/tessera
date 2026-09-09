@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Pin, Plus } from 'lucide-react';
+import { ChevronRight, GitBranch, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { useSessionStore } from '@/stores/session-store';
@@ -26,6 +26,7 @@ import {
   originProjectContainsRunningSession,
 } from '@/lib/projects/origin-project-representation';
 import { CompactProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
+import { ProjectBranchFilter } from '@/components/worktree/project-branch-filter';
 import { useWorkspacePeekStore } from '@/stores/workspace-peek-store';
 import { selectActiveTab, usePanelStore } from '@/stores/panel-store';
 import { shouldShowAllProjectLoading } from './sidebar-utils';
@@ -46,6 +47,7 @@ interface AllProjectsListProps {
   onSessionOpenInNewTab: (sessionId: string) => void;
   onSessionGenerateTitle: (sessionId: string) => void;
   onSessionStopProcess: (sessionId: string) => void;
+  onSessionRestartProcess: (sessionId: string) => void;
   onChatStatusChange: (sessionId: string, status: string) => void;
 }
 
@@ -60,6 +62,7 @@ export function AllProjectsList({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   onChatStatusChange,
 }: AllProjectsListProps) {
   const representation = useOriginProjectRepresentation();
@@ -95,6 +98,7 @@ export function AllProjectsList({
           onSessionOpenInNewTab={onSessionOpenInNewTab}
           onSessionGenerateTitle={onSessionGenerateTitle}
           onSessionStopProcess={onSessionStopProcess}
+          onSessionRestartProcess={onSessionRestartProcess}
           onChatStatusChange={onChatStatusChange}
         />
       ))}
@@ -122,6 +126,7 @@ function AllProjectSection({
   onSessionOpenInNewTab,
   onSessionGenerateTitle,
   onSessionStopProcess,
+  onSessionRestartProcess,
   onChatStatusChange,
 }: AllProjectSectionProps) {
   const { t } = useI18n();
@@ -240,7 +245,7 @@ function AllProjectSection({
   const handleProjectWorktreeSelect = useCallback(() => {
     const projectWorktree = project.projectWorktree;
     if (!projectWorktree) return;
-    useWorkspacePeekStore.getState().openWorktree(
+    useWorkspacePeekStore.getState().toggleWorktree(
       projectWorktree.id,
       project.encodedDir,
     );
@@ -268,15 +273,30 @@ function AllProjectSection({
         >
           {project.displayName.charAt(0).toUpperCase()}
         </div>
-        <Tooltip content={project.displayName} delay={400} wrapperClassName="min-w-0 flex-1">
+        <Tooltip content={project.displayName} delay={400} wrapperClassName="min-w-0">
           <span className="block truncate text-[0.625rem] font-semibold uppercase tracking-widest text-(--text-muted)">
             {project.displayName}
           </span>
         </Tooltip>
-        <span className="shrink-0 tabular-nums text-[0.625rem] text-(--text-muted)">
+        {project.projectWorktree && (
+          <button
+            {...telemetryClickAttributes('worktree.select', 'worktree')}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              handleProjectWorktreeSelect();
+            }}
+            className="ml-1 inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1 rounded font-mono text-[11px] font-medium text-(--sidebar-text-active) transition-colors hover:bg-(--sidebar-bg) focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-(--accent)"
+            title={project.projectWorktree.currentBranch ?? 'unknown'}
+            aria-label={`${project.displayName}, ${project.projectWorktree.displayPath}, branch ${project.projectWorktree.currentBranch ?? 'unknown'}`}
+          >
+            <GitBranch className="h-3.5 w-3.5 shrink-0 text-(--accent)" />
+            <span className="truncate">{project.projectWorktree.currentBranch ?? 'unknown'}</span>
+          </button>
+        )}
+        <span className="ml-auto shrink-0 tabular-nums text-[0.625rem] text-(--text-muted)">
           {sectionSessionCount}
         </span>
-        {project.isCurrent ? <Pin className="h-3 w-3 shrink-0 text-(--accent)" /> : null}
         <button
           ref={projectQuickCreateTriggerRef}
           {...telemetryClickAttributes('sidebar.project.add', 'sidebar')}
@@ -293,7 +313,6 @@ function AllProjectSection({
           <Plus className="h-3 w-3" />
         </button>
       </div>
-
       {isProjectQuickCreateOpen && (
         <CollectionQuickCreateSheet
           collection={null}
@@ -310,13 +329,22 @@ function AllProjectSection({
       {isExpanded && (
         <div className="ml-2">
           {project.projectWorktree ? (
-            <CompactProjectWorktreeRow
-              active={activeWorktreeId === project.projectWorktree.id}
-              branch={project.projectWorktree.currentBranch}
-              diffStats={project.projectWorktree.diffStats}
-              displayPath={project.projectWorktree.displayPath}
-              onSelect={handleProjectWorktreeSelect}
-            />
+            <>
+              <CompactProjectWorktreeRow
+                active={activeWorktreeId === project.projectWorktree.id}
+                branch={project.projectWorktree.currentBranch}
+                diffStats={project.projectWorktree.diffStats}
+                displayPath={project.projectWorktree.displayPath}
+                onSelect={handleProjectWorktreeSelect}
+                trailingControl={(
+                  <ProjectBranchFilter
+                    compact
+                    projectId={project.encodedDir}
+                    branches={project.creationBranches ?? []}
+                  />
+                )}
+              />
+            </>
           ) : null}
           {shouldShowLoading ? (
             <div className="px-4 py-3 text-[0.6875rem] text-(--text-muted)">
@@ -362,6 +390,7 @@ function AllProjectSection({
               onSessionOpenInNewTab={onSessionOpenInNewTab}
               onSessionGenerateTitle={onSessionGenerateTitle}
               onSessionStopProcess={onSessionStopProcess}
+              onSessionRestartProcess={onSessionRestartProcess}
               disableDnd
               allowPanelSessionDnd
               hideHeader
@@ -414,6 +443,7 @@ function AllProjectSection({
                   onSessionOpenInNewTab={onSessionOpenInNewTab}
                   onSessionGenerateTitle={onSessionGenerateTitle}
                   onSessionStopProcess={onSessionStopProcess}
+                  onSessionRestartProcess={onSessionRestartProcess}
                 />
               );
             })

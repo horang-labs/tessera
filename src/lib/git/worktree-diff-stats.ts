@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from '@/lib/logger';
 import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
-import { createGitRunner } from '@/lib/worktrees/git-runner';
+import { createGitRunner, createGitShellRunner } from '@/lib/worktrees/git-runner';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
   WorktreeDiffStats,
@@ -19,6 +19,93 @@ const UNTRACKED_LINECOUNT_MAX_FILES = 1000;
 // Cap concurrent file reads so even a large-but-under-limit untracked set can't
 // exhaust file descriptors.
 const NEWLINE_COUNT_CONCURRENCY = 16;
+const DIFF_STATS_BATCH_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+interface DiffStatsGitBatchOutput {
+  insideWorkTree: string | null;
+  numstat: string | null;
+  nameStatus: string | null;
+  untracked: string | null;
+}
+
+/**
+ * Four Git reads behind one shell keeps a Windows-hosted WSL agent to one
+ * wsl.exe/conhost lifecycle per worktree. Files are used between Git and
+ * base64 because shell variables cannot preserve the NUL-delimited ls-files
+ * output.
+ */
+export function buildWorktreeDiffStatsBatchScript(): string {
+  return [
+    'batch_dir=$(mktemp -d "${TMPDIR:-/tmp}/tessera-diff-stats.XXXXXX") || exit 70',
+    'trap \'rm -rf -- "$batch_dir"\' EXIT HUP INT TERM',
+    'run_git_probe() {',
+    '  probe_key=$1',
+    '  shift',
+    '  probe_output="$batch_dir/$probe_key"',
+    '  git "$@" >"$probe_output" 2>/dev/null',
+    '  probe_status=$?',
+    '  printf "%s\\t%s\\tb64:" "$probe_key" "$probe_status"',
+    '  base64 <"$probe_output" | tr -d "\\r\\n"',
+    '  printf "\\n"',
+    '}',
+    'run_git_probe insideWorkTree rev-parse --is-inside-work-tree',
+    'run_git_probe numstat diff --numstat HEAD --',
+    'run_git_probe nameStatus diff --name-status HEAD --',
+    'run_git_probe untracked ls-files --others --exclude-standard -z',
+  ].join('\n');
+}
+
+export function parseWorktreeDiffStatsBatchOutput(raw: string): DiffStatsGitBatchOutput | null {
+  const outputs = new Map<string, string | null>();
+  const expectedKeys = new Set(['insideWorkTree', 'numstat', 'nameStatus', 'untracked']);
+
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    const [key, statusRaw, encodedField, ...extra] = line.split('\t');
+    if (
+      extra.length > 0
+      || !key
+      || !expectedKeys.has(key)
+      || outputs.has(key)
+      || !/^\d+$/.test(statusRaw ?? '')
+      || !encodedField?.startsWith('b64:')
+    ) {
+      return null;
+    }
+    const status = Number.parseInt(statusRaw, 10);
+    outputs.set(
+      key,
+      status === 0
+        ? Buffer.from(encodedField.slice(4), 'base64').toString('utf8').trimEnd()
+        : null,
+    );
+  }
+
+  if (outputs.size !== expectedKeys.size) return null;
+  return {
+    insideWorkTree: outputs.get('insideWorkTree') ?? null,
+    numstat: outputs.get('numstat') ?? null,
+    nameStatus: outputs.get('nameStatus') ?? null,
+    untracked: outputs.get('untracked') ?? null,
+  };
+}
+
+async function collectDiffStatsGitBatch(
+  workDir: string,
+  agentEnvironment: AgentEnvironment,
+): Promise<DiffStatsGitBatchOutput | null> {
+  try {
+    const runGitShell = createGitShellRunner(agentEnvironment, {
+      timeoutMs: 10_000,
+      maxOutputBytes: DIFF_STATS_BATCH_MAX_OUTPUT_BYTES,
+    });
+    const result = await runGitShell(buildWorktreeDiffStatsBatchScript(), { cwd: workDir });
+    if (result.truncated) return null;
+    return parseWorktreeDiffStatsBatchOutput(result.stdout);
+  } catch {
+    return null;
+  }
+}
 
 // Map over items with a bounded number of in-flight async calls.
 async function mapWithConcurrency<T, R>(
@@ -155,8 +242,10 @@ async function collectNameStatus(
   agentEnvironment: AgentEnvironment,
 ): Promise<{ deletedFiles: number } | null> {
   const stdout = await runGit(workDir, ['diff', '--name-status', 'HEAD', '--'], agentEnvironment);
-  if (stdout === null) return null;
+  return stdout === null ? null : parseNameStatus(stdout);
+}
 
+function parseNameStatus(stdout: string): { deletedFiles: number } {
   let deletedFiles = 0;
   for (const line of stdout.split('\n')) {
     if (!line) continue;
@@ -206,13 +295,26 @@ export async function computeWorktreeDiffStats(
   try {
     const resolved = await resolveFilesystemPath(workDir);
     const pathModule = getPathModule(resolved);
-    if (!(await isGitWorkTree(resolved, agentEnvironment))) return null;
+    let numstat: NumstatAggregate | null;
+    let nameStatus: { deletedFiles: number } | null;
+    let untracked: { paths: string[] } | null;
 
-    const [numstat, nameStatus, untracked] = await Promise.all([
-      collectNumstat(resolved, agentEnvironment),
-      collectNameStatus(resolved, agentEnvironment),
-      collectUntracked(resolved, agentEnvironment),
-    ]);
+    if (agentEnvironment === 'wsl') {
+      const batch = await collectDiffStatsGitBatch(resolved, agentEnvironment);
+      if (!batch || batch.insideWorkTree?.trim() !== 'true') return null;
+      numstat = batch.numstat === null ? null : parseNumstat(batch.numstat);
+      nameStatus = batch.nameStatus === null ? null : parseNameStatus(batch.nameStatus);
+      untracked = batch.untracked === null
+        ? null
+        : { paths: parseUntrackedPaths(batch.untracked) };
+    } else {
+      if (!(await isGitWorkTree(resolved, agentEnvironment))) return null;
+      [numstat, nameStatus, untracked] = await Promise.all([
+        collectNumstat(resolved, agentEnvironment),
+        collectNameStatus(resolved, agentEnvironment),
+        collectUntracked(resolved, agentEnvironment),
+      ]);
+    }
 
     if (!numstat || !nameStatus || !untracked) return null;
 

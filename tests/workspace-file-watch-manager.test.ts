@@ -18,7 +18,7 @@ interface TestWatchEntry {
   readyPromise: Promise<void>;
   symlinks: Set<string>;
   watchMode: 'watch' | 'poll';
-  watcher: { close(): Promise<void>; removeAllListeners(): void } | null;
+  watcher: { close(): Promise<void>;  } | null;
 }
 
 function managerInternals(manager: WorkspaceFileWatchManager): {
@@ -44,11 +44,11 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5_000): Promise<v
 
 /**
  * Reproduce the delivery a Windows-hosted WSL root actually gets: the inotify
- * bridge, with no chokidar underneath. Closing the watcher keeps the test
- * honest — otherwise chokidar quietly supplies the events the bridge is being
+ * bridge, with no the native watcher underneath. Closing the watcher keeps the test
+ * honest — otherwise the native watcher quietly supplies the events the bridge is being
  * tested for losing.
  */
-async function silenceChokidar(entry: TestWatchEntry): Promise<void> {
+async function silenceNativeWatcher(entry: TestWatchEntry): Promise<void> {
   const watcher = entry.watcher;
   entry.watcher = null;
   entry.watchMode = 'poll';
@@ -65,7 +65,7 @@ function waitFor<T>(promise: Promise<T>, timeoutMs = 5_000): Promise<T> {
   ]);
 }
 
-test('only Windows-hosted WSL roots bypass chokidar', () => {
+test('only Windows-hosted WSL roots bypass the native watcher', () => {
   assert.equal(
     isWindowsHostedWslRoot('\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\project'),
     true,
@@ -223,7 +223,7 @@ test('an empty directory reaches the index and its creation is a change', async 
   const entry = internals.entriesByRoot.get(canonicalRoot);
   assert.ok(entry);
   await entry.readyPromise;
-  await silenceChokidar(entry);
+  await silenceNativeWatcher(entry);
 
   try {
     assert.deepEqual(
@@ -279,11 +279,11 @@ test('a symlink created after startup lands in the live index with its marker', 
     const entry = internals.entriesByRoot.get(canonicalRoot);
     assert.ok(entry);
     await entry.readyPromise;
-    // The initial notification only fires once chokidar is ready; without it the
+    // The initial notification only fires once the native watcher is ready; without it the
     // links below can be created before the watcher is listening.
     await waitFor(primed);
 
-    // chokidar lstats with followSymlinks:false, so both links arrive as "add"
+    // Native events are reconciled against the filesystem to classify links.
     // with isFile() === false. Only the one pointing at a file may be indexed.
     symlinkSync(path.join(source, 'CLAUDE.md'), path.join(root, 'CLAUDE.md'));
     symlinkSync(path.join(source, 'prd-doc'), path.join(root, 'prd-doc'));
@@ -326,7 +326,7 @@ test('a directory copied in during the initial walk still reaches the index', as
   });
   const entry = internals.entriesByRoot.get(realpathSync(root))!;
   await entry.readyPromise;
-  await silenceChokidar(entry);
+  await silenceNativeWatcher(entry);
 
   try {
     // Reopen the window the preparation script writes into: the walk is running
@@ -386,7 +386,7 @@ test('an event names a directory to re-read, not the index contents', async () =
   });
   const entry = internals.entriesByRoot.get(realpathSync(root))!;
   await entry.readyPromise;
-  await silenceChokidar(entry);
+  await silenceNativeWatcher(entry);
 
   try {
     // A file whose creation event was lost, arriving only as a modification —
@@ -418,6 +418,48 @@ test('an event names a directory to re-read, not the index contents', async () =
   }
 });
 
+test('a bridge event for content written to an existing file notifies root listeners', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-content-change-'));
+  const manager = new WorkspaceFileWatchManager();
+  const internals = managerInternals(manager);
+  writeFileSync(path.join(root, 'test.md'), '');
+  let changeCount = 0;
+  let resolvePrimed!: () => void;
+  const primed = new Promise<void>((resolve) => { resolvePrimed = resolve; });
+
+  const dispose = await manager.subscribeRootChanges({
+    listenerId: 'terminal:content-change',
+    root,
+    onChange: () => {
+      changeCount += 1;
+      if (changeCount === 1) resolvePrimed();
+    },
+  });
+  const entry = internals.entriesByRoot.get(realpathSync(root))!;
+  await entry.readyPromise;
+  await waitFor(primed);
+  await silenceNativeWatcher(entry);
+
+  try {
+    writeFileSync(path.join(root, 'test.md'), 'one\ntwo\nthree\n');
+    internals.handleBridgeEvent(entry, {
+      eventName: 'change',
+      relativePath: 'test.md',
+    });
+    await waitUntil(() => changeCount === 2);
+    // Let the real debounce window fully drain so a leftover timer cannot hide
+    // an accidental duplicate notification from this assertion.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    assert.equal(changeCount, 2, 'content-only changes must refresh terminal diff stats');
+  } finally {
+    dispose();
+    if (entry.closeTimer) clearTimeout(entry.closeTimer);
+    internals.closeEntryNow(entry);
+    rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test('a removed directory takes its subtree out of the index', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-unlink-dir-'));
   const manager = new WorkspaceFileWatchManager();
@@ -433,7 +475,7 @@ test('a removed directory takes its subtree out of the index', async () => {
   });
   const entry = internals.entriesByRoot.get(realpathSync(root))!;
   await entry.readyPromise;
-  await silenceChokidar(entry);
+  await silenceNativeWatcher(entry);
 
   try {
     assert.ok(entry.files.has('doomed/nested/deep.ts'));
@@ -449,5 +491,75 @@ test('a removed directory takes its subtree out of the index', async () => {
     if (entry!.closeTimer) clearTimeout(entry!.closeTimer);
     internals.closeEntryNow(entry!);
     rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('new generated directories stay excluded while same-name regular files remain live', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-ignore-'));
+  const manager = new WorkspaceFileWatchManager();
+  let notifications = 0;
+  const dispose = await manager.subscribeRootChanges({ root, listenerId: 'ignore-regression', onChange: () => { notifications++; } });
+  try {
+    await waitUntil(() => notifications > 0);
+    mkdirSync(path.join(root, '.venv/lib'), { recursive: true });
+    writeFileSync(path.join(root, '.venv/lib/hidden.py'), 'hidden');
+    writeFileSync(path.join(root, 'build'), 'source');
+    const entry = managerInternals(manager).entriesByRoot.get(realpathSync(root))!;
+    await waitUntil(() => entry.files.has('build'));
+    const directories = (entry as unknown as { directories: Set<string> }).directories;
+    assert.ok(!directories.has('.venv'));
+    assert.ok(!entry.files.has('.venv/lib/hidden.py'));
+    rmSync(path.join(root, 'build'));
+    await waitUntil(() => !entry.files.has('build'));
+  } finally {
+    dispose();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a UI subscriber receives a tree refresh when the initial index becomes ready', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-ready-'));
+  writeFileSync(path.join(root, 'before-native-ready.txt'), 'already present');
+  const manager = new WorkspaceFileWatchManager();
+  (manager as unknown as { resolveRootForSession(): Promise<string> }).resolveRootForSession = async () => root;
+  const messages: Array<{ type: string; treeChanged?: boolean; status?: string }> = [];
+  try {
+    await manager.subscribe({
+      agentEnvironment: 'native',
+      connectionId: 'ready-test', sessionId: 'ready-session', subscriberId: 'files', userId: 'test',
+      sendToUser: (_userId, message) => messages.push(message),
+    });
+    await waitUntil(() => messages.some((message) => message.type === 'workspace_files_changed' && message.treeChanged));
+    assert.ok(messages.some((message) => message.type === 'workspace_file_watch_status' && message.status === 'active'));
+  } finally {
+    manager.unsubscribeConnection('ready-test');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const delivery of ['native', 'bridge'] as const) test(`content-only ${delivery} changes notify open file subscribers with the changed path`, async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-content-'));
+  writeFileSync(path.join(root, 'existing.txt'), 'before');
+  const manager = new WorkspaceFileWatchManager();
+  (manager as unknown as { resolveRootForSession(): Promise<string> }).resolveRootForSession = async () => root;
+  const messages: Array<{ type: string; changedPaths?: string[]; treeChanged?: boolean; status?: string }> = [];
+  try {
+    await manager.subscribe({
+      agentEnvironment: 'native', connectionId: 'content-test', sessionId: 'content-session', subscriberId: 'file-tab', userId: 'test',
+      sendToUser: (_userId, message) => messages.push(message),
+    });
+    await waitUntil(() => messages.some((message) => message.status === 'active'));
+    const entry = managerInternals(manager).entriesByRoot.get(root)!;
+    if (delivery === 'bridge') await silenceNativeWatcher(entry);
+    messages.length = 0;
+    writeFileSync(path.join(root, 'existing.txt'), 'after external edit');
+    if (delivery === 'bridge') {
+      managerInternals(manager).handleBridgeEvent(entry, { eventName: 'change', relativePath: 'existing.txt' });
+    }
+    await waitUntil(() => messages.some((message) => message.changedPaths?.includes('existing.txt')));
+    assert.equal(messages.find((message) => message.changedPaths?.includes('existing.txt'))?.treeChanged, false);
+  } finally {
+    manager.unsubscribeConnection('content-test');
+    rmSync(root, { recursive: true, force: true });
   }
 });

@@ -17,6 +17,10 @@ import { useProvidersStore } from '@/stores/providers-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { resolveStoredCanonicalSession } from '@/lib/projects/stored-session-resolution';
 import {
+  applyProviderSessionRuntimeOverrides,
+  getProviderSessionRuntimeConfig,
+} from '@/lib/settings/provider-defaults';
+import {
   applyLocalInteractiveResponseStart,
   finalizeInFlightTurn,
 } from '@/lib/chat/session-client-effects';
@@ -30,6 +34,7 @@ import {
   captureTelemetryPromptSubmitted,
   captureTelemetryPromptTurnFinished,
 } from '@/lib/telemetry/client';
+import { resetSessionRestarts } from '@/lib/session/session-restart-lifecycle';
 
 type ServerMessageListener = (msg: ServerTransportMessage) => void;
 
@@ -146,6 +151,7 @@ export class WebSocketClient {
       this.ws.onclose = (event) => {
         const closeMsg = this.formatCloseMessage(event);
         console.warn('WebSocket closed:', closeMsg);
+        resetSessionRestarts();
         this.failPendingRequestCallbacks();
         this.reconnect();
       };
@@ -292,6 +298,36 @@ export class WebSocketClient {
       ...(controls?.sandboxMode && { sandboxMode: controls.sandboxMode }),
       ...(controls?.serviceTier !== undefined && { serviceTier: controls.serviceTier }),
       ...(controls?.fastMode !== undefined && { fastMode: controls.fastMode }),
+    });
+  }
+
+  restartSession(
+    sessionId: string,
+    controls?: ({ permissionMode?: PermissionMode } & ProviderRuntimeControls),
+  ): boolean {
+    let resolvedControls = controls;
+    if (!resolvedControls) {
+      const { projects, retainedSessions } = useSessionStore.getState();
+      const session = resolveStoredCanonicalSession(projects, retainedSessions, sessionId);
+      const providerId = session?.provider?.trim();
+      if (providerId) {
+        resolvedControls = applyProviderSessionRuntimeOverrides(
+          getProviderSessionRuntimeConfig(useSettingsStore.getState().settings, providerId),
+          session,
+          providerId,
+        );
+      }
+    }
+    return this.sendRequest('restart_session', {
+      sessionId,
+      ...(resolvedControls?.permissionMode && { permissionMode: resolvedControls.permissionMode }),
+      ...(resolvedControls?.sessionMode && { sessionMode: resolvedControls.sessionMode }),
+      ...(resolvedControls?.accessMode && { accessMode: resolvedControls.accessMode }),
+      ...(resolvedControls?.collaborationMode && { collaborationMode: resolvedControls.collaborationMode }),
+      ...(resolvedControls?.approvalPolicy && { approvalPolicy: resolvedControls.approvalPolicy }),
+      ...(resolvedControls?.sandboxMode && { sandboxMode: resolvedControls.sandboxMode }),
+      ...(resolvedControls?.serviceTier !== undefined && { serviceTier: resolvedControls.serviceTier }),
+      ...(resolvedControls?.fastMode !== undefined && { fastMode: resolvedControls.fastMode }),
     });
   }
 

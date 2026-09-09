@@ -6,6 +6,7 @@ import type {
   WorktreeCreationMode,
 } from '@/hooks/use-worktree-base-refs';
 import { useI18n } from '@/lib/i18n';
+import { Select } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
@@ -64,18 +65,19 @@ export function WorktreeStartFromControl({
       >
         {t('task.creation.worktreeSourceLabel')}
       </label>
-      <select
+      <Select
         {...telemetryClickAttributes('creation.worktree.source', 'new_session')}
         id={sourceModeId}
         value={creationMode}
-        onChange={(event) => onCreationModeChange(event.target.value as WorktreeCreationMode)}
+        onValueChange={(value) => onCreationModeChange(value as WorktreeCreationMode)}
         disabled={disabled}
         className={selectClassName}
         data-testid={`${testId}-source-mode`}
-      >
-        <option value="branch-off">{t('task.creation.worktreeSourceBranchOff')}</option>
-        <option value="checkout-branch">{t('task.creation.worktreeSourceCheckout')}</option>
-      </select>
+        options={[
+          { value: 'branch-off', label: t('task.creation.worktreeSourceBranchOff') },
+          { value: 'checkout-branch', label: t('task.creation.worktreeSourceCheckout') },
+        ]}
+      />
       <label
         htmlFor={id}
         className={cn(
@@ -87,52 +89,24 @@ export function WorktreeStartFromControl({
           ? t('task.creation.checkoutBranchLabel')
           : t('task.creation.baseRefLabel')}
       </label>
-      <select
+      <Select
         {...telemetryClickAttributes('creation.worktree.base_ref', 'new_session')}
         id={id}
         value={selectedBaseRef}
-        onChange={(event) => onSelectedBaseRefChange(event.target.value)}
+        onValueChange={onSelectedBaseRefChange}
         disabled={selectDisabled}
         className={selectClassName}
         aria-describedby={error ? errorId : undefined}
         data-testid={testId}
-      >
-        {isLoading ? (
-          <option value="">{t('task.creation.baseRefLoading')}</option>
-        ) : refs.length === 0 ? (
-          <option value="">
-            {creationMode === 'checkout-branch'
-              ? t('task.creation.checkoutBranchUnavailable')
-              : t('task.creation.baseRefUnavailable')}
-          </option>
-        ) : (
-          <>
-            {localRefs.length > 0 ? (
-              <optgroup label={t('task.creation.baseRefLocalGroup')}>
-                {localRefs.map((ref) => (
-                  <option key={ref.name} value={ref.name}>
-                    {formatBaseRefLabel(ref, t('task.creation.baseRefCurrentSuffix'))}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null}
-            {remoteRefs.length > 0 ? (
-              <optgroup label={t('task.creation.baseRefRemoteGroup')}>
-                {remoteRefs.map((ref) => (
-                  <option key={ref.name} value={ref.name}>
-                    {formatBaseRefLabel(ref, t('task.creation.baseRefCurrentSuffix'))}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null}
-            {otherRefs.map((ref) => (
-              <option key={ref.name} value={ref.name}>
-                {formatBaseRefLabel(ref, t('task.creation.baseRefCurrentSuffix'))}
-              </option>
-            ))}
-          </>
-        )}
-      </select>
+        placeholder={isLoading ? t('task.creation.baseRefLoading') : creationMode === 'checkout-branch' ? t('task.creation.checkoutBranchUnavailable') : t('task.creation.baseRefUnavailable')}
+        searchPlaceholder={t('chat.checkoutBranchSearchPlaceholder')}
+        emptyLabel={t('chat.checkoutBranchNoMatches')}
+        options={[
+          ...localRefs.map((ref) => ({ value: ref.name, label: formatBaseRefLabel(ref, t('task.creation.baseRefCurrentSuffix')), group: t('task.creation.baseRefLocalGroup') })),
+          ...remoteRefs.map((ref) => ({ value: ref.name, label: formatBaseRefLabel(ref, t('task.creation.baseRefCurrentSuffix')), group: t('task.creation.baseRefRemoteGroup') })),
+          ...otherRefs.map((ref) => ({ value: ref.name, label: formatBaseRefLabel(ref, t('task.creation.baseRefCurrentSuffix')) })),
+        ]}
+      />
       {error ? (
         <p
           id={errorId}

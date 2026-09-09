@@ -139,10 +139,31 @@ test('only a whole, textual buffer is editable', () => {
   assert.match(codeViewSource, /onChange=\{editable \? onDraftChange : undefined\}/);
 });
 
-test('the save shortcut is bound to this view, not to the window', () => {
-  assert.match(codeViewSource, /onKeyDown=\{handleSaveShortcut\}/);
+test('file shortcuts are bound to this view, not to the window', () => {
+  assert.match(codeViewSource, /onKeyDown=\{handleViewKeyDown\}/);
   assert.doesNotMatch(codeViewSource, /window\.addEventListener\("keydown"/);
   assert.match(codeViewSource, /event\.metaKey \|\| event\.ctrlKey/);
+});
+
+test('clicking Monaco never moves focus to the surrounding file view', () => {
+  assert.match(codeViewSource, /const handleViewMouseDown/);
+  assert.match(codeViewSource, /target\.closest\("\.monaco-editor"\)/);
+  assert.match(codeViewSource, /onMouseDown=\{handleViewMouseDown\}/);
+});
+
+test('file viewers open an in-view search for both Monaco source and Markdown previews', () => {
+  assert.match(codeViewSource, /WorkspaceFileFind/);
+  assert.match(codeViewSource, /event\.key\.toLowerCase\(\) !== "f"/);
+  assert.match(codeViewSource, /findRequest=\{monacoFindRequest\}/);
+  assert.match(monacoEditorSource, /findRequest\?: number/);
+  assert.match(monacoEditorSource, /editor\.trigger\("workspace", "actions\.find", null\)/);
+});
+
+test('Markdown preview search highlights matches without corrupting the input caret', () => {
+  assert.doesNotMatch(codeViewSource, /window\.getSelection\(\)/);
+  assert.match(codeViewSource, /return CSS\.highlights/);
+  assert.match(codeViewSource, /registry\?\.set\(/);
+  assert.match(codeViewSource, /registry\?\.delete\(/);
 });
 
 test('a dirty preview tab is pinned so it cannot be replaced out from under the draft', () => {
@@ -170,12 +191,14 @@ test('creating a file posts and opens what it created', () => {
   // POST, now issued straight from the inline input.
   assert.match(mutationClientSource, /createWorkspaceFileRequest/);
   assert.match(mutationClientSource, /body: JSON\.stringify\(\{ path, content: "" \}\)/);
-  assert.match(filePanelSource, /await loadFiles\(\{[\s\S]*silent: true,[\s\S]*mutation:/);
-  assert.match(fileListHookSource, /cache: 'no-store'/);
+  // Lazy trees reconcile only the created entry's parent directory.
+  assert.match(filePanelSource, /await loadDirectory\(created\.path\.split\([\s\S]*silent: true,[\s\S]*mutation:/);
+  assert.match(fileListHookSource, /cache: ["']no-store["']/);
   assert.match(fileListHookSource, /MUTATION_LIST_ATTEMPTS = 5/);
   assert.match(filePanelSource, /mutation: \{ kind: "file", path: created\.path, type: "create" \}/);
   assert.match(filePanelSource, /useWorkspacePeekStore\(\(state\) => state\.target\)/);
-  assert.match(filePanelSource, /peekTarget\?\.worktreeId !== target\.id/);
+  assert.match(filePanelSource, /shouldReloadReselectedWorktree\(\{/);
+  assert.match(filePanelSource, /previousFileListTargetKeyRef\.current = targetKey/);
   assert.match(
     filePanelSource,
     /openWorkspaceTargetFileTab\(target, "file", created\.path, \{[\s\S]*projectDir: sessionProjectDir/,

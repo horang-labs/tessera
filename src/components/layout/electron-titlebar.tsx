@@ -3,6 +3,7 @@
 import { useEffect, type MouseEvent } from 'react';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useGitStore } from '@/stores/git-store';
 import { ElectronWindowControls } from '@/components/layout/electron-window-controls';
 import { cn } from '@/lib/utils';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
@@ -44,13 +45,18 @@ function getElectronApi(): ElectronApi | undefined {
   return (window as Window & { electronAPI?: ElectronApi }).electronAPI;
 }
 
-function hasOpenModalDialog(): boolean {
+function hasOpenModalDialog(gitPanelOpen: boolean): boolean {
   if (typeof document === 'undefined') return false;
-  return document.querySelector(MODAL_DIALOG_SELECTOR) !== null;
+  return Array.from(document.querySelectorAll(MODAL_DIALOG_SELECTOR)).some((dialog) => {
+    // Peek covers only the board. With the right panel open, the native
+    // caption buttons sit above its undimmed titlebar instead.
+    return !gitPanelOpen || !dialog.closest('[data-testid="kanban-session-peek-backdrop"]');
+  });
 }
 
 function useElectronTitlebarThemeSync(isWindowsElectron: boolean) {
   const isSettingsOpen = useSettingsStore((state) => state.isOpen);
+  const gitPanelOpen = useGitStore((state) => state.isOpen);
 
   useEffect(() => {
     if (!isWindowsElectron) return;
@@ -62,7 +68,7 @@ function useElectronTitlebarThemeSync(isWindowsElectron: boolean) {
     const applyTheme = () => {
       const isDark = document.documentElement.classList.contains('dark');
       setTitlebarTheme(isDark ? 'dark' : 'light', {
-        dimmed: isSettingsOpen || hasOpenModalDialog(),
+        dimmed: isSettingsOpen || hasOpenModalDialog(gitPanelOpen),
       });
     };
 
@@ -92,7 +98,7 @@ function useElectronTitlebarThemeSync(isWindowsElectron: boolean) {
       themeObserver.disconnect();
       dialogObserver.disconnect();
     };
-  }, [isWindowsElectron, isSettingsOpen]);
+  }, [isWindowsElectron, isSettingsOpen, gitPanelOpen]);
 }
 
 export function ElectronTitlebarThemeSync() {

@@ -1,7 +1,9 @@
 import { GitBranch } from 'lucide-react';
+import type { ReactNode } from 'react';
 
-export function WorktreeOverview({ branch, displayPath, label }: {
+export function WorktreeOverview({ branch, branchControl, displayPath, label }: {
   branch: string | null;
+  branchControl?: ReactNode;
   displayPath: string;
   label?: string;
 }) {
@@ -22,6 +24,7 @@ export function WorktreeOverview({ branch, displayPath, label }: {
             <dt className="text-xs font-medium uppercase tracking-wide text-(--text-muted)">Current branch</dt>
             <dd className="mt-1 font-mono text-(--text-primary)">{branch ?? 'unknown'}</dd>
           </div>
+          {branchControl}
           <div>
             <dt className="text-xs font-medium uppercase tracking-wide text-(--text-muted)">Path</dt>
             <dd className="mt-1 break-all font-mono text-(--text-primary)">{displayPath}</dd>
