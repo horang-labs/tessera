@@ -118,6 +118,20 @@ export function hasActiveWorktreeCreationScope(
   return Boolean(row);
 }
 
+/** Immutable branch labels recorded when managed Worktrees were created. */
+export function getProjectViewWorktreeCreationBranches(
+  membership: ProjectViewMembership,
+): string[] {
+  if (membership.kind === 'non-git-project') return [];
+  return (getDb().prepare(`
+    SELECT DISTINCT creation_scope_branch AS branch
+    FROM tasks INDEXED BY idx_tasks_creation_scope
+    WHERE creation_scope_worktree_id = ?
+      AND creation_scope_branch IS NOT NULL
+    ORDER BY creation_scope_branch COLLATE NOCASE ASC
+  `).all(membership.worktreeId) as Array<{ branch: string }>).map(({ branch }) => branch);
+}
+
 export interface ArchivedTaskQueryOptions {
   query?: string;
   limit?: number;
@@ -297,22 +311,17 @@ function loadTaskSessions(
 export function getTasksForProjectView(
   membership: ProjectViewMembership,
   activeSessionIds: Set<string> = new Set(),
-  options: { includeArchived?: boolean } = {}
+  options: { includeArchived?: boolean; creationBranch?: string } = {}
 ): TaskEntity[] {
   const db = getDb();
   const where = membership.kind === 'canonical-worktree'
     ? {
-        sql: `(
-          creation_scope_worktree_id = ?
-          AND (
-            creation_scope_branch IS NULL
-            OR (? IS NOT NULL AND creation_scope_branch = ?)
-          )
-        )`,
+        sql: `creation_scope_worktree_id = ? ${options.creationBranch === undefined
+          ? ''
+          : 'AND creation_scope_branch = ?'}`,
         params: [
           membership.worktreeId,
-          membership.currentBranch,
-          membership.currentBranch,
+          ...(options.creationBranch === undefined ? [] : [options.creationBranch]),
         ],
       }
     : { sql: 'project_id = ?', params: [membership.projectId] };

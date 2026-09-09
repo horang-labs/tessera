@@ -12,6 +12,8 @@ interface WorkspaceMonacoEditorProps {
   mode: "file" | "diff";
   /** Unique editor instance identity; required when the same path can be open in multiple tabs. */
   modelKey?: string;
+  /** Opens Monaco's built-in Find widget when this counter changes. */
+  findRequest?: number;
   path: string;
   readOnly?: boolean;
   /**
@@ -211,6 +213,7 @@ export function WorkspaceMonacoEditor({
   language,
   mode,
   modelKey,
+  findRequest = 0,
   path,
   readOnly = true,
   onChange,
@@ -347,6 +350,13 @@ export function WorkspaceMonacoEditor({
       readOnly,
     });
   }, [readOnly]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || findRequest === 0) return;
+    editor.focus();
+    editor.trigger("workspace", "actions.find", null);
+  }, [findRequest]);
 
   return (
     <div className={cn("relative h-full min-h-0 w-full", className)}>

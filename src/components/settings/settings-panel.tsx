@@ -27,7 +27,9 @@ import AgentExecutionModeSettings from './agent-execution-mode-settings';
 import TesseraCliSettings from './tessera-cli-settings';
 import TerminalViewDefaultSettings from './terminal-view-default-settings';
 import NewSessionKindSettings from './new-session-kind-settings';
+import DefaultCliProviderSettings from './default-cli-provider-settings';
 import CustomModelSettings from './custom-model-settings';
+import ProviderDefaultSessionSettings from './provider-default-session-settings';
 import ProjectPreparationSettings from './project-preparation-settings';
 import RemoteAccessSection from './remote-access-section';
 import SettingsSectionPicker from './settings-section-picker';
@@ -186,9 +188,14 @@ export default function SettingsPanel() {
         );
       case 'models':
         return (
-          <SettingsCard testId="settings-section-models">
-            <CustomModelSettings />
-          </SettingsCard>
+          <>
+            <SettingsCard testId="settings-section-model-defaults">
+              <ProviderDefaultSessionSettings />
+            </SettingsCard>
+            <SettingsCard testId="settings-section-models">
+              <CustomModelSettings />
+            </SettingsCard>
+          </>
         );
       case 'remote-access':
         return (
@@ -236,6 +243,9 @@ export default function SettingsPanel() {
       default:
         return (
           <>
+            <SettingsCard testId="settings-section-general-default-cli-provider">
+              <DefaultCliProviderSettings />
+            </SettingsCard>
             <SettingsCard testId="settings-section-general-execution-mode">
               <AgentExecutionModeSettings />
             </SettingsCard>

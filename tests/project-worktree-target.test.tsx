@@ -21,7 +21,9 @@ import {
 } from '../src/lib/workspace-tabs/special-session';
 import {
   openWorkspaceFileTab,
+  openWorkspaceTargetFileTab,
   openWorktreeFileTab,
+  previewWorkspaceFileTab,
   previewWorkspaceTargetFileTab,
   previewWorktreeFileTab,
 } from '../src/lib/workspace-tabs/open-workspace-tab';
@@ -31,6 +33,21 @@ const chatLayoutSource = fs.readFileSync(
   new URL('../src/components/chat/chat-layout.tsx', import.meta.url),
   'utf8',
 );
+
+test('selecting the same Worktree toggles Peek while another Worktree replaces it', () => {
+  const store = useWorkspacePeekStore.getState();
+  store.close();
+  store.toggleWorktree('wt_a', 'project-a');
+  assert.equal(useWorkspacePeekStore.getState().target?.worktreeId, 'wt_a');
+  store.toggleWorktree('wt_a', 'project-a');
+  assert.equal(useWorkspacePeekStore.getState().target, null);
+  store.toggleWorktree('wt_a', 'project-a');
+  store.toggleWorktree('wt_b', 'project-b');
+  assert.deepEqual(useWorkspacePeekStore.getState().target, {
+    kind: 'worktree', worktreeId: 'wt_b', projectDir: 'project-b',
+  });
+  store.close();
+});
 
 test('Project Worktree rows render detailed and compact variants', () => {
   const row = renderToStaticMarkup(createElement(ProjectWorktreeRow, {
@@ -48,7 +65,7 @@ test('Project Worktree rows render detailed and compact variants', () => {
     },
     onSelect: () => {},
   }));
-  assert.match(row, /lucide-folder-git-2/);
+  assert.doesNotMatch(row, /lucide-folder-git-2/);
   assert.match(row, /lucide-git-branch/);
   assert.match(row, /tessera-dev/);
   assert.match(row, /\/repo\/tessera-dev/);
@@ -57,7 +74,8 @@ test('Project Worktree rows render detailed and compact variants', () => {
   assert.match(row, /−3/);
   assert.match(row, /aria-current="true"/);
   assert.match(row, /data-variant="detailed"/);
-  assert.match(row, /mb-0\.5[^\"]*py-2(?:\s|\")/);
+  assert.doesNotMatch(row, /bg-\(--input-bg\)|rounded-full|border-\(--divider\)/);
+  assert.match(row, /focus-visible:ring-1/);
 
   const compactRow = renderToStaticMarkup(createElement(CompactProjectWorktreeRow, {
     active: false,
@@ -73,14 +91,15 @@ test('Project Worktree rows render detailed and compact variants', () => {
     },
     onSelect: () => {},
   }));
-  assert.match(compactRow, /lucide-folder-git-2/);
-  assert.match(compactRow, /lucide-git-branch/);
+  assert.doesNotMatch(compactRow, /lucide-folder-git-2/);
+  assert.doesNotMatch(compactRow, /lucide-git-branch/);
   assert.match(compactRow, /\/repo\/tessera-dev/);
   assert.match(compactRow, /feature\/root-target/);
   assert.match(compactRow, /\+12/);
   assert.match(compactRow, /−3/);
   assert.match(compactRow, /data-variant="compact"/);
-  assert.match(compactRow, /mb-0\.5[^\"]*py-1(?:\s|\")/);
+  assert.doesNotMatch(compactRow, /bg-\(--input-bg\)|rounded-full|border-\(--divider\)/);
+  assert.match(compactRow, /focus-visible:ring-1/);
 });
 
 test('Worktree overview renders branch and path without duplicate creation actions', () => {
@@ -194,6 +213,60 @@ test('opening a Worktree file dismisses Peek and targets a Worktree-scoped previ
   assert.equal(
     specialSessionId,
     buildWorktreeFileSessionId('wt_project_root', 'README.md'),
+  );
+});
+
+test('opening a previewed Worktree file again retains that same tab', () => {
+  const target = { kind: 'worktree', id: 'wt_preview_pin' } as const;
+  previewWorkspaceTargetFileTab(target, 'file', 'README.md', {
+    projectDir: 'project-a',
+  });
+
+  const previewTabId = useTabStore.getState().activeTabId;
+  assert.equal(
+    useTabStore.getState().tabs.find((tab) => tab.id === previewTabId)?.isPreview,
+    true,
+  );
+
+  openWorkspaceTargetFileTab(target, 'file', 'README.md', {
+    projectDir: 'project-a',
+  });
+
+  assert.equal(useTabStore.getState().activeTabId, previewTabId);
+  assert.equal(
+    useTabStore.getState().tabs.find((tab) => tab.id === previewTabId)?.isPreview,
+    false,
+  );
+});
+
+test('previewing a Session file retains its preview source Session', () => {
+  const sourceTabId = 'source-session-preview-tab';
+  const sourcePanelId = 'source-session-preview-panel';
+  const sourceSessionId = 'source-session-preview';
+  const panelStore = usePanelStore.getState();
+  panelStore.initTab(sourceTabId, {
+    layout: { type: 'leaf', panelId: sourcePanelId },
+    panels: {
+      [sourcePanelId]: { id: sourcePanelId, sessionId: sourceSessionId },
+    },
+    activePanelId: sourcePanelId,
+  });
+  panelStore.setActiveTabId(sourceTabId);
+  useTabStore.setState({
+    tabs: [{ id: sourceTabId, projectDir: 'project-a', title: null, isPreview: true }],
+    activeTabId: sourceTabId,
+    lruTabIds: [sourceTabId],
+    currentProjectDir: 'project-a',
+  });
+
+  previewWorkspaceFileTab(sourceSessionId, 'file', 'README.md');
+
+  const tabs = useTabStore.getState().tabs;
+  assert.equal(tabs.find((tab) => tab.id === sourceTabId)?.isPreview, false);
+  assert.notEqual(useTabStore.getState().activeTabId, sourceTabId);
+  assert.equal(
+    tabs.find((tab) => tab.id === useTabStore.getState().activeTabId)?.isPreview,
+    true,
   );
 });
 

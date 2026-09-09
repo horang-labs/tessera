@@ -134,6 +134,7 @@ export interface ProviderLaunchResult {
 
 export interface ProviderLaunchModule {
   supportsProvider(providerId: string): boolean;
+  canResumeSession(sessionId: string): Promise<boolean>;
   launch(request: ProviderLaunchRequest): Promise<ProviderLaunchResult>;
 }
 
@@ -973,6 +974,17 @@ export function createProviderLaunchModule(
   return {
     supportsProvider(providerId): boolean {
       return isSupportedTerminalProvider(providerId);
+    },
+    async canResumeSession(sessionId): Promise<boolean> {
+      const persisted = getPersistedProvider({ mode: 'detached', sessionId, userId: '' });
+      if (persisted.providerId === 'claude-code') {
+        const providerSession = resolveTerminalProviderSessionReference(
+          sessionId,
+          persisted.providerState,
+        );
+        return providerSession.nativeFork || sessionHistory.historyExists(sessionId);
+      }
+      return persisted.provider.canResumeTerminalAfterRestart?.(persisted.providerState) ?? false;
     },
     async launch(request): Promise<ProviderLaunchResult> {
       validateInitialPrompt(request.initialPrompt);

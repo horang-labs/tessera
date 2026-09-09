@@ -45,7 +45,7 @@ function createRepository(name = 'repository'): string {
   return repository;
 }
 
-test('Project View Projection scopes direct Sessions without destroying hidden history', async () => {
+test('Project View projects root Sessions by folder and filters immutable creation branches', async () => {
   const { database, persistence, projects, projection, sessions } = await modules();
   const repository = createRepository();
   projects.registerProject('project-view', repository, 'Project View');
@@ -80,7 +80,6 @@ test('Project View Projection scopes direct Sessions without destroying hidden h
     now,
     now,
   );
-
   const storedMain = sessions.getSession('main-session');
   assert.equal(storedMain?.worktree_id, projectWorktree.id);
   assert.equal(storedMain?.scope_branch, 'main');
@@ -95,8 +94,8 @@ test('Project View Projection scopes direct Sessions without destroying hidden h
     stdio: 'ignore',
   });
   assert.deepEqual(
-    projection.getProjectViewProjection('project-view').sessions.map((session) => session.id),
-    ['legacy-session'],
+    projection.getProjectViewProjection('project-view').sessions.map((session) => session.id).sort(),
+    ['legacy-session', 'main-session'],
   );
   assert.equal(sessions.getSession('main-session')?.provider_state, JSON.stringify({
     threadId: 'canonical-thread',
@@ -112,15 +111,78 @@ test('Project View Projection scopes direct Sessions without destroying hidden h
   });
   assert.deepEqual(
     projection.getProjectViewProjection('project-view').sessions.map((session) => session.id).sort(),
-    ['feature-session', 'legacy-session', 'ownership-only-session'],
+    ['feature-session', 'legacy-session', 'main-session', 'ownership-only-session'],
+  );
+
+  assert.deepEqual(
+    projection.getProjectViewProjection('project-view', { creationBranch: 'main' })
+      .sessions.map((session) => session.id),
+    ['main-session'],
+  );
+  assert.deepEqual(
+    projection.getProjectViewProjection('project-view', { creationBranch: 'feature/session-scope' })
+      .sessions.map((session) => session.id),
+    ['feature-session'],
+  );
+  assert.deepEqual(
+    projection.getProjectViewCreationBranches('project-view'),
+    ['feature/session-scope', 'main'],
   );
 
   execFileSync('git', ['checkout', 'main'], { cwd: repository, stdio: 'ignore' });
   assert.deepEqual(
     projection.getProjectViewProjection('project-view').sessions.map((session) => session.id).sort(),
-    ['legacy-session', 'main-session', 'ownership-only-session'],
+    ['feature-session', 'legacy-session', 'main-session', 'ownership-only-session'],
   );
   assert.equal(sessions.getSession('feature-session')?.scope_branch, 'feature/session-scope');
+  execFileSync('git', ['branch', '-D', 'feature/session-scope'], { cwd: repository, stdio: 'ignore' });
+  assert.deepEqual(
+    projection.getProjectViewProjection('project-view', { creationBranch: 'feature/session-scope' })
+      .sessions.map((session) => session.id),
+    ['feature-session'],
+  );
+});
+
+test('Project View creation-branch filtering covers Worktree parents without changing child scoping', async () => {
+  const { database, projects, projection, sessions } = await modules();
+  const repository = createRepository('worktree-filter-repository');
+  projects.registerProject('worktree-filter-project', repository, 'Worktree filter');
+  const root = projects.getProjectWorktree('worktree-filter-project');
+  assert.ok(root);
+  const now = new Date().toISOString();
+  for (const [id, branch] of [['task-a', 'branch-a'], ['task-b', 'branch-b']] as const) {
+    database.getDb().prepare(`
+      INSERT INTO tasks (
+        id, public_worktree_id, project_id, title, workflow_status,
+        creation_scope_worktree_id, creation_scope_branch, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?)
+    `).run(id, `wt_${id}`, 'worktree-filter-project', id, root.id, branch, now, now);
+  }
+  database.getDb().prepare(`
+    INSERT INTO sessions (
+      id, project_id, title, provider, task_id, worktree_id, scope_branch, created_at, updated_at
+    ) VALUES ('task-a-child', 'worktree-filter-project', 'Child A', 'codex', 'task-a', 'wt_task-a', 'other', ?, ?)
+  `).run(now, now);
+  assert.deepEqual(
+    projection.getProjectViewProjection('worktree-filter-project').linkedWorktrees.map((task) => task.id).sort(),
+    ['task-a', 'task-b'],
+  );
+  assert.deepEqual(
+    projection.getProjectViewProjection('worktree-filter-project', { creationBranch: 'branch-a' })
+      .linkedWorktrees.map((task) => task.id),
+    ['task-a'],
+  );
+  // Child sessions remain scoped to the child Worktree's own current branch.
+  assert.deepEqual(
+    projection.getProjectViewProjection('worktree-filter-project', { creationBranch: 'branch-a' })
+      .linkedWorktrees[0]?.sessions,
+    [],
+  );
+  assert.deepEqual(
+    projection.getProjectViewCreationBranches('worktree-filter-project'),
+    ['branch-a', 'branch-b'],
+  );
+  assert.equal(sessions.getSession('task-a-child')?.scope_branch, 'other');
 });
 
 test('direct Sessions reuse canonical Project membership when the stored root uses agent path spelling', async () => {
@@ -159,6 +221,20 @@ test('direct Sessions reuse canonical Project membership when the stored root us
     now,
     now,
   );
+  database.getDb().prepare(`
+    INSERT INTO sessions (
+      id, project_id, title, provider, work_dir, scope_branch, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'legacy-bridged-historical-session',
+    reportedProjectId,
+    'Historical bridged root conversation',
+    'codex',
+    reportedProjectId,
+    'deleted/historical',
+    now,
+    now,
+  );
 
   assert.equal(sessions.getSession('legacy-bridged-root-session')?.worktree_id, null);
   const fallbackWhere = sessions.buildProjectViewWhere({
@@ -180,7 +256,16 @@ test('direct Sessions reuse canonical Project membership when the stored root us
   assert.doesNotMatch(queryPlanDetails, /SCAN (canonical|project_root)/);
   assert.deepEqual(
     projection.getProjectViewProjection(reportedProjectId).sessions.map((session) => session.id),
-    ['legacy-bridged-root-session'],
+    ['legacy-bridged-historical-session', 'legacy-bridged-root-session'],
+  );
+  assert.deepEqual(
+    projection.getProjectViewCreationBranches(reportedProjectId),
+    ['deleted/historical'],
+  );
+  assert.deepEqual(
+    projection.getProjectViewProjection(reportedProjectId, { creationBranch: 'deleted/historical' })
+      .sessions.map((session) => session.id),
+    ['legacy-bridged-historical-session'],
   );
 
   persistence.persistCreatedSessionRecord({
@@ -197,7 +282,7 @@ test('direct Sessions reuse canonical Project membership when the stored root us
   assert.equal(stored?.scope_branch, 'main');
   assert.deepEqual(
     projection.getProjectViewProjection(reportedProjectId).sessions.map((session) => session.id).sort(),
-    ['bridged-root-session', 'legacy-bridged-root-session'],
+    ['bridged-root-session', 'legacy-bridged-historical-session', 'legacy-bridged-root-session'],
   );
 
   persistence.persistCreatedSessionRecord({
@@ -212,7 +297,7 @@ test('direct Sessions reuse canonical Project membership when the stored root us
   assert.equal(sessions.getSession('taskless-linked-session')?.worktree_id, null);
   assert.deepEqual(
     projection.getProjectViewProjection(reportedProjectId).sessions.map((session) => session.id).sort(),
-    ['bridged-root-session', 'legacy-bridged-root-session'],
+    ['bridged-root-session', 'legacy-bridged-historical-session', 'legacy-bridged-root-session'],
   );
 });
 
@@ -258,4 +343,43 @@ test('Project View pagination does not skip equal project-local sort orders', as
   );
   assert.equal(secondStatusPage.sessions.length, 1);
   assert.notEqual(secondStatusPage.sessions[0].id, grouped.sessions[0].id);
+});
+
+test('creation-branch filtering applies before status counts and cursor pagination', async () => {
+  const { database, projects, projection, sessions } = await modules();
+  const repository = createRepository('filtered-pagination-repository');
+  projects.registerProject('filtered-pagination-project', repository, 'Filtered pagination');
+  const root = projects.getProjectWorktree('filtered-pagination-project');
+  assert.ok(root);
+  for (const id of ['branch-a-one', 'branch-a-two', 'branch-b-one']) {
+    sessions.createSession(id, 'filtered-pagination-project', id, 'codex', {
+      workDir: repository,
+      worktreeId: root.id,
+      scopeBranch: id.startsWith('branch-a') ? 'branch-a' : 'branch-b',
+    });
+  }
+  database.getDb().prepare(`
+    UPDATE sessions SET chat_workflow_status = 'doing' WHERE id = 'branch-a-two'
+  `).run();
+
+  const grouped = projection.getProjectViewProjection('filtered-pagination-project', {
+    creationBranch: 'branch-a',
+    limitPerStatus: 1,
+  });
+  assert.equal(grouped.totalCount, 2);
+  assert.deepEqual(grouped.countByStatus, { chat: 1, doing: 1 });
+  const firstPage = projection.getProjectViewSessions('filtered-pagination-project', {
+    creationBranch: 'branch-a',
+    limit: 1,
+  });
+  assert.equal(firstPage.totalCount, 2);
+  assert.ok(firstPage.nextCursor);
+  const secondPage = projection.getProjectViewSessions('filtered-pagination-project', {
+    creationBranch: 'branch-a',
+    limit: 1,
+    cursor: firstPage.nextCursor,
+  });
+  assert.equal(secondPage.totalCount, 2);
+  assert.equal(secondPage.sessions[0]?.scope_branch, 'branch-a');
+  assert.notEqual(secondPage.sessions[0]?.id, firstPage.sessions[0]?.id);
 });

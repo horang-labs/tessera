@@ -638,8 +638,8 @@ test('terminal startup normalizes inherited color capability flags', () => {
 });
 
 test('electron packages node-pty native runtime assets outside the asar', () => {
-  assert.ok(packageJson.build.asarUnpack.includes('**/node_modules/node-pty/prebuilds/**'));
-  assert.ok(packageJson.build.asarUnpack.includes('**/node_modules/node-pty/build/Release/*.node'));
+  assert.ok(packageJson.build.asar.unpack.includes('**/node_modules/node-pty/prebuilds/**'));
+  assert.ok(packageJson.build.asar.unpack.includes('**/node_modules/node-pty/build/Release/*.node'));
   assert.match(prepareElectronRuntimeSource, /addDirectory\('node_modules\/node-pty\/lib\/worker'/);
   assert.match(prepareElectronRuntimeSource, /addDirectory\('node_modules\/node-pty\/prebuilds'/);
   assert.match(prepareElectronRuntimeSource, /addDirectory\('node_modules\/node-pty\/build\/Release'/);

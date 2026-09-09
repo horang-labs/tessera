@@ -2,15 +2,17 @@
 
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
 import {
+  Archive,
+  ArchiveRestore,
+  CircleStop,
   Pencil,
   Check,
-  Hash,
-  MessageSquare,
   X as XIcon,
   MoreHorizontal,
   GitBranch,
   Search,
-  SquareTerminal,
+  Terminal,
+  MessageSquare,
 } from 'lucide-react';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { useSessionStore } from '@/stores/session-store';
@@ -26,6 +28,8 @@ import { TaskContextMenu } from './task-context-menu';
 import { wsClient } from '@/lib/ws/client';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import { ProviderBadge } from './provider-brand';
+import styles from './header.module.css';
+import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { setPanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { MessageSearchBar } from './message-search-bar';
 import {
@@ -46,6 +50,10 @@ interface HeaderProps {
   panelId: string;
   projectViewDir?: string | null;
   isSinglePanel?: boolean;
+  peek?: {
+    onClose: () => void;
+    closeButtonRef: React.RefObject<HTMLButtonElement | null>;
+  };
   search?: {
     isOpen: boolean;
     query: string;
@@ -60,7 +68,7 @@ interface HeaderProps {
   };
 }
 
-export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search }: HeaderProps) {
+export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = false, search, peek }: HeaderProps) {
   const { t } = useI18n();
   const tabId = useContext(TabIdContext);
   const session = useProjectViewSession(sessionId, projectViewDir);
@@ -77,7 +85,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
   // PTY 세션을 읽기 전용 채팅으로 덮어 보는 토글. transcript를 되읽을 수 있는
   // provider에서만 노출한다 — 그 외에는 보여줄 대화가 없다.
   const terminalViewMode = useTerminalViewMode(sessionId);
-  const toggleTerminalViewMode = useTerminalViewModeStore((state) => state.toggleMode);
+  const setTerminalViewMode = useTerminalViewModeStore((state) => state.setMode);
   const canToggleTerminalView = session?.kind === 'terminal'
     && supportsTerminalChatView(session?.provider);
   const isTerminalChatView = canToggleTerminalView && terminalViewMode === 'chat';
@@ -217,6 +225,10 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
     wsClient.stopSession(sessionId);
   }, [sessionId]);
 
+  const handleRestartProcess = useCallback(() => {
+    wsClient.restartSession(sessionId);
+  }, [sessionId]);
+
   const branchPresentation = resolveSessionBranchPresentation({
     worktreeBranch: session?.worktreeBranch,
     scopeBranch: session?.scopeBranch,
@@ -242,33 +254,35 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
 
   if (!session) return null;
   const runtimePresentation = resolveSessionRuntimePresentation(session);
+  const isCompact = session.kind === 'terminal';
   return (
     <div
       className={cn(
+        isCompact && styles.compact,
         'h-9 border-b border-(--chat-header-border) bg-(--chat-header-bg)',
         // At Phone viewport the row's four controls are 44px tall, which a
         // 36px row would clip. The height follows the targets instead of
         // being restated, so it stays right if the floor ever moves (#259).
         'max-sm:h-auto',
       )}
+      data-peek={peek ? "true" : undefined}
+      data-search-open={Boolean(search?.isOpen)}
       onContextMenu={handleContextMenu}
     >
       <div
         className={cn(
           'group/header flex h-full w-full items-center justify-between gap-2.5',
-          isSinglePanel ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5',
+          isSinglePanel && !isCompact ? SINGLE_PANEL_CONTENT_SHELL : 'px-2.5',
           // 44px targets take 176px of the 283px this row has at 360px. The
           // slack is taken back from the padding and the gap rather than from
           // the four controls, because the title is what is left to lose (#259).
           'max-sm:gap-1 max-sm:px-2',
         )}
       >
-        {/* Left: Channel-style title */}
+        {/* Left: Session title */}
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden max-sm:gap-1">
-        {isProcessing ? (
+        {isProcessing && (
           <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-(--success)/30 border-t-(--success) animate-spin" />
-        ) : (
-          <Hash className="h-3.5 w-3.5 shrink-0 text-(--text-muted) max-sm:hidden" />
         )}
 
         {isAwaitingUser ? (
@@ -328,19 +342,21 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
             >
               <ProviderBadge
                 providerId={session.provider}
-                className="h-5 rounded-md px-2 text-[10px] leading-none max-sm:px-1"
-                // "Claude Code" is 71px of a row that has 107px left once the
-                // four 44px targets are placed. The mark alone still says
-                // which provider this is, and what it gives back is the only
-                // room the session title has (#259).
-                labelClassName="max-sm:hidden"
+                className={cn("h-5 rounded-md px-2 text-[10px] leading-none max-sm:px-1", isCompact && styles.provider)}
+                labelClassName="hidden"
                 fullLabel={!session.provider || session.provider === 'claude-code'}
               />
 
-              <span className="flex min-w-0 shrink items-center gap-1 max-sm:flex-1">
+              {/* The mobile workspace tab already names this PTY session.
+                  Peek has no tab, so it retains its only visible title. */}
+              <span className={cn(
+                'flex min-w-0 shrink items-center gap-1 max-sm:flex-1',
+                isCompact && !peek && 'max-sm:hidden',
+              )}>
                 <h2
                   ref={titleRef}
                   className={cn(
+                    isCompact && styles.title,
                     'truncate text-[15px] font-semibold leading-none text-(--text-primary)',
                     isGeneratingTitle && 'title-generating'
                   )}
@@ -350,6 +366,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                 </h2>
                 <Pencil
                   className={cn(
+                    isCompact && styles.detail,
                     'h-3 w-3 shrink-0 text-(--text-muted) opacity-0 transition-opacity',
                     // Below the Phone viewport step the hint is simply shown: `hover:`
                     // compiles to `@media (hover: hover)`, so on a phone no rule exists
@@ -361,9 +378,10 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
 
               {branchPresentation && (
                 <>
-                  <span className="h-3 w-px shrink-0 bg-(--divider) opacity-70 max-sm:hidden" aria-hidden="true" />
+                  <span className={cn("h-3 w-px shrink-0 bg-(--divider) opacity-70 max-sm:hidden", isCompact && styles.detail)} aria-hidden="true" />
                   <span
                     className={cn(
+                      isCompact && styles.detail,
                       'inline-flex min-w-0 max-w-[min(18rem,35vw)] shrink items-center gap-1',
                       'text-[11px] font-normal leading-none text-(--text-secondary)',
                       'max-sm:hidden',
@@ -401,102 +419,180 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
             'max-sm:gap-0',
           )}
         >
-          {search?.isOpen ? (
-            <MessageSearchBar
-              query={search.query}
-              matchCount={search.matchCount}
-              activeMatchIndex={search.activeMatchIndex}
-              hasMore={search.hasMore}
-              onQueryChange={search.onQueryChange}
-              onNext={search.onNext}
-              onPrevious={search.onPrevious}
-              onClose={search.onClose}
-            />
-          ) : (
-            <>
-            {canToggleTerminalView && (
+          <div className={cn("flex items-center gap-2 max-sm:gap-0", isCompact && styles.actions)}>
+            {search?.isOpen ? (
+              <MessageSearchBar
+                query={search.query}
+                matchCount={search.matchCount}
+                activeMatchIndex={search.activeMatchIndex}
+                hasMore={search.hasMore}
+                onQueryChange={search.onQueryChange}
+                onNext={search.onNext}
+                onPrevious={search.onPrevious}
+                onClose={search.onClose}
+              />
+            ) : (
+              <>
+              {canToggleTerminalView && (
+                <div
+                  role="group"
+                  aria-label={t('chat.viewMode')}
+                  className="flex shrink-0 items-center gap-px rounded bg-(--sidebar-hover) p-px"
+                  data-testid="terminal-view-toggle"
+                >
+                  {(['terminal', 'chat'] as const).map((mode) => {
+                    const selected = mode === (isTerminalChatView ? 'chat' : 'terminal');
+                    return (
+                      <ShortcutTooltip key={mode} id="toggle-terminal-view" label={t('shortcut.toggleTerminalView')}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!selected) setTerminalViewMode(sessionId, mode);
+                        }}
+                        {...telemetryClickAttributes(
+                          mode === 'terminal' ? 'chat_header.view_mode.terminal' : 'chat_header.view_mode.chat',
+                          'chat_header',
+                        )}
+                        title={mode === 'terminal' ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                        aria-label={mode === 'terminal' ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                        aria-pressed={selected}
+                        className={cn(
+                          'flex h-[18px] items-center justify-center rounded-sm px-1.5 text-[10px] font-medium leading-none whitespace-nowrap',
+                          'focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-(--accent)',
+                          PHONE_TOUCH_TARGET,
+                          selected
+                            ? 'bg-black/10 text-(--text-primary) ring-1 ring-inset ring-black/15 dark:bg-white/15 dark:ring-white/20'
+                            : 'text-(--text-muted) hover:bg-(--chat-header-bg) hover:text-(--text-secondary)',
+                        )}
+                      >
+                        {mode === 'terminal'
+                          ? <Terminal className="h-3.5 w-3.5 sm:hidden" aria-hidden="true" />
+                          : <MessageSquare className="h-3.5 w-3.5 sm:hidden" aria-hidden="true" />}
+                        <span className="hidden sm:inline">
+                          {mode === 'terminal' ? t('chat.terminalMode') : t('chat.chatMode')}
+                        </span>
+                      </button>
+                      </ShortcutTooltip>
+                    );
+                  })}
+                </div>
+              )}
+              {session.kind !== 'terminal' && (
+                <button
+                  type="button"
+                  onClick={search?.onOpen}
+                  {...telemetryClickAttributes('chat_header.search', 'chat_header')}
+                  title={t('chat.search.open')}
+                  aria-label={t('chat.search.open')}
+                  className={cn(
+                    'rounded p-0.5 transition-all duration-150',
+                    'text-(--text-muted) hover:text-(--sidebar-text-active)',
+                    'hover:bg-(--sidebar-hover)',
+                    PHONE_TOUCH_TARGET,
+                    !search && 'pointer-events-none opacity-40',
+                  )}
+                  data-testid="message-search-open-button"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                </button>
+              )}
+              </>
+            )}
+
+            {runtimePresentation.canStop && (
+              <div className="hidden sm:contents">
+              <ShortcutTooltip id="stop-session" label={t('status.stopProcess')}>
               <button
                 type="button"
-                onClick={() => toggleTerminalViewMode(sessionId)}
-                {...telemetryClickAttributes('chat_header.terminal_toggle', 'chat_header')}
-                title={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
-                aria-label={isTerminalChatView ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
-                aria-pressed={isTerminalChatView}
+                onClick={handleStopProcess}
+                {...telemetryClickAttributes('chat_header.stop', 'chat_header')}
+                title={t('status.stopProcess')}
+                aria-label={t('status.stopProcess')}
+                data-testid="header-stop-process"
                 className={cn(
-                  'rounded p-0.5 transition-all duration-150',
-                  'text-(--text-muted) hover:text-(--sidebar-text-active)',
-                  'hover:bg-(--sidebar-hover)',
+                  'rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--error)',
                   PHONE_TOUCH_TARGET,
-                  isTerminalChatView && 'text-(--sidebar-text-active)',
                 )}
-                data-testid="terminal-view-toggle"
               >
-                {isTerminalChatView
-                  ? <SquareTerminal className="h-3.5 w-3.5" />
-                  : <MessageSquare className="h-3.5 w-3.5" />}
+                <CircleStop className="h-3.5 w-3.5" />
               </button>
+              </ShortcutTooltip>
+              </div>
             )}
+
+            {(!session.archived || !session.taskId) && (
+              <div className="hidden sm:contents">
+              <ShortcutTooltip id="archive-session" label={t(session.archived ? 'task.contextMenu.unarchive' : 'task.contextMenu.archive')}>
+              <button
+                type="button"
+                onClick={session.archived ? handleUnarchive : handleArchive}
+                {...telemetryClickAttributes(
+                  session.archived ? 'chat_header.unarchive' : 'chat_header.archive',
+                  'chat_header',
+                )}
+                title={t(session.archived ? 'task.contextMenu.unarchive' : 'task.contextMenu.archive')}
+                aria-label={t(session.archived ? 'task.contextMenu.unarchive' : 'task.contextMenu.archive')}
+                data-testid="header-archive"
+                className={cn(
+                  'rounded p-0.5 text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)',
+                  PHONE_TOUCH_TARGET,
+                )}
+              >
+                {session.archived
+                  ? <ArchiveRestore className="h-3.5 w-3.5" />
+                  : <Archive className="h-3.5 w-3.5" />}
+              </button>
+              </ShortcutTooltip>
+              </div>
+            )}
+
+            {/* More actions button */}
             <button
-              type="button"
-              onClick={search?.onOpen}
-              {...telemetryClickAttributes('chat_header.search', 'chat_header')}
-              title={t('chat.search.open')}
-              aria-label={t('chat.search.open')}
+              ref={moreButtonRef}
+              onClick={handleMoreClick}
+              {...telemetryClickAttributes('chat_header.more', 'chat_header')}
               className={cn(
                 'rounded p-0.5 transition-all duration-150',
                 'text-(--text-muted) hover:text-(--sidebar-text-active)',
                 'hover:bg-(--sidebar-hover)',
                 PHONE_TOUCH_TARGET,
-                !search && 'pointer-events-none opacity-40',
+                'opacity-100'
               )}
-              data-testid="message-search-open-button"
+              data-testid="header-more-button"
+              aria-label="More options"
+              aria-haspopup="menu"
+              aria-expanded={menuAnchorRect !== null}
             >
-              <Search className="h-3.5 w-3.5" />
+              <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
-            </>
-          )}
 
-          {/* More actions button — hover only */}
-          <button
-            ref={moreButtonRef}
-            onClick={handleMoreClick}
-            {...telemetryClickAttributes('chat_header.more', 'chat_header')}
-            className={cn(
-              'rounded p-0.5 transition-all duration-150',
-              'text-(--text-muted) hover:text-(--sidebar-text-active)',
-              'hover:bg-(--sidebar-hover)',
-              PHONE_TOUCH_TARGET,
-              'opacity-100'
-            )}
-            data-testid="header-more-button"
-            aria-label="More options"
-            aria-haspopup="menu"
-            aria-expanded={menuAnchorRect !== null}
-          >
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </button>
+          </div>
 
           {/* 세션 닫기 / 패널 닫기 버튼 */}
           {/* 세션 열림 → 세션 해제(빈 패널), 멀티패널 빈 상태 → 패널 닫기, 싱글패널 빈 상태 → 숨김 */}
-          {(panelCount >= 2 || panel?.sessionId) && (
+          {(peek || panelCount >= 2 || panel?.sessionId) && (
             <button
+              ref={peek?.closeButtonRef}
               onClick={() => {
-                if (panel?.sessionId) {
+                if (peek) {
+                  peek.onClose();
+                } else if (panel?.sessionId) {
                   assignSession(panelId, null);
                 } else {
                   closePanel(panelId);
                 }
               }}
               {...telemetryClickAttributes('chat_header.close_panel', 'chat_header')}
-              title={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
-              aria-label={panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
-              data-testid="panel-close-button"
+              title={peek ? t('common.close') : panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
+              aria-label={peek ? t('common.close') : panel?.sessionId ? t('chat.closeSession') : t('panel.closePanel')}
+              data-testid={peek ? "kanban-session-peek-close" : "panel-close-button"}
               className={cn(
                 'rounded p-0.5 transition-colors hover:bg-(--sidebar-hover)',
                 PHONE_TOUCH_TARGET,
+                peek && 'flex h-11 w-11 shrink-0 items-center justify-center',
               )}
             >
-              <XIcon className="h-3.5 w-3.5 text-(--text-muted)" />
+              <XIcon className={cn('text-(--text-muted)', peek ? 'h-4 w-4' : 'h-3.5 w-3.5')} />
             </button>
           )}
         </div>
@@ -506,16 +602,18 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
       {menuAnchorRect && (
         <TaskContextMenu
           anchorRect={menuAnchorRect}
+          triggerRef={moreButtonRef}
           currentStatus={isSingleSessionTask ? currentTaskStatus : undefined}
           isArchived={session.archived ?? false}
           isRunning={runtimePresentation.showRunning}
           onStatusChange={isSingleSessionTask ? handleStatusChange : undefined}
-          onArchive={handleArchive}
-          onUnarchive={session.taskId ? undefined : handleUnarchive}
+          onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
+          onArchive={!session.archived ? handleArchive : undefined}
+          onUnarchive={session.archived && !session.taskId ? handleUnarchive : undefined}
           onRename={handleRenameFromMenu}
           onDelete={handleDelete}
           onGenerateTitle={() => generateTitle(sessionId)}
-          onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
+          onRestartProcess={runtimePresentation.canStop ? handleRestartProcess : undefined}
           onClose={handleCloseMenu}
         />
       )}

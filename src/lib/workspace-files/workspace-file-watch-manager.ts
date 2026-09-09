@@ -1,5 +1,5 @@
 import * as fs from "fs/promises";
-import chokidar, { type FSWatcher } from "chokidar";
+import { startNativeWorkspaceWatcher } from "./native-workspace-watcher";
 import { getFilesystemPathModule } from "@/lib/filesystem/host-path";
 import logger from "@/lib/logger";
 import { resolveSessionWorkspaceFilesystemRoot } from "@/lib/session/session-workspace-root";
@@ -43,12 +43,6 @@ interface WorkspaceRootChangeListener {
   onChange: (root: string) => void;
 }
 
-interface WatchEventStats {
-  isDirectory(): boolean;
-  isFile(): boolean;
-  isSymbolicLink?(): boolean;
-}
-
 interface WorkspaceWatchEntry {
   bridge: { stop(): void } | null;
   bridgeActive: boolean;
@@ -84,7 +78,7 @@ interface WorkspaceWatchEntry {
   truncated: boolean;
   version: number;
   watchMode: WatchMode;
-  watcher: FSWatcher | null;
+  watcher: ReturnType<typeof startNativeWorkspaceWatcher> | null;
   watcherReadyPromise: Promise<void>;
   wslRoot: WslUncRoot | null;
 }
@@ -198,6 +192,20 @@ export class WorkspaceFileWatchManager {
         workDir: entry.root,
         status: entry.status === "active" ? "active" : "fallback",
         version: entry.version,
+      });
+      // The first HTTP listing may precede native subscription establishment.
+      // Once the initial index is ready, invalidate that listing even if no
+      // subsequent native event arrives (the file may already be in the index).
+      current.sendToUser(current.userId, {
+        type: "workspace_files_changed",
+        workDir: entry.root,
+        sessionIds: [current.sessionId],
+        version: entry.version,
+        treeChanged: true,
+        changedPaths: [],
+        addedPaths: [],
+        deletedPaths: [],
+        hasMoreChangedPaths: false,
       });
     }).catch((error) => {
       logger.warn({ error, root: entry.root }, "Workspace file watch bootstrap failed");
@@ -414,6 +422,8 @@ export class WorkspaceFileWatchManager {
   }
 
   private async bootstrapEntry(entry: WorkspaceWatchEntry): Promise<void> {
+    await entry.watcherReadyPromise;
+    if (this.entriesByRoot.get(entry.root) !== entry) return;
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
       entry.directories = new Set(snapshot.directories);
@@ -465,79 +475,37 @@ export class WorkspaceFileWatchManager {
       return;
     }
 
-    let resolveWatcherReady!: () => void;
-    entry.watcherReadyPromise = new Promise<void>((resolve) => {
-      resolveWatcherReady = resolve;
-    });
-    let watcherReadySettled = false;
-    const markWatcherReady = () => {
-      if (watcherReadySettled) return;
-      watcherReadySettled = true;
-      resolveWatcherReady();
-    };
-
-    try {
-      const watcher = chokidar.watch(entry.root, {
-        atomic: true,
-        awaitWriteFinish: false,
-        cwd: entry.root,
-        followSymlinks: false,
-        ignoreInitial: true,
-        ignored: (filePath, stats) => (
-          isIgnoredWorkspacePath(
-            toWorkspaceRelativePath(entry.root, String(filePath)),
-            stats,
-            { includeHidden: true },
-          )
-        ),
-        persistent: true,
-      });
-
-      watcher.on("all", (eventName, filePath, stats?: WatchEventStats) => {
-        if (!this.isWatchEventName(eventName)) return;
-        if (!this.isWatchEventShape(eventName, stats)) return;
-        const relativePath = toWorkspaceRelativePath(entry.root, String(filePath));
-        if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
-        this.applyWatchEvent(entry, eventName, relativePath);
-      });
-
-      watcher.on("ready", markWatcherReady);
-
-      watcher.on("error", (error) => {
-        markWatcherReady();
-        entry.status = "fallback";
-        logger.warn({ error, root: entry.root }, "Workspace file watcher failed; falling back to visible polling");
-        this.emitWatchStatus(entry, "fallback", "watch_error");
-      });
-
-      entry.watcher = watcher;
-    } catch (error) {
-      markWatcherReady();
+    const fail = (error: unknown) => {
+      if (this.entriesByRoot.get(entry.root) !== entry) return;
       entry.status = "fallback";
-      logger.warn({ error, root: entry.root }, "Failed to start workspace file watcher");
-      this.emitWatchStatus(entry, "fallback", "watch_start_failed");
-    }
-  }
-
-  private isWatchEventName(eventName: string): eventName is WatchEventName {
-    return eventName === "add"
-      || eventName === "addDir"
-      || eventName === "change"
-      || eventName === "unlink"
-      || eventName === "unlinkDir";
-  }
-
-  private isWatchEventShape(eventName: WatchEventName, stats?: WatchEventStats): boolean {
-    if (!stats) return true;
-    // With followSymlinks:false chokidar lstats every entry, so a symlink is
-    // neither isFile() nor isDirectory() and arrives as "add" whatever it points
-    // at. Admit it here; the rescan stats the target and decides whether it
-    // belongs in the index, applying the same rule as the initial walk.
-    if (eventName === "add" || eventName === "change") {
-      return stats.isFile() || Boolean(stats.isSymbolicLink?.());
-    }
-    if (eventName === "addDir") return stats.isDirectory();
-    return true;
+      const watcher = entry.watcher;
+      entry.watcher = null;
+      void watcher?.close().catch((closeError) => {
+        logger.warn({ error: closeError }, "Failed to close workspace file watcher");
+      });
+      this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
+      this.emitWatchStatus(entry, "fallback", "watch_error");
+      logger.warn({ error, root: entry.root }, "Workspace native watcher failed; using polling");
+    };
+    const watcher = startNativeWorkspaceWatcher(entry.root, (error, events) => {
+      if (this.entriesByRoot.get(entry.root) !== entry) return;
+      if (error) { fail(error); return; }
+      for (const event of events) {
+        const relativePath = toWorkspaceRelativePath(entry.root, event.path);
+        if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) continue;
+        if (event.type === "update") {
+          this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
+        }
+        // Parcel does not attach stat information. Reconcile create/delete
+        // subtrees too: moved-in directories may arrive without child events.
+        if (event.type !== "update" && !isIgnoredWorkspacePath(
+          relativePath, { isDirectory: () => true }, { includeHidden: true },
+        )) this.invalidateDirectory(entry, relativePath, true);
+        this.invalidateDirectory(entry, workspaceRelativeDirname(relativePath), false);
+      }
+    });
+    entry.watcher = watcher;
+    entry.watcherReadyPromise = watcher.ready.catch(fail);
   }
 
   /**
@@ -555,6 +523,9 @@ export class WorkspaceFileWatchManager {
     relativePath: string,
   ): void {
     const parentDir = workspaceRelativeDirname(relativePath);
+    if (eventName === "change") {
+      this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
+    }
     switch (eventName) {
       case "add":
       case "change":
@@ -604,6 +575,7 @@ export class WorkspaceFileWatchManager {
 
     entry.rescanning = true;
     let changed = false;
+    let rootChangeNotified = false;
     try {
       while (entry.pendingRescanDirs.size > 0) {
         if (this.entriesByRoot.get(entry.root) !== entry) return;
@@ -611,7 +583,7 @@ export class WorkspaceFileWatchManager {
         entry.pendingRescanDirs.clear();
 
         if (targets.length > MAX_RESCAN_DIRECTORIES) {
-          await this.refreshPollIndex(entry);
+          rootChangeNotified = await this.refreshPollIndex(entry) || rootChangeNotified;
           continue;
         }
 
@@ -629,7 +601,17 @@ export class WorkspaceFileWatchManager {
       entry.rescanning = false;
     }
 
-    if (!changed) return;
+    if (!changed) {
+      // The index only records paths, so writing new content to an existing
+      // file leaves the rescan unchanged. Open editors still need the changed
+      // path, while Git listeners need invalidation even without a path delta.
+      if (entry.pendingChangedPaths.size > 0 || entry.pendingHasMoreChangedPaths) {
+        this.flushChanges(entry);
+      } else if (!rootChangeNotified) {
+        this.notifyRootChangeListeners(entry);
+      }
+      return;
+    }
     entry.pendingTreeChanged = true;
     if (entry.debounceTimer) {
       clearTimeout(entry.debounceTimer);
@@ -784,14 +766,14 @@ export class WorkspaceFileWatchManager {
     this.applyWatchEvent(entry, event.eventName, relativePath);
   }
 
-  private async refreshPollIndex(entry: WorkspaceWatchEntry): Promise<void> {
+  private async refreshPollIndex(entry: WorkspaceWatchEntry): Promise<boolean> {
     // A sweep already under way started reading the tree before this request
     // existed, so it cannot answer it. Remember the request and re-run once it
     // finishes instead of dropping it — dropping is how a burst of writes ends
     // up permanently missing from the index.
     if (entry.refreshing || !entry.ready) {
       entry.refreshRequested = true;
-      return;
+      return false;
     }
     // Touching \\wsl.localhost boots a stopped distro; after `wsl --shutdown`
     // stay quiet and serve the last snapshot until the distro is back.
@@ -800,17 +782,18 @@ export class WorkspaceFileWatchManager {
       && process.platform === "win32"
       && !(await isWslDistroRunning(entry.wslRoot.distro))
     ) {
-      return;
+      return false;
     }
     if (entry.refreshing || !entry.ready) {
       entry.refreshRequested = true;
-      return;
+      return false;
     }
     entry.refreshing = true;
     entry.refreshRequested = false;
+    let rootChangeNotified = false;
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
-      if (this.entriesByRoot.get(entry.root) !== entry) return;
+      if (this.entriesByRoot.get(entry.root) !== entry) return false;
       const previous = entry.files;
       const previousSymlinks = entry.symlinks;
       const previousDirectories = entry.directories;
@@ -865,11 +848,13 @@ export class WorkspaceFileWatchManager {
           entry.debounceTimer = null;
         }
         this.flushChanges(entry);
+        rootChangeNotified = true;
       } else if (!entry.bridgeActive && entry.rootChangeListeners.size > 0) {
         // A filename-only snapshot cannot see edits to an existing file. In
         // bridge fallback mode, periodically invalidate terminal git stats so
         // content-only changes are still observed.
         this.notifyRootChangeListeners(entry);
+        rootChangeNotified = true;
       }
     } catch (error) {
       logger.warn({ error, root: entry.root }, "Workspace poll index refresh failed");
@@ -880,6 +865,7 @@ export class WorkspaceFileWatchManager {
         void this.refreshPollIndex(entry);
       }
     }
+    return rootChangeNotified;
   }
 
   private addPendingPath(

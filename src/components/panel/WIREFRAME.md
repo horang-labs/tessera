@@ -106,9 +106,9 @@ and path already shown in the project header.
 
 ## Interaction and copy rules
 
-- **New Session** always says `Creates here`; never expose “Project Worktree” in user-facing copy.
+- **New Session** supports the project folder (default) and existing Worktrees.
 - The New Session card stays compact and does not repeat destination details.
-- Selecting **New Session** shows a read-only `SESSION LOCATION` block before `TITLE`.
+- Selecting **New Session** shows `SESSION LOCATION` with visible `Project folder / Existing worktrees (count)` controls. Existing Worktrees are searchable by title and branch; the selected checkout identity appears below. A child Session inherits its Worktree collection, so the collection picker is hidden for this mode.
 - Selecting **New Worktree** labels its computed path `NEW LOCATION`, making the contrast explicit.
 - The sticky footer repeats the exact destination for New Session.
 - The read-only location block exposes the full path and a tooltip/copy affordance.

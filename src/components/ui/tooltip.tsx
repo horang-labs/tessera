@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
+import { useTooltipsEnabled } from '@/hooks/use-tooltips-enabled';
 
 interface TooltipProps {
   content: ReactNode;
@@ -23,6 +24,7 @@ export function Tooltip({
   side = 'bottom',
   sideOffset = 16,
 }: TooltipProps) {
+  const tooltipsEnabled = useTooltipsEnabled();
   const [isVisible, setIsVisible] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -34,13 +36,7 @@ export function Tooltip({
   }, []);
 
   const handleMouseEnter = useCallback(function showTooltip(e: React.MouseEvent) {
-    // A touchscreen has no way to hover away, so the tooltip that a tap
-    // synthesises never receives its own mouseleave and sticks on the page.
-    // `hover: none` covers phones and stylus-only tablets without touching
-    // desktops, where the reveal is still driven by a real pointer.
-    if (typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches) {
-      return;
-    }
+    if (!tooltipsEnabled) return;
     mousePos.current = { x: e.clientX, y: e.clientY };
     const nextPosition = () => ({
       top: side === 'top'
@@ -58,7 +54,7 @@ export function Tooltip({
       setPosition(nextPosition());
       setIsVisible(true);
     }
-  }, [delay, side, sideOffset]);
+  }, [delay, side, sideOffset, tooltipsEnabled]);
 
   const handleMouseLeave = useCallback(function hideTooltip() {
     if (timeoutRef.current) {
@@ -86,8 +82,9 @@ export function Tooltip({
       onMouseLeave={handleMouseLeave}
     >
       {children}
-      {isVisible && position && createPortal(
+      {tooltipsEnabled && isVisible && position && createPortal(
         <div
+          role="tooltip"
           className={cn(
             'fixed z-[9999] max-w-sm rounded-md bg-(--tooltip-bg) px-3 py-1.5 text-xs text-white shadow-lg pointer-events-none break-words',
             className

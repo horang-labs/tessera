@@ -2,6 +2,7 @@
 
 import { X } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
+import { ProjectCheckoutBranch } from '@/components/worktree/project-checkout-branch';
 import { WorktreeOverview } from '@/components/worktree/worktree-overview';
 import { useLoadedProjectViews } from '@/hooks/use-project-view-workspace-state';
 import { useTaskStore } from '@/stores/task-store';
@@ -93,6 +94,12 @@ export function WorktreePeek() {
         <div className="min-h-0 flex-1">
           <WorktreeOverview
             branch={branch}
+            branchControl={isProjectWorktree && project?.projectWorktree ? (
+              <ProjectCheckoutBranch
+                worktreeId={project.projectWorktree.id}
+                currentBranch={project.projectWorktree.currentBranch}
+              />
+            ) : undefined}
             displayPath={displayPath || 'Unknown path'}
             label={label}
           />

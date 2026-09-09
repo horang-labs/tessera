@@ -73,12 +73,26 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at       TEXT NOT NULL
 );
 
+-- Runtime intent survives server shutdown; actual liveness remains in memory.
+CREATE TABLE IF NOT EXISTS session_runtime_recovery (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS session_messages (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL,
   role       TEXT NOT NULL,
   content    TEXT NOT NULL,
   created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS image_generation_cache (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  source_json TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  cards_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS terminal_provider_sessions (

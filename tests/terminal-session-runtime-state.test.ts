@@ -14,6 +14,7 @@ import { useTabStore } from '@/stores/tab-store';
 import type { ProjectGroup, UnifiedSession } from '@/types/chat';
 import type { TaskEntity } from '@/types/task-entity';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
+import { resetSessionRestarts } from '@/lib/session/session-restart-lifecycle';
 
 const SESSION_ID = 'terminal-session-a';
 
@@ -115,6 +116,7 @@ function countSessionSurfaces(sessionId: string): number {
 }
 
 beforeEach(() => {
+  resetSessionRestarts();
   resetPendingTerminalReboundsForTests();
   useChatStore.setState({ turnInFlightBySession: {} });
   useBoardStore.setState({ selectedProjectDir: null, peekFileDirty: false });
@@ -390,6 +392,102 @@ test('PTY runtime exit closes a retained single-panel session tab', () => {
 
   assert.equal(useTabStore.getState().tabs.some((tab) => tab.id === tabId), false);
   assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+});
+
+test('planned PTY restart preserves its retained tab through the runtime gap', () => {
+  const tabId = 'restarting-terminal-tab';
+  const panelId = 'restarting-terminal-panel';
+  useSessionStore.setState({ projects: [project(terminalSession(SESSION_ID, true))] });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+  useBoardStore.setState({ peekSessionId: SESSION_ID });
+
+  receive({ type: 'session_restarting', sessionId: SESSION_ID, kind: 'terminal' });
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    running: false,
+  });
+
+  assert.equal(useTabStore.getState().activeTabId, tabId);
+  assert.ok(useTabStore.getState().findSessionLocation(SESSION_ID));
+  assert.equal(useBoardStore.getState().peekSessionId, SESSION_ID);
+
+  receive({ type: 'session_restarted', sessionId: SESSION_ID, kind: 'terminal' });
+  assert.ok(useTabStore.getState().findSessionLocation(SESSION_ID));
+});
+
+test('disconnect reset prevents a stale restart latch from retaining a later stopped PTY', () => {
+  const tabId = 'disconnected-restart-tab';
+  const panelId = 'disconnected-restart-panel';
+  useSessionStore.setState({ projects: [project(terminalSession(SESSION_ID, true))] });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId: SESSION_ID } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({ type: 'session_restarting', sessionId: SESSION_ID, kind: 'terminal' });
+  resetSessionRestarts();
+  receive({
+    type: 'terminal_session_runtime',
+    sessionId: SESSION_ID,
+    terminalId: `session-${SESSION_ID}`,
+    running: false,
+  });
+
+  assert.equal(useTabStore.getState().findSessionLocation(SESSION_ID), null);
+});
+
+test('planned GUI restart suppresses a stale stopped event without retiring the tab', () => {
+  const sessionId = 'restarting-gui-session';
+  const tabId = 'restarting-gui-tab';
+  const panelId = 'restarting-gui-panel';
+  useSessionStore.setState({ projects: [project(guiSession(sessionId, true))] });
+  useTabStore.setState({
+    tabs: [{ id: tabId, projectDir: '/workspace', title: null, isPreview: false }],
+    activeTabId: tabId,
+    lruTabIds: [tabId],
+  });
+  usePanelStore.setState({
+    activeTabId: tabId,
+    tabPanels: {
+      [tabId]: {
+        layout: { type: 'leaf', panelId },
+        panels: { [panelId]: { id: panelId, sessionId } },
+        activePanelId: panelId,
+      },
+    },
+  });
+
+  receive({ type: 'session_restarting', sessionId, kind: 'chat' });
+  receive({ type: 'session_stopped', sessionId });
+  assert.ok(useTabStore.getState().findSessionLocation(sessionId));
+  receive({ type: 'session_restarted', sessionId, kind: 'chat' });
 });
 
 test('restoring a retained PTY runtime does not steal focus from the active tab', () => {

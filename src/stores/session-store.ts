@@ -71,6 +71,8 @@ function findStoredSession(
 export interface SessionState {
   // Core state - NEW (project-grouped)
   projects: ProjectGroup[];
+  /** Named creation-branch filters by Project View; missing means All branches. */
+  projectCreationBranchFilters: Record<string, string>;
   activeSessionId: string | null;
   /** True after the first successful Project load attempts saved/fallback restoration. */
   didHydrateActiveSession: boolean;
@@ -93,6 +95,7 @@ export interface SessionState {
     restoredActiveSessionId?: string | null;
     restoredActiveTabId?: string;
   }) => Promise<void>;
+  setProjectCreationBranchFilter: (projectId: string, branch?: string) => void;
   updateProjectWorktreeBranch: (worktreeId: string, branch: string | null) => void;
   dismissBranchRenameWarning: (projectId: string) => void;
   loadMoreSessions: (encodedDir: string) => Promise<void>;
@@ -159,7 +162,7 @@ export interface SessionState {
   ) => void;
   syncTaskCollectionId: (taskId: string, collectionId: string | null) => void;
   replaceCollectionId: (fromCollectionId: string, toCollectionId: string | null) => void;
-  toggleArchive: (sessionId: string, archived: boolean) => void;
+  toggleArchive: (sessionId: string, archived: boolean) => Promise<boolean>;
 
   // Task selectors
   getSessionsByStatusGroup: (
@@ -435,6 +438,7 @@ let latestProjectLoadRequest = 0;
 export const useSessionStore = create<SessionState>((set, get) => ({
   // Initial state
   projects: [],
+  projectCreationBranchFilters: {},
   activeSessionId: null,
   didHydrateActiveSession: false,
   lastActiveProjectDir: null,
@@ -450,7 +454,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadProjects: async (options) => {
     const requestId = ++latestProjectLoadRequest;
     try {
-      const res = await fetch('/api/sessions/projects');
+      const creationBranchFilters = get().projectCreationBranchFilters;
+      const filterQuery = Object.keys(creationBranchFilters).length > 0
+        ? `?creationBranchFilters=${encodeURIComponent(JSON.stringify(creationBranchFilters))}`
+        : '';
+      const res = await fetch(`/api/sessions/projects${filterQuery}`);
       if (!res.ok) throw new Error('Failed to load projects');
       const data: { projects: any[] } = await res.json();
       // Keep Project-local open conversations addressable even when the live
@@ -474,6 +482,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           decodedPath: p.decodedPath,
           displayPath: p.displayPath,
           projectWorktree: p.projectWorktree,
+          creationBranches: p.creationBranches ?? [],
           branchRenameWarning: p.branchRenameWarning
             && !isBranchRenameWarningDismissed(p.encodedDir, p.branchRenameWarning)
             ? p.branchRenameWarning
@@ -596,6 +605,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
+  setProjectCreationBranchFilter: (projectId, branch) => {
+    set((state) => {
+      const projectCreationBranchFilters = { ...state.projectCreationBranchFilters };
+      if (branch) projectCreationBranchFilters[projectId] = branch;
+      else delete projectCreationBranchFilters[projectId];
+      return { projectCreationBranchFilters };
+    });
+    void get().loadProjects();
+    void useTaskStore.getState().loadTasks(projectId, { setCurrent: false });
+  },
+
   updateProjectWorktreeBranch: (worktreeId, branch) => {
     const affectedProjectIds = get().projects
       .filter((project) => project.projectWorktree?.id === worktreeId)
@@ -658,9 +678,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const cursorParam = project.nextCursor
         ? `&cursor=${encodeURIComponent(project.nextCursor)}`
         : `&offset=${project.loadedCount}`;
+      const creationBranch = get().projectCreationBranchFilters[encodedDir];
+      const branchParam = creationBranch ? `&creationBranch=${encodeURIComponent(creationBranch)}` : '';
 
       const res = await fetch(
-        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=${limit}${cursorParam}`
+        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=${limit}${cursorParam}${branchParam}`
       );
       if (!res.ok) throw new Error('Failed to load more sessions');
       const data = await res.json();
@@ -702,9 +724,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       const cursor = project.cursorByStatus?.[statusGroup];
       const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+      const creationBranch = get().projectCreationBranchFilters[encodedDir];
+      const branchParam = creationBranch ? `&creationBranch=${encodeURIComponent(creationBranch)}` : '';
 
       const res = await fetch(
-        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=20&statusGroup=${statusGroup}${cursorParam}`
+        `/api/sessions/projects/${encodeURIComponent(encodedDir)}?limit=20&statusGroup=${statusGroup}${cursorParam}${branchParam}`
       );
       if (!res.ok) throw new Error('Failed to load more sessions');
       const data = await res.json();
@@ -831,10 +855,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   removeSession: (sessionId) => {
     set((state) => {
-      const updatedProjects = state.projects.map((project) => ({
-        ...project,
-        sessions: project.sessions.filter((s) => s.id !== sessionId),
-      }));
+      const updatedProjects = state.projects.map((project) => {
+        const sessions = project.sessions.filter((session) => session.id !== sessionId);
+        const removedCount = project.sessions.length - sessions.length;
+        if (removedCount === 0) return project;
+        return {
+          ...project,
+          sessions,
+          totalSessions: Math.max(0, project.totalSessions - removedCount),
+          loadedCount: Math.max(0, project.loadedCount - removedCount),
+        };
+      });
 
       // BR-DEL-006: 활성 세션 삭제 시 빈 상태 표시 (자동 전환 없음)
       // BR-DEL-007: 비활성 세션 삭제 시 현재 세션 유지
@@ -1502,7 +1533,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ),
     }));
 
-    fetchWithClientId(`/api/sessions/${sessionId}/archive`, {
+    return fetchWithClientId(`/api/sessions/${sessionId}/archive`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ archived }),
@@ -1527,6 +1558,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (result.cleanupError) {
           console.warn(`[session-store] archive cleanup warning for ${sessionId}: ${result.cleanupError}`);
         }
+        return true;
       })
       .catch(() => {
         // Rollback on any network or server error
@@ -1561,6 +1593,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }));
           console.warn(`[session-store] toggleArchive rollback for session ${sessionId}`);
         }
+        return false;
       });
   },
 
@@ -1633,6 +1666,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // Session reorder by IDs only (collection view)
   reorderSessionsByIds: (orderedIds) => {
     const orderMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+    const affectedTaskProjectIds = useTaskStore.getState().reorderLinkedSessions(orderedIds);
     set((state) => ({
       projects: state.projects.map((p) => ({
         ...p,
@@ -1649,12 +1683,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           : session,
       ),
     }));
-    fetchWithClientId('/api/sessions/reorder', {
+    void fetchWithClientId('/api/sessions/reorder', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderedIds }),
+    }).then((response) => {
+      if (!response.ok) throw new Error(`Session reorder failed: ${response.status}`);
     }).catch(() => {
-      get().loadProjects();
+      void Promise.all([
+        get().loadProjects(),
+        ...affectedTaskProjectIds.map((projectId) =>
+          useTaskStore.getState().loadTasks(projectId, {
+            setCurrent: useTaskStore.getState().currentProjectId === projectId,
+          })
+        ),
+      ]);
     });
   },
 

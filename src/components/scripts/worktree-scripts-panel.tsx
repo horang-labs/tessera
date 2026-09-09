@@ -209,6 +209,9 @@ function PreparationRow({
               terminalId={getPreparationTerminalId(taskId)}
               terminalSessionId={null}
               surfaceActive
+              // This is a passive log viewer. Its delayed connection must not
+              // take keyboard focus from the session that opened alongside it.
+              autoFocus={false}
               detachOnUnmount
               // The row above already names the run and reports its status; the
               // panel's own bar would repeat that and add a close button for a

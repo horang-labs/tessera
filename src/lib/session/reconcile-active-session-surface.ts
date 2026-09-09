@@ -25,7 +25,13 @@ export function reconcileActiveSessionSurface(
     activeTabData?.panels[activeTabData.activePanelId]?.sessionId ?? null;
 
   if (activeSessionId === currentPanelSessionId) {
-    useTabStore.getState().syncTabProjectFromSession(panelState.activeTabId, activeSessionId);
+    // Selecting a scope must not move an existing Project View's tab to the
+    // Session's origin Project. Only a newly filled, unowned tab needs adoption.
+    const tabs = useTabStore.getState();
+    const tab = tabs.tabs.find((item) => item.id === panelState.activeTabId);
+    if (tab?.projectDir === null && Object.values(activeTabData?.panels ?? {}).length === 1) {
+      tabs.syncTabProjectFromSession(panelState.activeTabId, activeSessionId);
+    }
     return 'already-active';
   }
 

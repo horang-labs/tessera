@@ -28,6 +28,10 @@ import { i18n } from '@/lib/i18n';
 import { supportsTerminalChatView } from '@/lib/terminal/terminal-chat-view-support';
 import { v4 as uuidv4 } from 'uuid';
 import { openSingletonNewTab } from '@/lib/tab/open-singleton-new-tab';
+import { getAdjacentTabId, type TabNavigationDirection } from '@/lib/tab/adjacent-tab';
+import { wsClient } from '@/lib/ws/client';
+import { requestSessionArchive } from '@/lib/session/session-archive-client';
+import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { captureTelemetryEvent } from '@/lib/telemetry/client';
 
 export interface UseKeyboardShortcutsOptions {
@@ -147,6 +151,12 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     closeTab(id);
   }, []);
 
+  const handleNavigateTab = useCallback((direction: TabNavigationDirection) => {
+    const tabStore = useTabStore.getState();
+    const targetTabId = getAdjacentTabId(tabStore.tabs, tabStore.activeTabId, direction);
+    if (targetTabId) tabStore.setActiveTab(targetTabId);
+  }, []);
+
   const handleToggleSidebar = useCallback(() => {
     settingsStore.toggleSidebar();
   }, [settingsStore]);
@@ -173,6 +183,21 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
       ?? useSettingsStore.getState().settings.terminalSessionDefaultView
       ?? 'terminal';
     viewModeStore.setMode(sessionId, currentMode === 'chat' ? 'terminal' : 'chat');
+  }, [activePanelId, panels]);
+
+  const handleSessionAction = useCallback((action: 'stop' | 'archive') => {
+    const { peekSessionId, peekFileRef } = useBoardStore.getState();
+    if (!peekSessionId && peekFileRef) return;
+    const sessionId = peekSessionId ?? panels[activePanelId]?.sessionId;
+    if (!sessionId) return;
+    const session = projectViewWorkspaceState.resolveSession(sessionId);
+    if (!session) return;
+
+    if (action === 'stop') {
+      if (resolveSessionRuntimePresentation(session).canStop) wsClient.stopSession(sessionId);
+    } else if (!session.archived || !session.taskId) {
+      requestSessionArchive(sessionId, !session.archived);
+    }
   }, [activePanelId, panels]);
 
   const handleSplitRight = useCallback(() => {
@@ -228,9 +253,13 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
   const handlers: Partial<Record<ShortcutId, () => void | Promise<void>>> = {
     'new-tab':        handleNewTab,
     'close-tab':      handleCloseTab,
+    'prev-tab':       () => handleNavigateTab('previous'),
+    'next-tab':       () => handleNavigateTab('next'),
     'toggle-sidebar': handleToggleSidebar,
     'toggle-view':    handleToggleView,
     'toggle-terminal-view': handleToggleTerminalView,
+    'stop-session': () => handleSessionAction('stop'),
+    'archive-session': () => handleSessionAction('archive'),
     'split-right':    handleSplitRight,
     'split-down':     handleSplitDown,
     'toggle-terminal': handleToggleTerminal,
@@ -263,8 +292,8 @@ export function useKeyboardShortcuts(_options: UseKeyboardShortcutsOptions = {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     overrides,
-    handleNewTab, handleCloseTab,
-    handleToggleSidebar, handleToggleView, handleToggleTerminalView,
+    handleNewTab, handleCloseTab, handleNavigateTab,
+    handleToggleSidebar, handleToggleView, handleToggleTerminalView, handleSessionAction,
     handleSplitRight, handleSplitDown,
     handleToggleTerminal, handleFocusPanel,
   ]);

@@ -28,6 +28,7 @@ import {
 import { resolveWorkspaceTarget } from '@/types/worktree';
 import { WorkspaceFilePanel } from "@/components/workspace/workspace-file-panel";
 import { MemoryPanel } from "@/components/memory/memory-panel";
+import { ImageGenerationsPanel } from "@/components/image-generation/image-generations-panel";
 import { cn } from "@/lib/utils";
 import { PHONE_TOUCH_TARGET } from "@/lib/ui/touch-target";
 import { ElectronWindowControls } from "@/components/layout/electron-window-controls";
@@ -81,6 +82,7 @@ function GitPanelTabButton({
 
 export function GitPanel({
   sessionId,
+  isActive = true,
   worktreeId = null,
   width,
   className,
@@ -88,6 +90,7 @@ export function GitPanel({
   onClose,
 }: {
   sessionId: string | null;
+  isActive?: boolean;
   worktreeId?: string | null;
   width: number | string;
   className?: string;
@@ -102,7 +105,9 @@ export function GitPanel({
   const controller = useSharedGitPanelController();
   // The selection lives in the store so a preparation badge can send the user
   // straight to the Scripts tab.
-  const activePanelTab = useGitStore((state) => state.panelTab);
+  const activePanelTab = useGitStore((state) => sessionId
+    ? state.panelTabsBySessionId[sessionId] ?? 'git'
+    : state.panelTab);
   const setActivePanelTab = useGitStore((state) => state.setPanelTab);
   const openedTelemetryRef = useRef(false);
   const resolvedCloseLabel = closeLabel ?? t("chat.closeGitPanel");
@@ -115,7 +120,10 @@ export function GitPanel({
     enabled: isPhoneViewport && Boolean(onClose),
   });
 
-  const sessionProvider = useProjectViewSession(sessionId)?.provider?.trim() ?? null;
+  const session = useProjectViewSession(sessionId);
+  const sessionProvider = session?.provider?.trim() ?? null;
+  const sessionKind = session?.kind ?? "chat";
+  const showImagesTab = sessionProvider === "codex" && sessionKind === "terminal";
   const showMemoryTab = supportsMemoryPanel(sessionProvider);
   const showScriptsTab = useWorktreeScriptsAvailable(sessionId);
   const fileTarget = useMemo(
@@ -125,9 +133,10 @@ export function GitPanel({
 
   // Derive the visible tab instead of forcing state: if the stored selection
   // is one this session can't show, fall back to Git for rendering while
-  // preserving the selection for sessions that can.
+  // preserving this session's selection while its capabilities are loading.
   const tabUnavailable =
     (!showMemoryTab && activePanelTab === "memory")
+    || (!showImagesTab && activePanelTab === "images")
     || (!showScriptsTab && activePanelTab === "scripts");
   const effectivePanelTab: GitPanelTab = tabUnavailable ? "git" : activePanelTab;
 
@@ -142,6 +151,11 @@ export function GitPanel({
     openedTelemetryRef.current = true;
     void captureTelemetryEvent("git_panel_opened", {
       source: "git_panel",
+      provider_id: sessionProvider,
+      session_kind: sessionKind,
+      execution_mode: sessionKind === "terminal" ? "pty" : "gui",
+      tab: effectivePanelTab,
+      images_tab_visible: showImagesTab,
       result: controller.error ? "failed" : "success",
       has_worktree: Boolean(controller.data?.worktreePath),
       has_changes: Boolean(controller.changedFileCount),
@@ -150,6 +164,10 @@ export function GitPanel({
       github_available: Boolean(controller.data?.github.available),
     });
   }, [
+    sessionProvider,
+    sessionKind,
+    effectivePanelTab,
+    showImagesTab,
     controller.changedFileCount,
     controller.data?.github.available,
     controller.data?.github.pullRequest,
@@ -161,9 +179,13 @@ export function GitPanel({
 
   const handlePanelTabChange = useCallback((tab: GitPanelTab) => {
     if (activePanelTab === tab) return;
-    setActivePanelTab(tab);
+    setActivePanelTab(tab, sessionId);
     void captureTelemetryEvent("git_panel_tab_changed", {
       source: "git_panel",
+      provider_id: sessionProvider,
+      session_kind: sessionKind,
+      execution_mode: sessionKind === "terminal" ? "pty" : "gui",
+      images_tab_visible: showImagesTab,
       tab,
       has_worktree: Boolean(controller.data?.worktreePath),
       has_changes: Boolean(controller.changedFileCount),
@@ -171,6 +193,10 @@ export function GitPanel({
     });
   }, [
     activePanelTab,
+    sessionId,
+    sessionProvider,
+    sessionKind,
+    showImagesTab,
     setActivePanelTab,
     controller.changedFileCount,
     controller.data?.github.pullRequest,
@@ -303,6 +329,15 @@ export function GitPanel({
           >
             {t("gitPanel.tabs.files")}
           </GitPanelTabButton>
+          {showImagesTab ? (
+            <GitPanelTabButton
+              active={effectivePanelTab === "images"}
+              onClick={() => handlePanelTabChange("images")}
+              telemetryControl="right_panel.tab.images"
+            >
+              {t("gitPanel.tabs.images")}
+            </GitPanelTabButton>
+          ) : null}
           {showScriptsTab ? (
             <GitPanelTabButton
               active={effectivePanelTab === "scripts"}
@@ -340,7 +375,7 @@ export function GitPanel({
         ) : null}
       </div>
 
-      {effectivePanelTab === "scripts"
+      {effectivePanelTab === "scripts" || effectivePanelTab === "images"
         || (isPhoneViewport && effectivePanelTab === "git")
         ? null
         : summarySection}
@@ -360,6 +395,10 @@ export function GitPanel({
       ) : effectivePanelTab === "memory" ? (
         <div className="min-h-0 flex-1">
           <MemoryPanel key={sessionId ?? "no-session"} sessionId={sessionId} />
+        </div>
+      ) : effectivePanelTab === "images" ? (
+        <div className="min-h-0 flex-1">
+          <ImageGenerationsPanel key={sessionId ?? "no-session"} sessionId={sessionId} isActive={isActive} />
         </div>
       ) : (
         <>

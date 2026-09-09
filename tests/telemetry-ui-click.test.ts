@@ -152,6 +152,50 @@ test('semantic telemetry transport keeps only allowlisted safe properties', () =
   });
 });
 
+test('default CLI provider changes keep their allowlisted setting name', () => {
+  assert.deepEqual(sanitizeTelemetryProperties({
+    setting: 'defaultCliProvider',
+  }), {
+    setting: 'defaultCliProvider',
+  });
+});
+
+test('branch telemetry survives transport without branch names, search text, or raw errors', () => {
+  for (const [event, properties] of [
+    ['project_branch_filter_changed', { filter_mode: 'all' }],
+    ['project_branch_filter_changed', { filter_mode: 'branch' }],
+    ['worktree_branch_switch_result', { result: 'success' }],
+    ['worktree_branch_switch_result', { result: 'failed' }],
+  ] as const) {
+    const result = prepareTelemetryCaptureForTransport(
+      {
+        event,
+        properties: {
+          ...properties,
+          surface: 'worktree',
+          branch: 'private-branch',
+          query: 'private-search',
+          worktreeId: 'private-id',
+          error: 'private-error',
+        },
+      },
+      {
+        installId: 'install-test', appSessionId: 'app-session-test',
+        appVersion: 'test', platform: 'linux', arch: 'x64', channel: 'development',
+      },
+      true,
+      'phc-public-project-token',
+    );
+    assert.equal(result?.event, event);
+    assert.equal(result?.properties?.surface, 'worktree');
+    for (const [key, value] of Object.entries(properties)) {
+      assert.equal(result?.properties?.[key], value);
+    }
+    assert.doesNotMatch(JSON.stringify(result), /private-/);
+  }
+  assert.deepEqual(sanitizeTelemetryProperties({ filter_mode: 'private-branch' }), {});
+});
+
 test('client form factor is reduced locally without transmitting raw device signals', () => {
   assert.equal(detectTelemetryClientFormFactor({
     userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel) AppleWebKit Mobile',

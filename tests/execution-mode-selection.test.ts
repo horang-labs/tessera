@@ -79,20 +79,22 @@ test('All Projects defaults to the most recently active conversation project whe
   assert.equal(resolveLastActiveProjectDir(projects, null), null);
 });
 
-test('All Projects creation prefers the active tab project over the last active project', () => {
+test('All Projects creation defaults only to the last active session project, otherwise remains unselected', () => {
   const projects = [
     { encodedDir: 'project-a' },
     { encodedDir: 'project-b' },
   ];
 
   assert.equal(
-    resolveAllProjectsDefaultProjectId(projects, 'project-b', 'project-a'),
+    resolveAllProjectsDefaultProjectId(projects, 'project-b'),
     'project-b',
   );
   assert.equal(
-    resolveAllProjectsDefaultProjectId(projects, null, 'project-a'),
+    resolveAllProjectsDefaultProjectId(projects, 'project-a'),
     'project-a',
   );
+  assert.equal(resolveAllProjectsDefaultProjectId(projects, null), null);
+  assert.equal(resolveAllProjectsDefaultProjectId(projects, 'removed-project'), null);
 });
 
 test('a standalone shell honors the project cwd selected in the launcher', () => {

@@ -76,6 +76,7 @@ export type ClientMessage =
   | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
   | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
   | ({ type: 'resume_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
+  | ({ type: 'restart_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
   | { type: 'retry_session'; requestId: string; sessionId: string }
   | { type: 'interactive_response'; requestId: string; sessionId: string; toolUseId: string; response: string }
   | { type: 'mark_as_read'; requestId: string; sessionId: string } // NEW - for FEAT-002
@@ -526,6 +527,9 @@ export type AppServerMessage =
       unreadCount: number;
     }
   | { type: 'session_stopped'; sessionId: string }
+  | { type: 'session_restarting'; sessionId: string; kind: 'chat' | 'terminal' }
+  | { type: 'session_restarted'; sessionId: string; kind: 'chat' | 'terminal' }
+  | { type: 'session_restart_failed'; sessionId: string; kind: 'chat' | 'terminal'; message: string }
   | { type: 'session_idle_closed'; sessionId: string }
   | ({ type: 'rate_limit_update' } & ProviderRateLimitsSnapshot)
   | { type: 'model_config_updated'; providerId: 'claude-code' }

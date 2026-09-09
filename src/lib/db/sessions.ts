@@ -3,6 +3,7 @@
  */
 
 import fs from 'fs';
+import { imageSessionCacheDirectory } from '@/lib/image-generation/cache-files';
 import { getDb } from './database';
 import { deleteTerminalProviderSessionsForTesseraSession } from './terminal-provider-sessions';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -317,6 +318,8 @@ export function createSession(
 export function deleteSession(id: string): void {
   deleteTerminalProviderSessionsForTesseraSession(id);
   getDb().prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  // Only this server-owned, hashed per-session directory is removed.
+  void fs.promises.rm(imageSessionCacheDirectory(id), { recursive: true, force: true }).catch(() => {});
 }
 
 /**
@@ -460,6 +463,8 @@ export function clearWorktreeMetadataByWorkDir(workDir: string): void {
 export function softDeleteSession(id: string): void {
   getDb().prepare('UPDATE sessions SET deleted = 1, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id);
+  getDb().prepare('DELETE FROM image_generation_cache WHERE session_id = ?').run(id);
+  void fs.promises.rm(imageSessionCacheDirectory(id), { recursive: true, force: true }).catch(() => {});
 }
 
 /**
@@ -615,6 +620,7 @@ export function countArchivedChatSessions(projectId?: string, query?: string): n
 
 export function buildProjectViewWhere(
   membership: ProjectViewMembership,
+  creationBranch?: string,
 ): { sql: string; params: unknown[] } {
   if (membership.kind === 'non-git-project') {
     return { sql: 's.project_id = ?', params: [membership.projectId] };
@@ -625,12 +631,22 @@ export function buildProjectViewWhere(
     FROM sessions canonical INDEXED BY idx_sessions_worktree_scope
     WHERE canonical.worktree_id = ?
       AND (
-        canonical.scope_branch IS NULL
-        OR (? IS NOT NULL AND canonical.scope_branch = ?)
+        (
+          canonical.task_id IS NULL
+          ${creationBranch === undefined ? '' : 'AND canonical.scope_branch = ?'}
+        )
+        OR (
+          canonical.task_id IS NOT NULL
+          AND (
+            canonical.scope_branch IS NULL
+            OR (? IS NOT NULL AND canonical.scope_branch = ?)
+          )
+        )
       )
   `;
   const canonicalParams = [
     membership.worktreeId,
+    ...(creationBranch === undefined ? [] : [creationBranch]),
     membership.currentBranch,
     membership.currentBranch,
   ];
@@ -651,13 +667,48 @@ export function buildProjectViewWhere(
         AND project_root.worktree_id IS NULL
         AND project_root.task_id IS NULL
         AND project_root.work_dir = ?
+        ${creationBranch === undefined ? '' : 'AND project_root.scope_branch = ?'}
     )`,
     params: [
       ...canonicalParams,
       membership.projectRootFallback.projectId,
       membership.projectRootFallback.workDir,
+      ...(creationBranch === undefined ? [] : [creationBranch]),
     ],
   };
+}
+
+/** Immutable branch labels recorded when root Sessions were created. */
+export function getProjectViewSessionCreationBranches(
+  membership: ProjectViewMembership,
+): string[] {
+  if (membership.kind === 'non-git-project') return [];
+  return (getDb().prepare(`
+    SELECT DISTINCT branch
+    FROM (
+      SELECT scope_branch AS branch
+      FROM sessions INDEXED BY idx_sessions_worktree_scope
+      WHERE worktree_id = ?
+        AND task_id IS NULL
+        AND scope_branch IS NOT NULL
+      ${membership.projectRootFallback ? `
+      UNION ALL
+      SELECT scope_branch AS branch
+      FROM sessions INDEXED BY idx_sessions_project_updated
+      WHERE project_id = ?
+        AND worktree_id IS NULL
+        AND task_id IS NULL
+        AND work_dir = ?
+        AND scope_branch IS NOT NULL
+      ` : ''}
+    )
+    ORDER BY branch COLLATE NOCASE ASC
+  `).all(
+    membership.worktreeId,
+    ...(membership.projectRootFallback
+      ? [membership.projectRootFallback.projectId, membership.projectRootFallback.workDir]
+      : []),
+  ) as Array<{ branch: string }>).map(({ branch }) => branch);
 }
 
 function applyProjectRootMembershipFallback(
@@ -684,11 +735,11 @@ export function setSessionWorktreeDeletedAt(id: string, deletedAt: string): void
  */
 export function getSessionsForProjectView(
   membership: ProjectViewMembership,
-  options: { limit?: number; cursor?: string } = {}
+  options: { limit?: number; cursor?: string; creationBranch?: string } = {}
 ): SessionQueryResult {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = buildProjectViewWhere(membership);
+  const where = buildProjectViewWhere(membership, options.creationBranch);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt
@@ -732,7 +783,7 @@ export function getSessionsForProjectView(
  */
 export function getSessionsForProjectViewGrouped(
   membership: ProjectViewMembership,
-  options: { limitPerStatus?: number } = {}
+  options: { limitPerStatus?: number; creationBranch?: string } = {}
 ): {
   sessions: SessionRow[];
   totalCount: number;
@@ -742,7 +793,7 @@ export function getSessionsForProjectViewGrouped(
 } {
   const db = getDb();
   const limitPerStatus = options.limitPerStatus ?? 20;
-  const where = buildProjectViewWhere(membership);
+  const where = buildProjectViewWhere(membership, options.creationBranch);
 
   // Get counts per status (exclude archived and soft-deleted)
   const statusCounts = db.prepare(`
@@ -822,11 +873,11 @@ export function getSessionsForProjectViewGrouped(
 export function getSessionsForProjectViewByStatus(
   membership: ProjectViewMembership,
   statusGroup: string,
-  options: { limit?: number; cursor?: string } = {}
+  options: { limit?: number; cursor?: string; creationBranch?: string } = {}
 ): { sessions: SessionRow[]; totalCount: number; nextCursor: string | null } {
   const db = getDb();
   const limit = options.limit ?? 20;
-  const where = buildProjectViewWhere(membership);
+  const where = buildProjectViewWhere(membership, options.creationBranch);
 
   const countRow = db.prepare(`
     SELECT COUNT(*) as cnt

@@ -20,7 +20,8 @@ import {
 import { useSettingsStore } from '@/stores/settings-store';
 import { useI18n } from '@/lib/i18n';
 import {
-  getWorkspaceFileDragAbsolutePath,
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
   isPathInsertOnlyDragData,
   isSessionReferenceDragData,
@@ -117,6 +118,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   >(null);
   const sessionInsertZoneRef = useRef(false);
   const dropEdgeRef = useRef<DropEdge | null>(null);
+  const capturedDropRef = useRef<{ edge: DropEdge | null; sessionInsert: boolean } | null>(null);
   const dragCounterRef = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -160,7 +162,8 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
   }, [panelId]);
 
   const isTerminalPathInsertTarget = useCallback((e: React.DragEvent) => (
-    hasWorkspaceFileDragData(e.dataTransfer) && resolveInsertTargetTerminalId() !== null
+    (hasWorkspaceFileDragData(e.dataTransfer) || hasPathInsertDragData(e.dataTransfer)) &&
+    resolveInsertTargetTerminalId() !== null
   ), [resolveInsertTargetTerminalId]);
 
   // OS (Finder/Explorer) file drops behave like folder drags: insert-only,
@@ -265,6 +268,29 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     resolveSessionInsertZoneBounds,
   ]);
 
+  // A child drop target (such as the PTY ChatView overlay) can intentionally
+  // stop the bubbling `drop` event after handling its own payload. Clear this
+  // pane's visual state during capture as well, so that ownership transfer
+  // never leaves the panel-level highlight behind.
+  const clearDropIndicators = useCallback(() => {
+    dragCounterRef.current = 0;
+    dropEdgeRef.current = null;
+    sessionInsertZoneRef.current = false;
+    setDropEdge(null);
+    setInsertPathHint(false);
+    setSessionInsertZone(null);
+  }, []);
+
+  const handleDropCapture = useCallback(() => {
+    // Capture runs before handleDrop. Preserve its routing decision before
+    // clearing the highlight, including when a child stops propagation.
+    capturedDropRef.current = {
+      edge: dropEdgeRef.current,
+      sessionInsert: sessionInsertZoneRef.current,
+    };
+    clearDropIndicators();
+  }, [clearDropIndicators]);
+
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     if (!isPanelCompatibleDrag(e)) return;
     e.preventDefault();
@@ -281,14 +307,10 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    const currentEdge = dropEdgeRef.current;
-    const droppedInSessionInsertZone = sessionInsertZoneRef.current;
-    dragCounterRef.current = 0;
-    dropEdgeRef.current = null;
-    sessionInsertZoneRef.current = false;
-    setDropEdge(null);
-    setInsertPathHint(false);
-    setSessionInsertZone(null);
+    const currentEdge = capturedDropRef.current?.edge ?? dropEdgeRef.current;
+    const droppedInSessionInsertZone = capturedDropRef.current?.sessionInsert ?? sessionInsertZoneRef.current;
+    capturedDropRef.current = null;
+    clearDropIndicators();
 
     // OS (Finder/Explorer) file drop → insert each absolute path into the PTY.
     if (currentEdge === 'center' && isNativeFilePathInsertTarget(e)) {
@@ -308,9 +330,15 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     }
 
     if (currentEdge === 'center' && isTerminalPathInsertTarget(e)) {
-      const filePath = getWorkspaceFileDragAbsolutePath(e.dataTransfer);
       const targetTerminalId = resolveInsertTargetTerminalId();
-      if (filePath && targetTerminalId && insertFilePathIntoTerminal(targetTerminalId, filePath)) {
+      const paths = getInternalPathDropPaths(e.dataTransfer);
+      let inserted = false;
+      if (targetTerminalId) {
+        for (const path of paths) {
+          if (insertFilePathIntoTerminal(targetTerminalId, path)) inserted = true;
+        }
+      }
+      if (inserted) {
         usePanelStore.getState().setActivePanelId(panelId);
         focusPanelControl(panelId);
       }
@@ -572,6 +600,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
     isNativeFilePathInsertTarget,
     isTerminalSessionRefTarget,
     resolveInsertTargetTerminalId,
+    clearDropIndicators,
   ]);
 
   return (
@@ -596,6 +625,7 @@ export const PanelWrapper = memo(function PanelWrapper({ panelId, children }: Pa
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
+      onDropCapture={handleDropCapture}
       onDrop={handleDrop}
     >
       {children}

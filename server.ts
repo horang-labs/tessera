@@ -1,4 +1,6 @@
 import './runtime/register-runtime-aliases';
+import { restoreSessionRuntimes } from './src/lib/session/session-runtime-recovery';
+import { providerLaunchModule } from './src/lib/terminal/shared-provider-launch-module';
 import next from 'next';
 import { loadEnvConfig } from '@next/env';
 import { createServer } from 'http';
@@ -140,6 +142,9 @@ async function startServer() {
 
       // Start WebSocket server on the same HTTP server
       wsServer.start(server);
+      // Resume every previously live provider independently of the selected
+      // project or mounted panels (including the all-project Running board).
+      void restoreSessionRuntimes((request) => providerLaunchModule.launch(request));
       configureArchivedWorktreeRetention(startupRetentionPolicy);
 
       // Pay the first ConPTY spawn cost (~seconds on Windows) before the user

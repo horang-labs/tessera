@@ -11,6 +11,11 @@
  * affected.
  */
 
+import {
+  hasPathInsertDragData,
+  hasWorkspaceFileDragData,
+} from '@/lib/dnd/panel-session-drag';
+
 /** Guard against pathological multi-file drops (mirrors Orca's limit). */
 export const NATIVE_FILE_DROP_MAX_PATHS = 256;
 
@@ -20,14 +25,17 @@ interface ElectronFilePathBridge {
 
 /**
  * True for a drag originating from the OS file manager. Such drags expose the
- * synthetic `'Files'` type; in-app drags only ever carry custom MIME types, so
- * this never collides with panel/session/workspace drags.
+ * synthetic `'Files'` type. Chromium can also attach `'Files'` to the native
+ * drag payload of an in-app `<img>`, so an active Tessera path drag must win
+ * over that browser-provided type.
  *
  * Note: `dataTransfer.files` is empty during dragover for security — only the
  * `types` list is readable then, which is why this checks types alone.
  */
 export function isNativeFileDrag(dataTransfer: Pick<DataTransfer, 'types'>): boolean {
-  return dataTransfer.types.includes('Files');
+  return dataTransfer.types.includes('Files') &&
+    !hasPathInsertDragData(dataTransfer) &&
+    !hasWorkspaceFileDragData(dataTransfer);
 }
 
 /**

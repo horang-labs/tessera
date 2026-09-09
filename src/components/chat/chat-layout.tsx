@@ -705,6 +705,7 @@ export function ChatLayout() {
               )}
               <GitPanel
                 sessionId={activeGitTargetSessionId}
+                isActive={Boolean(activeGitTargetSessionId)}
                 worktreeId={activeGitWorktreeId}
                 width={isCompactViewport ? "100vw" : gitPanelWidth}
                 className={cn(

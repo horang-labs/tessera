@@ -133,15 +133,15 @@ export function extractCodexOverlayTerminalId(
  * Non-overlay paths and unresolvable candidates are returned untouched — the
  * caller reports a missing transcript, which is the honest outcome.
  */
-export function resolveCodexAccountTranscriptPath(
-  transcriptPath: string,
+export function resolveCodexAccountOverlayPath(
+  overlayBackedPath: string,
   options: ResolveCodexAccountHomeOptions = {},
 ): string {
-  const match = transcriptPath.match(CODEX_OVERLAY_PATH_PATTERN);
-  if (!match) return transcriptPath;
+  const match = overlayBackedPath.match(CODEX_OVERLAY_PATH_PATTERN);
+  if (!match) return overlayBackedPath;
 
   const [, dataDir, overlayName, relativePath] = match;
-  const pathModule = /^[a-zA-Z]:[\\/]|^\\\\/.test(transcriptPath) ? path.win32 : path.posix;
+  const pathModule = /^[a-zA-Z]:[\\/]|^\\\\/.test(overlayBackedPath) ? path.win32 : path.posix;
   const segments = relativePath.split(/[/\\]/).filter(Boolean);
 
   const candidateHomes = [
@@ -158,7 +158,14 @@ export function resolveCodexAccountTranscriptPath(
     if (fs.existsSync(candidate)) return candidate;
   }
 
-  return transcriptPath;
+  return overlayBackedPath;
+}
+
+export function resolveCodexAccountTranscriptPath(
+  transcriptPath: string,
+  options: ResolveCodexAccountHomeOptions = {},
+): string {
+  return resolveCodexAccountOverlayPath(transcriptPath, options);
 }
 
 export function buildCodexAccountEnvironment(

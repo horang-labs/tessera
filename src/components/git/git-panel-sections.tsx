@@ -10,13 +10,14 @@ import {
   Copy,
   ExternalLink,
   FileText,
+  FolderOpen,
   GitCompare,
   GitCommitHorizontal,
   GitPullRequest,
   LoaderCircle,
   Undo2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -24,7 +25,11 @@ import { GitRevertConfirmDialog } from "@/components/git/git-revert-confirm-dial
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
 import { useI18n } from "@/lib/i18n";
-import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
+import {
+  canUseElectronFileActions,
+  openFilePathOnHost,
+  toAbsoluteWorkspacePath,
+} from "@/lib/workspace-tabs/file-path-actions";
 import { cn } from "@/lib/utils";
 import { deriveGitConflictRecovery } from "@/lib/git/git-conflict-recovery";
 import type { GitPrimaryAction } from "@/lib/git/primary-git-action";
@@ -61,6 +66,9 @@ function formatShortCount(value: number): string {
   if (value < 10000) return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
   return `${Math.round(value / 1000)}k`;
 }
+
+const subscribeToStaticClientValue = () => () => {};
+const getNoElectronFileActions = () => false;
 
 function formatDiffMetric(
   data: GitPanelData,
@@ -156,12 +164,34 @@ function FileBadge({ file }: { file: GitChangedFile }) {
   return (
     <span
       className={cn(
-        "inline-flex h-5 w-5 shrink-0 items-center justify-center font-mono text-[11px] font-semibold leading-none",
+        "inline-flex h-4 shrink-0 items-center font-mono text-[10px] font-semibold leading-none",
         meta.statusClassName,
       )}
       aria-label={meta.label}
     >
       {display}
+    </span>
+  );
+}
+
+/**
+ * Keep the leaf name visible when the Git panel is narrow. A conventional
+ * end-truncated path hides the part people use to tell adjacent files apart.
+ */
+function FilePath({ path }: { path: string }) {
+  const slashIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  if (slashIndex === -1) {
+    return <span className="truncate">{path}</span>;
+  }
+
+  const directory = path.slice(0, slashIndex);
+  const filename = path.slice(slashIndex + 1);
+
+  return (
+    <span className="flex min-w-0 items-baseline" title={path}>
+      <span className="min-w-0 truncate text-(--text-muted)">{directory}</span>
+      <span className="shrink-0 text-(--text-muted)">/</span>
+      <span className="shrink-0">{filename}</span>
     </span>
   );
 }
@@ -439,6 +469,11 @@ export function GitPanelSummarySection({
   const worktreeName = data ? getGitPanelWorktreeName(data) : "worktree";
   const branchName = data?.branch ?? "branch";
   const worktreeTooltip = data?.worktreePath ?? "Worktree path unavailable";
+  const canOpenWorktreeFolder = useSyncExternalStore(
+    subscribeToStaticClientValue,
+    canUseElectronFileActions,
+    getNoElectronFileActions,
+  );
   const prUrl = data?.prStatus?.url ?? data?.github.pullRequest?.url;
   const historicalPr = data?.prStatus ? !isCurrentTaskPr(data.prStatus) : false;
   const prLabel = data?.prStatus
@@ -492,12 +527,29 @@ export function GitPanelSummarySection({
                   </span>
                 </Tooltip>
                 {data ? (
-                  <GitSummaryCopyButton
-                    ariaLabel="Copy full worktree path"
-                    onClick={onCopyWorktreePath}
-                    telemetryControl="git.worktree_path.copy"
-                    tooltip="Copy full worktree path"
-                  />
+                  <>
+                    {canOpenWorktreeFolder ? (
+                      <Tooltip content="Open worktree folder" side="top">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0 rounded text-(--text-muted) hover:text-(--text-primary)"
+                          onClick={() => openFilePathOnHost(data.worktreePath)}
+                          {...telemetryClickAttributes("git.worktree_folder.open", "git_panel")}
+                          aria-label="Open worktree folder"
+                        >
+                          <FolderOpen className="h-3.5 w-3.5" />
+                        </Button>
+                      </Tooltip>
+                    ) : null}
+                    <GitSummaryCopyButton
+                      ariaLabel="Copy full worktree path"
+                      onClick={onCopyWorktreePath}
+                      telemetryControl="git.worktree_path.copy"
+                      tooltip="Copy full worktree path"
+                    />
+                  </>
                 ) : null}
               </div>
             </div>
@@ -822,7 +874,7 @@ export function GitPanelContentSection({
               />
             ) : (
               <>
-                <div className="flex items-center justify-between gap-2 px-1">
+                <div className="flex items-center justify-between gap-2 pl-1.5 pr-1">
                   <label className="flex min-w-0 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
                     <input
                       ref={selectAllCheckboxRef}
@@ -922,7 +974,7 @@ export function GitPanelContentSection({
                                 path: file.path,
                               })}
                               data-testid={`git-commit-file-checkbox-${file.path}`}
-                              className="ml-2 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
+                              className="ml-1 h-3.5 w-3.5 shrink-0 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
                             />
                             <button
                               type="button"
@@ -935,11 +987,11 @@ export function GitPanelContentSection({
                                 setSelectedPath(file.path);
                                 onPinDiffFile(file);
                               }}
-                              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+                              className="flex min-w-0 flex-1 items-center gap-1 px-1 py-1.5 text-left"
                             >
                               <FileBadge file={file} />
-                              <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-                                {file.path}
+                              <span className="min-w-0 flex-1 font-mono text-[11px]">
+                                <FilePath path={file.path} />
                               </span>
                               {/* The inversion of the rule below: the diff stats give way
                                   to the action overlay. Below the Phone viewport step that

@@ -101,7 +101,7 @@ Windows builds are not code-signed yet, so SmartScreen may show an unknown-publi
 
 ### Browser runtime
 
-Requires Node.js 20 or later and npm 10 or later.
+Requires Node.js 20.9+ (20.x) or Node.js 22–26, plus npm 10 or later.
 
 ```bash
 npm install -g @horang-labs/tessera
@@ -139,7 +139,7 @@ Authenticate provider CLIs first, for example with `claude login`, `codex login`
 
 For development, clone the repository and install dependencies:
 
-Source development requires Node.js 20 or later and npm 10 or later.
+Source development requires Node.js 20.9+ (20.x) or Node.js 22–26, plus npm 10 or later.
 
 ```bash
 git clone https://github.com/horang-labs/tessera.git

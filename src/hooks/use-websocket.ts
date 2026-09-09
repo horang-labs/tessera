@@ -59,6 +59,10 @@ export function useWebSocket() {
     wsClient.retrySession(sessionId);
   }, []);
 
+  const restartSession = useCallback((sessionId: string) => {
+    wsClient.restartSession(sessionId);
+  }, []);
+
   const sendInteractiveResponse = useCallback(
     (sessionId: string, toolUseId: string, response: string): boolean => {
       return wsClient.sendInteractiveResponse(sessionId, toolUseId, response);
@@ -102,6 +106,7 @@ export function useWebSocket() {
     closeSession,
     resumeSession,
     retrySession,
+    restartSession,
     sendInteractiveResponse,
     cancelGeneration,
     compactSession,

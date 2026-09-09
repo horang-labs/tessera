@@ -176,14 +176,20 @@ test('Control creates exact local and remote branches through the managed path p
   git(repository.path, ['checkout', '-b', 'view/other']);
   assert.deepEqual(
     (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
-      .worktrees,
-    [],
+      .worktrees.map((worktree) => ({ id: worktree.id, branch: worktree.branch })),
+    [
+      { id: remote.taskId, branch: 'feature/exact-remote' },
+      { id: local.taskId, branch: 'feature/exact-local' },
+    ],
   );
   git(repository.path, ['checkout', 'main']);
   assert.deepEqual(
     (await control.listWorktrees({ kind: 'project', projectId: repository.path }, context))
-      .worktrees.map((worktree) => worktree.branch),
-    ['feature/exact-remote', 'feature/exact-local'],
+      .worktrees.map((worktree) => ({ id: worktree.id, branch: worktree.branch })),
+    [
+      { id: remote.taskId, branch: 'feature/exact-remote' },
+      { id: local.taskId, branch: 'feature/exact-local' },
+    ],
   );
 
   await assert.rejects(

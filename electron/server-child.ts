@@ -7,6 +7,7 @@ import '../runtime/register-runtime-aliases';
 import next from 'next';
 import { createServer, type Server } from 'http';
 import { networkInterfaces } from 'node:os';
+import { getHeapSpaceStatistics, getHeapStatistics } from 'node:v8';
 import { initDatabase } from '../src/lib/db/database';
 import { bootstrapCanonicalWorktreeRegistry } from '../src/lib/db/worktree-bootstrap';
 import '../src/lib/cli/providers/bootstrap';
@@ -27,6 +28,9 @@ import { ensureRemoteModelConfigLoaded } from '../src/lib/model-config/remote-co
 import logger from '../src/lib/logger';
 import { getTesseraDataPath } from '../src/lib/tessera-data-dir';
 import { terminalManager } from '../src/lib/terminal/shared-terminal-manager';
+import { providerLaunchModule } from '../src/lib/terminal/shared-provider-launch-module';
+import { restoreSessionRuntimes } from '../src/lib/session/session-runtime-recovery';
+import { markServerShuttingDown } from '../src/lib/server-lifecycle';
 import { handleHookRequest } from '../src/lib/cli/hook-receiver';
 import { CONTROL_ROUTE_PREFIX } from '../src/lib/control/http-handler';
 import { readAppVersion } from '../src/lib/app-version';
@@ -97,8 +101,55 @@ function logStartup(level: StartupLogLevel, msg: string) {
 
 let shutdownHandler: ((reason: string) => Promise<void>) | null = null;
 let parentWatchdog: NodeJS.Timeout | null = null;
+let oomDiagnosticsTimer: NodeJS.Timeout | null = null;
 let parentShutdownRequested = false;
 let controlRuntime: ControlRuntimeHost | null = null;
+
+const OOM_DIAGNOSTICS_TAG = '[DEBUG-oom-memory-v1]';
+const OOM_DIAGNOSTICS_INTERVAL_MS = 1_000;
+
+function bytesToMiB(value: number): number {
+  return Math.round((value / (1024 * 1024)) * 10) / 10;
+}
+
+function logOomDiagnostics(): void {
+  const memory = process.memoryUsage();
+  const heap = getHeapStatistics();
+  const oldSpaceUsed = getHeapSpaceStatistics()
+    .filter((space) => space.space_name === 'old_space' || space.space_name === 'old_large_object_space')
+    .reduce((total, space) => total + space.space_used_size, 0);
+  const terminal = terminalManager.collectOomDiagnostics();
+  const websocket = wsServer.collectOomDiagnostics();
+  const heapPressure = heap.heap_size_limit > 0 ? memory.heapUsed / heap.heap_size_limit : 0;
+  const elevated = heapPressure >= 0.7
+    || terminal.headlessPendingChars >= 64 * 1024 * 1024
+    || terminal.pendingFrameChars >= 64 * 1024 * 1024
+    || websocket.totalBufferedBytes >= 64 * 1024 * 1024;
+  const fields = {
+    diagnosticTag: OOM_DIAGNOSTICS_TAG,
+    memoryMiB: {
+      rss: bytesToMiB(memory.rss),
+      heapUsed: bytesToMiB(memory.heapUsed),
+      heapTotal: bytesToMiB(memory.heapTotal),
+      heapLimit: bytesToMiB(heap.heap_size_limit),
+      oldSpaceUsed: bytesToMiB(oldSpaceUsed),
+      external: bytesToMiB(memory.external),
+      arrayBuffers: bytesToMiB(memory.arrayBuffers),
+    },
+    heapPressure: Math.round(heapPressure * 10_000) / 10_000,
+    terminal,
+    websocket,
+  };
+  if (elevated) logger.warn(fields, `${OOM_DIAGNOSTICS_TAG} Server memory pressure sample`);
+  else logger.debug(fields, `${OOM_DIAGNOSTICS_TAG} Server memory sample`);
+}
+
+function startOomDiagnostics(): void {
+  if (STARTUP_LOG_LEVEL !== 'debug' || oomDiagnosticsTimer) return;
+  logOomDiagnostics();
+  oomDiagnosticsTimer = setInterval(logOomDiagnostics, OOM_DIAGNOSTICS_INTERVAL_MS);
+  oomDiagnosticsTimer.unref?.();
+}
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -220,6 +271,8 @@ initDatabase().then(async () => {
       });
 
       wsServer.start(server);
+      void restoreSessionRuntimes((request) => providerLaunchModule.launch(request));
+      startOomDiagnostics();
       // Only now can a direct listener serve /ws, so bind it after the
       // WebSocket server exists rather than alongside the loopback listen.
       await directListeners.sync();
@@ -283,9 +336,14 @@ initDatabase().then(async () => {
   const shutdown = async (reason = 'requested') => {
     if (isShuttingDown) return;
     isShuttingDown = true;
+    markServerShuttingDown();
     if (parentWatchdog) {
       clearInterval(parentWatchdog);
       parentWatchdog = null;
+    }
+    if (oomDiagnosticsTimer) {
+      clearInterval(oomDiagnosticsTimer);
+      oomDiagnosticsTimer = null;
     }
 
     const forceShutdownTimer = setTimeout(() => {

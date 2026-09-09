@@ -2,8 +2,17 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { PairingDecision } from '../src/lib/auth/pairing-contract';
 import type { TerminalClipboardPayload } from '../src/lib/terminal/terminal-clipboard-paste';
 
+type PanelSplitPlacement = 'left' | 'right' | 'up' | 'down';
+
+// Sandboxed Electron preload scripts cannot load arbitrary compiled sibling
+// modules at runtime. Keep this tiny boundary validator local to the preload.
+function isPanelSplitPlacement(value: unknown): value is PanelSplitPlacement {
+  return value === 'left' || value === 'right' || value === 'up' || value === 'down';
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
+  linuxWayland: process.env.TESSERA_LINUX_WAYLAND === '1',
   isElectron: true,
   // Renderer console mirroring. The main process only registers these channels in a debug
   // build, so on a release send() lands on no listener and costs nothing. See
@@ -27,6 +36,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('read-terminal-clipboard') as Promise<TerminalClipboardPayload>,
   writeTerminalClipboardText: (text: string) =>
     ipcRenderer.invoke('write-terminal-clipboard-text', text) as Promise<void>,
+  onTerminalPanelSplitRequested: (
+    callback: (payload: { panelId: string; placement: PanelSplitPlacement }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { panelId?: unknown; placement?: unknown },
+    ) => {
+      if (typeof payload?.panelId !== 'string' || !isPanelSplitPlacement(payload.placement)) return;
+      callback({ panelId: payload.panelId, placement: payload.placement });
+    };
+    ipcRenderer.on('terminal-panel-split-requested', listener);
+    return () => {
+      ipcRenderer.removeListener('terminal-panel-split-requested', listener);
+    };
+  },
+  onTerminalPanelViewModeRequested: (
+    callback: (payload: { panelId: string; mode: 'terminal' | 'chat' }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { panelId?: unknown; mode?: unknown },
+    ) => {
+      if (
+        typeof payload?.panelId === 'string'
+        && (payload.mode === 'terminal' || payload.mode === 'chat')
+      ) {
+        callback({ panelId: payload.panelId, mode: payload.mode });
+      }
+    };
+    ipcRenderer.on('terminal-panel-view-mode-requested', listener);
+    return () => {
+      ipcRenderer.removeListener('terminal-panel-view-mode-requested', listener);
+    };
+  },
   uiStorageGetItem: (key: string) => ipcRenderer.sendSync('ui-storage-get-item', key) as string | null,
   uiStorageSetItem: (key: string, value: string) =>
     ipcRenderer.sendSync('ui-storage-set-item', { key, value }),

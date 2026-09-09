@@ -2,16 +2,17 @@ import type { PermissionMode } from '@/lib/ws/message-types';
 import type { ShortcutId } from '@/lib/keyboard/registry';
 import type { ProviderSessionAccessMode, ProviderSessionMode } from '@/lib/session/session-control-types';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
+import type { DefaultCliProvider } from './default-cli-provider';
+import type {
+  TerminalDarkThemePresetId,
+  TerminalLightThemePresetId,
+} from '@/lib/terminal/terminal-theme';
 
 /** Surface a PTY session opens on: its terminal, or the read-only chat view. */
 export type TerminalSessionDefaultView = 'terminal' | 'chat';
 
 /** Which kind of session the creation UIs preselect: a plain chat, or a worktree task. */
 export type NewSessionDefaultKind = 'chat' | 'task';
-import type {
-  TerminalDarkThemePresetId,
-  TerminalLightThemePresetId,
-} from '@/lib/terminal/terminal-theme';
 
 export type Language = 'en' | 'ko' | 'zh' | 'ja';
 export type Theme = 'light' | 'dark' | 'auto';
@@ -75,6 +76,8 @@ export interface UserSettings {
    * Kanban board's per-column create button — keep overriding it.
    */
   defaultNewSessionKind: NewSessionDefaultKind;
+  /** CLI provider new-session creation surfaces prefer when it is available. */
+  defaultCliProvider: DefaultCliProvider;
   profile: UserProfileSettings;
   notifications: {
     soundEnabled: boolean;

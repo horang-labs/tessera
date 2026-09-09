@@ -19,6 +19,7 @@ function advertiseInterruptPolicy(
   terminalId: string,
   policy: 'none' | 'single-escape',
 ): void {
+  Reflect.set(surface, 'attachedConnectionGeneration', 1);
   (surface as unknown as TerminalSurfaceInternals).handleServerMessage({
     type: 'terminal_started',
     terminalId,

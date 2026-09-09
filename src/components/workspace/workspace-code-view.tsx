@@ -1,7 +1,7 @@
 "use client";
 
-import { AlertCircle, Binary, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, Image as ImageIcon, LoaderCircle, RefreshCw, Save, X } from "lucide-react";
-import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
+import { AlertCircle, Binary, ChevronDown, ChevronUp, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, Image as ImageIcon, LoaderCircle, RefreshCw, Save, Search, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -29,6 +29,19 @@ type MarkdownViewMode = "preview" | "source";
 
 const subscribeToStaticClientValue = () => () => {};
 const getNoElectronFileActions = () => false;
+const WORKSPACE_FIND_MATCH_HIGHLIGHT = "workspace-file-find-match";
+const WORKSPACE_FIND_ACTIVE_HIGHLIGHT = "workspace-file-find-active";
+
+function getWorkspaceFindHighlightRegistry(): HighlightRegistry | null {
+  if (typeof CSS === "undefined" || typeof Highlight === "undefined" || !CSS.highlights) return null;
+  return CSS.highlights;
+}
+
+function clearWorkspaceFindHighlights(): void {
+  const registry = getWorkspaceFindHighlightRegistry();
+  registry?.delete(WORKSPACE_FIND_MATCH_HIGHLIGHT);
+  registry?.delete(WORKSPACE_FIND_ACTIVE_HIGHLIGHT);
+}
 
 function dirname(filePath: string): string {
   const slashIndex = filePath.lastIndexOf("/");
@@ -90,6 +103,113 @@ function useCanUseElectronFileActions(): boolean {
     subscribeToStaticClientValue,
     canUseElectronFileActions,
     getNoElectronFileActions,
+  );
+}
+
+function WorkspaceFileFind({
+  contentRef,
+  onClose,
+}: {
+  contentRef: React.RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const matchesRef = useRef<Range[]>([]);
+  const [query, setQuery] = useState("");
+  const [matchIndex, setMatchIndex] = useState(-1);
+  const [matchCount, setMatchCount] = useState(0);
+
+  const selectMatch = useCallback((index: number) => {
+    const match = matchesRef.current[index];
+    if (!match) return;
+    getWorkspaceFindHighlightRegistry()?.set(
+      WORKSPACE_FIND_ACTIVE_HIGHLIGHT,
+      new Highlight(match),
+    );
+    const element = match.startContainer.parentElement;
+    element?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setMatchIndex(index);
+  }, []);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    return clearWorkspaceFindHighlights;
+  }, []);
+
+  const updateQuery = useCallback((nextQuery: string) => {
+    setQuery(nextQuery);
+    const container = contentRef.current;
+    const normalizedQuery = nextQuery.toLocaleLowerCase();
+    if (!container || !normalizedQuery) {
+      matchesRef.current = [];
+      clearWorkspaceFindHighlights();
+      setMatchCount(0);
+      setMatchIndex(-1);
+      return;
+    }
+
+    const matches: Range[] = [];
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const text = node.textContent ?? "";
+      const normalizedText = text.toLocaleLowerCase();
+      let offset = normalizedText.indexOf(normalizedQuery);
+      while (offset >= 0) {
+        const range = document.createRange();
+        range.setStart(node, offset);
+        range.setEnd(node, offset + nextQuery.length);
+        matches.push(range);
+        offset = normalizedText.indexOf(normalizedQuery, offset + normalizedQuery.length);
+      }
+      node = walker.nextNode();
+    }
+    matchesRef.current = matches;
+    const registry = getWorkspaceFindHighlightRegistry();
+    registry?.set(WORKSPACE_FIND_MATCH_HIGHLIGHT, new Highlight(...matches));
+    registry?.delete(WORKSPACE_FIND_ACTIVE_HIGHLIGHT);
+    setMatchCount(matches.length);
+    if (matches.length > 0) selectMatch(0);
+    else setMatchIndex(-1);
+  }, [contentRef, selectMatch]);
+
+  const move = useCallback((direction: 1 | -1) => {
+    const count = matchesRef.current.length;
+    if (count === 0) return;
+    selectMatch((matchIndex + direction + count) % count);
+  }, [matchIndex, selectMatch]);
+
+  return (
+    <div className="absolute right-4 top-4 z-10 flex items-center gap-1 rounded-md border border-(--divider) bg-(--chat-bg) p-1 shadow-lg">
+      <Search className="ml-1 h-3.5 w-3.5 text-(--text-muted)" />
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={(event) => updateQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose();
+          if (event.key === "Enter") {
+            event.preventDefault();
+            move(event.shiftKey ? -1 : 1);
+          }
+        }}
+        className="h-7 w-44 bg-transparent px-1 text-xs text-(--text-primary) outline-none"
+        placeholder="Find in file"
+        aria-label="Find in file"
+      />
+      <span className="min-w-12 text-center text-[11px] text-(--text-muted)">
+        {query ? `${matchCount ? matchIndex + 1 : 0}/${matchCount}` : ""}
+      </span>
+      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => move(-1)} disabled={!matchCount} aria-label="Previous match">
+        <ChevronUp className="h-3.5 w-3.5" />
+      </Button>
+      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => move(1)} disabled={!matchCount} aria-label="Next match">
+        <ChevronDown className="h-3.5 w-3.5" />
+      </Button>
+      <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={onClose} aria-label="Close find">
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
   );
 }
 
@@ -253,6 +373,9 @@ export function WorkspaceCodeView({
     mode: "preview",
     path: "",
   });
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [monacoFindRequest, setMonacoFindRequest] = useState(0);
+  const markdownContentRef = useRef<HTMLDivElement>(null);
   const loadedContent =
     mode === "diff"
       ? (data as GitDiffData | null)?.diff ?? ""
@@ -285,7 +408,21 @@ export function WorkspaceCodeView({
   }, [path, sourceTarget]);
   const handleMarkdownViewModeChange = useCallback((nextMode: MarkdownViewMode) => {
     setMarkdownModeState({ mode: nextMode, path });
+    setIsFindOpen(false);
   }, [path]);
+  const handleMonacoFind = useCallback(() => {
+    // Monaco owns source/diff searching, including its match navigation UI.
+    setMonacoFindRequest((request) => request + 1);
+  }, []);
+  const handleFindShortcut = useCallback((event: React.KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f") return;
+    event.preventDefault();
+    if (shouldRenderMarkdownPreview) {
+      setIsFindOpen(true);
+      return;
+    }
+    handleMonacoFind();
+  }, [handleMonacoFind, shouldRenderMarkdownPreview]);
   // Bound to this view's root rather than window: with two split panels open,
   // only the panel the keystroke happened in must save.
   const handleSaveShortcut = useCallback((event: React.KeyboardEvent) => {
@@ -297,6 +434,17 @@ export function WorkspaceCodeView({
       onSave?.();
     }
   }, [dirty, editable, onSave, saving]);
+  const handleViewKeyDown = useCallback((event: React.KeyboardEvent) => {
+    handleSaveShortcut(event);
+    handleFindShortcut(event);
+  }, [handleFindShortcut, handleSaveShortcut]);
+  const handleViewMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    // Monaco focuses its hidden textarea during this same event. Taking focus
+    // back on the parent after it bubbles makes a file look read-only.
+    const target = event.target;
+    if (target instanceof Element && target.closest(".monaco-editor")) return;
+    event.currentTarget.focus({ preventScroll: true });
+  }, []);
 
   async function copyContent() {
     try {
@@ -374,7 +522,7 @@ export function WorkspaceCodeView({
 
   return (
     <>
-    <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)" onKeyDown={handleSaveShortcut}>
+    <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)" tabIndex={-1} onMouseDown={handleViewMouseDown} onKeyDown={handleViewKeyDown}>
       <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-(--chat-header-border) px-4">
         <div className="flex min-w-0 items-center gap-2">
           {mode === "diff" ? (
@@ -545,7 +693,7 @@ export function WorkspaceCodeView({
           </div>
         </div>
       ) : null}
-      <div className={shouldRenderMarkdownPreview ? "min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}>
+      <div className={shouldRenderMarkdownPreview ? "relative min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}>
         {imageRawUrl && fileData ? (
           <WorkspaceImageViewer
             key={imageRawUrl}
@@ -554,7 +702,7 @@ export function WorkspaceCodeView({
             size={fileData.size}
           />
         ) : shouldRenderMarkdownPreview ? (
-          <div className="mx-auto w-full max-w-5xl px-6 py-8 text-base">
+          <div ref={markdownContentRef} className="mx-auto w-full max-w-5xl px-6 py-8 text-base">
             <PreviewMarkdown content={content} resolveImageSrc={resolveMarkdownImageSrc} variant="document" />
           </div>
         ) : (
@@ -566,8 +714,12 @@ export function WorkspaceCodeView({
             path={path}
             readOnly={!editable}
             onChange={editable ? onDraftChange : undefined}
+            findRequest={monacoFindRequest}
           />
         )}
+        {shouldRenderMarkdownPreview && isFindOpen ? (
+          <WorkspaceFileFind contentRef={markdownContentRef} onClose={() => setIsFindOpen(false)} />
+        ) : null}
       </div>
     </div>
     {contextMenu && absolutePath ? (

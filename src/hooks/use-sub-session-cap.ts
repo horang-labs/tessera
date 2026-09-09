@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useSubSessionCapStateStore } from '@/stores/sub-session-cap-state-store';
 import type { TaskSession } from '@/types/task-entity';
 
 /** Sub-session rows a task shows before the rest collapse behind "show more". */
@@ -6,11 +7,12 @@ export const SUB_SESSION_VISIBLE_LIMIT = 5;
 
 /**
  * Caps a task's sub-session list so long-running worktrees don't stretch the
- * card down the whole column. Deliberately unpersisted: the cap comes back on
- * remount, which is what keeps the list from creeping back to full height.
+ * card down the whole column. Expansion is keyed by task so a Project change
+ * does not reset a list that the user already revealed.
  */
-export function useSubSessionCap(sessions: TaskSession[]) {
-  const [revealed, setRevealed] = useState(false);
+export function useSubSessionCap(taskId: string, sessions: TaskSession[]) {
+  const revealed = useSubSessionCapStateStore((state) => state.revealedTaskIds[taskId] ?? false);
+  const toggle = useSubSessionCapStateStore((state) => state.toggleRevealed);
   const isCapped = sessions.length > SUB_SESSION_VISIBLE_LIMIT;
 
   const visibleSessions = useMemo(
@@ -25,6 +27,6 @@ export function useSubSessionCap(sessions: TaskSession[]) {
     // limit would otherwise show a "show less" that collapses nothing.
     showToggle: isCapped,
     revealed,
-    toggle: () => setRevealed((current) => !current),
+    toggle: () => toggle(taskId),
   };
 }

@@ -91,6 +91,10 @@ export interface TabStoreState {
   projectTabStates: Record<string, ProjectTabState>;
   /** 모든 프로젝트에서 항상 보이는 전역 탭 상태. */
   globalTabState: ProjectTabState | null;
+  /** 프로젝트별 화면에서 전역/프로젝트 탭이 합쳐져 보이는 순서. */
+  tabOrderIdsByScope: Record<string, string[]>;
+  /** Last selected tab in each Project/All Projects view, independent of tab ownership. */
+  activeTabIdsByScope: Record<string, string>;
   /** 현재 활성 프로젝트 디렉토리. null이면 아직 프로젝트 미결정 상태. */
   currentProjectDir: string | null;
 }
@@ -165,6 +169,12 @@ export interface TabStoreActions {
   createTabWithSession(sessionId: string): void;
 
   /**
+   * 선택한 세션들을 하나의 고정 분할 탭으로 옮겨 열기.
+   * @returns 새 탭 ID. 세션이 없으면 null.
+   */
+  createTabWithSessions(sessionIds: string[]): string | null;
+
+  /**
    * 프리뷰 탭에서 세션 열기. 기존 프리뷰 탭이 있으면 세션만 교체, 없으면 새 프리뷰 탭 생성.
    * 채팅/세션 프리뷰 슬롯만 재사용한다.
    */
@@ -194,8 +204,9 @@ export interface TabStoreActions {
 
   /**
    * 세션이 없는 프로젝트 셸처럼 프로젝트 소유권을 직접 지정해야 하는 탭에 사용.
+   * null은 모든 프로젝트에서 보이는 전역 탭이다.
    */
-  setTabProject(tabId: string, projectDir: string): void;
+  setTabProject(tabId: string, projectDir: string | null): void;
 
   /**
    * 주어진 세션이 열려 있는 탭과 패널을 찾음 (BR-007).
@@ -312,6 +323,9 @@ export interface PersistedTabStoreV3 {
   projects: Record<string, { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] }>;
   /** 전역 탭 상태. 전역 탭이 없으면 null. */
   global: { tabs: PersistedTab[]; activeTabId: string; lruTabIds?: string[] } | null;
+  /** 프로젝트별 화면에서 전역/프로젝트 탭이 합쳐져 보이는 순서. */
+  tabOrderIdsByScope?: Record<string, string[]>;
+  activeTabIdsByScope?: Record<string, string>;
 }
 
 /** localStorage에 저장되는 탭 스토어 DTO (v1 | v2 | v3) */
