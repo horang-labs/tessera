@@ -12,6 +12,9 @@
  */
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { normalizeCwdForCliEnvironment, spawnCli } from '@/lib/cli/spawn-cli';
+import { isRunningInWsl } from '@/lib/cli/cli-exec';
+import { beginGitMutation } from '@/lib/git/git-read-cache';
+import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
 /**
@@ -99,6 +102,8 @@ export class GitCommandError extends Error {
 }
 
 export interface GitRunnerOptions {
+  /** Explicit read contract for path-free query adapters. Mutations never opt in. */
+  readOnly?: boolean;
   /** Overrides `DEFAULT_GIT_TIMEOUT_MS` for every call this runner makes. */
   timeoutMs?: number;
   /** Overrides `DEFAULT_GIT_MAX_OUTPUT_BYTES` for every call this runner makes. */
@@ -126,8 +131,8 @@ export type GitRunner = (
 ) => Promise<GitRunResult>;
 
 /**
- * Runs several Git commands behind one `sh -c`. Only worth it when each spawn
- * crosses the WSL bridge; the script itself is the caller's to build.
+ * Runs several Git commands behind one `sh -c`, avoiding repeated spawns
+ * from the server process. The script itself is the caller's to build.
  */
 export type GitShellRunner = (
   script: string,
@@ -138,12 +143,24 @@ export function createGitRunner(
   agentEnvironment: AgentEnvironment,
   runnerOptions?: GitRunnerOptions,
 ): GitRunner {
-  return (args, invocationOptions) => runCommand(
-    'git',
-    normalizeGitPathArgs(args, agentEnvironment),
-    agentEnvironment,
-    { ...runnerOptions, ...invocationOptions },
-  );
+  return async (args, invocationOptions) => {
+    const options = { ...runnerOptions, ...invocationOptions };
+    const finish = options.readOnly || isReadOnlyGitCommand(args) ? undefined : beginGitMutation();
+    try {
+      return await runCommand('git', normalizeGitPathArgs(args, agentEnvironment), agentEnvironment, options);
+    } finally {
+      finish?.();
+    }
+  };
+}
+
+/** Windows native has no POSIX shell contract; WSL supplies its own shell. */
+export function supportsGitShellBatch(
+  agentEnvironment: AgentEnvironment,
+  platform: NodeJS.Platform = getRuntimePlatform(),
+  hostedInWsl = platform === 'linux' && isRunningInWsl(),
+): boolean {
+  return agentEnvironment === 'wsl' || (platform !== 'win32' && !hostedInWsl);
 }
 
 export function createGitShellRunner(
@@ -152,12 +169,28 @@ export function createGitShellRunner(
 ): GitShellRunner {
   // The script is program text, not a path argument, so it is passed through
   // untranslated — the Git commands inside it name paths relative to `cwd`.
-  return (script, invocationOptions) => runCommand(
-    'sh',
-    ['-c', script],
-    agentEnvironment,
-    { ...runnerOptions, ...invocationOptions },
-  );
+  return async (script, invocationOptions) => {
+    const options = { ...runnerOptions, ...invocationOptions };
+    const finish = options.readOnly ? undefined : beginGitMutation();
+    try {
+      return await runCommand('sh', ['-c', script], agentEnvironment, options);
+    } finally {
+      finish?.();
+    }
+  };
+}
+
+/** Unknown verbs/aliases are conservatively treated as mutations. */
+function isReadOnlyGitCommand(args: string[]): boolean {
+  let index = 0;
+  while (args[index] === '-C' || args[index] === '-c') index += 2;
+  const [verb, ...rest] = args.slice(index);
+  if (['status', 'diff', 'rev-parse', 'rev-list', 'log', 'show', 'ls-files', 'for-each-ref', 'ls-remote', 'merge-base', 'check-ref-format'].includes(verb)) return true;
+  if (verb === 'config') return rest.some((arg) => ['--get', '--get-all', '--get-regexp', '--list', '-l'].includes(arg));
+  if (verb === 'remote') return rest.length === 0 || rest[0] === 'get-url' || rest[0] === '-v';
+  if (verb === 'branch') return rest.includes('--show-current') || rest.some((arg) => arg.startsWith('--format='));
+  if (verb === 'worktree') return rest[0] === 'list';
+  return false;
 }
 
 function normalizeGitPathArgs(args: string[], agentEnvironment: AgentEnvironment): string[] {

@@ -1,3 +1,4 @@
+import { readGitPanelSnapshot, readGitDiff } from './git-panel-cache';
 import { readFile } from "fs/promises";
 import path from "path";
 import {
@@ -20,9 +21,8 @@ import {
 } from "@/lib/git/worktree-diff-stats-cache";
 import {
   createGitRunner,
-  createGitShellRunner,
+  supportsGitShellBatch,
   GitCommandError,
-  looksLikeFilesystemPath,
 } from "@/lib/worktrees/git-runner";
 import {
   resolveGitEnvironment,
@@ -36,7 +36,8 @@ import {
 } from "@/lib/git/upstream-config";
 import type { GitActionTarget } from "@/lib/git/git-actions";
 import { getManagedWorktreeRelativeDisplayPath } from "@/lib/worktrees/managed";
-import { getRuntimePlatform } from "@/lib/system/runtime-platform";
+import { runGitQueryBatch, type GitBatchCommand, type GitBatchResult } from '@/lib/worktrees/git-query-batch';
+export { buildGitBatchScript } from '@/lib/worktrees/git-query-batch';
 import type { AgentEnvironment } from "@/lib/settings/types";
 import type {
   GitChangedFile,
@@ -146,102 +147,19 @@ async function runGitCommand(
   }
 }
 
-export interface GitBatchCommand {
-  key: string;
-  args: string[];
-}
-
-interface GitBatchResult {
-  stdout: string;
-}
-
-function quotePosixShellArg(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-export function buildGitBatchScript(commands: GitBatchCommand[]): string {
-  for (const command of commands) {
-    if (!/^[a-z][a-zA-Z0-9]*$/.test(command.key)) {
-      throw new Error(`Invalid git batch key: ${command.key}`);
-    }
-    // The runner translates path arguments per argument; it cannot reach inside
-    // this script. Batching is only ever used on a bridged setup, so a path
-    // smuggled in here would break in the one configuration that is hardest to
-    // notice. Keep the batch path-free and let the caller run it unbatched.
-    const pathArg = command.args.find(looksLikeFilesystemPath);
-    if (pathArg) {
-      throw new Error(`Batched git commands cannot carry a path argument: ${pathArg}`);
-    }
-  }
-
-  return [
-    "command -v base64 >/dev/null 2>&1 || exit 69",
-    "command -v tr >/dev/null 2>&1 || exit 69",
-    ...commands.flatMap((command) => [
-      `printf ${quotePosixShellArg(`${command.key}\tb64:`)}`,
-      [
-        "git",
-        ...command.args.map(quotePosixShellArg),
-        "2>/dev/null",
-        "| base64 | tr -d '\\r\\n'",
-      ].join(" "),
-      "printf '\\n'",
-    ]),
-  ].join("\n");
-}
-
-function parseGitBatchOutput(
-  raw: string,
-  commands: GitBatchCommand[],
-): Map<string, GitBatchResult> {
-  const expectedKeys = new Set(commands.map((command) => command.key));
-  const results = new Map<string, GitBatchResult>();
-
-  for (const line of raw.split("\n")) {
-    if (!line) continue;
-    const firstTab = line.indexOf("\t");
-    if (firstTab <= 0) {
-      throw new GitPanelError("command_failed", "Invalid batched git output", 500);
-    }
-
-    const key = line.slice(0, firstTab);
-    const encodedField = line.slice(firstTab + 1);
-    if (
-      !expectedKeys.has(key)
-      || !encodedField.startsWith("b64:")
-    ) {
-      throw new GitPanelError("command_failed", "Invalid batched git result", 500);
-    }
-    const encoded = encodedField.slice(4);
-
-    results.set(key, {
-      stdout: Buffer.from(encoded, "base64").toString("utf8").trimEnd(),
-    });
-  }
-
-  if (results.size !== expectedKeys.size) {
-    throw new GitPanelError("command_failed", "Incomplete batched git output", 500);
-  }
-
-  return results;
-}
-
 async function runGitBatch(
   commands: GitBatchCommand[],
   cwd: string,
   agentEnvironment: AgentEnvironment,
 ): Promise<Map<string, GitBatchResult>> {
-  const runGitShell = createGitShellRunner(agentEnvironment, {
-    timeoutMs: COMMAND_TIMEOUT_MS,
-    maxOutputBytes: BATCH_COMMAND_MAX_BUFFER,
-  });
-  let raw: string;
   try {
-    raw = (await runGitShell(buildGitBatchScript(commands), { cwd })).stdout;
+    return await runGitQueryBatch(commands, cwd, agentEnvironment, {
+      timeoutMs: COMMAND_TIMEOUT_MS,
+      maxOutputBytes: BATCH_COMMAND_MAX_BUFFER,
+    });
   } catch (error) {
     throw toGitPanelError(error, "git");
   }
-  return parseGitBatchOutput(raw, commands);
 }
 
 function getOptionalBatchOutput(
@@ -249,11 +167,7 @@ function getOptionalBatchOutput(
   key: string,
 ): string | null {
   const result = results.get(key);
-  return result?.stdout ?? null;
-}
-
-function shouldBatchGitCommands(agentEnvironment: AgentEnvironment): boolean {
-  return agentEnvironment === "wsl" && getRuntimePlatform() === "win32";
+  return result?.exitCode === 0 ? result.stdout : null;
 }
 
 async function runOptionalGitCommand(
@@ -780,9 +694,7 @@ function getChangedFilesBatchCommands(): GitBatchCommand[] {
 }
 
 /**
- * Exported so a test can run the bridged path's command set on any platform:
- * `shouldBatchGitCommands` is false everywhere except a Windows host with a WSL
- * agent, and this is the half of the panel read no ordinary test run reaches.
+ * Shared command set for every platform with a POSIX shell capability.
  */
 export function getGitPanelBatchCommands(): GitBatchCommand[] {
   return [
@@ -843,25 +755,6 @@ function requireBatchedRepoRoot(results: Map<string, GitBatchResult>): string {
   return repoRoot;
 }
 
-async function getBatchedChangedFiles(
-  workDir: string,
-  agentEnvironment: AgentEnvironment,
-): Promise<{ repoRoot: string; changedFiles: ChangedFilesResult }> {
-  const commands = getChangedFilesBatchCommands();
-  const results = await runGitBatch(commands, workDir, agentEnvironment);
-  const repoRoot = requireBatchedRepoRoot(results);
-  const statusRaw = getOptionalBatchOutput(results, "status");
-  const fileDiffStats = await computeWorktreeFileDiffStatsFromRaw(
-    workDir,
-    getOptionalBatchOutput(results, "numstat"),
-    getOptionalBatchOutput(results, "untracked"),
-  );
-  return {
-    repoRoot,
-    changedFiles: attachFileDiffStats(statusRaw, fileDiffStats),
-  };
-}
-
 async function getBatchedGitPanelSnapshot(
   workDir: string,
   agentEnvironment: AgentEnvironment,
@@ -869,6 +762,12 @@ async function getBatchedGitPanelSnapshot(
   const commands = getGitPanelBatchCommands();
   const results = await runGitBatch(commands, workDir, agentEnvironment);
   const repoRoot = requireBatchedRepoRoot(results);
+  const status = results.get('status');
+  if (status?.exitCode !== 0) {
+    throw toGitPanelError(new GitCommandError('command_failed', 'Failed to read git status', {
+      exitCode: status?.exitCode,
+    }), 'git status');
+  }
   const upstream = getOptionalBatchOutput(results, "upstream");
   const fileDiffStats = await computeWorktreeFileDiffStatsFromRaw(
     workDir,
@@ -903,7 +802,7 @@ async function getBatchedGitPanelSnapshot(
   };
 }
 
-async function getSeparateGitPanelSnapshot(
+export async function getSeparateGitPanelSnapshot(
   workDir: string,
   agentEnvironment: AgentEnvironment,
 ): Promise<GitPanelSnapshot> {
@@ -1000,10 +899,12 @@ async function getSeparateGitPanelSnapshot(
 export function getGitPanelSnapshot(
   workDir: string,
   agentEnvironment: AgentEnvironment,
+  userId?: string,
 ): Promise<GitPanelSnapshot> {
-  return shouldBatchGitCommands(agentEnvironment)
-    ? getBatchedGitPanelSnapshot(workDir, agentEnvironment)
-    : getSeparateGitPanelSnapshot(workDir, agentEnvironment);
+  return readGitPanelSnapshot(workDir, agentEnvironment, userId, () =>
+    supportsGitShellBatch(agentEnvironment)
+      ? getBatchedGitPanelSnapshot(workDir, agentEnvironment)
+      : getSeparateGitPanelSnapshot(workDir, agentEnvironment));
 }
 
 function ensurePathInsideRepo(repoRoot: string, relativePath: string): string {
@@ -1120,7 +1021,7 @@ async function buildGitPanelData(
     recentCommitsRaw,
     detachedHead,
     headShaRaw,
-  } = await getGitPanelSnapshot(workDir, agentEnvironment);
+  } = await getGitPanelSnapshot(workDir, agentEnvironment, userId);
   const prContext = sessionContext.taskId
     ? dbTasks.getTaskPrSyncContext(sessionContext.taskId)
     : null;
@@ -1204,7 +1105,7 @@ async function buildGitPanelData(
     diffStats: sessionContext.worktreeBranch
       ? (userId
         ? getCachedDiffStatsRevalidating(workDir, userId)
-        : getCachedDiffStats(workDir)) ?? undefined
+        : getCachedDiffStats(workDir, userId)) ?? undefined
       : undefined,
     prStatus: prContext?.prStatus ?? bareSessionPr?.prStatus ?? worktreePr?.prStatus,
     prStatusKnown:
@@ -1232,13 +1133,7 @@ export async function getGitChangedFilesData(
 ): Promise<GitChangedFilesData> {
   const workDir = await resolveSessionWorkDir(sessionId);
   const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
-  let changedFiles: ChangedFilesResult;
-  if (shouldBatchGitCommands(agentEnvironment)) {
-    changedFiles = (await getBatchedChangedFiles(workDir, agentEnvironment)).changedFiles;
-  } else {
-    await resolveRepoRoot(workDir, agentEnvironment);
-    changedFiles = await getChangedFiles(workDir, agentEnvironment);
-  }
+  const { changedFiles } = await getGitPanelSnapshot(workDir, agentEnvironment, userId);
 
   return {
     sessionId,
@@ -1360,8 +1255,19 @@ async function getGitDiffDataForWorkDir(
   userId?: string,
 ): Promise<GitDiffData> {
   const agentEnvironment = await resolveGitEnvironment(gitEnvironmentSourceFor(workDir, userId));
-  const repoRoot = await resolveRepoRoot(workDir, agentEnvironment);
-  const changedFiles = await getChangedFiles(workDir, agentEnvironment);
+  const data = await readGitDiff(workDir, agentEnvironment, userId, relativePath, () =>
+    computeGitDiffData(targetId, workDir, relativePath, agentEnvironment, userId));
+  return { ...data, sessionId: targetId };
+}
+
+async function computeGitDiffData(
+  targetId: string,
+  workDir: string,
+  relativePath: string,
+  agentEnvironment: AgentEnvironment,
+  userId?: string,
+): Promise<GitDiffData> {
+  const { repoRoot, changedFiles } = await getGitPanelSnapshot(workDir, agentEnvironment, userId);
   const fileEntry = changedFiles.files.find((file) => file.path === relativePath);
 
   if (!fileEntry) {

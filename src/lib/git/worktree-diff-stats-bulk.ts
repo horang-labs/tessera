@@ -4,7 +4,7 @@ import {
   scheduleRecompute,
 } from './worktree-diff-stats-cache';
 import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
-import { crossEnvironmentFilesystemPathKey } from '@/lib/filesystem/path-equivalence';
+import { normalizeGitReadPath } from './git-read-cache';
 
 interface BulkDiffStatsDependencies {
   readCached: typeof getCachedDiffStats;
@@ -26,16 +26,17 @@ const defaultDependencies: BulkDiffStatsDependencies = {
 export function getCachedBulk(
   workDirs: Array<string | undefined>,
   readCached: typeof getCachedDiffStats = getCachedDiffStats,
+  userId?: string,
 ): Map<string, WorktreeDiffStats | null> {
   const result = new Map<string, WorktreeDiffStats | null>();
   const visited = new Set<string>();
 
   for (const workDir of workDirs) {
     if (!workDir) continue;
-    const key = crossEnvironmentFilesystemPathKey(workDir);
+    const key = normalizeGitReadPath(workDir);
     if (visited.has(key)) continue;
     visited.add(key);
-    const cached = readCached(workDir);
+    const cached = readCached(workDir, userId);
     if (cached !== undefined) result.set(workDir, cached);
   }
 
@@ -58,14 +59,14 @@ export function getCachedOrScheduleBulk(
 
   for (const wd of workDirs) {
     if (!wd) continue;
-    const key = crossEnvironmentFilesystemPathKey(wd);
+    const key = normalizeGitReadPath(wd);
     if (visited.has(key)) continue;
     visited.add(key);
 
-    const cached = dependencies.readCached(wd);
+    const cached = dependencies.readCached(wd, userId);
     if (cached !== undefined) {
       result.set(wd, cached);
-      if (!dependencies.isStale(wd)) continue;
+      if (!dependencies.isStale(wd, Date.now(), userId)) continue;
     }
     dependencies.schedule(wd, userId);
   }

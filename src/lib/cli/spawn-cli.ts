@@ -8,6 +8,7 @@
  *
  * Platform/path probing details live in spawn-cli-runtime.ts.
  */
+import { invalidateGitReads } from '@/lib/git/git-read-cache';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { SettingsManager } from '../settings/manager';
 import type { AgentEnvironment } from '../settings/types';
@@ -54,6 +55,7 @@ export async function getAgentEnvironment(userId?: string): Promise<AgentEnviron
 
 /** Invalidate the cached environment (call when settings change). */
 export function invalidateAgentEnvironmentCache(userId?: string): void {
+  invalidateGitReads();
   if (userId) {
     spawnCliCache.agentEnvironmentByUserId.delete(userId);
   } else {
