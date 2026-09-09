@@ -54,7 +54,8 @@ import {
   resolveTerminalPanelAtPoint,
 } from './web-contents-context-menu';
 import type { PanelSplitPlacement } from '../src/lib/panel/panel-split';
-import { isLinuxWaylandSession } from '../src/lib/terminal/linux-wayland-rendering';
+import { onWindowFirstShow } from './window-first-show';
+import { isLinuxWaylandSession, linuxWaylandImeSwitches } from '../src/lib/terminal/linux-wayland-rendering';
 
 // Must run before getTesseraDataPath() or app.requestSingleInstanceLock().
 // Normal builds do not set the test instance env and keep the production path.
@@ -718,6 +719,18 @@ const linuxWaylandSession = isLinuxWaylandSession({
 });
 if (linuxWaylandSession) {
   process.env.TESSERA_LINUX_WAYLAND = '1';
+}
+
+// XWayland/IBus can deliver Korean preedit updates but lose their commits.
+// Use the native input path on Wayland; explicit X11 choices remain supported.
+for (const [name, value] of linuxWaylandImeSwitches({
+  platform: process.platform,
+  env: process.env,
+  ozonePlatform: app.commandLine.getSwitchValue('ozone-platform'),
+})) {
+  if (name === 'ozone-platform' || !app.commandLine.hasSwitch(name)) {
+    app.commandLine.appendSwitch(name, value);
+  }
 }
 
 if (process.env.TESSERA_DISABLE_GPU === '1') {
@@ -1557,9 +1570,10 @@ function createWindow(port: number, restoredState?: RestorableWindowState): Brow
   const url = `http://localhost:${port}`;
   win.loadURL(url);
 
-  win.once('ready-to-show', () => {
+  onWindowFirstShow(win, app.commandLine.getSwitchValue('ozone-platform') === 'wayland', () => {
     applyRestoredWindowMode(win, restoredState);
     win.show();
+    clearTimeout(showTimeout);
   });
 
   // Fallback: force-show window after 15s even if page fails to load
@@ -1572,7 +1586,7 @@ function createWindow(port: number, restoredState?: RestorableWindowState): Brow
     }
   }, 15_000);
 
-  win.once('ready-to-show', () => clearTimeout(showTimeout));
+  win.once('closed', () => clearTimeout(showTimeout));
 
   // Log renderer failures
   win.webContents.on('did-fail-load', (_e, code, desc) => {
@@ -1677,7 +1691,7 @@ function createPopoutWindow(
   const url = `http://localhost:${port}${route}`;
   win.loadURL(url);
 
-  win.once('ready-to-show', () => {
+  onWindowFirstShow(win, app.commandLine.getSwitchValue('ozone-platform') === 'wayland', () => {
     applyRestoredWindowMode(win, restoredState);
     win.show();
   });
