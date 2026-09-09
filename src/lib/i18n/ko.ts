@@ -349,6 +349,8 @@ export const ko: I18nMessages = {
     model: {
       label: '기본 모델',
       reasoningEffortLabel: 'Thinking 강도',
+      searchModels: '모델 검색…',
+      noMatchingModels: '일치하는 모델이 없습니다',
       loadingOptions: '프로바이더 옵션을 불러오는 중...',
       providerDefaultsTitle: '프로바이더별 기본값',
       providerDefaultsHint: '새 세션을 시작할 때 사용할 모델과 Thinking 강도를 지정합니다. GUI 세션 컨트롤과 동일한 선택지가 표시됩니다.',
