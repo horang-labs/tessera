@@ -710,7 +710,7 @@ function SubSessionRow({
           className="min-w-0 flex-1 border-b border-(--accent) bg-transparent text-[0.75rem] text-(--sidebar-text-active) outline-none"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate pr-8">{sess.title}</span>
+        <span className="min-w-0 flex-1 truncate">{sess.title}</span>
       )}
 
       {!isRenaming && (
@@ -720,7 +720,7 @@ function SubSessionRow({
         // carries them via onContextMenu), and the kebab itself is always
         // visible. Hover on touch is unreliable and, when it does fire on tap,
         // races the row's own onClick that opens the session.
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5 sm:absolute sm:inset-y-0 sm:right-2 sm:z-10">
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               telemetryControl="task.stop"
