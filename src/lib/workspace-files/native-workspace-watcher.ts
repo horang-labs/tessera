@@ -8,6 +8,11 @@ export function workspaceWatcherOptions(platform = process.platform): Options & 
   const separator = platform === 'win32' ? '[\\\\/]' : '/';
   const component = platform === 'win32' ? '[^\\\\/]+' : '[^/]+';
   return {
+    // Parcel's default probes Watchman through _popen on Windows, briefly
+    // opening a console. Select the OS backend before that probe can run.
+    backend: platform === 'win32' ? 'windows'
+      : platform === 'darwin' ? 'fs-events'
+        : platform === 'linux' ? 'inotify' : undefined,
     // Keep the named entry observable: it may be a regular file called
     // "build". Exclude descendants, pruning generated directory contents.
     ignoreGlobs: [`^(?:${component}${separator})*(?:${alternatives})${separator}.*$`],
