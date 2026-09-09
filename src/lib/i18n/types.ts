@@ -324,6 +324,8 @@ export interface I18nMessages {
     model: {
       label: string;
       reasoningEffortLabel: string;
+      searchModels: string;
+      noMatchingModels: string;
       loadingOptions: string;
       providerDefaultsTitle: string;
       providerDefaultsHint: string;
