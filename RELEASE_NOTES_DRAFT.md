@@ -6,7 +6,7 @@ Review generated images, work across sessions, and manage projects across branch
 
 - **Projects & Worktrees** — See your project's Sessions across branches and switch branches without leaving Tessera
 
-  ![Filter Sessions by branch](https://raw.githubusercontent.com/horang-labs/tessera/56e3b2de/docs/assets/releases/v0.2.4/branch-filter.png)
+  ![Filter Sessions by branch](https://raw.githubusercontent.com/horang-labs/tessera/04673461/docs/assets/releases/v0.2.4/branch-filter.png)
 
   ![Choose a checkout branch](https://raw.githubusercontent.com/horang-labs/tessera/56e3b2de/docs/assets/releases/v0.2.4/branch-switch.png)
 
