@@ -6,17 +6,17 @@ Review generated images, work across sessions, and manage projects across branch
 
 - **Projects & Worktrees** — See your project's Sessions across branches and switch branches without leaving Tessera
 
-  ![Filter Sessions by branch](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/releases/v0.2.4/branch-filter.png)
+  ![Filter Sessions by branch](https://raw.githubusercontent.com/horang-labs/tessera/56e3b2de/docs/assets/releases/v0.2.4/branch-filter.png)
 
-  ![Choose a checkout branch](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/releases/v0.2.4/branch-switch.png)
+  ![Choose a checkout branch](https://raw.githubusercontent.com/horang-labs/tessera/56e3b2de/docs/assets/releases/v0.2.4/branch-switch.png)
 
 - **Session creation** — Start a new Session in a Worktree you already use
 
-  ![Create a Session in an existing Worktree](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/releases/v0.2.4/existing-worktree-session.png)
+  ![Create a Session in an existing Worktree](https://raw.githubusercontent.com/horang-labs/tessera/56e3b2de/docs/assets/releases/v0.2.4/existing-worktree-session.png)
 
 - **Images** — See what you asked Codex to create, the images it used, and the results together. Download images or drag them into your next prompt
 
-  ![Generated result and its input image beside a Codex terminal Session](https://raw.githubusercontent.com/horang-labs/tessera/dev/docs/assets/releases/v0.2.4/images-input-and-result.png)
+  ![Generated result and its input image beside a Codex terminal Session](https://raw.githubusercontent.com/horang-labs/tessera/56e3b2de/docs/assets/releases/v0.2.4/images-input-and-result.png)
 
 - **Split views** — Select several Sessions and work with them side by side
 - **Linux** — Improved typing experience on Linux
