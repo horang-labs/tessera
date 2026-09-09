@@ -336,8 +336,9 @@ jobs:
             exit 1
           fi
 
-          if [[ ! -s RELEASE_NOTES_DRAFT.md ]] || grep -Fq 'vNEXT' RELEASE_NOTES_DRAFT.md; then
-            echo "RELEASE_NOTES_DRAFT.md is missing, empty, or still contains vNEXT."
+          release_notes="docs/releases/${RELEASE_TAG}.md"
+          if [[ ! -s "$release_notes" ]] || grep -Fq 'vNEXT' "$release_notes"; then
+            echo "$release_notes is missing, empty, or still contains vNEXT."
             exit 1
           fi
 
@@ -356,7 +357,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --draft \
               --title "$RELEASE_TAG" \
-              --notes-file RELEASE_NOTES_DRAFT.md \
+              --notes-file "$release_notes" \
               "${release_args[@]}"
           fi
 
