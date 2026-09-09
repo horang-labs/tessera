@@ -115,6 +115,27 @@ test('All Projects collapses disposable New Tabs and keeps occupied tabs through
   assert.equal(useTabStore.getState().tabs.length, 3);
 });
 
+test('All Projects hides inactive New Tabs between sessions through reload and project round trips', () => {
+  resetWorkspace();
+  const sessionA = openSharedSession('project-a');
+  useTabStore.getState().openNewTab();
+  const sessionC = openSharedSession('project-c');
+
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  assert.deepEqual(useTabStore.getState().tabs.map((tab) => tab.id), [sessionA, sessionC]);
+  assert.equal(useTabStore.getState().activeTabId, sessionC);
+
+  useTabStore.getState().persistToLocalStorage();
+  resetWorkspace(false);
+  useTabStore.getState().restoreFromLocalStorage();
+  assert.deepEqual(useTabStore.getState().tabs.map((tab) => tab.id), [sessionA, sessionC]);
+
+  useTabStore.getState().switchProject('project-a');
+  assert.ok(useTabStore.getState().tabs.some((tab) => tab.id === sessionA));
+  useTabStore.getState().switchProject(ALL_PROJECTS_SENTINEL);
+  assert.deepEqual(useTabStore.getState().tabs.map((tab) => tab.id), [sessionA, sessionC]);
+});
+
 test('All Projects keeps named, split, worktree and terminal surfaces when collapsing New Tabs', () => {
   resetWorkspace();
   useTabStore.getState().switchProject('project-a');

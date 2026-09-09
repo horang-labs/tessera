@@ -317,7 +317,8 @@ function getVisibleTabs(
   if (!isAllProjectsScope(projectDir)) return ordered;
 
   // Empty start screens are disposable placeholders, not separate work.
-  // Keep one in All Projects; named, split, and terminal tabs stay independent.
+  // Keep only the selected placeholder when work exists, or one for an empty workspace.
+  // Named, split, and terminal tabs stay independent.
   const isEmpty = (tab: Tab) => {
     const data = tab.projectDir === null
       ? globalState?.tabPanelSnapshots?.[tab.id]
@@ -325,7 +326,8 @@ function getVisibleTabs(
     return isPristineEmptyTabData(tab, data);
   };
   const emptyTabs = ordered.filter(isEmpty);
-  const retained = emptyTabs.find((tab) => tab.id === preferredActiveTabId) ?? emptyTabs[0];
+  const retained = emptyTabs.find((tab) => tab.id === preferredActiveTabId)
+    ?? (emptyTabs.length === ordered.length ? emptyTabs[0] : undefined);
   const discarded = new Set(emptyTabs.filter((tab) => tab !== retained).map((tab) => tab.id));
   return ordered.filter((tab) => !discarded.has(tab.id));
 }
