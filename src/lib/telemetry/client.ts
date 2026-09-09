@@ -28,6 +28,9 @@ export type TelemetryEventName =
   | 'project_import_result'
   | 'git_panel_opened'
   | 'git_panel_tab_changed'
+  | 'image_generation_card_created'
+  | 'project_branch_filter_changed'
+  | 'worktree_branch_switch_result'
   | 'git_file_opened'
   | 'git_action_triggered'
   | 'ai_title_generation_result'
@@ -87,6 +90,9 @@ const allowedEvents = new Set<TelemetryEventName>([
   'project_import_result',
   'git_panel_opened',
   'git_panel_tab_changed',
+  'image_generation_card_created',
+  'project_branch_filter_changed',
+  'worktree_branch_switch_result',
   'git_file_opened',
   'git_action_triggered',
   'ai_title_generation_result',
@@ -115,6 +121,7 @@ const allowedProperties = new Set([
   'environment',
   'error_code',
   'file_state',
+  'filter_mode',
   'changed_file_count',
   'github_available',
   'has_collection',
@@ -511,6 +518,7 @@ export function sanitizeTelemetryProperties(
 
     if (key === 'source' && (typeof value !== 'string' || !allowedSources.has(value))) continue;
     if (key === 'view' && (typeof value !== 'string' || !allowedViews.has(value))) continue;
+    if (key === 'filter_mode' && value !== 'all' && value !== 'branch') continue;
     if (key === 'tab' && (typeof value !== 'string' || !allowedGitTabs.has(value))) continue;
     if (key === 'action' && (typeof value !== 'string' || !allowedGitActions.has(value))) continue;
     if (key === 'target' && (typeof value !== 'string' || !allowedGitTargets.has(value))) continue;
