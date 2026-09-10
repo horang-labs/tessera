@@ -742,6 +742,7 @@ export const ja: I18nMessages = {
     imageFallback: '[画像]',
     tabList: 'タブ一覧',
     newTab: '新しいタブを追加',
+    mergeTabs: '結合 ({{count}})',
     newTabDefault: '新しいタブ',
     openGitPanel: '右側の Git パネルを開く',
     closeGitPanel: '右側の Git パネルを閉じる',

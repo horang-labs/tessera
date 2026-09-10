@@ -719,6 +719,7 @@ export interface I18nMessages {
     imageFallback: string;
     tabList: string;
     newTab: string;
+    mergeTabs: string;
     newTabDefault: string;
     openGitPanel: string;
     closeGitPanel: string;
