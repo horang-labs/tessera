@@ -349,6 +349,8 @@ export const zh: I18nMessages = {
     model: {
       label: '默认模型',
       reasoningEffortLabel: 'Thinking 强度',
+      searchModels: '搜索模型…',
+      noMatchingModels: '没有匹配的模型',
       loadingOptions: '正在加载 Provider 选项...',
       providerDefaultsTitle: 'Provider 默认值',
       providerDefaultsHint: '选择新会话启动时使用的模型和 Thinking 强度。选项与 GUI 会话控件中显示的相同。',

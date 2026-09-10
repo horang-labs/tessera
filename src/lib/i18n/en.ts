@@ -349,6 +349,8 @@ export const en: I18nMessages = {
     model: {
       label: 'Default Model',
       reasoningEffortLabel: 'Thinking Intensity',
+      searchModels: 'Search models…',
+      noMatchingModels: 'No matching models',
       loadingOptions: 'Loading provider options...',
       providerDefaultsTitle: 'Provider defaults',
       providerDefaultsHint: 'Choose the model and thinking intensity used when a new session starts. These are the same choices shown in the GUI session controls.',

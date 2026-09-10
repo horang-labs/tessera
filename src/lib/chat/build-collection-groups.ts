@@ -64,7 +64,18 @@ export function filterCollectionGroupsByRunning(groups: CollectionGroupData[]): 
   return groups
     .map((group) => ({
       collectionId: group.collectionId,
-      tasks: group.tasks.filter(taskHasVisibleRuntimeSession),
+      // A Task may contain both running and stopped child Sessions. The
+      // Running view must project the children as well as the parent Task;
+      // otherwise Shift range selection can traverse stopped rows that are
+      // absent from the filtered surface.
+      tasks: group.tasks
+        .map((task) => ({
+          ...task,
+          sessions: task.sessions.filter((session) =>
+            resolveSessionRuntimePresentation(session).showRunning
+          ),
+        }))
+        .filter((task) => task.sessions.length > 0),
       chats: group.chats.filter((session) =>
         resolveSessionRuntimePresentation(session).showRunning
       ),

@@ -349,6 +349,8 @@ export const ja: I18nMessages = {
     model: {
       label: 'デフォルトモデル',
       reasoningEffortLabel: 'Thinking 強度',
+      searchModels: 'モデルを検索…',
+      noMatchingModels: '一致するモデルがありません',
       loadingOptions: 'プロバイダー設定を読み込み中...',
       providerDefaultsTitle: 'プロバイダーごとのデフォルト',
       providerDefaultsHint: '新しいセッションの開始時に使うモデルと Thinking 強度を選択します。GUI セッションコントロールと同じ選択肢が表示されます。',
