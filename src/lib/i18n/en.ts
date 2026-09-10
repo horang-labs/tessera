@@ -740,6 +740,7 @@ export const en: I18nMessages = {
     imageFallback: '[image]',
     tabList: 'Tab list',
     newTab: 'Add new tab',
+    mergeTabs: 'Merge ({{count}})',
     newTabDefault: 'New Tab',
     openGitPanel: 'Open right Git panel',
     closeGitPanel: 'Close right Git panel',

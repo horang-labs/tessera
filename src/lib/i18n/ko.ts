@@ -742,6 +742,7 @@ export const ko: I18nMessages = {
     imageFallback: '[이미지]',
     tabList: '탭 목록',
     newTab: '새 탭 추가',
+    mergeTabs: '합치기 ({{count}})',
     newTabDefault: '새 탭',
     openGitPanel: '오른쪽 Git 패널 열기',
     closeGitPanel: '오른쪽 Git 패널 닫기',

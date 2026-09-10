@@ -740,6 +740,7 @@ export const zh: I18nMessages = {
     imageFallback: '[图片]',
     tabList: '标签列表',
     newTab: '添加新标签',
+    mergeTabs: '合并 ({{count}})',
     newTabDefault: '新标签',
     openGitPanel: '打开右侧 Git 面板',
     closeGitPanel: '关闭右侧 Git 面板',
