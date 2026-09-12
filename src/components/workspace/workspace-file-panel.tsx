@@ -54,6 +54,7 @@ import {
 import { WorkspaceInlineInputRow } from "@/components/workspace/workspace-inline-input-row";
 import { useWorkspaceInlineInput } from "@/components/workspace/use-workspace-inline-input";
 import {
+  isRapidDirectoryRenameDoubleClick,
   shouldOpenOnRowClick,
   shouldToggleDirectoryOnClick,
 } from "@/components/workspace/workspace-inline-input-state";
@@ -221,6 +222,11 @@ export function WorkspaceFilePanel({
   const peekTarget = useWorkspacePeekStore((state) => state.target);
   const previousPeekTargetRef = useRef(peekTarget);
   const previousFileListTargetKeyRef = useRef(targetKey);
+  const directoryRenameDoubleClickRef = useRef<{
+    path: string;
+    qualified: boolean;
+    timestamp: number;
+  } | null>(null);
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -553,12 +559,22 @@ export function WorkspaceFilePanel({
     toggleStoredPath(targetKey, path);
   }
 
-  /**
-   * Toggle on the first click with no double-click delay. Chromium marks the
-   * second click with detail > 1, so it is dropped instead of toggling back.
-  */
+  /** Keep native double-click support, but use a tighter app-level threshold. */
   function handleDirectoryClick(event: MouseEvent, path: string) {
-    if (!shouldToggleDirectoryOnClick(event.detail)) return;
+    const previousClick = directoryRenameDoubleClickRef.current;
+    const qualifiedDoubleClick = isRapidDirectoryRenameDoubleClick({
+      clickCount: event.detail,
+      path,
+      previousPath: previousClick?.path,
+      previousTimestamp: previousClick?.timestamp,
+      timestamp: event.timeStamp,
+    });
+    directoryRenameDoubleClickRef.current = {
+      path,
+      qualified: qualifiedDoubleClick,
+      timestamp: event.timeStamp,
+    };
+    if (!shouldToggleDirectoryOnClick(event.detail, qualifiedDoubleClick)) return;
     toggleDirectory(path);
   }
 
@@ -712,9 +728,11 @@ export function WorkspaceFilePanel({
             />
             <FolderIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
             <span
-              // The double-click-to-rename target is the name text alone.
+              // The name alone owns rename, with a tighter threshold than the
+              // browser's native double-click setting.
               onDoubleClick={(event) => {
                 if (!canMutate) return;
+                if (!directoryRenameDoubleClickRef.current?.qualified) return;
                 event.stopPropagation();
                 beginRename(node);
               }}

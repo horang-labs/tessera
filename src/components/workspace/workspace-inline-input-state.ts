@@ -17,13 +17,39 @@ export type WorkspaceInlineSubmitIntent =
   /** Nothing to ask the server for: close the input and touch no network. */
   | { kind: "cancel" };
 
+export const DIRECTORY_RENAME_DOUBLE_CLICK_MS = 300;
+
+/** Whether two clicks qualify as the deliberately fast folder-rename gesture. */
+export function isRapidDirectoryRenameDoubleClick({
+  clickCount,
+  path,
+  previousPath,
+  previousTimestamp,
+  timestamp,
+}: {
+  clickCount: number;
+  path: string;
+  previousPath: string | undefined;
+  previousTimestamp: number | undefined;
+  timestamp: number;
+}): boolean {
+  return clickCount === 2
+    && previousPath === path
+    && previousTimestamp !== undefined
+    && timestamp >= previousTimestamp
+    && timestamp - previousTimestamp <= DIRECTORY_RENAME_DOUBLE_CLICK_MS;
+}
+
 /**
- * The first click toggles immediately. Chromium reports the second click of a
- * double-click with detail > 1; dropping that duplicate prevents a folder from
- * toggling straight back before the rename handler runs.
+ * A qualified rapid double-click reserves its second click for rename. A slow
+ * second click is still an ordinary expand/collapse action even if Chromium
+ * groups it into a native `dblclick` gesture.
  */
-export function shouldToggleDirectoryOnClick(clickCount: number): boolean {
-  return clickCount <= 1;
+export function shouldToggleDirectoryOnClick(
+  clickCount: number,
+  isQualifiedDoubleClick = false,
+): boolean {
+  return clickCount !== 2 || !isQualifiedDoubleClick;
 }
 
 /**
