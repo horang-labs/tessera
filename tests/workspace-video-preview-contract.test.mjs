@@ -19,12 +19,8 @@ test('workspace video preview remains a read-only native video surface', () => {
   assert.match(videoViewer, /\bplaysInline\b/);
   assert.match(videoViewer, /preload="metadata"/);
   assert.doesNotMatch(videoViewer, /\bautoPlay\b/);
-  assert.match(videoViewer, /MIN_VIDEO_ZOOM = 0\.5/);
-  assert.match(videoViewer, /MAX_VIDEO_ZOOM = 4/);
-  assert.match(videoViewer, /overflow-auto/);
-  assert.match(videoViewer, /style=\{fittedSize \? \{ width: fittedSize\.width, height: fittedSize\.height \}/);
-  assert.match(videoViewer, /aria-label="Zoom in video"/);
-  assert.match(videoViewer, /aria-label="Fit video to available area"/);
+  assert.match(videoViewer, /max-h-full max-w-full object-contain/);
+  assert.doesNotMatch(videoViewer, /ZoomIn|ZoomOut|setZoom|ResizeObserver/);
 });
 
 test('workspace video preview isolates controls and pauses when hidden or unmounted', () => {
