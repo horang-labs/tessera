@@ -1,6 +1,7 @@
 import type { ServerTransportMessage } from '../ws/message-types';
 import type { CliEnvironment } from '../cli/cli-exec';
 import logger from '../logger';
+import { startLatencySpan } from '../terminal/terminal-server-latency';
 import type { ProviderRateLimitsSnapshot } from '../status-display/types';
 import { cliProviderRegistry } from '../cli/providers/registry';
 import type { CliProvider } from '../cli/providers/provider-contract';
@@ -101,20 +102,27 @@ export class RateLimitPoller {
   }
 
   private async poll(): Promise<void> {
-    const environment = await this.resolveEnvironment();
-    const providers = this.dependencies.listProviders();
-    const results = await Promise.allSettled(
-      providers.map((provider) => provider.fetchRateLimits({ environment })),
-    );
+    const endLatency = startLatencySpan('rate-limit-poll');
+    try {
+      const environment = await this.resolveEnvironment();
+      const providers = this.dependencies.listProviders();
+      const results = await Promise.allSettled(
+        providers.map(async (provider) => {
+          const endProvider = startLatencySpan('rate-limit-provider', provider.getProviderId());
+          try { return await provider.fetchRateLimits({ environment }); }
+          finally { endProvider(); }
+        }),
+      );
 
-    for (const [index, result] of results.entries()) {
-      const providerId = providers[index].getProviderId();
-      if (result.status === 'fulfilled') {
-        if (result.value) this.publish(result.value);
-      } else {
-        logger.error({ error: result.reason, providerId }, 'Rate limit poll error');
+      for (const [index, result] of results.entries()) {
+        const providerId = providers[index].getProviderId();
+        if (result.status === 'fulfilled') {
+          if (result.value) this.publish(result.value);
+        } else {
+          logger.error({ error: result.reason, providerId }, 'Rate limit poll error');
+        }
       }
-    }
+    } finally { endLatency(); }
   }
 }
 

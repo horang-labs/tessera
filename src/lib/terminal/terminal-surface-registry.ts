@@ -1,5 +1,7 @@
 'use client';
 
+import { PTY_LATENCY_ENABLED, traceTerminalLatency } from './terminal-latency-diagnostics';
+
 import type { ITheme, IUnicodeHandling } from '@xterm/xterm';
 import { shouldUseLinuxTerminalIme } from './terminal-ime-platform';
 import { v4 as uuidv4 } from 'uuid';
@@ -1126,6 +1128,7 @@ export class TerminalSurface {
         return false;
       });
       this.inputDisposable = terminal.onData((data) => {
+        traceTerminalLatency('xterm-input', this.surfaceId, data.length);
         if (this.terminalInputOriginArmed) {
           this.terminalInputOriginArmed = false;
           this.notifyTerminalInput();
@@ -1500,6 +1503,8 @@ export class TerminalSurface {
   }
 
   private applyTerminalOutput(data: string): void {
+    const diagnosticStart = PTY_LATENCY_ENABLED ? performance.now() : 0;
+    traceTerminalLatency('output-received', this.surfaceId, data.length);
     const restorePoint = this.scrollController?.captureRestorePoint();
     const shouldRecoverRenderer = this.backgroundSgrDetector.consume(data);
     if (!this.terminal) return;
@@ -1507,6 +1512,7 @@ export class TerminalSurface {
       forceViewportRefresh: true,
       shouldRefreshViewportSynchronously: () => !this.webglAddon,
       onParsed: () => {
+        if (PTY_LATENCY_ENABLED) traceTerminalLatency('output-parsed', this.surfaceId, data.length, performance.now() - diagnosticStart);
         if (restorePoint) this.scrollController?.restore(restorePoint);
         this.scheduleScrollRebuildSettle();
         this.scheduleSurfaceScrollStateSync();

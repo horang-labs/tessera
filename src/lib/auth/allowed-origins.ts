@@ -26,7 +26,9 @@ export async function getAllowedOrigins(): Promise<Set<string>> {
 
   // Concurrent worktree dev servers share machine settings. Keep each explicit
   // browser origin process-local so configuring one port cannot disconnect another.
-  if (process.env.NODE_ENV === 'development' && process.env.TESSERA_DEV_ORIGIN) {
+  // Also support an explicitly opted-out local production-mode preview.
+  if ((process.env.NODE_ENV === 'development' || process.env.TESSERA_PRODUCTION_DB === '0')
+    && process.env.TESSERA_DEV_ORIGIN) {
     try {
       const devAddress = normalizeAdvertisedAddress(process.env.TESSERA_DEV_ORIGIN);
       if (devAddress) origins.add(devAddress.origin);

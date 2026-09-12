@@ -15,6 +15,7 @@ import { skillAnalysisService } from '../skill/skill-analysis-service';
 import { buildClaudeRateLimitSnapshot } from '../status-display/rate-limit-snapshots';
 import { rateLimitPoller } from '../rate-limit/poller';
 import logger from '../logger';
+import { SERVER_PTY_LATENCY_ENABLED, traceServerLatency } from '../terminal/terminal-server-latency';
 import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
 import {
@@ -558,11 +559,16 @@ export class WebSocketServer {
    * Handle incoming WebSocket message
    */
   private async handleMessage(ws: AuthenticatedWebSocket, data: Buffer): Promise<void> {
+    const latencyStart = SERVER_PTY_LATENCY_ENABLED ? performance.now() : 0;
+    const receivedAt = SERVER_PTY_LATENCY_ENABLED ? Date.now() : 0;
     const userId = ws.identity!.userId;
     let requestId: string | undefined;
 
     try {
       const message = parseClientTransportMessage(data);
+      if (SERVER_PTY_LATENCY_ENABLED && message.type === 'terminal_input') {
+        traceServerLatency('ws-input-received', message.terminalId, message.data.length, Date.now() - receivedAt);
+      }
       requestId = message.requestId;
       logReceivedClientTransportMessage(userId, message);
 
@@ -581,6 +587,9 @@ export class WebSocketServer {
         sendToUser: this.sendToUser.bind(this),
         sendToConnection: this.sendToConnectionId.bind(this),
       });
+      if (SERVER_PTY_LATENCY_ENABLED && message.type === 'terminal_input') {
+        traceServerLatency('ws-input-handled', message.terminalId, message.data.length, performance.now() - latencyStart);
+      }
     } catch (err) {
       logger.error({
         userId,

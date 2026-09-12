@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import { createRequire } from 'module';
 import logger from '@/lib/logger';
+import { SERVER_PTY_LATENCY_ENABLED, traceServerLatency } from './terminal-server-latency';
 import { buildSpawnEnv, getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
@@ -1054,6 +1055,7 @@ export class TerminalManager {
       });
 
       processHandle.onData((rawData) => {
+        traceServerLatency('pty-output', options.terminalId, rawData.length);
         const data = runtime.appearanceController?.consumeOutput(rawData) ?? rawData;
         runtime.resizeOutputTransaction?.accept(data);
       });
@@ -1261,7 +1263,9 @@ export class TerminalManager {
     if (classifyAutomatedTerminalResponse(data) === 'not-automated') {
       runtime.resizeOutputTransaction?.settle();
     }
+    const diagnosticStart = SERVER_PTY_LATENCY_ENABLED ? performance.now() : 0;
     runtime.process.write(data);
+    if (SERVER_PTY_LATENCY_ENABLED) traceServerLatency('pty-input-written', terminalId, data.length, performance.now() - diagnosticStart);
     this.observeAgentInterruptInput(runtime, data);
   }
 
@@ -2616,6 +2620,7 @@ export class TerminalManager {
     }
     if (runtime.pendingSend.length === 0) return;
     const data = runtime.pendingSend.join('');
+    traceServerLatency('output-flush', runtime.terminalId, data.length);
     runtime.pendingSend = [];
     const frame = { seq: ++runtime.sequence, data };
     for (const subscriber of runtime.subscribers.values()) {

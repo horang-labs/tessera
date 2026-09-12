@@ -17,6 +17,8 @@ const posthogAssetsHost = process.env.NEXT_PUBLIC_POSTHOG_ASSETS_HOST || 'https:
 // Set to 'debug' by the `electron:build:*:debug` scripts. Keeps the store invariant checks and
 // WebSocket traces (see src/lib/debug-diagnostics.ts) in the bundle, which a release drops.
 const tesseraLogLevel = process.env.NEXT_PUBLIC_TESSERA_LOG_LEVEL || '';
+// Independent of debug logging: only an explicit PTY diagnostic build opts in.
+const ptyLatency = process.env.TESSERA_PTY_LATENCY === '1' ? '1' : '0';
 
 const nextConfig = {
   reactCompiler: true,
@@ -30,6 +32,7 @@ const nextConfig = {
     NEXT_PUBLIC_POSTHOG_API_HOST: posthogApiHost,
     NEXT_PUBLIC_POSTHOG_UI_HOST: posthogUiHost,
     NEXT_PUBLIC_TESSERA_LOG_LEVEL: tesseraLogLevel,
+    NEXT_PUBLIC_TESSERA_PTY_LATENCY: ptyLatency,
   },
   webpack(config) {
     config.resolve.alias = {
@@ -41,7 +44,7 @@ const nextConfig = {
     // debug build replays cached modules that still carry the previous build's inlined value:
     // the debug build silently loses its traces, or worse, a release keeps them.
     if (config.cache && typeof config.cache === 'object' && 'version' in config.cache) {
-      config.cache.version = `${config.cache.version}|tesseraLogLevel=${tesseraLogLevel}|telemetryBuildDisabled=${telemetryBuildDisabled}`;
+      config.cache.version = `${config.cache.version}|tesseraLogLevel=${tesseraLogLevel}|telemetryBuildDisabled=${telemetryBuildDisabled}|ptyLatency=${ptyLatency}`;
     }
     return config;
   },
