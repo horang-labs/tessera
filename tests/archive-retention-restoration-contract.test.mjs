@@ -87,7 +87,7 @@ test('retention days are committed only after editing finishes', () => {
 test('Archive restore updates one row without replacing the dashboard with a full reload', () => {
   const archive = read('src/components/archive/archive-dashboard.tsx');
   const restoreStart = archive.indexOf('const restoreItem = useCallback');
-  const deleteStart = archive.indexOf('const deleteItem = useCallback', restoreStart);
+  const deleteStart = archive.indexOf('const startDelete = useCallback', restoreStart);
 
   assert.ok(restoreStart >= 0 && deleteStart > restoreStart);
   const restoreHandler = archive.slice(restoreStart, deleteStart);
