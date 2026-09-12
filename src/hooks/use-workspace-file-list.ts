@@ -57,6 +57,25 @@ interface WorkspaceDirectoryLoadOptions {
 const MUTATION_LIST_ATTEMPTS = 5;
 const FILE_LIST_LOAD_TIMEOUT_MS = 15_000;
 
+interface CachedWorkspaceListing {
+  listings: Record<string, WorkspaceDirectoryListing>;
+  workDir: string | null;
+}
+
+// Browser-memory only: keep recently visited trees across panel unmounts, without
+// persisting filesystem metadata or allowing an unbounded collection of sessions.
+const MAX_CACHED_WORKSPACES = 20;
+const workspaceListingCache = new Map<string, CachedWorkspaceListing>();
+const EMPTY_LISTINGS: Record<string, WorkspaceDirectoryListing> = {};
+
+function cacheWorkspaceListing(key: string, snapshot: CachedWorkspaceListing) {
+  workspaceListingCache.delete(key);
+  workspaceListingCache.set(key, snapshot);
+  while (workspaceListingCache.size > MAX_CACHED_WORKSPACES) {
+    workspaceListingCache.delete(workspaceListingCache.keys().next().value!);
+  }
+}
+
 function normalizeWorkspaceRelativePath(filePath: string): string {
   return filePath
     .replace(/\\/g, "/")
@@ -172,14 +191,17 @@ export function useWorkspaceFileList(
   const target = useMemo<WorkspaceTarget | null>(() => targetKind && targetId
     ? { kind: targetKind, id: targetId }
     : null, [targetId, targetKind]);
-  const targetKey = target ? workspaceTargetKey(target) : null;
+  const targetKey = target
+    ? JSON.stringify([workspaceTargetKey(target), target.kind === "session" ? projectId ?? null : null])
+    : null;
   const targetReady = Boolean(target && (target.kind === "worktree" || projectId));
-  const [listings, setListings] = useState<Record<string, WorkspaceDirectoryListing>>({});
-  const [listingTargetKey, setListingTargetKey] = useState<string | null>(null);
+  const cached = targetKey && targetReady ? workspaceListingCache.get(targetKey) : undefined;
+  const [listings, setListings] = useState<Record<string, WorkspaceDirectoryListing>>(() => cached?.listings ?? EMPTY_LISTINGS);
+  const [listingTargetKey, setListingTargetKey] = useState<string | null>(targetKey);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(Boolean(targetId));
+  const [loading, setLoading] = useState(Boolean(targetId) && !cached);
   const [loadingDirectories, setLoadingDirectories] = useState<string[]>([]);
-  const [workDir, setWorkDir] = useState<string | null>(null);
+  const [workDir, setWorkDir] = useState<string | null>(() => cached?.workDir ?? null);
   const [searchResult, setSearchResult] = useState<WorkspaceSearchResult>({
     directories: [], error: null, files: [], loading: false, symlinks: [], truncated: false,
   });
@@ -192,7 +214,7 @@ export function useWorkspaceFileList(
     rawDirectory: string,
     options?: WorkspaceDirectoryLoadOptions,
   ) => {
-    if (!target || !targetReady) return;
+    if (!target || !targetReady || !targetKey) return;
     const directory = normalizeWorkspaceRelativePath(rawDirectory);
     const generation = generationRef.current;
     const requestSeq = (requestSeqByDirectoryRef.current.get(directory) ?? 0) + 1;
@@ -202,9 +224,11 @@ export function useWorkspaceFileList(
       setError(null);
       setLoading(true);
     }
-    setLoadingDirectories((current) => current.includes(directory)
-      ? current
-      : [...current, directory]);
+    if (!options?.silent || !listingsRef.current[directory]) {
+      setLoadingDirectories((current) => current.includes(directory)
+        ? current
+        : [...current, directory]);
+    }
 
     try {
       let payload: WorkspaceFilesResponse | null = null;
@@ -225,12 +249,14 @@ export function useWorkspaceFileList(
       }
 
       if (
-        generationRef.current !== generation
+        options?.signal?.aborted
+        || generationRef.current !== generation
         || requestSeqByDirectoryRef.current.get(directory) !== requestSeq
       ) return;
 
       const nextListing = toListing(payload, options?.mutation);
-      setListings((current) => {
+      const nextListings = (() => {
+        const current = listingsRef.current;
         const next = { ...current, [directory]: nextListing };
         const previousChildren = current[directory]?.directories ?? [];
         const nextChildren = new Set(nextListing.directories);
@@ -241,7 +267,10 @@ export function useWorkspaceFileList(
           }
         }
         return next;
-      });
+      })();
+      listingsRef.current = nextListings;
+      cacheWorkspaceListing(targetKey, { listings: nextListings, workDir: payload?.workDir ?? null });
+      setListings(nextListings);
       setWorkDir(payload?.workDir ?? null);
       if (directory === "") {
         setError(null);
@@ -325,34 +354,54 @@ export function useWorkspaceFileList(
   useEffect(() => {
     generationRef.current += 1;
     requestSeqByDirectoryRef.current.clear();
-    setListings({});
-    setListingTargetKey(null);
+    const snapshot = targetKey && targetReady ? workspaceListingCache.get(targetKey) : undefined;
+    if (snapshot && targetKey) cacheWorkspaceListing(targetKey, snapshot);
+    listingsRef.current = snapshot?.listings ?? EMPTY_LISTINGS;
+    setListings(listingsRef.current);
+    setListingTargetKey(targetKey);
     setError(null);
-    setLoading(Boolean(target));
+    setLoading(Boolean(target) && !snapshot);
     setLoadingDirectories([]);
-    setWorkDir(null);
+    setWorkDir(snapshot?.workDir ?? null);
     setSearchResult({
       directories: [], error: null, files: [], loading: false, symlinks: [], truncated: false,
     });
     if (!target || !targetReady) return;
     const abortController = new AbortController();
-    void loadDirectory("", { signal: abortController.signal });
-    return () => abortController.abort();
+    // Revalidate parents before descendants so removed subtrees cannot be
+    // reintroduced by a late child response. Keep the cached tree on screen.
+    void (async () => {
+      await loadDirectory("", { signal: abortController.signal, silent: Boolean(snapshot) });
+      for (const directory of Object.keys(snapshot?.listings ?? {}).filter(Boolean)
+        .sort((a, b) => a.split("/").length - b.split("/").length)) {
+        if (abortController.signal.aborted) return;
+        if (!listingsRef.current[directory]) continue;
+        await loadDirectory(directory, { signal: abortController.signal, silent: true });
+      }
+    })();
+    return () => {
+      abortController.abort();
+      generationRef.current += 1;
+    };
   }, [loadDirectory, target, targetKey, targetReady]);
 
-  const flattened = useMemo(() => flattenListings(listings), [listings]);
+  // A target change renders before its effect runs. Never paint the previous
+  // target's files (or a spinner) while a cached snapshot is already available.
+  const currentTarget = listingTargetKey === targetKey;
+  const visibleListings = currentTarget ? listings : cached?.listings ?? EMPTY_LISTINGS;
+  const flattened = useMemo(() => flattenListings(visibleListings), [visibleListings]);
   return {
     ...flattened,
-    error,
-    loadedDirectories: Object.keys(listings),
-    loading: Boolean(target) && listingTargetKey !== targetKey ? true : loading,
-    loadingDirectories,
+    error: currentTarget ? error : null,
+    loadedDirectories: Object.keys(visibleListings),
+    loading: currentTarget ? loading : Boolean(target) && !cached,
+    loadingDirectories: currentTarget ? loadingDirectories : [],
     loadDirectory,
     loadFiles,
     refreshFiles,
     searchFiles,
     searchResult,
-    workDir,
+    workDir: currentTarget ? workDir : cached?.workDir ?? null,
   };
 }
 
