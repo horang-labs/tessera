@@ -324,6 +324,8 @@ export interface I18nMessages {
     model: {
       label: string;
       reasoningEffortLabel: string;
+      searchModels: string;
+      noMatchingModels: string;
       loadingOptions: string;
       providerDefaultsTitle: string;
       providerDefaultsHint: string;
@@ -717,6 +719,7 @@ export interface I18nMessages {
     imageFallback: string;
     tabList: string;
     newTab: string;
+    mergeTabs: string;
     newTabDefault: string;
     openGitPanel: string;
     closeGitPanel: string;
@@ -1665,6 +1668,14 @@ export interface I18nMessages {
     footerNoToken: string;
   };
   archive: {
+    retentionProgress: {
+      scanning: string;
+      running: string;
+      waiting: string;
+      complete: string;
+      summary: string;
+      failures: string;
+    };
     title: string;
     description: string;
     refresh: string;

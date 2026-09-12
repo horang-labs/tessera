@@ -27,8 +27,13 @@ on:
         required: true
         type: boolean
         default: true
+      artifact_run_id:
+        description: Existing workflow run ID whose desktop artifacts should be published without rebuilding
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: write
 
 env:
@@ -42,7 +47,12 @@ jobs:
     steps:
       - name: Require at least one desktop target
         run: |
-          if [[ "${{ inputs.build_windows }}" != "true" && "${{ inputs.build_macos }}" != "true" && "${{ inputs.build_linux }}" != "true" ]]; then
+          if [[ -n "${{ inputs.artifact_run_id }}" ]]; then
+            if [[ "${{ inputs.build_windows }}" == "true" || "${{ inputs.build_macos }}" == "true" || "${{ inputs.build_linux }}" == "true" ]]; then
+              echo "Desktop build targets must be disabled when artifact_run_id is provided."
+              exit 1
+            fi
+          elif [[ "${{ inputs.build_windows }}" != "true" && "${{ inputs.build_macos }}" != "true" && "${{ inputs.build_linux }}" != "true" ]]; then
             echo "At least one desktop target must be enabled."
             exit 1
           fi
@@ -50,7 +60,7 @@ jobs:
   build-windows:
     name: Build Windows x64
     needs: validate
-    if: ${{ inputs.build_windows }}
+    if: ${{ inputs.artifact_run_id == '' && inputs.build_windows }}
     runs-on: windows-latest
 
     steps:
@@ -103,7 +113,7 @@ jobs:
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     needs: validate
-    if: ${{ inputs.build_macos }}
+    if: ${{ inputs.artifact_run_id == '' && inputs.build_macos }}
     runs-on: ${{ matrix.runner }}
 
     strategy:
@@ -200,7 +210,7 @@ jobs:
   build-linux:
     name: Build Linux x64
     needs: validate
-    if: ${{ inputs.build_linux }}
+    if: ${{ inputs.artifact_run_id == '' && inputs.build_linux }}
     runs-on: ubuntu-latest
 
     steps:
@@ -281,6 +291,7 @@ jobs:
         needs.build-linux.result != 'failure' &&
         needs.build-linux.result != 'cancelled' &&
         (
+          inputs.artifact_run_id != '' ||
           needs.build-windows.result == 'success' ||
           needs.build-macos.result == 'success' ||
           needs.build-linux.result == 'success'
@@ -293,20 +304,41 @@ jobs:
       GH_REPO: ${{ github.repository }}
 
     steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
       - name: Download desktop artifacts
+        if: ${{ inputs.artifact_run_id == '' }}
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: ${{ runner.temp }}/release-artifacts
           merge-multiple: true
 
-      - name: Create or update release
+      - name: Download desktop artifacts from prior run
+        if: ${{ inputs.artifact_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release-artifacts
+          merge-multiple: true
+
+      - name: Upload and publish GitHub Release
         run: |
           set -euo pipefail
           shopt -s nullglob
 
-          assets=(artifacts/*)
+          assets=("$RUNNER_TEMP"/release-artifacts/*)
           if [[ ${#assets[@]} -eq 0 ]]; then
             echo "No desktop assets found."
+            exit 1
+          fi
+
+          release_notes="docs/releases/${RELEASE_TAG}.md"
+          if [[ ! -s "$release_notes" ]] || grep -Fq 'vNEXT' "$release_notes"; then
+            echo "$release_notes is missing, empty, or still contains vNEXT."
             exit 1
           fi
 
@@ -316,10 +348,25 @@ jobs:
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')"
+            if [[ "$is_draft" != "true" ]]; then
+              echo "Release $RELEASE_TAG already exists and is public; refusing to modify it."
+              exit 1
+            fi
           else
-            gh release create "$RELEASE_TAG" "${assets[@]}" \
+            gh release create "$RELEASE_TAG" \
+              --draft \
               --title "$RELEASE_TAG" \
-              --generate-notes \
+              --notes-file "$release_notes" \
               "${release_args[@]}"
           fi
+
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+
+          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
+          actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
+          printf '%s\n' "${assets[@]##*/}" | sort > "$expected_assets"
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > "$actual_assets"
+          diff -u "$expected_assets" "$actual_assets"
+
+          gh release edit "$RELEASE_TAG" --draft=false

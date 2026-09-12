@@ -349,6 +349,8 @@ export const ko: I18nMessages = {
     model: {
       label: '기본 모델',
       reasoningEffortLabel: 'Thinking 강도',
+      searchModels: '모델 검색…',
+      noMatchingModels: '일치하는 모델이 없습니다',
       loadingOptions: '프로바이더 옵션을 불러오는 중...',
       providerDefaultsTitle: '프로바이더별 기본값',
       providerDefaultsHint: '새 세션을 시작할 때 사용할 모델과 Thinking 강도를 지정합니다. GUI 세션 컨트롤과 동일한 선택지가 표시됩니다.',
@@ -742,6 +744,7 @@ export const ko: I18nMessages = {
     imageFallback: '[이미지]',
     tabList: '탭 목록',
     newTab: '새 탭 추가',
+    mergeTabs: '합치기 ({{count}})',
     newTabDefault: '새 탭',
     openGitPanel: '오른쪽 Git 패널 열기',
     closeGitPanel: '오른쪽 Git 패널 닫기',
@@ -1689,6 +1692,14 @@ export const ko: I18nMessages = {
     footerNoToken: 'URL에 토큰을 남기지 않음',
   },
   archive: {
+    retentionProgress: {
+      scanning: '자동삭제 대상 폴더 확인 중…',
+      running: '워크트리 폴더 정리 중 · {{completed}}/{{total}}개 처리',
+      waiting: '다음 폴더 삭제 대기 중',
+      complete: '워크트리 폴더 자동삭제 완료',
+      summary: '삭제 {{removed}}개 · 건너뜀 {{skipped}}개 · 실패 {{failed}}개',
+      failures: '삭제 실패 {{count}}개 확인',
+    },
     title: '아카이브',
     description: '아카이브된 chat/워크트리를 읽기 전용으로 열거나, 복구하거나, 영구 삭제합니다.',
     refresh: '새로고침',

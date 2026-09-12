@@ -349,6 +349,8 @@ export const zh: I18nMessages = {
     model: {
       label: '默认模型',
       reasoningEffortLabel: 'Thinking 强度',
+      searchModels: '搜索模型…',
+      noMatchingModels: '没有匹配的模型',
       loadingOptions: '正在加载 Provider 选项...',
       providerDefaultsTitle: 'Provider 默认值',
       providerDefaultsHint: '选择新会话启动时使用的模型和 Thinking 强度。选项与 GUI 会话控件中显示的相同。',
@@ -740,6 +742,7 @@ export const zh: I18nMessages = {
     imageFallback: '[图片]',
     tabList: '标签列表',
     newTab: '添加新标签',
+    mergeTabs: '合并 ({{count}})',
     newTabDefault: '新标签',
     openGitPanel: '打开右侧 Git 面板',
     closeGitPanel: '关闭右侧 Git 面板',
@@ -1682,6 +1685,14 @@ export const zh: I18nMessages = {
     footerNoToken: 'URL中不保留令牌',
   },
   archive: {
+    retentionProgress: {
+      scanning: '正在检查自动清理的目标文件夹…',
+      running: '正在清理工作树文件夹 · 已处理 {{completed}}/{{total}} 个',
+      waiting: '等待删除下一个文件夹',
+      complete: '文件夹自动清理完成',
+      summary: '已删除 {{removed}} 个 · 已跳过 {{skipped}} 个 · 失败 {{failed}} 个',
+      failures: '查看 {{count}} 个失败的文件夹',
+    },
     title: '归档',
     description: '以只读方式打开已归档的 chat/工作树,可恢复或永久删除。',
     refresh: '刷新',

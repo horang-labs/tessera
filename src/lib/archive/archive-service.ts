@@ -614,10 +614,33 @@ function assertWorktreeDeletionAllowed(worktreeId: string): void {
   );
 }
 
+function isArchivedWorktreeRetentionCandidate(item: ArchiveItem, retentionDays: number): boolean {
+  return Boolean(item.worktreeId && item.workDir)
+    && !item.sharedWorktree
+    && isExpired(item.archivedAt, retentionDays)
+    && item.worktreeStatus === 'present'
+    && !item.worktreeDeletedAt
+    && item.worktreeManaged;
+}
+
+/** Snapshot physical folders, not archive rows: several rows may share a checkout. */
+export async function listExpiredArchivedWorktreeCandidates(
+  retentionDays: number,
+): Promise<Array<{ worktreeId: string; id: string; kind: ArchiveItemKind; title: string }>> {
+  const { items } = await listArchiveItems();
+  const seen = new Set<string>();
+  return items.flatMap((item) => {
+    if (!item.worktreeId || seen.has(item.worktreeId)
+      || !isArchivedWorktreeRetentionCandidate(item, retentionDays)) return [];
+    seen.add(item.worktreeId);
+    return [{ worktreeId: item.worktreeId, id: item.id, kind: item.kind, title: item.title }];
+  });
+}
+
 export async function pruneExpiredArchivedWorktrees(
   retentionDays: number,
   userId?: string,
-  options: { maxWorktreeAttempts?: number } = {},
+  options: { maxWorktreeAttempts?: number; worktreeIds?: ReadonlySet<string> } = {},
 ): Promise<RetentionResult> {
   const result: RetentionResult = { removed: 0, skipped: 0, attempted: 0, errors: [] };
   const { items } = await listArchiveItems();
@@ -629,9 +652,8 @@ export async function pruneExpiredArchivedWorktrees(
     if (
       !item.worktreeId
       || visitedWorktreeIds.has(item.worktreeId)
-      || !item.workDir
-      || item.sharedWorktree
-      || !isExpired(item.archivedAt, retentionDays)
+      || (options.worktreeIds && !options.worktreeIds.has(item.worktreeId))
+      || !isArchivedWorktreeRetentionCandidate(item, retentionDays)
     ) {
       result.skipped += 1;
       continue;

@@ -349,6 +349,8 @@ export const ja: I18nMessages = {
     model: {
       label: 'デフォルトモデル',
       reasoningEffortLabel: 'Thinking 強度',
+      searchModels: 'モデルを検索…',
+      noMatchingModels: '一致するモデルがありません',
       loadingOptions: 'プロバイダー設定を読み込み中...',
       providerDefaultsTitle: 'プロバイダーごとのデフォルト',
       providerDefaultsHint: '新しいセッションの開始時に使うモデルと Thinking 強度を選択します。GUI セッションコントロールと同じ選択肢が表示されます。',
@@ -740,6 +742,7 @@ export const ja: I18nMessages = {
     imageFallback: '[画像]',
     tabList: 'タブ一覧',
     newTab: '新しいタブを追加',
+    mergeTabs: '結合 ({{count}})',
     newTabDefault: '新しいタブ',
     openGitPanel: '右側の Git パネルを開く',
     closeGitPanel: '右側の Git パネルを閉じる',
@@ -1682,6 +1685,14 @@ export const ja: I18nMessages = {
     footerNoToken: 'URLにトークンを保持しません',
   },
   archive: {
+    retentionProgress: {
+      scanning: '自動削除の対象フォルダーを確認中…',
+      running: 'ワークツリーフォルダーを整理中 · {{completed}}/{{total}}件処理',
+      waiting: '次のフォルダーの削除を待機中',
+      complete: 'フォルダーの自動削除が完了しました',
+      summary: '削除 {{removed}}件 · スキップ {{skipped}}件 · 失敗 {{failed}}件',
+      failures: '失敗したフォルダー {{count}}件を表示',
+    },
     title: 'アーカイブ',
     description: 'アーカイブされた chat/ワークツリー を読み取り専用で開く、復元する、または完全に削除します。',
     refresh: '更新',
