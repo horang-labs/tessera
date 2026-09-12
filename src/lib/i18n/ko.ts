@@ -1692,6 +1692,14 @@ export const ko: I18nMessages = {
     footerNoToken: 'URL에 토큰을 남기지 않음',
   },
   archive: {
+    retentionProgress: {
+      scanning: '자동삭제 대상 폴더 확인 중…',
+      running: '워크트리 폴더 정리 중 · {{completed}}/{{total}}개 처리',
+      waiting: '다음 폴더 삭제 대기 중',
+      complete: '워크트리 폴더 자동삭제 완료',
+      summary: '삭제 {{removed}}개 · 건너뜀 {{skipped}}개 · 실패 {{failed}}개',
+      failures: '삭제 실패 {{count}}개 확인',
+    },
     title: '아카이브',
     description: '아카이브된 chat/워크트리를 읽기 전용으로 열거나, 복구하거나, 영구 삭제합니다.',
     refresh: '새로고침',

@@ -5,8 +5,8 @@ import {
   preferWorktreeDiffStatsBroadcastPath,
 } from '@/lib/git/worktree-diff-stats-cache';
 
-test('WSL display and UNC spellings share one diff-stats cache key', () => {
-  assert.equal(
+test('WSL display and UNC spellings remain distinct without proven distro identity', () => {
+  assert.notEqual(
     normalizeWorktreeDiffStatsCacheKey(
       '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev',
     ),
@@ -21,12 +21,12 @@ test('Windows-native drive paths retain Windows path semantics', () => {
   );
 });
 
-test('broadcasts preserve the canonical Windows-hosted path while cache keys collapse to WSL', () => {
+test('broadcasts preserve the canonical Windows-hosted path without stripping distro identity', () => {
   const wslPath = '/home/work/Source/tessera-dev';
   const canonicalPath = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
 
   assert.equal(preferWorktreeDiffStatsBroadcastPath(undefined, wslPath), wslPath);
   assert.equal(preferWorktreeDiffStatsBroadcastPath(wslPath, canonicalPath), canonicalPath);
   assert.equal(preferWorktreeDiffStatsBroadcastPath(canonicalPath, wslPath), canonicalPath);
-  assert.equal(normalizeWorktreeDiffStatsCacheKey(canonicalPath), wslPath);
+  assert.equal(normalizeWorktreeDiffStatsCacheKey(canonicalPath), canonicalPath);
 });

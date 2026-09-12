@@ -2,13 +2,14 @@
 
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, Home, Plus, Blocks, EyeOff, MessageSquarePlus } from 'lucide-react';
+import { Home, Plus, Blocks, EyeOff, MessageSquarePlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ArchiveNavigationButton } from '@/components/archive/archive-navigation-button';
 import { useBoardStore } from '@/stores/board-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useTabStore } from '@/stores/tab-store';
 import { ALL_PROJECTS_SENTINEL, getProjectColor } from '@/lib/constants/project-strip';
-import { ARCHIVE_DASHBOARD_SESSION_ID, SKILLS_DASHBOARD_SESSION_ID } from '@/lib/constants/special-sessions';
+import { SKILLS_DASHBOARD_SESSION_ID } from '@/lib/constants/special-sessions';
 import { useProjectStripDnd } from '@/hooks/use-project-strip-dnd';
 import { usePopoutActive } from '@/hooks/use-popout-active';
 import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_WIDTH } from '@/lib/ui/touch-target';
@@ -283,26 +284,7 @@ export function ProjectStrip({
             <Blocks className="w-5 h-5 max-sm:w-3.5 max-sm:h-3.5" />
           </Button>
         </Tooltip>
-        <Tooltip content={t('archive.title')} delay={300}>
-          <Button
-            {...telemetryClickAttributes('sidebar.archive.open', 'sidebar')}
-            variant="ghost"
-            size="icon-lg"
-            className="rounded-none max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0"
-            onClick={() => {
-              const tabStore = useTabStore.getState();
-              const existing = tabStore.findSessionLocation(ARCHIVE_DASHBOARD_SESSION_ID);
-              if (existing) {
-                tabStore.setActiveTab(existing.tabId);
-              } else {
-                tabStore.createTab(ARCHIVE_DASHBOARD_SESSION_ID);
-              }
-            }}
-            data-testid="project-strip-archive"
-          >
-            <Archive className="w-5 h-5 max-sm:w-3.5 max-sm:h-3.5" />
-          </Button>
-        </Tooltip>
+        <ArchiveNavigationButton />
         <Tooltip content={t('feedback.tooltip')} delay={300}>
           <Button
             {...telemetryClickAttributes('sidebar.feedback.open', 'sidebar')}

@@ -321,5 +321,8 @@ test('the Git panel spawns nothing itself — every Git command goes through the
   assert.doesNotMatch(source, /\bspawnCli\b/);
   assert.doesNotMatch(source, /from ["']child_process["']/);
   assert.match(source, /createGitRunner/);
-  assert.match(source, /createGitShellRunner/);
+  assert.match(source, /runGitQueryBatch/);
+  const batchSource = fs.readFileSync(new URL('../src/lib/worktrees/git-query-batch.ts', import.meta.url), 'utf8');
+  assert.match(batchSource, /createGitShellRunner/);
+  assert.doesNotMatch(batchSource, /from ["'](?:node:)?child_process["']/);
 });
