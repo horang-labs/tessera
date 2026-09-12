@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Panel, PanelDropEdge, PanelNode, PanelStore, PanelStoreState, TabPanelData } from '@/types/panel';
 import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
 import { useSessionStore } from '@/stores/session-store';
+import { parseWorkspaceSpecialSessionId } from '@/lib/workspace-tabs/special-session';
 
 export const EMPTY_PANELS: Record<string, Panel> = Object.freeze({});
 
@@ -243,7 +244,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     if (!containsLeaf(tabData.layout, panelId)) return null;
 
     const newPanelId = uuidv4();
-    const newPanel: Panel = { id: newPanelId, sessionId: newSessionId ?? null };
+    const fileRef = newSessionId ? parseWorkspaceSpecialSessionId(newSessionId) : null;
+    const newPanel: Panel = {
+      id: newPanelId,
+      sessionId: newSessionId ?? null,
+      ...(fileRef && 'sourceWorktreeId' in fileRef
+        ? { worktreeId: fileRef.sourceWorktreeId }
+        : {}),
+    };
     const existingLeaf: PanelNode = { type: 'leaf', panelId };
     const newLeaf: PanelNode = { type: 'leaf', panelId: newPanelId };
     const splitNode: PanelNode = {

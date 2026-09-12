@@ -44,7 +44,10 @@ import {
   previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { resolveWorkspaceTarget, workspaceTargetKey } from '@/types/worktree';
-import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
+import {
+  setWorkspaceDirectoryDragData,
+  setWorkspaceTargetFileDragData,
+} from "@/lib/dnd/panel-session-drag";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import {
@@ -802,11 +805,11 @@ export function WorkspaceFilePanel({
             beginRename(node);
           }}
           onDragStart={(event) => {
-            if (!sessionId) return;
+            if (!target) return;
             setSelectedPath(node.path);
-            setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path, absolutePath);
+            setWorkspaceTargetFileDragData(event.dataTransfer, target, "file", node.path, absolutePath);
           }}
-          draggable={Boolean(sessionId)}
+          draggable={Boolean(target)}
           className="flex w-full min-w-0 items-center gap-2 border-l-transparent py-1.5 pr-8 text-left transition-colors"
           title={node.isSymlink ? `${node.path} (symbolic link)` : node.path}
           data-testid={`workspace-file-row-${node.path}`}
