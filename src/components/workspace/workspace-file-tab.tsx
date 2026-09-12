@@ -24,7 +24,10 @@ import {
   clearWorkspaceFileDirty,
   markWorkspaceFileDirty,
 } from "@/lib/workspace-files/workspace-dirty-registry";
-import { isWorkspaceImageMimeType } from '@/lib/workspace-files/workspace-file-preview';
+import {
+  isWorkspaceImageMimeType,
+  isWorkspaceVideoMimeType,
+} from '@/lib/workspace-files/workspace-file-preview';
 import type { GitDiffData } from "@/types/git";
 import type { WorkspaceFileData } from "@/types/workspace-file";
 import {
@@ -166,7 +169,8 @@ export function WorkspaceFileTab({
   const editable = fileData !== null
     && !fileData.binary
     && !fileData.truncated
-    && !isWorkspaceImageMimeType(fileData.mimeType);
+    && !isWorkspaceImageMimeType(fileData.mimeType)
+    && !isWorkspaceVideoMimeType(fileData.mimeType);
   const dirty = editable && draft !== null && draft !== fileData.content;
   dirtyRef.current = dirty;
 
@@ -538,6 +542,7 @@ export function WorkspaceFileTab({
       path={fileRef.path}
       editorModelKey={tabId || `${sourceTarget.kind}:${sourceTarget.id}:${kind}:${path}`}
       sourceTarget={sourceTarget}
+      previewActive={isTabActive && isDocumentVisible}
     />
   );
 }

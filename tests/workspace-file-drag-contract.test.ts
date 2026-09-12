@@ -11,13 +11,17 @@ import {
   parseWorkspaceFileDragData,
   setPathInsertDragData,
   setWorkspaceFileDragData,
+  setWorkspaceTargetFileDragData,
 } from '../src/lib/dnd/panel-session-drag';
 import {
   PATH_INSERT_DRAG_MIME,
   SESSION_DRAG_MIME,
   WORKSPACE_FILE_DRAG_MIME,
 } from '../src/types/panel';
-import { buildWorkspaceFileSessionId } from '../src/lib/workspace-tabs/special-session';
+import {
+  buildWorktreeFileSessionId,
+  buildWorkspaceFileSessionId,
+} from '../src/lib/workspace-tabs/special-session';
 import {
   formatWorkspaceFileReference,
   insertWorkspaceFileReferenceAtCursor,
@@ -80,6 +84,25 @@ test('workspace file drags preserve the host absolute path when supplied', () =>
     parseWorkspaceFileDragData(transfer)?.absolutePath,
     '/workspace/docs/readme.md',
   );
+});
+
+test('worktree explorer file drags carry a worktree file session for panel splits', () => {
+  const transfer = new FakeDataTransfer();
+  setWorkspaceTargetFileDragData(
+    transfer,
+    { kind: 'worktree', id: 'worktree-1' },
+    'file',
+    'videos/clip.mp4',
+    '/workspace/videos/clip.mp4',
+  );
+
+  assert.equal(
+    transfer.getData(SESSION_DRAG_MIME),
+    buildWorktreeFileSessionId('worktree-1', 'videos/clip.mp4'),
+  );
+  assert.equal(parseWorkspaceFileDragData(transfer)?.sourceSessionId, 'worktree-1');
+  assert.equal(parseWorkspaceFileDragData(transfer)?.absolutePath, '/workspace/videos/clip.mp4');
+  assert.equal(isSessionReferenceDragData(transfer), false);
 });
 
 test('path insertion drags carry agent-readable paths without a panel session payload', () => {

@@ -12,6 +12,10 @@ const WORKSPACE_IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   webp: 'image/webp',
 };
 
+const WORKSPACE_VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
+  mp4: 'video/mp4',
+};
+
 function extensionOf(filePath: string): string {
   const slashIndex = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
   const dotIndex = filePath.lastIndexOf('.');
@@ -19,12 +23,18 @@ function extensionOf(filePath: string): string {
 }
 
 export function inferWorkspaceFileContentType(filePath: string): string {
-  return WORKSPACE_IMAGE_MIME_BY_EXTENSION[extensionOf(filePath)]
+  const extension = extensionOf(filePath);
+  return WORKSPACE_IMAGE_MIME_BY_EXTENSION[extension]
+    ?? WORKSPACE_VIDEO_MIME_BY_EXTENSION[extension]
     ?? 'application/octet-stream';
 }
 
 export function isWorkspaceImageMimeType(mimeType: string | null | undefined): boolean {
   return typeof mimeType === 'string' && mimeType.startsWith('image/');
+}
+
+export function isWorkspaceVideoMimeType(mimeType: string | null | undefined): boolean {
+  return mimeType === 'video/mp4';
 }
 
 export function buildWorkspaceRawFileUrl(
