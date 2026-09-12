@@ -1668,6 +1668,14 @@ export interface I18nMessages {
     footerNoToken: string;
   };
   archive: {
+    retentionProgress: {
+      scanning: string;
+      running: string;
+      waiting: string;
+      complete: string;
+      summary: string;
+      failures: string;
+    };
     title: string;
     description: string;
     refresh: string;

@@ -1688,6 +1688,14 @@ export const en: I18nMessages = {
     footerNoToken: 'No token retained in URL',
   },
   archive: {
+    retentionProgress: {
+      scanning: 'Checking folders for automatic cleanup…',
+      running: 'Cleaning worktree folders · {{completed}}/{{total}} processed',
+      waiting: 'Waiting for the next folder',
+      complete: 'Automatic folder cleanup complete',
+      summary: '{{removed}} deleted · {{skipped}} skipped · {{failed}} failed',
+      failures: 'View {{count}} failed folders',
+    },
     title: 'Archive',
     description: 'Open archived chats/worktrees read-only, restore them, or permanently delete.',
     refresh: 'Refresh',
