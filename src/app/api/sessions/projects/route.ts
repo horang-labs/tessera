@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
       // cross-project request may read its cache, but must never enqueue work
       // for every persisted Session. The focused task request warms it later.
       const projectDiffWorkDir = projectWorktree?.filesystemPath ?? project.decoded_path;
-      const diffStatsByWorkDir = getCachedBulk([projectDiffWorkDir]);
+      const diffStatsByWorkDir = getCachedBulk([projectDiffWorkDir], undefined, userId);
       const projectDiffStats = diffStatsByWorkDir.get(projectDiffWorkDir) ?? undefined;
       const sessions = mapped.map((s) => ({
         ...s,

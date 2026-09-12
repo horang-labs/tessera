@@ -1,3 +1,4 @@
+import { parseGitBatchOutput } from '@/lib/worktrees/git-query-batch';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
@@ -205,12 +206,8 @@ test('the batched command set reads the same tracking config as the plain one', 
       { cwd: cloneDir },
     );
 
-    const decoded = new Map(
-      stdout.trimEnd().split('\n').map((line) => {
-        const [key, encodedField = ''] = line.split('\t');
-        return [key, Buffer.from(encodedField.slice(4), 'base64').toString('utf8')] as const;
-      }),
-    );
+    const decoded = new Map(Array.from(parseGitBatchOutput(stdout, getGitPanelBatchCommands()),
+      ([key, result]) => [key, result.stdout]));
 
     assert.equal(decoded.get('upstream')?.trim(), '', '@{upstream} answers nothing here');
     const configured = resolveConfiguredUpstream(

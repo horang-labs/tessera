@@ -82,7 +82,7 @@ test('sessions sharing one workDir produce a single recompute', () => {
   assert.deepEqual(recomputed, [{ workDir: '/repo/shared', userId: 'user-a' }]);
 });
 
-test('WSL display and UNC spellings produce a single recompute', () => {
+test('WSL display and UNC spellings are not merged without proven identity', () => {
   const recomputed: Array<{ workDir: string; userId: string }> = [];
   const result = runDiffStatsSafetySweep({
     getConnectedUserIds: () => ['user-a'],
@@ -94,11 +94,11 @@ test('WSL display and UNC spellings produce a single recompute', () => {
     recompute: (workDir, userId) => recomputed.push({ workDir, userId }),
   });
 
-  assert.equal(result.inspected, 1);
-  assert.equal(recomputed.length, 1);
+  assert.equal(result.inspected, 2);
+  assert.equal(recomputed.length, 2);
 });
 
-test('a workDir shared across users is recomputed once, for the first owner seen', () => {
+test('a workDir shared across users is recomputed separately for each environment owner', () => {
   const { dependencies, recomputed } = createDependencies({
     connectedUserIds: ['user-a', 'user-b'],
     sessionsByUser: {
@@ -114,7 +114,7 @@ test('a workDir shared across users is recomputed once, for the first owner seen
 
   runDiffStatsSafetySweep(dependencies);
 
-  assert.deepEqual(recomputed, [{ workDir: '/repo/shared', userId: 'user-a' }]);
+  assert.deepEqual(recomputed, [{ workDir: '/repo/shared', userId: 'user-a' }, { workDir: '/repo/shared', userId: 'user-b' }]);
 });
 
 test('sessions without a work_dir are skipped', () => {
