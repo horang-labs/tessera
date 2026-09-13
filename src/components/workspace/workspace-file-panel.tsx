@@ -36,6 +36,7 @@ import {
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
+import { restoreWorkspaceFileScroll } from "@/lib/workspace-files/workspace-file-scroll";
 import {
   selectExpandedWorkspacePaths,
   useWorkspaceFileViewStore,
@@ -241,7 +242,7 @@ export function WorkspaceFilePanel({
     () => resolveWorkspaceTarget(sessionId, worktreeId),
     [sessionId, worktreeId],
   );
-  const targetKey = target ? workspaceTargetKey(target) : null;
+  const targetKey = useMemo(() => target ? workspaceTargetKey(target) : null, [target]);
   const canMutate = target !== null;
   const isDocumentVisible = useDocumentVisibility();
   const peekTarget = useWorkspacePeekStore((state) => state.target);
@@ -351,6 +352,15 @@ export function WorkspaceFilePanel({
   });
 
   const isSearching = query.trim().length > 0;
+  const scrollRef = useCallback((viewport: HTMLDivElement | null) => {
+    if (!viewport || !targetKey || isSearching) return;
+    const store = useWorkspaceFileViewStore.getState();
+    return restoreWorkspaceFileScroll(
+      viewport,
+      store.scrollTopByWorkspace[targetKey] ?? 0,
+      (scrollTop) => store.setScrollTop(targetKey, scrollTop),
+    );
+  }, [targetKey, isSearching]);
   useEffect(function loadGlobalSearchResults() {
     const trimmed = query.trim();
     const abortController = new AbortController();
@@ -977,7 +987,7 @@ export function WorkspaceFilePanel({
               {visibleFiles.length.toLocaleString()}
             </span>
           </div>
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea key={targetKey} ref={scrollRef} className="min-h-0 flex-1">
             {/* The rows stop their own context menu, so this one only ever
                 fires on the empty space past the last row. */}
             <div

@@ -8,6 +8,8 @@ interface WorkspaceFileViewState {
   showHiddenFiles: boolean;
   /** Expanded directory paths, isolated by canonical Session/Worktree target. */
   expandedPathsByWorkspace: Record<string, string[]>;
+  scrollTopByWorkspace: Record<string, number>;
+  setScrollTop: (workspaceKey: string, scrollTop: number) => void;
   toggleShowHiddenFiles: () => void;
   setShowHiddenFiles: (value: boolean) => void;
   setExpandedPaths: (workspaceKey: string, paths: Iterable<string>) => void;
@@ -17,7 +19,7 @@ interface WorkspaceFileViewState {
 
 type PersistedWorkspaceFileViewState = Pick<
   WorkspaceFileViewState,
-  'showHiddenFiles' | 'expandedPathsByWorkspace'
+  'showHiddenFiles' | 'expandedPathsByWorkspace' | 'scrollTopByWorkspace'
 >;
 
 const EMPTY_EXPANDED_PATHS: string[] = [];
@@ -27,6 +29,14 @@ export const useWorkspaceFileViewStore = create<WorkspaceFileViewState>()(
     (set) => ({
       showHiddenFiles: false,
       expandedPathsByWorkspace: {},
+      scrollTopByWorkspace: {},
+      setScrollTop: (workspaceKey, scrollTop) =>
+        set((state) => ({
+          scrollTopByWorkspace: {
+            ...state.scrollTopByWorkspace,
+            [workspaceKey]: scrollTop,
+          },
+        })),
       toggleShowHiddenFiles: () =>
         set((state) => ({ showHiddenFiles: !state.showHiddenFiles })),
       setShowHiddenFiles: (value) => set({ showHiddenFiles: value }),
@@ -73,6 +83,7 @@ export const useWorkspaceFileViewStore = create<WorkspaceFileViewState>()(
       partialize: (state) => ({
         showHiddenFiles: state.showHiddenFiles,
         expandedPathsByWorkspace: state.expandedPathsByWorkspace,
+        scrollTopByWorkspace: state.scrollTopByWorkspace,
       }),
     },
   ),
