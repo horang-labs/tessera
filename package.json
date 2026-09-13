@@ -33,6 +33,7 @@
   "files": [
     "bin/",
     "skills/",
+    "runtime/*.cjs",
     "dist-server/",
     "!dist-server/**/*.map",
     ".next/",
@@ -90,7 +91,6 @@
     "prepare": "node scripts/patch-xterm-webgl-atlas.mjs && node scripts/patch-xterm-webgl-device-pixel.mjs && node scripts/patch-xterm-touch-scroll.mjs && node scripts/patch-xterm-mouse-report-coords.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
-    "acorn": "^8.16.0",
     "@tanstack/react-virtual": "^3.13.24",
     "@xterm/addon-fit": "0.12.0-beta.289",
     "@xterm/addon-search": "0.17.0-beta.289",
@@ -100,6 +100,7 @@
     "@xterm/addon-webgl": "0.20.0-beta.288",
     "@xterm/headless": "6.1.0-beta.289",
     "@xterm/xterm": "6.1.0-beta.289",
+    "acorn": "^8.16.0",
     "agentation": "^3.0.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "12.10.0",
@@ -117,6 +118,7 @@
     "pino": "^8.18.0",
     "posthog-js": "^1.372.6",
     "qrcode": "^1.5.4",
+    "quickjs-emscripten": "^0.32.0",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "react-i18next": "^16.5.4",

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import { readMetadataRecords } from '../../../runtime/image-record-reader.cjs';
 
 export interface ImageCheckpoint {
   path: string;
@@ -21,7 +22,7 @@ export async function readImageTranscriptBatch(
   path: string,
   previous: ImageCheckpoint | undefined,
   reset: () => void,
-  consume: (line: string, offset: number) => Promise<void>,
+  consume: (record: Record<string, unknown>, offset: number) => Promise<void>,
   signal?: AbortSignal,
 ): Promise<{ checkpoint: ImageCheckpoint; more: boolean; bytesRead: number }> {
   const file = await fs.open(path, 'r');
@@ -35,44 +36,13 @@ export async function readImageTranscriptBatch(
       && previous.boundary === await boundaryHash(file, offset)
       && !(stat.size === previous.size && stat.mtimeMs !== previous.mtimeMs);
     if (!valid) { offset = 0; reset(); }
-    const start = offset;
-    let more = false;
-    if (stat.size > offset) {
-      let readPosition = offset;
-      let fragments: Buffer[] = [];
-      let length = 0;
-      const started = Date.now();
-        outer: while (readPosition < stat.size) {
-          const chunk = Buffer.allocUnsafe(Math.min(256 * 1024, stat.size - readPosition));
-          const read = await file.read(chunk, 0, chunk.length, readPosition);
-          if (!read.bytesRead) break;
-          readPosition += read.bytesRead;
-          const buffer = chunk.subarray(0, read.bytesRead);
-          let cursor = 0;
-          while (cursor < buffer.length) {
-            if (signal?.aborted) break outer;
-            const newline = buffer.indexOf(10, cursor);
-            const end = newline === -1 ? buffer.length : newline + 1;
-            const part = buffer.subarray(cursor, end);
-            fragments.push(part);
-            length += part.length;
-            // Fail explicitly instead of retaining unbounded malformed/huge JSON records.
-            if (length > 96 * 1024 * 1024) throw new Error('Image transcript record exceeds 96 MiB');
-            cursor = end;
-            if (newline === -1) continue;
-            const line = Buffer.concat(fragments, length).toString('utf8');
-            await consume(line, offset);
-            offset += length;
-            fragments = [];
-            length = 0;
-            if (offset - start >= 32 * 1024 * 1024 || Date.now() - started >= 250) {
-              more = offset < stat.size;
-              break outer;
-            }
-          }
-        }
-    }
+    const batch = await readMetadataRecords(path, { start: offset, end: stat.size, maxBytes: 32 * 1024 * 1024, maxMs: 250, signal },
+      async (record, originalOffset) => {
+        delete record.__tesseraRecordOffset;
+        await consume(record, originalOffset);
+      });
+    offset = batch.offset;
     return { checkpoint: { path, identity, offset, size: stat.size, mtimeMs: stat.mtimeMs, boundary: await boundaryHash(file, offset) },
-      more, bytesRead: offset - start };
+      more: batch.more, bytesRead: batch.bytesRead };
   } finally { await file.close(); }
 }

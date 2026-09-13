@@ -1343,6 +1343,7 @@ export const ja: I18nMessages = {
       file: 'ファイルから読み込んだ画像',
       'explicit-path': '指定パス',
     },
+    inputResolutionFailed: 'この記録から入力画像の参照を復元できませんでした。',
     unresolved: '{{count}}件の画像を解決できませんでした。',
     prompt: 'プロンプト',
     revised: '修正プロンプト',

@@ -62,34 +62,44 @@ export function ImageGenerationsPanel({ sessionId, isActive = true }: { sessionI
   }, [sessionId]);
 
   useEffect(function synchronizeActiveImageTab() {
-    const controller = new AbortController();
+    if (!isActive || !sessionId) return;
+    let controller: AbortController | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let busy = false;
-    const refresh = async () => {
-      if (busy || controller.signal.aborted || !isActive || document.visibilityState !== 'visible') return;
+    const stop = () => {
+      controller?.abort();
+      controller = undefined;
       clearTimeout(timer);
-      busy = true;
-      const more = await load(controller.signal, true);
-      busy = false;
-      if (!controller.signal.aborted) timer = setTimeout(() => void refresh(), more ? 0 : REFRESH_INTERVAL_MS);
     };
-    const resume = () => { void refresh(); };
-    const start = async () => {
-      busy = true;
-      await load(controller.signal, false); // Never wait for transcript I/O to show saved cards.
-      busy = false;
-      await refresh();
+    const resume = () => {
+      if (document.visibilityState !== "visible") {
+        stop();
+        return;
+      }
+      if (controller) return;
+      const activeController = new AbortController();
+      controller = activeController;
+      const refresh = async () => {
+        if (activeController.signal.aborted) return;
+        const more = await load(activeController.signal, true);
+        if (!activeController.signal.aborted) {
+          timer = setTimeout(() => void refresh(), more ? 0 : REFRESH_INTERVAL_MS);
+        }
+      };
+      void (async () => {
+        // Never wait for transcript I/O to show saved cards.
+        await load(activeController.signal, false);
+        await refresh();
+      })();
     };
-    void start();
-    window.addEventListener('focus', resume);
-    document.addEventListener('visibilitychange', resume);
+    resume();
+    window.addEventListener("focus", resume);
+    document.addEventListener("visibilitychange", resume);
     return () => {
-      controller.abort();
-      clearTimeout(timer);
-      window.removeEventListener('focus', resume);
-      document.removeEventListener('visibilitychange', resume);
+      stop();
+      window.removeEventListener("focus", resume);
+      document.removeEventListener("visibilitychange", resume);
     };
-  }, [isActive, load, retry]);
+  }, [isActive, load, retry, sessionId]);
 
   if (!sessionId) return <EmptyState text={t("imagePanel.selectSession")} />;
   if (loading) return <EmptyState loading text={t("imagePanel.loading")} />;
@@ -160,7 +170,7 @@ export function ImageGenerationTraceCard({
       </section>
 
       <div className="space-y-4 p-3">
-        {trace.inputs.length > 0 || trace.unresolvedInputCount > 0 ? (
+        {trace.inputs.length > 0 || trace.unresolvedInputCount > 0 || trace.inputResolutionError ? (
           <section className="space-y-2.5">
             <div className="flex items-center justify-between">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-(--text-muted)">{t("imagePanel.inputs")}</p>
@@ -208,7 +218,9 @@ export function ImageGenerationTraceCard({
                 })}
               </p>
             ) : null}
-            {trace.unresolvedInputCount > 0 ? (
+            {trace.inputResolutionError ? (
+              <p className="flex items-center gap-1 text-[10px] text-amber-600"><AlertTriangle className="h-3 w-3" />{t("imagePanel.inputResolutionFailed")}</p>
+            ) : trace.unresolvedInputCount > 0 ? (
               <p className="flex items-center gap-1 text-[10px] text-amber-600"><AlertTriangle className="h-3 w-3" />{t("imagePanel.unresolved", { count: trace.unresolvedInputCount })}</p>
             ) : null}
           </section>
