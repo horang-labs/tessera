@@ -15,8 +15,10 @@ const chatLayoutSource = fs.readFileSync(
   'utf8',
 );
 
-test('the project strip always renders Claude and Codex usage summaries', () => {
+test('the project strip mounts usage summaries and hides providers without windows', () => {
   assert.match(projectStripSource, /<ProviderUsageRail\s*\/>/);
+  assert.match(railSource, /filter\(\(model\) => model.shortTerm !== null \|\| model.weekly !== null\)/);
+  assert.match(railSource, /if \(models.length === 0\) return null/);
   assert.match(railSource, /limitsByProvider\['claude-code'\]/);
   assert.match(railSource, /limitsByProvider\.codex/);
   assert.match(railSource, /data-testid=\{`provider-usage-\$\{model\.providerId\}`\}/);

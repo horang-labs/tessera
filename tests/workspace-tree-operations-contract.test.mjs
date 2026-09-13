@@ -208,11 +208,12 @@ test('a watch reconcile cannot take the row being edited', () => {
 });
 
 test('double-clicking a directory name renames without fighting its toggle', () => {
-  // The first click toggles immediately and the second click is ignored before
-  // the double-click handler opens rename, so no timer delays ordinary clicks.
-  assert.match(directoryRowSource, /onDoubleClick=\{\(event\) => \{\s*if \(!canMutate\) return;\s*event\.stopPropagation\(\);\s*beginRename\(node\);/);
-  assert.match(filePanelSource, /if \(!shouldToggleDirectoryOnClick\(event\.detail\)\) return;/);
-  assert.match(inlineStateSource, /return clickCount <= 1;/);
+  // A fast second click is reserved for rename. A slower second click must
+  // remain a normal toggle even when Chromium still emits `dblclick`.
+  assert.match(directoryRowSource, /if \(!directoryRenameDoubleClickRef\.current\?\.qualified\) return;/);
+  assert.match(filePanelSource, /isRapidDirectoryRenameDoubleClick\(\{/);
+  assert.match(filePanelSource, /shouldToggleDirectoryOnClick\(event\.detail, qualifiedDoubleClick\)/);
+  assert.match(inlineStateSource, /return clickCount !== 2 \|\| !isQualifiedDoubleClick;/);
 });
 
 test('the delete confirmation survives the move to inline entry', () => {

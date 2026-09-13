@@ -1,10 +1,12 @@
 export type LinuxWaylandRenderingEnvironment = Record<string, string | undefined>;
 
-export function isLinuxWaylandSession(options: {
+type LinuxWaylandOptions = {
   platform: NodeJS.Platform;
   env: LinuxWaylandRenderingEnvironment;
   ozonePlatform?: string;
-}): boolean {
+};
+
+export function isLinuxWaylandSession(options: LinuxWaylandOptions): boolean {
   if (options.platform !== 'linux') return false;
 
   const ozonePlatform = options.ozonePlatform?.trim().toLowerCase() ?? '';
@@ -18,4 +20,16 @@ export function isLinuxWaylandSession(options: {
     || ozonePlatform === 'wayland'
     || ozoneHint === 'wayland'
   );
+}
+
+/** Electron 33 otherwise defaults to XWayland even on a native Wayland desktop. */
+export function linuxWaylandImeSwitches(options: LinuxWaylandOptions): Array<[string, string]> {
+  if (!isLinuxWaylandSession(options)) return [];
+  const platform = options.ozonePlatform?.trim().toLowerCase();
+  if (platform && platform !== 'auto' && platform !== 'wayland') return [];
+  return [
+    ['ozone-platform', 'wayland'],
+    ['enable-wayland-ime', ''],
+    ['wayland-text-input-version', '3'],
+  ];
 }

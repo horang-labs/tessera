@@ -46,6 +46,7 @@ import {
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import logger from '@/lib/logger';
 import { getRateLimitData } from '@/lib/rate-limit/fetcher';
+import { hasClaudeSubscription } from '../../subscription-auth';
 import { buildClaudeRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import {
   createClaudeTerminalSessionObserver,
@@ -216,6 +217,11 @@ export class ClaudeCodeAdapter implements CliProvider {
   }
 
   async fetchRateLimits({ environment }: { environment: 'native' | 'wsl' }) {
+    const command = await resolveProviderCliCommand(PROVIDER_ID, DEFAULT_COMMAND, environment);
+    const auth = await execCli(command, ['auth', 'status'], environment, STATUS_CHECK_TIMEOUT_MS);
+    if (hasClaudeSubscription(auth) === false) {
+      return { providerId: PROVIDER_ID, windows: [], updatedAt: new Date().toISOString() };
+    }
     const data = await getRateLimitData({ environment });
     return data ? buildClaudeRateLimitSnapshot(data) : null;
   }

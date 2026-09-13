@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useMemo } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, SyntheticEvent, RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Archive, ArchiveRestore, CircleStop, Pencil, RefreshCw, RotateCcw, Trash2, ExternalLink, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -15,6 +15,7 @@ import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 export interface TaskContextMenuProps {
   anchorRect: DOMRect;
+  triggerRef?: RefObject<HTMLElement | null>;
   currentStatus?: string;
   allowChatStatus?: boolean;
   isArchived: boolean;
@@ -42,6 +43,7 @@ const PADDING = 6;
 
 export function TaskContextMenu({
   anchorRect,
+  triggerRef,
   currentStatus,
   allowChatStatus = false,
   isArchived,
@@ -121,15 +123,16 @@ export function TaskContextMenu({
   ]);
 
   useEffect(function handleOutsideClick() {
-    function onMouseDown(e: MouseEvent) {
+    function onPointerDown(e: PointerEvent) {
       const target = e.target as Node;
-      if (!menuRef.current?.contains(target)) {
+      if (!menuRef.current?.contains(target) && !triggerRef?.current?.contains(target)) {
         onClose();
       }
     }
-    document.addEventListener('mousedown', onMouseDown, true);
-    return () => document.removeEventListener('mousedown', onMouseDown, true);
-  }, [onClose]);
+    // Terminal touch handlers can suppress compatibility mouse events.
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [onClose, triggerRef]);
 
   useEffect(function focusFirstItem() {
     const firstItem = menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');

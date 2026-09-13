@@ -66,6 +66,12 @@ Open a Codex or OpenCode PTY and press the chat icon in its header. Chat View tu
 
 ![Switching between a PTY session and PTY Chat View](docs/assets/readme/pty-chatview.gif)
 
+## Create and refine images without leaving the session
+
+Open the **Images** tab in a Codex terminal session to see generated images, their reference inputs, and prompts together. Download a result or drag it into your next prompt.
+
+![Generated images and reference inputs beside a Codex terminal session](docs/assets/releases/v0.2.4/images-input-and-result.png)
+
 ## Finish the Git workflow without switching apps
 
 Edit project files, review diffs, select changes, commit, sync, publish branches, and open pull requests without leaving the session.

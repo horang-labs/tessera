@@ -120,7 +120,7 @@ export function WorkspaceInlineInputRow({
               ? "New folder name"
               : "New file name"}
           aria-invalid={error ? true : undefined}
-          className="min-w-0 flex-1 rounded-sm border border-(--accent) bg-(--chat-bg) px-1 py-0.5 font-mono text-[11px] text-(--text-primary) outline-none"
+          className="min-w-0 flex-1 rounded-sm border border-(--accent) bg-(--chat-bg) px-1 py-0.5 text-[13px] text-(--text-primary) outline-none"
           data-testid="workspace-inline-input"
           onKeyDown={(event) => {
             if (event.key === "Enter") {

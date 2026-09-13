@@ -314,22 +314,18 @@ export function useSkillPicker(
     [],
   );
 
-  // When commands first arrive while picker is in loading state, auto-populate
-  const prevCommandsRef = useRef<CommandInfo[] | undefined>(undefined);
+  // An open picker follows every catalog update, including removals. A cached
+  // nonempty catalog can be replaced by the running provider's authoritative list.
   useEffect(() => {
-    const wasEmpty = !prevCommandsRef.current || prevCommandsRef.current.length === 0;
-    prevCommandsRef.current = commands;
-    // Only trigger on transition from empty → populated
-    if (!wasEmpty) return;
+    if (!isOpen) return;
     const list = skillsOnlyMode
       ? (visibleCommands ?? []).filter((command) => !isReservedCodexSlashCommandName(command.name))
       : availableCommands;
-    if (list.length === 0) return;
     const input = lastInputRef.current;
     if (!input.startsWith('/') || input.indexOf(' ') !== -1) return;
     if (selectedSkill) return;
     filterAndShow(input, list);
-  }, [availableCommands, commands, filterAndShow, selectedSkill, skillsOnlyMode, visibleCommands]);
+  }, [availableCommands, filterAndShow, isOpen, selectedSkill, skillsOnlyMode, visibleCommands]);
 
   const selectSkill = useCallback((skill: SkillInfo) => {
     setSelectedSkill(skill);

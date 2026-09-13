@@ -11,12 +11,14 @@ import type {
   PersistedTabStoreV2,
   PersistedTabStoreV3,
   SessionSurfaceLocation,
+  MergeTabsResult,
 } from '@/types/tab';
 import { TAB_STORE_KEY, LRU_LIMIT } from '@/types/tab';
 import { DEBUG_DIAGNOSTICS } from '@/lib/debug-diagnostics';
 import { PANEL_LAYOUT_STORAGE_KEY } from '@/types/panel';
 import type { PersistedPanelLayout, PanelNode, TabPanelData } from '@/types/panel';
 import { usePanelStore } from '@/stores/panel-store';
+import { planTabMerge } from '@/lib/tab/tab-merge';
 import { useSessionStore } from '@/stores/session-store';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
@@ -317,7 +319,8 @@ function getVisibleTabs(
   if (!isAllProjectsScope(projectDir)) return ordered;
 
   // Empty start screens are disposable placeholders, not separate work.
-  // Keep one in All Projects; named, split, and terminal tabs stay independent.
+  // Keep only the selected placeholder when work exists, or one for an empty workspace.
+  // Named, split, and terminal tabs stay independent.
   const isEmpty = (tab: Tab) => {
     const data = tab.projectDir === null
       ? globalState?.tabPanelSnapshots?.[tab.id]
@@ -325,7 +328,8 @@ function getVisibleTabs(
     return isPristineEmptyTabData(tab, data);
   };
   const emptyTabs = ordered.filter(isEmpty);
-  const retained = emptyTabs.find((tab) => tab.id === preferredActiveTabId) ?? emptyTabs[0];
+  const retained = emptyTabs.find((tab) => tab.id === preferredActiveTabId)
+    ?? (emptyTabs.length === ordered.length ? emptyTabs[0] : undefined);
   const discarded = new Set(emptyTabs.filter((tab) => tab !== retained).map((tab) => tab.id));
   return ordered.filter((tab) => !discarded.has(tab.id));
 }
@@ -1117,6 +1121,43 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     panelStore.setActiveTabId(destinationTabId);
 
     return destinationTabId;
+  },
+
+  mergeTabs: (tabIds: readonly string[]): MergeTabsResult => {
+    const state = get();
+    const panelStore = usePanelStore.getState();
+    const plan = planTabMerge(state.tabs, panelStore.tabPanels, tabIds);
+    if (!plan.ok) return plan;
+    const tabId = uuidv4();
+    const layout = buildBalancedPanelLayout(plan.panels.map((panel) => panel.id));
+    if (!layout) return { ok: false, reason: 'invalid-panel-data' };
+    const sourceIds = new Set(plan.sourceTabIds);
+    const resultTab: Tab = { id: tabId, projectDir: plan.projectDir, title: null, isPreview: false };
+    const nextTabs = [...state.tabs.filter((tab) => !sourceIds.has(tab.id))];
+    nextTabs.splice(plan.insertionIndex, 0, resultTab);
+    const resultData: TabPanelData = { layout, panels: Object.fromEntries(plan.panels.map((panel) => [panel.id, panel])), activePanelId: plan.panels[0]!.id };
+    // Register the new owner before sources disappear so terminal cleanup always finds it.
+    panelStore.initTab(tabId, resultData);
+    set({ tabs: nextTabs, activeTabId: tabId, lruTabIds: computeNewLru(state.lruTabIds.filter((id) => !sourceIds.has(id)), tabId) });
+    for (const sourceId of sourceIds) panelStore.removeTab(sourceId);
+    panelStore.setActiveTabId(tabId);
+    const scoped = saveVisibleTabsToScopedStates(get(), usePanelStore.getState());
+    const stripSources = (snapshot: ProjectTabState | null): ProjectTabState | null => {
+      if (!snapshot) return null;
+      const remainingTabs = snapshot.tabs.filter((tab) => !sourceIds.has(tab.id));
+      if (!remainingTabs.length) return null;
+      const snapshots = Object.fromEntries(Object.entries(snapshot.tabPanelSnapshots ?? {})
+        .filter(([id]) => !sourceIds.has(id)));
+      const active = sourceIds.has(snapshot.activeTabId) ? remainingTabs[0]!.id : snapshot.activeTabId;
+      return { ...snapshot, tabs: remainingTabs, activeTabId: active, lruTabIds: snapshot.lruTabIds.filter((id) => !sourceIds.has(id)), tabPanelSnapshots: snapshots };
+    };
+    const projectTabStates = Object.fromEntries(Object.entries(scoped.projectTabStates)
+      .map(([dir, snapshot]) => [dir, stripSources(snapshot)])
+      .filter((entry): entry is [string, ProjectTabState] => entry[1] !== null));
+    set({ ...scoped, projectTabStates, globalTabState: stripSources(scoped.globalTabState) });
+    markTabActiveSessionRead(tabId);
+    assertTabStoreInvariants(get());
+    return { ok: true, tabId, panelCount: plan.panels.length, deduplicatedCount: plan.deduplicatedCount };
   },
 
   openPreview: (sessionId: string): void => {

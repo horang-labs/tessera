@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+import { useI18n } from '@/lib/i18n';
 import { Gauge, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type {
@@ -147,9 +149,39 @@ export function ComposerModelMenu({
   onSelectModel,
   telemetryControl,
 }: ComposerModelMenuProps) {
+  const { t } = useI18n();
+  const [query, setQuery] = useState('');
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredOptions = modelOptions.filter((option) =>
+    `${option.label} ${option.value}`.toLowerCase().includes(normalizedQuery),
+  );
+
   return (
     <>
-      {modelOptions.map((option) => (
+      <div className="sticky top-0 z-10 bg-(--chat-header-bg) px-2 pb-2 pt-1">
+        <input
+          type="search"
+          data-composer-menu-search
+          data-testid="model-selector-search"
+          aria-label={t('settings.model.searchModels')}
+          placeholder={t('settings.model.searchModels')}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing || event.keyCode === 229) {
+              event.stopPropagation();
+              return;
+            }
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              event.stopPropagation();
+              if (filteredOptions[0]) onSelectModel(filteredOptions[0].value);
+            }
+          }}
+          className="w-full rounded-md border border-(--divider) bg-(--input-bg) px-2 py-1.5 text-xs text-(--text-primary) outline-none focus:border-(--accent)"
+        />
+      </div>
+      {filteredOptions.map((option) => (
         <button
           {...telemetryClickAttributes(telemetryControl, 'composer')}
           key={option.value}
@@ -168,6 +200,11 @@ export function ComposerModelMenu({
           )}
         </button>
       ))}
+      {!isLoading && filteredOptions.length === 0 && (
+        <div role="status" className="px-3 py-2 text-xs text-(--text-muted)">
+          {t('settings.model.noMatchingModels')}
+        </div>
+      )}
       {isLoading && (
         <div className="px-3 py-2 text-[10px] text-(--text-muted)">
           {loadingLabel}

@@ -5,6 +5,7 @@ import type {
   ContentBlock,
   SessionSpawnConfig,
 } from './message-types';
+import { PTY_LATENCY_ENABLED, traceTerminalLatency } from '@/lib/terminal/terminal-latency-diagnostics';
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
@@ -510,7 +511,9 @@ export class WebSocketClient {
     surfaceId: string,
     data: string,
   ): boolean {
+    const diagnosticStart = PTY_LATENCY_ENABLED ? performance.now() : 0;
     const sent = this.sendRequest('terminal_input', { terminalId, surfaceId, data });
+    if (PTY_LATENCY_ENABLED) traceTerminalLatency(sent ? 'input-sent' : 'input-send-failed', surfaceId, data.length, performance.now() - diagnosticStart);
     // A carriage return is the terminal's submit boundary. Do not inspect or
     // retain any buffered text that preceded it.
     if (sent && data === '\r') {

@@ -116,7 +116,7 @@ export async function PATCH(
       task.workDir &&
       !task.worktreeDeletedAt
     ) {
-      const cachedDiffStats = getCachedDiffStats(task.workDir);
+      const cachedDiffStats = getCachedDiffStats(task.workDir, auth.userId);
       if (cachedDiffStats && cachedDiffStats.changedFiles > 0) {
         suppressDiffAutoPromoteForTask(id);
       }

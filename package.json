@@ -1,6 +1,6 @@
 {
   "name": "@horang-labs/tessera",
-  "version": "0.2.3-prebuild.1",
+  "version": "0.2.3",
   "description": "Open-source web and desktop workspace for AI coding agents",
   "private": false,
   "license": "AGPL-3.0-only",
@@ -91,6 +91,7 @@
     "prepare": "node scripts/patch-xterm-webgl-atlas.mjs && node scripts/patch-xterm-webgl-device-pixel.mjs && node scripts/patch-xterm-touch-scroll.mjs && node scripts/patch-xterm-mouse-report-coords.mjs && node -e \"const fs=require('fs'); if (fs.existsSync('.electron-runtime')) require('child_process').execFileSync('electron-builder', ['install-app-deps'], {stdio:'inherit'});\""
   },
   "dependencies": {
+    "@parcel/watcher": "2.5.6",
     "@tanstack/react-virtual": "^3.13.24",
     "@xterm/addon-fit": "0.12.0-beta.289",
     "@xterm/addon-search": "0.17.0-beta.289",
@@ -175,6 +176,7 @@
     "allowMissingDependencies": true,
     "asar": {
       "unpack": [
+        "**/node_modules/@parcel/watcher*/**",
         "**/node_modules/better-sqlite3/**",
         "**/sql.js/**",
         "**/node_modules/sql.js/**",

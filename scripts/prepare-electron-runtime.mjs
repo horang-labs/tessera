@@ -150,6 +150,9 @@ async function addNextTraceFiles(files) {
 }
 
 async function addTracedEntrypointFiles(files) {
+  // Parcel selects its platform binary through a computed require. File tracing
+  // alone can omit the installed optional native package.
+  await addDirectory('node_modules/@parcel', files);
   const { fileList } = await nodeFileTrace(ELECTRON_ENTRYPOINTS, {
     base: rootDir,
     processCwd: rootDir,
@@ -254,6 +257,7 @@ async function writeRuntimePackageJson() {
     await fs.readFile(path.join(rootDir, 'package.json'), 'utf8')
   );
   const runtimeDependencies = await collectRuntimeDependencies();
+  const nextBuild = JSON.parse(await fs.readFile(requiredServerFilesPath, 'utf8'));
 
   const runtimePackageJson = {
     name: sourcePackageJson.name,
@@ -264,6 +268,7 @@ async function writeRuntimePackageJson() {
     homepage: sourcePackageJson.homepage,
     main: 'dist-electron/electron/main.js',
     dependencies: runtimeDependencies,
+    tesseraPtyLatency: nextBuild.config?.env?.NEXT_PUBLIC_TESSERA_PTY_LATENCY === '1',
   };
 
   await fs.writeFile(

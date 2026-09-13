@@ -8,6 +8,8 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useSessionStore } from '@/stores/session-store';
 import type { WorktreeBaseRef } from '@/hooks/use-worktree-base-refs';
+import { captureTelemetryEvent } from '@/lib/telemetry/client';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ProjectCheckoutBranchProps {
   worktreeId: string;
@@ -175,7 +177,15 @@ export function ProjectCheckoutBranch({
       }
       setSelectedBranch(payload.currentBranch);
       updateProjectWorktreeBranch(worktreeId, payload.currentBranch);
+      void captureTelemetryEvent('worktree_branch_switch_result', {
+        surface: 'worktree',
+        result: 'success',
+      });
     } catch (error) {
+      void captureTelemetryEvent('worktree_branch_switch_result', {
+        surface: 'worktree',
+        result: 'failed',
+      });
       setSwitchError(
         error instanceof Error ? error.message : t('chat.checkoutBranchSwitchFailed'),
       );
@@ -191,6 +201,7 @@ export function ProjectCheckoutBranch({
       </label>
       <div className="flex gap-2">
         <button
+          {...telemetryClickAttributes('worktree.branch_switch.open', 'worktree')}
           ref={branchTriggerRef}
           type="button"
           aria-label={t('chat.checkoutBranchAriaLabel')}
@@ -216,6 +227,7 @@ export function ProjectCheckoutBranch({
           <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', isBranchMenuOpen && 'rotate-180')} aria-hidden="true" />
         </button>
         <button
+          {...telemetryClickAttributes('worktree.branch_switch.submit', 'worktree')}
           type="button"
           onClick={() => { void handleSwitch(); }}
           disabled={!canSwitch}
@@ -240,6 +252,7 @@ export function ProjectCheckoutBranch({
           <div className="mb-1 flex items-center gap-2 border-b border-(--divider) px-2 pb-1.5">
             <Search className="h-4 w-4 text-(--text-muted)" aria-hidden="true" />
             <input
+              {...telemetryClickAttributes('worktree.branch_switch.search', 'worktree')}
               ref={branchSearchRef}
               value={branchQuery}
               onChange={(event) => setBranchQuery(event.target.value)}
@@ -253,6 +266,7 @@ export function ProjectCheckoutBranch({
               const isSelected = ref.name === selectedBranch;
               return (
                 <button
+                  {...telemetryClickAttributes('worktree.branch_switch.select', 'worktree')}
                   key={ref.name}
                   role="option"
                   type="button"

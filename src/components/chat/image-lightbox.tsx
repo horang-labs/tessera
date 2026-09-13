@@ -32,9 +32,8 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
   const avoidsWindowControls = electronPlatform === 'win32';
   const resolvedAlt = alt || t('chat.imageOriginalView');
 
-  // The opener is a button, so it remains focused behind this portal. Android
-  // Chrome can restore that focus when the portal is removed, which summons the
-  // software keyboard even though the user only dismissed an image.
+  // Clear any focus left behind the portal when dismissing the image. The click
+  // boundary below must also prevent the message list from focusing it again.
   const closeLightbox = useCallback(() => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
@@ -55,7 +54,11 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
     };
   }, []);
 
-  const handleOverlayClick = useCallback(() => {
+  const handleOverlayClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    // Portals still bubble through the React tree. The message list treats an
+    // image/backdrop click as a blank-area click and focuses the composer after
+    // closeLightbox has blurred it, reopening the mobile keyboard.
+    event.stopPropagation();
     if (suppressClickRef.current) {
       suppressClickRef.current = false;
       return;
@@ -124,7 +127,10 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       <button
         {...telemetryClickAttributes('message.image.close', 'message')}
         type="button"
-        onClick={closeLightbox}
+        onClick={(event) => {
+          event.stopPropagation();
+          closeLightbox();
+        }}
         className={cn(
           'absolute z-10 right-4 w-10 h-10 flex items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors text-xl',
           avoidsWindowControls ? 'top-12' : 'top-4',

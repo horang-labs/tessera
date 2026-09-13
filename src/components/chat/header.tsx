@@ -11,6 +11,8 @@ import {
   MoreHorizontal,
   GitBranch,
   Search,
+  Terminal,
+  MessageSquare,
 } from 'lucide-react';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { useSessionStore } from '@/stores/session-store';
@@ -345,7 +347,12 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                 fullLabel={!session.provider || session.provider === 'claude-code'}
               />
 
-              <span className="flex min-w-0 shrink items-center gap-1 max-sm:flex-1">
+              {/* The mobile workspace tab already names this PTY session.
+                  Peek has no tab, so it retains its only visible title. */}
+              <span className={cn(
+                'flex min-w-0 shrink items-center gap-1 max-sm:flex-1',
+                isCompact && !peek && 'max-sm:hidden',
+              )}>
                 <h2
                   ref={titleRef}
                   className={cn(
@@ -447,6 +454,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                           'chat_header',
                         )}
                         title={mode === 'terminal' ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
+                        aria-label={mode === 'terminal' ? t('chat.viewAsTerminal') : t('chat.viewAsChat')}
                         aria-pressed={selected}
                         className={cn(
                           'flex h-[18px] items-center justify-center rounded-sm px-1.5 text-[10px] font-medium leading-none whitespace-nowrap',
@@ -457,7 +465,12 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                             : 'text-(--text-muted) hover:bg-(--chat-header-bg) hover:text-(--text-secondary)',
                         )}
                       >
-                        {mode === 'terminal' ? t('chat.terminalMode') : t('chat.chatMode')}
+                        {mode === 'terminal'
+                          ? <Terminal className="h-3.5 w-3.5 sm:hidden" aria-hidden="true" />
+                          : <MessageSquare className="h-3.5 w-3.5 sm:hidden" aria-hidden="true" />}
+                        <span className="hidden sm:inline">
+                          {mode === 'terminal' ? t('chat.terminalMode') : t('chat.chatMode')}
+                        </span>
                       </button>
                       </ShortcutTooltip>
                     );
@@ -487,6 +500,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
             )}
 
             {runtimePresentation.canStop && (
+              <div className="hidden sm:contents">
               <ShortcutTooltip id="stop-session" label={t('status.stopProcess')}>
               <button
                 type="button"
@@ -503,9 +517,11 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                 <CircleStop className="h-3.5 w-3.5" />
               </button>
               </ShortcutTooltip>
+              </div>
             )}
 
             {(!session.archived || !session.taskId) && (
+              <div className="hidden sm:contents">
               <ShortcutTooltip id="archive-session" label={t(session.archived ? 'task.contextMenu.unarchive' : 'task.contextMenu.archive')}>
               <button
                 type="button"
@@ -527,6 +543,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                   : <Archive className="h-3.5 w-3.5" />}
               </button>
               </ShortcutTooltip>
+              </div>
             )}
 
             {/* More actions button */}
@@ -585,10 +602,14 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
       {menuAnchorRect && (
         <TaskContextMenu
           anchorRect={menuAnchorRect}
+          triggerRef={moreButtonRef}
           currentStatus={isSingleSessionTask ? currentTaskStatus : undefined}
           isArchived={session.archived ?? false}
           isRunning={runtimePresentation.showRunning}
           onStatusChange={isSingleSessionTask ? handleStatusChange : undefined}
+          onStopProcess={runtimePresentation.canStop ? handleStopProcess : undefined}
+          onArchive={!session.archived ? handleArchive : undefined}
+          onUnarchive={session.archived && !session.taskId ? handleUnarchive : undefined}
           onRename={handleRenameFromMenu}
           onDelete={handleDelete}
           onGenerateTitle={() => generateTitle(sessionId)}

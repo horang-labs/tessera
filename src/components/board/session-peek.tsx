@@ -1,5 +1,7 @@
 'use client';
 
+import { isPhoneViewport } from '@/lib/viewport/phone-viewport';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, SquareTerminal, Terminal, X } from 'lucide-react';
 import { PeekContextMenu } from './peek-context-menu';
@@ -152,7 +154,7 @@ export function SessionPeek({
 
   useEffect(function focusPeekInputWhenReady() {
     const content = sessionContentRef.current;
-    if (!showSessionContent || !content) return;
+    if (!showSessionContent || !content || isPhoneViewport()) return;
     const selector = isTerminalChatView
       ? '[data-testid="terminal-chat-composer-input"]:not([disabled])'
       : isTerminal

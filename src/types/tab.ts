@@ -105,6 +105,10 @@ export interface SessionSurfaceLocation {
   projectDir: string | null;
 }
 
+export type MergeTabsResult =
+  | { ok: true; tabId: string; panelCount: number; deduplicatedCount: number }
+  | { ok: false; reason: import('@/lib/tab/tab-merge').TabMergeFailureReason };
+
 /**
  * tab-store의 액션 인터페이스
  */
@@ -173,6 +177,9 @@ export interface TabStoreActions {
    * @returns 새 탭 ID. 세션이 없으면 null.
    */
   createTabWithSessions(sessionIds: string[]): string | null;
+
+  /** Combine existing tabs while retaining their existing panel identities. */
+  mergeTabs(tabIds: readonly string[]): MergeTabsResult;
 
   /**
    * 프리뷰 탭에서 세션 열기. 기존 프리뷰 탭이 있으면 세션만 교체, 없으면 새 프리뷰 탭 생성.

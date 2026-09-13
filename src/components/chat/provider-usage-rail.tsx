@@ -106,7 +106,7 @@ export function ProviderUsageRail() {
     () => [
       buildProviderUsageRailModel('claude-code', claudeSnapshot),
       buildProviderUsageRailModel('codex', codexSnapshot),
-    ],
+    ].filter((model) => model.shortTerm !== null || model.weekly !== null),
     [claudeSnapshot, codexSnapshot],
   );
   const railRef = useRef<HTMLDivElement>(null);
@@ -114,7 +114,7 @@ export function ProviderUsageRail() {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [openProviderId, setOpenProviderId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
-  const isOpen = openProviderId !== null;
+  const isOpen = models.some((model) => model.providerId === openProviderId);
   const close = useCallback(() => setOpenProviderId(null), []);
   const calculatePosition = useCallback((trigger: HTMLElement) => {
     const rect = trigger.getBoundingClientRect();
@@ -151,6 +151,10 @@ export function ProviderUsageRail() {
     updatePosition();
     setOpenProviderId(providerId);
   };
+
+  // Forget an open provider when its quota disappears, including a later switch back.
+  if (openProviderId !== null && !isOpen) setOpenProviderId(null);
+  if (models.length === 0) return null;
 
   return (
     <>

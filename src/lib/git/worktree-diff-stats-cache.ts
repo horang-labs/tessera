@@ -1,7 +1,6 @@
-import * as path from 'path';
+import { invalidateGitPanelReads, gitReadKey, getGitReadGeneration, normalizeGitReadPath } from './git-read-cache';
 import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import {
-  formatWindowsHostedWslDisplayPath,
   isWindowsHostedWslFilesystemPath,
 } from '@/lib/filesystem/path-environment';
 import { computeWorktreeDiffStats } from './worktree-diff-stats';
@@ -24,10 +23,12 @@ type Listener = (
 interface CacheEntry {
   stats: WorktreeDiffStats | null;
   computedAt: number;
+  generation: number;
 }
 
 interface CacheState {
   entries: Map<string, CacheEntry>;
+  readKeys: Map<string, string>;
   pendingTimers: Map<string, NodeJS.Timeout>;
   pendingUserIds: Map<string, Set<string>>;
   pendingBroadcastWorkDirs: Map<string, string>;
@@ -46,6 +47,7 @@ function getState(): CacheState {
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = {
       entries: new Map(),
+      readKeys: new Map(),
       pendingTimers: new Map(),
       pendingUserIds: new Map(),
       pendingBroadcastWorkDirs: new Map(),
@@ -59,6 +61,7 @@ function getState(): CacheState {
   }
   const state = g[GLOBAL_KEY]!;
   // Keep Next.js hot-reload state created by an older module shape usable.
+  state.readKeys ??= new Map();
   state.rerunUserIds ??= new Map();
   state.pendingBroadcastWorkDirs ??= new Map();
   state.rerunBroadcastWorkDirs ??= new Map();
@@ -96,21 +99,22 @@ function runWithComputeLimit<T>(compute: () => Promise<T>): Promise<T> {
 }
 
 export function normalizeWorktreeDiffStatsCacheKey(workDir: string): string {
-  const trimmed = workDir.trim();
-  // The DB can contain both a CLI-reported `/home/...` path and the Windows
-  // server's `\\wsl.localhost\<distro>\home\...` spelling for the same tree.
-  // Collapse those spellings before cache/in-flight lookup so one invalidation
-  // cannot create two WSL probes. Windows-native drive paths stay untouched.
-  if (isWindowsHostedWslFilesystemPath(trimmed)) {
-    return path.posix.resolve(formatWindowsHostedWslDisplayPath(trimmed, null));
-  }
-  return getPathModule(trimmed).resolve(trimmed);
+  return normalizeGitReadPath(workDir);
 }
 
-export function getCachedDiffStats(workDir: string): WorktreeDiffStats | null | undefined {
-  const key = normalizeWorktreeDiffStatsCacheKey(workDir);
-  const entry = getState().entries.get(key);
-  return entry ? entry.stats : undefined;
+function scopeKey(workDir: string, userId?: string): string {
+  return JSON.stringify([normalizeWorktreeDiffStatsCacheKey(workDir), userId ?? null]);
+}
+
+function cachedEntry(workDir: string, userId?: string): CacheEntry | undefined {
+  const state = getState();
+  const key = state.readKeys.get(scopeKey(workDir, userId));
+  const entry = key ? state.entries.get(key) : undefined;
+  return entry?.generation === getGitReadGeneration() ? entry : undefined;
+}
+
+export function getCachedDiffStats(workDir: string, userId?: string): WorktreeDiffStats | null | undefined {
+  return cachedEntry(workDir, userId)?.stats;
 }
 
 /**
@@ -118,8 +122,8 @@ export function getCachedDiffStats(workDir: string): WorktreeDiffStats | null | 
  * NOT stale — callers distinguish the two because a miss needs a blocking-free
  * first compute while a stale hit still has a usable value to return meanwhile.
  */
-export function isDiffStatsStale(workDir: string, now: number = Date.now()): boolean {
-  const entry = getState().entries.get(normalizeWorktreeDiffStatsCacheKey(workDir));
+export function isDiffStatsStale(workDir: string, now: number = Date.now(), userId?: string): boolean {
+  const entry = cachedEntry(workDir, userId);
   if (!entry) return false;
   return isDiffStatsEntryStale(entry.computedAt, now);
 }
@@ -133,8 +137,8 @@ export function getCachedDiffStatsRevalidating(
   workDir: string,
   userId: string,
 ): WorktreeDiffStats | null | undefined {
-  const cached = getCachedDiffStats(workDir);
-  if (cached !== undefined && isDiffStatsStale(workDir)) {
+  const cached = getCachedDiffStats(workDir, userId);
+  if (cached !== undefined && isDiffStatsStale(workDir, Date.now(), userId)) {
     scheduleRecompute(workDir, userId);
   }
   return cached;
@@ -175,20 +179,31 @@ async function runCompute(
   workDir: string,
   userIds: string[],
   broadcastWorkDir: string,
+  refresh = true,
 ): Promise<WorktreeDiffStats | null> {
+  const userId = userIds[0];
+  const agentEnvironment = await resolveGitEnvironment(
+    userId ? { userId } : { inferFromPaths: [workDir] },
+  );
+  const key = gitReadKey(workDir, agentEnvironment, userId, 'diff-stats', [getGitReadGeneration()]);
   const state = getState();
-  const existing = state.inFlight.get(workDir);
+  if (state.readKeys.size >= 256 && !state.readKeys.has(scopeKey(workDir, userId))) {
+    state.readKeys.delete(state.readKeys.keys().next().value!);
+  }
+  state.readKeys.set(scopeKey(workDir, userId), key);
+  const existing = state.inFlight.get(key);
   if (existing) {
-    let queuedUserIds = state.rerunUserIds.get(workDir);
+    if (!refresh) return existing;
+    let queuedUserIds = state.rerunUserIds.get(key);
     if (!queuedUserIds) {
       queuedUserIds = new Set();
-      state.rerunUserIds.set(workDir, queuedUserIds);
+      state.rerunUserIds.set(key, queuedUserIds);
     }
     for (const userId of userIds) queuedUserIds.add(userId);
     state.rerunBroadcastWorkDirs.set(
-      workDir,
+      key,
       preferWorktreeDiffStatsBroadcastPath(
-        state.rerunBroadcastWorkDirs.get(workDir),
+        state.rerunBroadcastWorkDirs.get(key),
         broadcastWorkDir,
       ),
     );
@@ -205,36 +220,36 @@ async function runCompute(
       // queried. Keep one shared promise, but repeat the query until no newer
       // request remains so the final broadcast cannot expose stale counts.
       while (true) {
-        stats = await runWithComputeLimit(async () => {
-          // A recompute can be triggered by a filesystem event with no user
-          // attached, so the fallback to the worktree path is named here.
-          const agentEnvironment = await resolveGitEnvironment(
-            nextUserIds[0]
-              ? { userId: nextUserIds[0] }
-              : { inferFromPaths: [workDir] },
-          );
-          return computeWorktreeDiffStats(workDir, agentEnvironment);
-        });
-        const previousStats = state.entries.get(workDir)?.stats;
-        state.entries.set(workDir, { stats, computedAt: Date.now() });
-        notifyListeners(nextBroadcastWorkDir, stats, nextUserIds, previousStats);
+        const generation = getGitReadGeneration();
+        stats = await runWithComputeLimit(() => computeWorktreeDiffStats(workDir, agentEnvironment));
+        const previousStats = state.entries.get(key)?.stats;
+        // A refresh or mutation during this read invalidates its result.
+        if (generation === getGitReadGeneration() && !state.rerunUserIds.has(key)) {
+          if (state.entries.size >= 256 && !state.entries.has(key)) {
+            state.entries.delete(state.entries.keys().next().value!);
+          }
+          state.entries.set(key, { stats, computedAt: Date.now(), generation });
+        }
+        if (generation === getGitReadGeneration() && !state.rerunUserIds.has(key)) {
+          notifyListeners(nextBroadcastWorkDir, stats, nextUserIds, previousStats);
+        }
 
-        const queuedUserIds = state.rerunUserIds.get(workDir);
+        const queuedUserIds = state.rerunUserIds.get(key);
         if (!queuedUserIds) return stats;
-        state.rerunUserIds.delete(workDir);
+        state.rerunUserIds.delete(key);
         nextUserIds = Array.from(queuedUserIds);
-        nextBroadcastWorkDir = state.rerunBroadcastWorkDirs.get(workDir)
+        nextBroadcastWorkDir = state.rerunBroadcastWorkDirs.get(key)
           ?? nextBroadcastWorkDir;
-        state.rerunBroadcastWorkDirs.delete(workDir);
+        state.rerunBroadcastWorkDirs.delete(key);
       }
     } finally {
-      state.rerunUserIds.delete(workDir);
-      state.rerunBroadcastWorkDirs.delete(workDir);
-      state.inFlight.delete(workDir);
+      state.rerunUserIds.delete(key);
+      state.rerunBroadcastWorkDirs.delete(key);
+      state.inFlight.delete(key);
     }
   })();
 
-  state.inFlight.set(workDir, promise);
+  state.inFlight.set(key, promise);
   return promise;
 }
 
@@ -244,7 +259,8 @@ async function runCompute(
  * a set so the resulting broadcast can reach everyone who triggered it.
  */
 export function scheduleRecompute(workDir: string, userId?: string): void {
-  const key = normalizeWorktreeDiffStatsCacheKey(workDir);
+  invalidateGitPanelReads();
+  const key = scopeKey(workDir, userId);
   const state = getState();
 
   if (userId) {
@@ -272,7 +288,9 @@ export function scheduleRecompute(workDir: string, userId?: string): void {
     state.pendingUserIds.delete(key);
     const broadcastWorkDir = state.pendingBroadcastWorkDirs.get(key) ?? workDir;
     state.pendingBroadcastWorkDirs.delete(key);
-    void runCompute(key, userIds, broadcastWorkDir);
+    void runCompute(workDir, userIds, broadcastWorkDir).catch(() => {
+      // A rejected environment lookup must not become an unhandled timer rejection.
+    });
   }, DEBOUNCE_MS);
   state.pendingTimers.set(key, timer);
 }
@@ -282,7 +300,8 @@ export function scheduleRecompute(workDir: string, userId?: string): void {
  * Used at turn-end so the final state reaches the client without waiting.
  */
 export function flushRecompute(workDir: string, userId?: string): Promise<WorktreeDiffStats | null> {
-  const key = normalizeWorktreeDiffStatsCacheKey(workDir);
+  invalidateGitPanelReads();
+  const key = scopeKey(workDir, userId);
   const state = getState();
   const timer = state.pendingTimers.get(key);
   if (timer) {
@@ -296,22 +315,9 @@ export function flushRecompute(workDir: string, userId?: string): Promise<Worktr
   const userIds = accumulated ? Array.from(accumulated) : [];
   if (userId && !userIds.includes(userId)) userIds.push(userId);
   return runCompute(
-    key,
+    workDir,
     userIds,
     preferWorktreeDiffStatsBroadcastPath(pendingBroadcastWorkDir, workDir),
-  );
-}
-
-function getPathModule(filesystemPath: string): typeof path.win32 | typeof path.posix {
-  return isWindowsStylePath(filesystemPath) ? path.win32 : path.posix;
-}
-
-function isWindowsStylePath(filesystemPath: string): boolean {
-  return (
-    /^[a-zA-Z]:[\\/]/.test(filesystemPath)
-    || /^[a-zA-Z]:$/.test(filesystemPath)
-    || filesystemPath.startsWith('\\\\')
-    || filesystemPath.startsWith('//')
   );
 }
 
@@ -324,5 +330,5 @@ export async function computeAndCache(
   workDir: string,
   userId: string,
 ): Promise<WorktreeDiffStats | null> {
-  return runCompute(normalizeWorktreeDiffStatsCacheKey(workDir), [userId], workDir);
+  return runCompute(workDir, [userId], workDir, false);
 }

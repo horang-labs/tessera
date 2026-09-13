@@ -131,7 +131,7 @@ async function refreshSharingSessionPanels(
     while (next < bystanders.length) {
       const sessionId = bystanders[next++]!;
       try {
-        await flushGitPanelRecompute(sessionId, userId);
+        await flushGitPanelRecompute(sessionId, userId, { invalidate: false });
       } catch (error) {
         // One session's panel failing to recompute must not stop the rest.
         logger.warn(

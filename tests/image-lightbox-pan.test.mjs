@@ -59,12 +59,12 @@ test('zoomed image moves with left drag, stays open on release, and reset recent
   tree = app.render();
   img = descendants(tree).find(node => node.type === 'img');
   assert.match(img.props.style.transform, /translate\(80px, 40px\)/);
-  tree.props.onClick();
+  tree.props.onClick({ stopPropagation() {} });
   assert.equal(app.closes, 0);
   button(tree, 'chat.imageZoomReset').props.onClick();
   img = descendants(app.render()).find(node => node.type === 'img');
   assert.match(img.props.style.transform, /translate\(0px, 0px\) scale\(1\)/);
-  app.render().props.onClick();
+  app.render().props.onClick({ stopPropagation() {} });
   assert.equal(app.closes, 1);
 });
 
@@ -82,6 +82,6 @@ test('right button does not pan and cancelled drags stop tracking', () => {
   assert.match(img.props.style.transform, /translate\(80px, 40px\)/);
   const tree = app.render();
   tree.props.onPointerDownCapture();
-  tree.props.onClick();
+  tree.props.onClick({ stopPropagation() {} });
   assert.equal(app.closes, 1);
 });

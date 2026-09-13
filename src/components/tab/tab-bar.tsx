@@ -1,7 +1,8 @@
 'use client';
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, GitBranch, LoaderCircle, Plus, PanelLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, GitBranch, LayoutGrid, LoaderCircle, Plus, PanelLeft, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
 import { useTabStore } from '@/stores/tab-store';
@@ -12,6 +13,7 @@ import { TAB_MIN_WIDTH, TAB_MAX_WIDTH } from '@/types/tab';
 import { PANEL_NODE_DRAG_MIME, PANEL_SESSION_DRAG_MIME } from '@/types/panel';
 import { useGitStore } from '@/stores/git-store';
 import { usePhoneViewport } from '@/hooks/use-phone-viewport';
+import { useTabHeaderSelection } from '@/hooks/use-tab-header-selection';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
 import { TabItem } from './tab-item';
 import { TabContextMenu } from './tab-context-menu';
@@ -114,12 +116,29 @@ export const TabBar = memo(function TabBar() {
   // Store subscriptions — minimal slices to avoid unnecessary re-renders
   const tabs = useTabStore((state) => state.tabs);
   const activeTabId = useTabStore((state) => state.activeTabId);
+  const isPhoneViewport = usePhoneViewport();
+  const { selectedTabIds, anchorTabId: mergeAnchorTabId, select: selectForMerge, clear: clearMergeSelection } = useTabHeaderSelection(
+    tabs.map((tab) => tab.id), activeTabId, isPhoneViewport,
+  );
+  const selectedCount = selectedTabIds.size;
+  const [mergeMenuAnchorId, setMergeMenuAnchorId] = useState<string | null>(null);
+  const [mergePointer, setMergePointer] = useState<{ x: number; y: number } | null>(null);
+  const mergeMenuPosition = useMemo(() => {
+    const anchorId = mergeMenuAnchorId ?? mergeAnchorTabId;
+    if (!anchorId || selectedCount < 2 || typeof document === 'undefined') return null;
+    const anchor = document.querySelector(`[data-tab-id="${CSS.escape(anchorId)}"]`);
+    if (!anchor) return null;
+    const rect = anchor.getBoundingClientRect();
+    return {
+      left: Math.max(8, Math.min(mergePointer?.x ?? rect.left, window.innerWidth - 168)),
+      top: Math.max(8, Math.min(Math.max((mergePointer?.y ?? rect.bottom) + 12, rect.bottom + 8), window.innerHeight - 44)),
+    };
+  }, [mergeAnchorTabId, mergeMenuAnchorId, mergePointer, selectedCount, tabs]);
   const sidebarCollapsed = useSettingsStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useSettingsStore((state) => state.toggleSidebar);
   const gitPanelOpen = useGitStore((state) => state.isOpen);
   const toggleGitPanel = useGitStore((state) => state.toggle);
   const openGitPanel = useGitStore((state) => state.open);
-  const isPhoneViewport = usePhoneViewport();
   const handlePhoneGitToggle = useCallback(() => {
     if (gitPanelOpen) {
       toggleGitPanel();
@@ -351,6 +370,7 @@ export const TabBar = memo(function TabBar() {
   }, []);
 
   const handleTabActivate = useCallback(function handleTabActivate(tabId: string) {
+    clearMergeSelection();
     useWorkspacePeekStore.getState().close();
     const tabStore = useTabStore.getState();
     const panelStore = usePanelStore.getState();
@@ -361,11 +381,22 @@ export const TabBar = memo(function TabBar() {
     if (targetPanelId) {
       focusPanelControl(targetPanelId);
     }
-  }, []);
+  }, [clearMergeSelection]);
 
   const handleTabClose = useCallback(function handleTabClose(tabId: string) {
     useTabStore.getState().closeTab(tabId);
   }, []);
+
+  const handleMergeTabs = useCallback(() => {
+    const result = useTabStore.getState().mergeTabs([...selectedTabIds]);
+    if (result.ok) clearMergeSelection();
+  }, [clearMergeSelection, selectedTabIds]);
+
+  const handleSelectForMerge = useCallback((tabId: string, mode: 'toggle' | 'range' | 'add-range', position: { x: number; y: number }) => {
+    setMergeMenuAnchorId(tabId);
+    setMergePointer(position);
+    selectForMerge(tabId, mode);
+  }, [selectForMerge]);
 
   // ---------------------------------------------------------------------------
   // Context menu handlers
@@ -579,8 +610,10 @@ export const TabBar = memo(function TabBar() {
                 isPreview={tab.isPreview}
                 isDragOver={tab.id === dragOverTabId}
                 isDragging={tab.id === draggingTabId}
+                isMergeSelected={selectedTabIds.has(tab.id)}
                 style={{ minWidth: TAB_MIN_WIDTH, maxWidth: TAB_MAX_WIDTH }}
                 onActivate={handleTabActivate}
+                onSelectForMerge={handleSelectForMerge}
                 onClose={handleTabClose}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
@@ -636,6 +669,24 @@ export const TabBar = memo(function TabBar() {
           )}
         </div>
       )}
+
+      {!isPhoneViewport && mergeMenuPosition && typeof document !== 'undefined' ? createPortal(
+        <div
+          role="menu"
+          data-testid="tab-bar-merge-menu"
+          style={mergeMenuPosition}
+          className="electron-no-drag fixed z-[9998] flex w-max items-center gap-1 rounded-md border border-white/20 bg-[#303841] p-1 text-[#f1f5f9] shadow-lg"
+        >
+          <button type="button" className="flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded px-2 text-[12px] font-medium text-[#f1f5f9] hover:bg-white/10" onClick={handleMergeTabs} role="menuitem" data-testid="tab-bar-merge">
+            <LayoutGrid size={14} className="text-(--accent)" />
+            {t('chat.mergeTabs', { count: selectedCount })}
+          </button>
+          <span className="h-4 w-px bg-(--divider)" />
+          <button type="button" className="rounded-md p-1 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary)" onClick={clearMergeSelection} aria-label="Clear tab selection">
+            <X size={14} />
+          </button>
+        </div>, document.body,
+      ) : null}
 
       {/* "+" button — always visible */}
       <ShortcutTooltip id="new-tab" label={t('shortcut.newTab')}>

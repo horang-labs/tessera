@@ -93,7 +93,8 @@ async function startServer() {
   const server = createServer();
   let controlRuntime: ControlRuntimeHost | null = null;
 
-  const app = next({ dev, hostname, port, dir, httpServer: server } as Parameters<typeof next>[0]);
+  // Avoid the Turbopack persistent dev-cache path that caused sustained CPU saturation.
+  const app = next({ dev, ...(dev ? { webpack: true } : {}), hostname, port, dir, httpServer: server } as Parameters<typeof next>[0]);
   const handle = app.getRequestHandler();
 
   await app.prepare();

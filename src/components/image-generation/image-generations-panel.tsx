@@ -2,13 +2,15 @@
 
 /* eslint-disable @next/next/no-img-element -- Authenticated, session-scoped image routes cannot use Next's unauthenticated optimizer. */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Copy, Download, ImageIcon, LoaderCircle, RefreshCw } from "lucide-react";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { clearPathInsertDragData, setPathInsertDragData } from "@/lib/dnd/panel-session-drag";
 import type { PublicImageGenerationTrace } from "@/lib/image-generation/traces";
 import { useI18n } from "@/lib/i18n";
 import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
+import { captureTelemetryEvent } from "@/lib/telemetry/client";
+import { createImageGenerationCardTracker } from "@/lib/image-generation/card-tracker";
 import { cn } from "@/lib/utils";
 import { toast } from "@/stores/notification-store";
 
@@ -28,6 +30,12 @@ export function ImageGenerationsPanel({ sessionId, isActive = true }: { sessionI
   const [error, setError] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<LightboxImage | null>(null);
   const [retry, setRetry] = useState(0);
+  // Establish a fresh baseline for each session; initial transcript hydration
+  // must not count historical cards as new image-generation activity.
+  const cardTrackerRef = useRef<{
+    sessionId: string;
+    observe: ReturnType<typeof createImageGenerationCardTracker>;
+  } | null>(null);
 
   const load = useCallback(async (signal: AbortSignal, sync: boolean) => {
     if (!sessionId) {
@@ -44,6 +52,16 @@ export function ImageGenerationsPanel({ sessionId, isActive = true }: { sessionI
       const body = await response.json() as { traces?: PublicImageGenerationTrace[]; more?: boolean };
       if (signal.aborted) return;
       const nextTraces = Array.isArray(body.traces) ? body.traces : [];
+      if (cardTrackerRef.current?.sessionId !== sessionId) {
+        cardTrackerRef.current = { sessionId, observe: createImageGenerationCardTracker() };
+      }
+      const newCardCount = cardTrackerRef.current.observe(nextTraces, sync && !body.more);
+      for (let index = 0; index < newCardCount; index += 1) {
+        void captureTelemetryEvent('image_generation_card_created', {
+          surface: 'right_panel',
+          tab: 'images',
+        });
+      }
       panelCache.delete(sessionId);
       panelCache.set(sessionId, nextTraces);
       while (panelCache.size > 8) panelCache.delete(panelCache.keys().next().value!);
