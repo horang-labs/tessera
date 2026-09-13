@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { nodeFileTrace } from '@vercel/nft';
+import replayRuntime from './verify-image-replay-runtime.cjs';
 
 const rootDir = process.cwd();
 const runtimeDir = path.join(rootDir, '.electron-runtime');
@@ -349,6 +350,7 @@ async function main() {
   await ensureExecutableRuntimeFiles();
 
   await writeRuntimePackageJson();
+  await replayRuntime.verifyImageReplayRuntime(runtimeDir);
 
   const totalBytes = (
     await Promise.all(

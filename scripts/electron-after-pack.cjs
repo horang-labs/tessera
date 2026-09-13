@@ -4,6 +4,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { signAsync } = require('@electron/osx-sign');
 const { Arch } = require('builder-util');
+const { verifyImageReplayRuntime } = require('./verify-image-replay-runtime.cjs');
 
 const execFileAsync = promisify(execFile);
 const ADHOC_ENTITLEMENTS = path.join(__dirname, 'entitlements.mac.adhoc.plist');
@@ -79,6 +80,8 @@ module.exports = async function afterPack(context) {
   const resources = appPath
     ? path.join(appPath, 'Contents', 'Resources')
     : path.join(context.appOutDir, 'resources');
+  await verifyImageReplayRuntime(path.join(resources, 'app.asar'));
+  console.log('[electron-after-pack] verified image replay worker and WASM');
   const nativePackage = `watcher-${platform}-${arch}${platform === 'linux' ? '-glibc' : ''}`;
   const nativeBinary = path.join(resources, 'app.asar.unpacked', 'node_modules', '@parcel', nativePackage, 'watcher.node');
   if (!(await pathExists(nativeBinary))) {
