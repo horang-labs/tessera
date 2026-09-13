@@ -83,7 +83,7 @@ class Recording {
       p.input = `await tools.image_gen__imagegen(${JSON.stringify(args)});`;
     }
     if (record.type === 'response_item' && ['function_call', 'custom_tool_call'].includes(p.type) && ['wait', 'functions.wait'].includes(p.name)) {
-      try { const args = JSON.parse(p.arguments ?? p.input); const cell = this.yielded.get(args.cell_id); if (cell) { this.waits.set(p.call_id, cell); this.active.set(p.call_id, cell); } } catch { /* malformed wait */ }
+      try { const args = JSON.parse(p.arguments ?? p.input); const cell = this.yielded.get(args.cell_id); if (cell) { this.active.set(p.call_id, cell); } } catch { /* malformed wait */ }
       return;
     }
     if (record.type === 'response_item' && p.type === 'custom_tool_call' && ['exec', 'functions.exec'].includes(p.name)) {
@@ -160,35 +160,62 @@ async function prefixHash(file, offset) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+// Read bounded windows and release each completed prefix after replay. The VM
+// remains alive across windows, so store/load can retain Maps, proxies and other
+// values without serializing them or keeping the transcript that created them.
+async function* streamCells(recording, filePath, end) {
+  let offset = 0, count = 0;
+  while (offset < end) {
+    const scanned = await readMetadataRecords(filePath, { start: offset, end, maxBytes: 256 * 1024 }, (record, position) => {
+      recording.append(record, position);
+    });
+    if (scanned.offset === offset) break;
+    offset = scanned.offset;
+    while (recording.cells[0]?.closed) {
+      const cell = recording.cells[0];
+      if (++count > MAX_CELLS) throw Error('Replay cell limit exceeded');
+      yield cell;
+      recording.cells.shift();
+      for (const { item } of cell.events) {
+        recording.hints.delete(item.id); recording.resultKeys.delete(item.id);
+      }
+    }
+    // Only unfinished calls count toward the retained-record limit. Include
+    // their complete metadata, not just their JavaScript source.
+    recording.metadataBytes = recording.cells.reduce((n, cell) => n + Buffer.byteLength(cell.source ?? ''), 0);
+    recording.retainedBytes = Buffer.byteLength(JSON.stringify(recording.cells));
+  }
+  for (const cell of recording.cells) {
+    if (++count > MAX_CELLS) throw Error('Replay cell limit exceeded');
+    yield cell;
+  }
+}
+
 class ReplaySession {
-  constructor() { this.recording = new Recording(); this.path = ''; this.boundary = ''; this.identity = ''; this.signature = -1; this.lastResult = null; }
+  constructor() { this.path = ''; this.boundary = ''; this.identity = ''; this.offset = 0; this.lastResult = null; }
   async read(filePath, cutoff, reset = false) {
     const file = await fs.open(filePath, 'r');
     try {
       const stat = await file.stat();
       const identity = `${stat.dev}:${stat.ino}`;
-      if (reset || this.path !== filePath || this.identity !== identity || cutoff < this.recording.offset
-        || this.boundary !== await prefixHash(file, this.recording.offset)) {
-        this.recording = new Recording(); this.signature = -1; this.lastResult = null;
-      }
-      this.path = filePath; this.identity = identity;
       const end = Math.min(cutoff, stat.size);
-      const scanned = await readMetadataRecords(filePath, { start: this.recording.offset, end }, (record, offset) => {
-        this.recording.append(record, offset);
-      });
-      this.recording.offset = scanned.offset;
-      this.boundary = await prefixHash(file, this.recording.offset);
+      const boundary = await prefixHash(file, end);
+      if (reset || this.path !== filePath || this.identity !== identity || this.offset !== end || this.boundary !== boundary) this.lastResult = null;
+      this.path = filePath; this.identity = identity; this.offset = end; this.boundary = boundary;
     } finally { await file.close(); }
   }
   async run() {
-    if (this.signature === this.recording.generation && this.lastResult) return this.lastResult;
-    const result = await replayCells(this.recording);
-    this.signature = this.recording.generation; this.lastResult = result;
-    return result;
+    if (this.lastResult) return this.lastResult;
+    const recording = new Recording();
+    // Re-read on append: unfinished executions may now have new return values.
+    // A fresh VM avoids applying their store mutations twice. Unchanged polls
+    // reuse lastResult and perform no replay.
+    this.lastResult = await replayCells(recording, { cells: streamCells(recording, this.path, this.offset) });
+    return this.lastResult;
   }
 }
 
-async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes = MAX_STATE } = {}) {
+async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes = MAX_STATE, cells = recording.cells } = {}) {
   const engine = await getQuickJS();
   const runtime = engine.newRuntime(); runtime.setMemoryLimit(memoryLimitBytes); runtime.setMaxStackSize(512 * 1024);
   let deadline = performance.now() + cellTimeoutMs;
@@ -226,7 +253,12 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
             ...(event ? { resultId: event.item.id } : {}),
             ...(parsed.numLastImagesToInclude ? { recentImages: cell.recent } : {}) };
           invocations.push(invocation);
-          if (!event) reply = { pending: true, ordinal: invocation.ordinal };
+          if (!event && cell.recordedFailure) {
+            // Validation can reject before a generation event exists. Preserve
+            // the actual rejection and preceding store writes for later retries.
+            invocation.status = 'error'; invocation.error = cell.recordedFailure;
+            reply = { rejection: cell.recordedFailure };
+          } else if (!event) reply = { pending: true, ordinal: invocation.ordinal };
           else if (invocation.status === 'error') {
             const observed = cell.texts.map(t => { try { return JSON.parse(t).error; } catch { return undefined; } }).find(t => typeof t === 'string');
             invocation.error = observed ?? 'Image generation failed';
@@ -328,7 +360,9 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
         return Promise.resolve(value);
       }});
     })();void 0;`);
-    for (cell of recording.cells) {
+    let cellCount = 0;
+    for await (cell of cells) {
+      cellCount++;
       unknown = undefined; captured = 0; commandCursor = 0; usedResults = new Set();
       if (typeof cell.source !== 'string' || cell.source.length > MAX_SOURCE) { evaluate('__clear();void 0;'); continue; }
       cell.texts = textBlocks(cell.output);
@@ -384,7 +418,7 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
             // to the first of several concurrent calls merely by arrival order.
             const calls = invocations.filter(i => i.callId === cell.id);
             const events = cell.events.filter(e => e.item.kind === 'image_gen.generation' || e.item.type === 'imageGeneration');
-            if (calls.length === 1 && !calls[0].resultId && events.length === 1 && !usedResults.has(events[0].item.id)) {
+            if (calls.length === 1 && !calls[0].resultId && calls[0].status !== 'error' && events.length === 1 && !usedResults.has(events[0].item.id)) {
               const invocation = calls[0], event = events[0];
               usedResults.add(event.item.id);
               invocation.resultId = event.item.id;
@@ -417,7 +451,7 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
         break;
       }
     }
-    return { invocations, diagnostics, cells: recording.cells.length };
+    return { invocations, diagnostics, cells: cellCount };
   } finally { runtime.setInterruptHandler(() => false); vm.dispose(); runtime.dispose(); }
 }
 
