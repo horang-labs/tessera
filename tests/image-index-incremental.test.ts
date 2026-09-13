@@ -79,7 +79,7 @@ test('reader resumes on byte boundaries, waits for complete UTF-8 lines and dete
     const records: string[] = [];
     let resets = 0;
     const reset = () => { resets++; };
-    const consume = async (line: string) => { records.push(line); };
+    const consume = async (record: Record<string, unknown>) => { records.push(JSON.stringify(record)); };
     const first = await readImageTranscriptBatch(file, undefined, reset, consume);
     assert.equal(records.length, 1);
     assert.equal(first.checkpoint.offset, Buffer.byteLength('{"text":"고양이"}\n'));

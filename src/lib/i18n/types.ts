@@ -1328,6 +1328,7 @@ export interface I18nMessages {
       file: string;
       'explicit-path': string;
     };
+    inputResolutionFailed: string;
     unresolved: string;
     prompt: string;
     revised: string;

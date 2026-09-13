@@ -1,7 +1,7 @@
 import { getDb } from './database';
 import type { ImageGenerationTrace } from '@/lib/image-generation/traces';
 
-export const IMAGE_CACHE_VERSION = 1;
+export const IMAGE_CACHE_VERSION = 2;
 
 export function readImageCache(sessionId: string): {
   source_json: string; state_json: string; cards_json: string;

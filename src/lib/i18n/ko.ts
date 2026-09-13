@@ -1353,6 +1353,7 @@ export const ko: I18nMessages = {
       file: '파일에서 읽은 이미지',
       'explicit-path': '직접 지정한 경로',
     },
+    inputResolutionFailed: '이 기록에서 입력 이미지 참조를 복원할 수 없습니다.',
     unresolved: '요청된 이미지 {{count}}개를 확인할 수 없습니다.',
     prompt: '프롬프트',
     revised: '수정된 프롬프트',

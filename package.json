@@ -33,6 +33,7 @@
   "files": [
     "bin/",
     "skills/",
+    "runtime/*.cjs",
     "dist-server/",
     "!dist-server/**/*.map",
     ".next/",
@@ -118,6 +119,7 @@
     "pino": "^8.18.0",
     "posthog-js": "^1.372.6",
     "qrcode": "^1.5.4",
+    "quickjs-emscripten": "^0.32.0",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "react-i18next": "^16.5.4",

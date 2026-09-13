@@ -1349,6 +1349,7 @@ export const en: I18nMessages = {
       file: 'Image read from file',
       'explicit-path': 'Referenced path',
     },
+    inputResolutionFailed: 'Input references could not be reconstructed from this recording.',
     unresolved: '{{count}} requested image(s) could not be resolved.',
     prompt: 'Prompt',
     revised: 'Revised prompt',

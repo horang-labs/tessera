@@ -13,6 +13,9 @@ const ELECTRON_ENTRYPOINTS = [
   'dist-electron/electron/preload.js',
   'dist-electron/electron/tray.js',
   'dist-electron/electron/server-child.js',
+  // This worker is plain CommonJS, so electron:compile does not emit it.
+  // Trace it explicitly to include its replay module and QuickJS WASM assets.
+  'runtime/image-reference-replay-worker.cjs',
 ];
 
 function toPosix(relPath) {
