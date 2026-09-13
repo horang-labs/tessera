@@ -16,6 +16,19 @@ function fixture() {
   return { recording, append, call, output, event };
 }
 
+test('recorded image validation failure preserves stored values for a corrected retry', async () => {
+  const f = fixture();
+  f.call('rejected', 'store("prompt","retry");await tools.image_gen__imagegen({prompt:"first",referenced_image_paths:["/a.png"]});');
+  f.output('rejected', [{ type: 'input_text', text: 'Script error:\nInvalid reference arguments' }]);
+  f.call('retry', 'await tools.image_gen__imagegen({prompt:load("prompt"),referenced_image_paths:["/retry.png"]});');
+  f.event('exec-retry', 'retry'); f.output('retry');
+  const result = await replayCells(f.recording);
+  assert.equal(result.invocations[0].status, 'error');
+  assert.equal(result.invocations[0].error, 'Invalid reference arguments');
+  assert.equal(result.invocations[1]?.resultId, 'exec-retry');
+  assert.deepEqual(result.invocations[1].referencedImagePaths, ['/retry.png']);
+});
+
 test('parallel map calls match out-of-order results and recorded hints survive JSON output', async () => {
   const f = fixture();
   f.call('store', 'store("prompts",[0,1,2].map(i=>({key:i,prompt:`asset-${i}`,referenced_image_paths:[`/input-${i}.png`]})));');
