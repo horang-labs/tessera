@@ -36,6 +36,20 @@ test('Linux Electron package does not disable the Chromium sandbox by default', 
   assert.doesNotMatch(afterPackSource, /--no-sandbox/);
 });
 
+test('dependency install does not mutate a stale generated Electron runtime', () => {
+  assert.doesNotMatch(packageJson.scripts.prepare, /install-app-deps/);
+  for (const script of [
+    'electron:build:win',
+    'electron:build:win:debug',
+    'electron:build:linux',
+    'electron:build:linux:debug',
+    'electron:build:mac-x64',
+    'electron:build:mac-arm64',
+  ]) {
+    assert.match(packageJson.scripts[script], /electron:prepare-native/);
+  }
+});
+
 test('Linux deb packaging relies on electron-builder chrome-sandbox installation', () => {
   assert.equal(packageJson.build.linux.executableName, 'tessera');
   assert.equal(packageJson.build.directories.app, '.electron-runtime');

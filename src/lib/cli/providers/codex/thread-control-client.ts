@@ -95,7 +95,7 @@ export async function deleteCodexThread(
   try {
     await executeCodexAppServerRequest(context, 'thread/delete', { threadId });
   } catch (error) {
-    if (isAlreadyDeletedThreadError(error)) {
+    if (isAbsentCodexThreadError(error)) {
       logger.info({ threadId }, 'Codex thread was already absent during delete');
       return;
     }
@@ -103,10 +103,11 @@ export async function deleteCodexThread(
   }
 }
 
-function isAlreadyDeletedThreadError(error: unknown): boolean {
+export function isAbsentCodexThreadError(error: unknown): boolean {
   if (!(error instanceof CodexAppServerRequestError)) return false;
   const message = error.message.toLowerCase();
   return message.includes('not found')
     || message.includes('does not exist')
-    || message.includes('already deleted');
+    || message.includes('already deleted')
+    || message.includes('no rollout found');
 }

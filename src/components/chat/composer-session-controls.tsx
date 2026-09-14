@@ -262,7 +262,8 @@ function ComposerControlDropdown({
         `${COMPOSER_MENU_ITEM_SELECTOR}[data-selected="true"]`,
       );
       const fallbackItem = menu.querySelector<HTMLButtonElement>(COMPOSER_MENU_ITEM_SELECTOR);
-      (selectedItem ?? fallbackItem)?.focus();
+      const searchInput = menu.querySelector<HTMLInputElement>('[data-composer-menu-search]');
+      (searchInput ?? selectedItem ?? fallbackItem)?.focus();
     });
 
     return () => cancelAnimationFrame(frame);
@@ -272,6 +273,15 @@ function ComposerControlDropdown({
     const menu = menuRef.current;
     if (!menu) return;
 
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+      requestAnimationFrame(() => triggerRef.current?.focus());
+      return;
+    }
+    const searchInput = menu.querySelector<HTMLInputElement>('[data-composer-menu-search]');
+    if (event.target === searchInput && event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     const items = getComposerMenuItems(menu);
     if (items.length === 0) return;
 
@@ -287,7 +297,8 @@ function ComposerControlDropdown({
         break;
       case 'ArrowUp':
         event.preventDefault();
-        focusItem(currentIndex >= 0 ? currentIndex - 1 : items.length - 1);
+        if (currentIndex === 0 && searchInput) searchInput.focus();
+        else focusItem(currentIndex >= 0 ? currentIndex - 1 : items.length - 1);
         break;
       case 'Home':
         event.preventDefault();
@@ -296,11 +307,6 @@ function ComposerControlDropdown({
       case 'End':
         event.preventDefault();
         focusItem(items.length - 1);
-        break;
-      case 'Escape':
-        event.preventDefault();
-        close();
-        requestAnimationFrame(() => triggerRef.current?.focus());
         break;
       default:
         break;
@@ -365,7 +371,7 @@ function ComposerControlDropdown({
           ref={menuRef}
           data-testid={testId ? `${testId}-menu` : undefined}
           data-side="top"
-          role="menu"
+          role={controlId === 'model' ? 'group' : 'menu'}
           onKeyDown={handleMenuKeyDown}
           className="fixed z-[10001] overflow-y-auto rounded-lg border border-(--chat-header-border) bg-(--chat-header-bg) py-1 shadow-lg"
           style={{

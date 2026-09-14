@@ -40,7 +40,9 @@ export async function resolveDatabaseLocation(
   const dbDir = options.dbDir ?? getTesseraDataDir();
   const isProductionRuntime = options.isProductionRuntime ?? (
     process.env.TESSERA_PRODUCTION_DB === '1' ||
-    process.env.NODE_ENV === 'production' ||
+    // A local production-mode preview can explicitly retain its branch DB.
+    // Packaged/CLI runtime flags below still force the production database.
+    (process.env.NODE_ENV === 'production' && process.env.TESSERA_PRODUCTION_DB !== '0') ||
     process.env.TESSERA_CLI === '1' ||
     process.env.ELECTRON_CHILD === '1' ||
     process.env.TESSERA_ELECTRON_SERVER === '1'

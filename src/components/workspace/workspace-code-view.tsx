@@ -1,12 +1,13 @@
 "use client";
 
-import { AlertCircle, Binary, ChevronDown, ChevronUp, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, Image as ImageIcon, LoaderCircle, RefreshCw, Save, Search, X } from "lucide-react";
+import { AlertCircle, Binary, ChevronDown, ChevronUp, Code2, Copy, ExternalLink, Eye, FileCode2, FileText, GitCompare, Image as ImageIcon, LoaderCircle, RefreshCw, Save, Search, Video, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { PreviewMarkdown } from "@/components/chat/preview-markdown";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { WorkspaceImageViewer } from '@/components/workspace/workspace-image-viewer';
+import { WorkspaceVideoViewer } from '@/components/workspace/workspace-video-viewer';
 import { WorkspaceMonacoEditor } from "@/components/workspace/workspace-monaco-editor";
 import {
   canUseElectronFileActions,
@@ -23,6 +24,7 @@ import { formatBytes } from '@/lib/format-bytes';
 import {
   buildWorkspaceRawFileUrl,
   isWorkspaceImageMimeType,
+  isWorkspaceVideoMimeType,
 } from '@/lib/workspace-files/workspace-file-preview';
 
 type MarkdownViewMode = "preview" | "source";
@@ -344,6 +346,7 @@ export function WorkspaceCodeView({
   path,
   saving = false,
   sourceTarget,
+  previewActive = true,
 }: {
   /** The file changed on disk under an unsaved draft; the banner is showing. */
   conflict?: boolean;
@@ -367,6 +370,8 @@ export function WorkspaceCodeView({
   path: string;
   saving?: boolean;
   sourceTarget?: WorkspaceTarget;
+  /** Inactive mounted tabs must not keep video audio playing. */
+  previewActive?: boolean;
 }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [markdownModeState, setMarkdownModeState] = useState<{ mode: MarkdownViewMode; path: string }>({
@@ -394,7 +399,13 @@ export function WorkspaceCodeView({
   const isImageFile = mode === 'file'
     && Boolean(sourceTarget)
     && isWorkspaceImageMimeType(fileData?.mimeType);
+  const isVideoFile = mode === 'file'
+    && Boolean(sourceTarget)
+    && isWorkspaceVideoMimeType(fileData?.mimeType);
   const imageRawUrl = isImageFile && sourceTarget && fileData
+    ? buildWorkspaceRawFileUrl(sourceTarget, path, `${fileData.mtimeMs}-${fileData.size}`)
+    : null;
+  const videoRawUrl = isVideoFile && sourceTarget && fileData
     ? buildWorkspaceRawFileUrl(sourceTarget, path, `${fileData.mtimeMs}-${fileData.size}`)
     : null;
   const markdownViewMode = isMarkdownFile && markdownModeState.path === path ? markdownModeState.mode : "preview";
@@ -443,6 +454,8 @@ export function WorkspaceCodeView({
     // back on the parent after it bubbles makes a file look read-only.
     const target = event.target;
     if (target instanceof Element && target.closest(".monaco-editor")) return;
+    // Let mouse events reach panel activation without stealing native media or toolbar focus.
+    if (target instanceof Element && target.closest('[data-testid="workspace-video-viewer"]')) return;
     event.currentTarget.focus({ preventScroll: true });
   }, []);
 
@@ -509,7 +522,7 @@ export function WorkspaceCodeView({
     );
   }
 
-  if (fileData?.binary && !isImageFile) {
+  if (fileData?.binary && !isImageFile && !isVideoFile) {
     return (
       <div className="flex h-full min-h-0 flex-col bg-(--chat-bg)">
         <PendingStateHeader mode={mode} path={path} onClose={onClose} />
@@ -529,6 +542,8 @@ export function WorkspaceCodeView({
             <GitCompare className="h-4 w-4 shrink-0 text-(--text-muted)" />
           ) : isImageFile ? (
             <ImageIcon className="h-4 w-4 shrink-0 text-(--text-muted)" />
+          ) : isVideoFile ? (
+            <Video className="h-4 w-4 shrink-0 text-(--text-muted)" />
           ) : isMarkdownFile ? (
             <FileText className="h-4 w-4 shrink-0 text-(--text-muted)" />
           ) : (
@@ -556,9 +571,9 @@ export function WorkspaceCodeView({
               ) : null}
             </p>
             <p className="truncate text-[10px] uppercase tracking-[0.14em] text-(--text-muted)">
-              {mode === "diff" ? "Diff" : isImageFile ? fileData?.mimeType : fileData?.language || "text"}
+              {mode === "diff" ? "Diff" : (isImageFile || isVideoFile) ? fileData?.mimeType : fileData?.language || "text"}
               {fileData ? ` · ${formatBytes(fileData.size)}` : ""}
-              {(!isImageFile && fileData?.truncated) || diffData?.truncated ? " · truncated" : ""}
+              {(!isImageFile && !isVideoFile && fileData?.truncated) || diffData?.truncated ? " · truncated" : ""}
             </p>
           </div>
         </div>
@@ -566,7 +581,7 @@ export function WorkspaceCodeView({
           {isMarkdownFile ? (
             <MarkdownModeToggle mode={markdownViewMode} onChange={handleMarkdownViewModeChange} />
           ) : null}
-          {editable ? (
+          {editable && !isVideoFile ? (
             <Tooltip content={dirty ? "Save (Ctrl/Cmd+S)" : "No unsaved changes"}>
               <Button
                 {...telemetryClickAttributes('workspace_editor.save', 'workspace_editor')}
@@ -602,7 +617,7 @@ export function WorkspaceCodeView({
               </Button>
             </Tooltip>
           ) : null}
-          {!isImageFile ? <Tooltip content={copied ? "Copied" : "Copy"}>
+          {!isImageFile && !isVideoFile ? <Tooltip content={copied ? "Copied" : "Copy"}>
             <Button
               {...telemetryClickAttributes('workspace_editor.copy_content', 'workspace_editor')}
               type="button"
@@ -700,6 +715,13 @@ export function WorkspaceCodeView({
             path={path}
             rawUrl={imageRawUrl}
             size={fileData.size}
+          />
+        ) : videoRawUrl ? (
+          <WorkspaceVideoViewer
+            key={videoRawUrl}
+            active={previewActive}
+            path={path}
+            rawUrl={videoRawUrl}
           />
         ) : shouldRenderMarkdownPreview ? (
           <div ref={markdownContentRef} className="mx-auto w-full max-w-5xl px-6 py-8 text-base">

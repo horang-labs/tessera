@@ -6,6 +6,7 @@ import {
   selectSidebarProjectTasks,
   shouldShowAllProjectLoading,
 } from '../src/components/chat/sidebar-utils';
+import { filterCollectionGroupsByRunning } from '../src/lib/chat/build-collection-groups';
 import type { RecentWorkItem } from '../src/lib/chat/recent-work';
 import { useSelectionStore } from '../src/stores/selection-store';
 import { useSessionStore } from '../src/stores/session-store';
@@ -119,6 +120,37 @@ test('Shift range selection includes rendered task sessions missing from the dir
     [...useSelectionStore.getState().selectedIds],
     ['session-a', 'session-b', 'session-c'],
   );
+});
+
+test('Running filter excludes stopped task sessions from Shift ranges', () => {
+  const task = {
+    id: 'task-a',
+    projectId: 'project-a',
+    projectViewId: 'project-a',
+    sessions: [
+      { id: 'running-a', title: 'running-a', isRunning: true },
+      { id: 'stopped-between', title: 'stopped-between', isRunning: false },
+      { id: 'running-b', title: 'running-b', isRunning: true },
+    ],
+  } as TaskEntity;
+  const project = { encodedDir: 'project-a', sessions: [] } as ProjectGroup;
+  const runningGroups = filterCollectionGroupsByRunning([{
+    collectionId: null,
+    tasks: [task],
+    chats: [],
+  }]);
+  const orderedIds = buildSidebarOrderedSessionIds({
+    selectedProjectDir: project.encodedDir,
+    allProjectsSessionIds: [],
+    selectedProject: project,
+    collectionGroups: runningGroups,
+  });
+
+  useSelectionStore.getState().clearSelection();
+  useSelectionStore.getState().toggleSelect('running-a');
+  useSelectionStore.getState().rangeSelect('running-b', orderedIds);
+
+  assert.deepEqual([...useSelectionStore.getState().selectedIds], ['running-a', 'running-b']);
 });
 
 test('Recent Work Shift range selection follows the rendered recent-item order', () => {

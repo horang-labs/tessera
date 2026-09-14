@@ -531,6 +531,12 @@ export class OpenCodeProtocolParser {
         description: typeof command.description === 'string' ? command.description : '',
       }));
 
+    // OpenCode 1.18.x executes /compact via ACP but omits it from the catalog
+    // (upstream #37229). Match pre-session discovery without duplicating it.
+    if (!commands.some((command) => command.name === 'compact')) {
+      commands.push({ name: 'compact', description: 'compact the session' });
+    }
+
     return [
       {
         serverMessage: null,

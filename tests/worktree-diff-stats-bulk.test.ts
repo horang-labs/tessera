@@ -26,7 +26,7 @@ test('cold bulk reads deduplicate checkout paths without scheduling work', () =>
   assert.deepEqual(Array.from(result.entries()), [['/repo/project', cachedStats]]);
 });
 
-test('cold bulk reads deduplicate WSL display and UNC spellings', () => {
+test('cold bulk reads keep WSL display and UNC spellings separate', () => {
   const reads: string[] = [];
   const posix = '/home/work/Source/tessera-dev';
   const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
@@ -36,7 +36,7 @@ test('cold bulk reads deduplicate WSL display and UNC spellings', () => {
     return cachedStats;
   });
 
-  assert.deepEqual(reads, [posix]);
+  assert.deepEqual(reads, [posix, unc]);
 });
 
 test('bulk list reads return cached values and schedule every unique miss in list order', () => {
@@ -78,7 +78,7 @@ test('bulk list reads keep stale values visible while scheduling one refresh', (
   assert.deepEqual(scheduled, ['/repo/a']);
 });
 
-test('bulk list schedules one refresh for WSL display and UNC spellings', () => {
+test('bulk list schedules both unproven WSL display and UNC identities', () => {
   const scheduled: string[] = [];
   const posix = '/home/work/Source/tessera-dev';
   const unc = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\Source\\tessera-dev';
@@ -89,5 +89,16 @@ test('bulk list schedules one refresh for WSL display and UNC spellings', () => 
     schedule: (workDir) => scheduled.push(workDir),
   });
 
-  assert.deepEqual(scheduled, [posix]);
+  assert.deepEqual(scheduled, [posix, unc]);
+});
+
+ test('bulk scheduling preserves distro identity and significant path whitespace', () => {
+  const paths = ['/repo', '/repo ', '\\\\wsl.localhost\\Ubuntu\\home\\repo', '\\\\wsl.localhost\\Debian\\home\\repo'];
+  const scheduled: string[] = [];
+  getCachedOrScheduleBulk(paths, 'user', {
+    readCached: () => undefined,
+    isStale: () => false,
+    schedule: (workDir) => scheduled.push(workDir),
+  });
+  assert.deepEqual(scheduled, paths);
 });

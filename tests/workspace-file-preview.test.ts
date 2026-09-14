@@ -4,6 +4,7 @@ import {
   buildWorkspaceRawFileUrl,
   inferWorkspaceFileContentType,
   isWorkspaceImageMimeType,
+  isWorkspaceVideoMimeType,
 } from '../src/lib/workspace-files/workspace-file-preview';
 
 test('infers supported workspace image MIME types', () => {
@@ -28,6 +29,9 @@ test('infers supported workspace image MIME types', () => {
   }
   assert.equal(inferWorkspaceFileContentType('archive.zip'), 'application/octet-stream');
   assert.equal(isWorkspaceImageMimeType('application/octet-stream'), false);
+  assert.equal(inferWorkspaceFileContentType('movie.MP4'), 'video/mp4');
+  assert.equal(isWorkspaceVideoMimeType('video/mp4'), true);
+  assert.equal(isWorkspaceVideoMimeType('video/webm'), false);
 });
 
 test('builds versioned raw URLs for session and worktree targets', () => {

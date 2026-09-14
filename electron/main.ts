@@ -404,6 +404,7 @@ function normalizeElectronLogLevel(value: string | undefined): ElectronLogLevel 
 interface TesseraBuildMetadata {
   tesseraLogLevel?: unknown;
   tesseraTelemetryDisabled?: unknown;
+  tesseraPtyLatency?: unknown;
 }
 
 function readBuildMetadata(): TesseraBuildMetadata {
@@ -1360,6 +1361,10 @@ async function startServer(): Promise<number> {
       TESSERA_ELECTRON_SERVER: '1',
       TESSERA_ELECTRON_PACKAGED: isPackaged ? '1' : '0',
       TESSERA_PRODUCTION_DB: '1',
+      // Packaged diagnostics follow the build, never an inherited shell setting.
+      TESSERA_PTY_LATENCY: isPackaged
+        ? (BUILD_METADATA.tesseraPtyLatency === true ? '1' : '0')
+        : (process.env.TESSERA_PTY_LATENCY === '1' ? '1' : '0'),
       TESSERA_APP_ROOT: appRoot,
       TESSERA_CHANNEL: process.env.TESSERA_CHANNEL || (isPackaged ? 'github-release' : 'dev'),
       ...(BUILD_STAMPED_TELEMETRY_DISABLED ? { TESSERA_TELEMETRY_DISABLED: '1' } : {}),

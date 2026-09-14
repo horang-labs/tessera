@@ -3,6 +3,7 @@ import type { EnhancedMessage } from '@/types/chat';
 
 export type ImageLocator =
   | { kind: 'inline'; data: string; mimeType: string }
+  | { kind: 'transcript'; path: string; offset: number; length: number; dataUrl: boolean; mimeType?: string }
   | { kind: 'cache'; path: string }
   | { kind: 'path'; path: string };
 
@@ -25,6 +26,8 @@ export interface ImageGenerationTrace {
   numLastImagesToInclude?: number;
   inputs: ResolvedTraceImage[];
   unresolvedInputCount: number;
+  inputResolutionError?: string;
+  resultMessageId?: string;
   status: 'running' | 'completed' | 'error';
   revisedPrompt?: string;
   error?: string;

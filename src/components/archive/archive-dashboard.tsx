@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useDeferredValue, useEffect, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import {
   Archive,
@@ -10,6 +10,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
+import { ArchiveRetentionStatus } from './archive-retention-status';
 import { AsyncConfirmDialog } from '@/components/ui/async-confirm-dialog';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -32,6 +33,11 @@ import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-ta
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 
 type ArchiveKind = 'chat' | 'task';
+type ArchiveDeletion = 'record' | 'folder';
+
+function archiveOperationKey(item: ArchiveItem): string {
+  return item.worktreeId ?? `${item.kind}:${item.id}`;
+}
 
 interface ArchiveResponse {
   items: ArchiveItem[];
@@ -81,28 +87,7 @@ function removeItemFromArchiveKindState(
     ...current,
     items: current.items.filter((item) => item.id !== itemId),
     total: Math.max(0, current.total - 1),
-  };
-}
-
-function removeItemFromArchiveSummary(
-  current: ArchiveResponse['summary'] | null,
-  item: ArchiveItem,
-): ArchiveResponse['summary'] | null {
-  if (!current) return current;
-  const worktreeKey = item.worktreeStatus === 'present'
-    ? 'worktreesPresent'
-    : item.worktreeStatus === 'deleted'
-      ? 'worktreesDeleted'
-      : item.worktreeStatus === 'missing'
-        ? 'worktreesMissing'
-        : null;
-
-  return {
-    ...current,
-    total: Math.max(0, current.total - 1),
-    chats: item.kind === 'chat' ? Math.max(0, current.chats - 1) : current.chats,
-    tasks: item.kind === 'task' ? Math.max(0, current.tasks - 1) : current.tasks,
-    ...(worktreeKey ? { [worktreeKey]: Math.max(0, current[worktreeKey] - 1) } : {}),
+    nextCursor: current.nextCursor === null ? null : String(Math.max(0, Number(current.nextCursor) - 1)),
   };
 }
 
@@ -225,7 +210,6 @@ async function fetchArchivePage(args: {
 
 export function ArchiveDashboard() {
   const { t } = useI18n();
-  const [summary, setSummary] = useState<ArchiveResponse['summary'] | null>(null);
   const [chatState, setChatState] = useState<ArchiveKindState>(() => emptyArchiveKindState());
   const [taskState, setTaskState] = useState<ArchiveKindState>(() => emptyArchiveKindState());
   const [archiveProjects, setArchiveProjects] = useState<ArchiveProjectOption[]>([]);
@@ -238,20 +222,28 @@ export function ArchiveDashboard() {
   const [worktreeDeleteTarget, setWorktreeDeleteTarget] = useState<ArchiveItem | null>(null);
   const [bulkWorktreeDeleteOpen, setBulkWorktreeDeleteOpen] = useState(false);
   const [restoringItemIds, setRestoringItemIds] = useState<Set<string>>(() => new Set());
+  const [deletingItems, setDeletingItems] = useState<ReadonlyMap<string, ArchiveDeletion>>(() => new Map());
+  const deletingKeys = useRef(new Set<string>());
+  const [deleteErrors, setDeleteErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const archiveRevision = useRef(0);
+  const loadRequest = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const { handleSessionClick } = useSessionClickHandlers();
 
-  const loadArchive = useCallback(async () => {
+  const loadArchive = useCallback(async (): Promise<void> => {
+    const request = ++loadRequest.current;
+    const revision = archiveRevision.current;
     setIsLoading(true);
     setError(null);
     try {
       const responses = await Promise.all(
         (['task', 'chat'] as const).map((kind) => fetchArchivePage({ kind, projectFilter, query: deferredQuery })),
       );
+      if (request !== loadRequest.current) return;
+      if (revision !== archiveRevision.current) return void loadArchive();
       const nextChat = responses.find((response) => response.pagination.kind === 'chat');
       const nextTask = responses.find((response) => response.pagination.kind === 'task');
 
-      setSummary(responses[0]?.summary ?? null);
       setArchiveProjects(responses[0]?.projects ?? []);
       setChatState(nextChat
         ? {
@@ -271,7 +263,7 @@ export function ArchiveDashboard() {
       console.error(err);
       setError(t('archive.errors.loadFailed'));
     } finally {
-      setIsLoading(false);
+      if (request === loadRequest.current) setIsLoading(false);
     }
   }, [deferredQuery, projectFilter, t]);
 
@@ -296,13 +288,15 @@ export function ArchiveDashboard() {
 
   const loadMore = useCallback(async (kind: ArchiveKind) => {
     const cursor = kind === 'chat' ? chatState.nextCursor : taskState.nextCursor;
-    if (!cursor) return;
+    if (!cursor || deletingKeys.current.size > 0) return;
+    const revision = archiveRevision.current;
+    const request = loadRequest.current;
 
     setLoadingMoreKind(kind);
     setError(null);
     try {
       const response = await fetchArchivePage({ kind, projectFilter, query: deferredQuery, cursor });
-      setSummary(response.summary);
+      if (revision !== archiveRevision.current || request !== loadRequest.current) return;
       if (kind === 'chat') {
         setChatState((current) => ({
           items: [...current.items, ...response.items],
@@ -342,7 +336,6 @@ export function ArchiveDashboard() {
     } else {
       setTaskState((current) => removeItemFromArchiveKindState(current, item.id));
     }
-    setSummary((current) => removeItemFromArchiveSummary(current, item));
   }, []);
 
   const finishRestoringItem = useCallback((itemId: string) => {
@@ -354,7 +347,7 @@ export function ArchiveDashboard() {
   }, []);
 
   const restoreItem = useCallback(async (item: ArchiveItem) => {
-    if (restoringItemIds.has(item.id)) return;
+    if (restoringItemIds.has(item.id) || deletingKeys.current.has(archiveOperationKey(item))) return;
     setRestoringItemIds((current) => new Set(current).add(item.id));
     setError(null);
     const restoredSession = primarySessionFromItem(item);
@@ -409,49 +402,71 @@ export function ArchiveDashboard() {
     });
   }, [finishRestoringItem, removeRestoredArchiveItem, restoringItemIds, t]);
 
-  const deleteItem = useCallback(async (item: ArchiveItem) => {
-    const endpoint = item.kind === 'task'
-      ? `/api/archive/tasks/${item.id}`
-      : `/api/sessions/${item.id}`;
-    const res = await fetchWithClientId(endpoint, { method: 'DELETE' });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      const message = body.error ?? t('archive.errors.deleteFailed');
-      setError(message);
-      throw new Error(message);
-    }
-    await Promise.all([
-      loadArchive(),
-      useSessionStore.getState().loadProjects(),
-    ]);
-  }, [loadArchive, t]);
+  const startDelete = useCallback((item: ArchiveItem, deletion: ArchiveDeletion) => {
+    const key = archiveOperationKey(item);
+    if (deletingKeys.current.has(key) || restoringItemIds.has(item.id)) return;
+    if (deletion === 'folder' && !item.worktreeId) return;
+    deletingKeys.current.add(key);
+    archiveRevision.current += 1;
+    setDeletingItems((current) => new Map(current).set(key, deletion));
+    setDeleteErrors((current) => {
+      const next = new Map(current);
+      next.delete(key);
+      return next;
+    });
 
-  const deleteWorktreeOnly = useCallback(async (item: ArchiveItem) => {
-    if (!item.worktreeId) return;
-    const res = await fetch(`/api/worktrees/${item.worktreeId}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      const message = body.error ?? t('archive.errors.deleteWorktreeFailed');
-      setError(message);
-      throw new Error(message);
-    }
-    await Promise.all([
-      loadArchive(),
-      useSessionStore.getState().loadProjects(),
-    ]);
-  }, [loadArchive, t]);
+    void (async () => {
+      try {
+        const endpoint = deletion === 'folder'
+          ? `/api/worktrees/${item.worktreeId}`
+          : item.kind === 'task' ? `/api/archive/tasks/${item.id}` : `/api/sessions/${item.id}`;
+        const res = await fetchWithClientId(endpoint, { method: 'DELETE' });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? t(deletion === 'folder'
+            ? 'archive.errors.deleteWorktreeFailed' : 'archive.errors.deleteFailed'));
+        }
+        archiveRevision.current += 1;
+        if (deletion === 'record') {
+          removeRestoredArchiveItem(item);
+        } else {
+          const deletedAt = new Date().toISOString();
+          const markFolderDeleted = (current: ArchiveKindState): ArchiveKindState => ({
+            ...current,
+            items: current.items.map((entry) => entry.worktreeId === item.worktreeId
+              ? { ...entry, worktreeStatus: 'deleted', worktreeDeletedAt: deletedAt, canRestore: false }
+              : entry),
+          });
+          setChatState(markFolderDeleted);
+          setTaskState(markFolderDeleted);
+        }
+        // Sidebar refresh is independent of the completed row mutation.
+        void useSessionStore.getState().loadProjects().catch(console.error);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : t('archive.errors.deleteFailed');
+        setDeleteErrors((current) => new Map(current).set(key, `${item.title}: ${message}`));
+      } finally {
+        deletingKeys.current.delete(key);
+        setDeletingItems((current) => {
+          const next = new Map(current);
+          next.delete(key);
+          return next;
+        });
+      }
+    })();
+  }, [removeRestoredArchiveItem, restoringItemIds, t]);
 
-  const confirmDeleteItem = useCallback(async () => {
+  const confirmDeleteItem = useCallback(() => {
     if (!deleteTarget) return;
-    await deleteItem(deleteTarget);
+    startDelete(deleteTarget, 'record');
     setDeleteTarget(null);
-  }, [deleteItem, deleteTarget]);
+  }, [startDelete, deleteTarget]);
 
-  const confirmDeleteWorktree = useCallback(async () => {
+  const confirmDeleteWorktree = useCallback(() => {
     if (!worktreeDeleteTarget) return;
-    await deleteWorktreeOnly(worktreeDeleteTarget);
+    startDelete(worktreeDeleteTarget, 'folder');
     setWorktreeDeleteTarget(null);
-  }, [deleteWorktreeOnly, worktreeDeleteTarget]);
+  }, [startDelete, worktreeDeleteTarget]);
 
   const confirmDeleteAllWorktrees = useCallback(async () => {
     const params = new URLSearchParams();
@@ -517,6 +532,8 @@ export function ArchiveDashboard() {
             </button>
           </div>
 
+          <ArchiveRetentionStatus />
+
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full max-w-[360px] sm:w-[360px]">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--text-muted)" />
@@ -550,7 +567,7 @@ export function ArchiveDashboard() {
           <div className="flex flex-wrap items-center gap-3 text-xs text-(--text-muted)">
             <span>{settings.autoDeleteArchivedWorktrees ? t('archive.autoDeleteOn') : t('archive.autoDeleteOff')}</span>
             <span>{t('archive.retentionInfo', { days: settings.archivedWorktreeRetentionDays })}</span>
-            <span>{t('archive.loadedCount', { loaded: visibleItemCount, total: summary?.total ?? 0 })}</span>
+            <span>{t('archive.loadedCount', { loaded: visibleItemCount, total: chatState.total + taskState.total })}</span>
             <span>{t('archive.worktreesPresent', { count: loadedWorktreesPresent })}</span>
             <span>{t('archive.worktreesDeleted', { count: loadedWorktreesDeleted })}</span>
             <span>{t('archive.worktreesMissing', { count: loadedWorktreesMissing })}</span>
@@ -587,7 +604,7 @@ export function ArchiveDashboard() {
             <button
               {...telemetryClickAttributes('archive.bulk_delete', 'archive')}
               onClick={() => setBulkWorktreeDeleteOpen(true)}
-              disabled={isLoading || visibleItemCount === 0}
+              disabled={isLoading || visibleItemCount === 0 || deletingItems.size > 0}
               className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[color-mix(in_srgb,var(--status-error-text)_32%,var(--divider))] bg-[color-mix(in_srgb,var(--status-error-text)_8%,transparent)] px-2.5 text-xs font-medium text-(--status-error-text) transition-colors hover:bg-(--status-error-bg) disabled:cursor-not-allowed disabled:opacity-50"
             >
               <FolderX className="h-3.5 w-3.5" />
@@ -602,6 +619,12 @@ export function ArchiveDashboard() {
           </div>
         )}
 
+        {[...deleteErrors].map(([key, message]) => (
+          <div key={key} role="alert" className="rounded-lg border border-(--status-error-border) bg-(--status-error-bg) px-3 py-2 text-xs text-(--status-error-text)">
+            {message}
+          </div>
+        ))}
+
         {isLoading ? (
           <div className="py-20 text-center text-sm text-(--text-muted)">{t('archive.loading')}</div>
         ) : hasNoResults ? (
@@ -614,6 +637,7 @@ export function ArchiveDashboard() {
               <TaskArchiveTable
                 items={taskItems}
                 restoringItemIds={restoringItemIds}
+                deletingItems={deletingItems}
                 onOpenSession={openItem}
                 onRestore={restoreItem}
                 onDelete={setDeleteTarget}
@@ -624,6 +648,7 @@ export function ArchiveDashboard() {
                 loaded={taskItems.length}
                 total={taskState.total}
                 isLoading={loadingMoreKind === 'task'}
+                disabled={deletingItems.size > 0}
                 onClick={() => void loadMore('task')}
                 t={t}
               />
@@ -633,6 +658,7 @@ export function ArchiveDashboard() {
               <ChatArchiveTable
                 items={chatItems}
                 restoringItemIds={restoringItemIds}
+                deletingItems={deletingItems}
                 onOpen={openItem}
                 onRestore={restoreItem}
                 onDelete={setDeleteTarget}
@@ -642,6 +668,7 @@ export function ArchiveDashboard() {
                 loaded={chatItems.length}
                 total={chatState.total}
                 isLoading={loadingMoreKind === 'chat'}
+                disabled={deletingItems.size > 0}
                 onClick={() => void loadMore('chat')}
                 t={t}
               />
@@ -779,12 +806,14 @@ function ArchiveLoadMore({
   loaded,
   total,
   isLoading,
+  disabled = false,
   onClick,
   t,
 }: {
   loaded: number;
   total: number;
   isLoading: boolean;
+  disabled?: boolean;
   onClick: () => void;
   t: TranslateFn;
 }) {
@@ -795,7 +824,7 @@ function ArchiveLoadMore({
       <button
         {...telemetryClickAttributes('archive.load_more', 'archive')}
         onClick={onClick}
-        disabled={isLoading}
+        disabled={isLoading || disabled}
         className="rounded-lg border border-(--divider) px-3 py-1.5 text-xs text-(--text-secondary) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary) disabled:opacity-50"
       >
         {isLoading ? t('archive.loadingMore') : t('archive.loadMore', { loaded, total })}
@@ -874,6 +903,7 @@ function StackedField({
 function ChatRowActions({
   item,
   isRestoring,
+  deletion,
   onRestore,
   onDelete,
   t,
@@ -881,6 +911,7 @@ function ChatRowActions({
 }: {
   item: ArchiveItem;
   isRestoring: boolean;
+  deletion?: ArchiveDeletion;
   onRestore: (item: ArchiveItem) => void;
   onDelete: (item: ArchiveItem) => void;
   t: TranslateFn;
@@ -893,16 +924,16 @@ function ChatRowActions({
           telemetryControl="archive.item.restore"
           tone="primary"
           onClick={() => onRestore(item)}
-          disabled={isRestoring}
+          disabled={isRestoring || Boolean(deletion)}
           ariaBusy={isRestoring}
         >
           <RotateCcw className={cn('h-3 w-3', isRestoring && 'animate-spin')} />
           {t('archive.actions.restore')}
         </ActionButton>
       )}
-      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)} disabled={isRestoring}>
-        <Trash2 className="h-3 w-3" />
-        {t('archive.actions.delete')}
+      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)} ariaBusy={deletion === 'record'} disabled={isRestoring || Boolean(deletion)}>
+        <Trash2 className={cn('h-3 w-3', deletion === 'record' && 'animate-pulse')} />
+        {t(deletion === 'record' ? 'archive.dialog.deleting' : 'archive.actions.delete')}
       </ActionButton>
     </RowActions>
   );
@@ -916,6 +947,7 @@ function ChatRowActions({
 function TaskRowActions({
   item,
   isRestoring,
+  deletion,
   onRestore,
   onDelete,
   onDeleteWorktree,
@@ -924,6 +956,7 @@ function TaskRowActions({
 }: {
   item: ArchiveItem;
   isRestoring: boolean;
+  deletion?: ArchiveDeletion;
   onRestore: (item: ArchiveItem) => void;
   onDelete: (item: ArchiveItem) => void;
   onDeleteWorktree: (item: ArchiveItem) => void;
@@ -937,7 +970,7 @@ function TaskRowActions({
           telemetryControl="archive.item.restore"
           tone="primary"
           onClick={() => onRestore(item)}
-          disabled={isRestoring}
+          disabled={isRestoring || Boolean(deletion)}
           ariaBusy={isRestoring}
         >
           <RotateCcw className={cn('h-3 w-3', isRestoring && 'animate-spin')} />
@@ -945,14 +978,14 @@ function TaskRowActions({
         </ActionButton>
       )}
       {item.worktreeStatus === 'present' && item.worktreeManaged && !item.sharedWorktree && (
-        <ActionButton telemetryControl="archive.item.delete_worktree" tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')} disabled={isRestoring}>
-          <FolderX className="h-3 w-3" />
-          {t('archive.actions.deleteWorktree')}
+        <ActionButton telemetryControl="archive.item.delete_worktree" tone="dangerOutline" onClick={() => onDeleteWorktree(item)} title={t('archive.actions.deleteWorktreeTooltip')} ariaBusy={deletion === 'folder'} disabled={isRestoring || Boolean(deletion)}>
+          <FolderX className={cn('h-3 w-3', deletion === 'folder' && 'animate-pulse')} />
+          {t(deletion === 'folder' ? 'archive.dialog.deleting' : 'archive.actions.deleteWorktree')}
         </ActionButton>
       )}
-      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)} disabled={isRestoring}>
-        <Trash2 className="h-3 w-3" />
-        {t('archive.actions.delete')}
+      <ActionButton telemetryControl="archive.item.delete" tone="dangerOutline" onClick={() => onDelete(item)} ariaBusy={deletion === 'record'} disabled={isRestoring || Boolean(deletion)}>
+        <Trash2 className={cn('h-3 w-3', deletion === 'record' && 'animate-pulse')} />
+        {t(deletion === 'record' ? 'archive.dialog.deleting' : 'archive.actions.delete')}
       </ActionButton>
     </RowActions>
   );
@@ -1065,6 +1098,7 @@ function ActionButton({
 function ChatArchiveTable({
   items,
   restoringItemIds,
+  deletingItems,
   onOpen,
   onRestore,
   onDelete,
@@ -1072,6 +1106,7 @@ function ChatArchiveTable({
 }: {
   items: ArchiveItem[];
   restoringItemIds: ReadonlySet<string>;
+  deletingItems: ReadonlyMap<string, ArchiveDeletion>;
   onOpen: (item: ArchiveItem, sessionId?: string) => void;
   onRestore: (item: ArchiveItem) => void;
   onDelete: (item: ArchiveItem) => void;
@@ -1109,7 +1144,7 @@ function ChatArchiveTable({
                     label={t('archive.columns.archived')}
                     value={formatRelativeTime(item.archivedAt, t)}
                   />
-                  <ChatRowActions item={item} isRestoring={restoringItemIds.has(item.id)} onRestore={onRestore} onDelete={onDelete} t={t} stacked />
+                  <ChatRowActions item={item} isRestoring={restoringItemIds.has(item.id)} deletion={deletingItems.get(archiveOperationKey(item))} onRestore={onRestore} onDelete={onDelete} t={t} stacked />
                 </td>
               </tr>
             ))}
@@ -1162,7 +1197,7 @@ function ChatArchiveTable({
                 {formatRelativeTime(item.archivedAt, t)}
               </td>
               <td className="h-10 px-3">
-                <ChatRowActions item={item} isRestoring={restoringItemIds.has(item.id)} onRestore={onRestore} onDelete={onDelete} t={t} />
+                <ChatRowActions item={item} isRestoring={restoringItemIds.has(item.id)} deletion={deletingItems.get(archiveOperationKey(item))} onRestore={onRestore} onDelete={onDelete} t={t} />
               </td>
             </tr>
           ))}
@@ -1175,6 +1210,7 @@ function ChatArchiveTable({
 function TaskArchiveTable({
   items,
   restoringItemIds,
+  deletingItems,
   onOpenSession,
   onRestore,
   onDelete,
@@ -1183,6 +1219,7 @@ function TaskArchiveTable({
 }: {
   items: ArchiveItem[];
   restoringItemIds: ReadonlySet<string>;
+  deletingItems: ReadonlyMap<string, ArchiveDeletion>;
   onOpenSession: (item: ArchiveItem, sessionId: string) => void;
   onRestore: (item: ArchiveItem) => void;
   onDelete: (item: ArchiveItem) => void;
@@ -1221,7 +1258,7 @@ function TaskArchiveTable({
                   />
                   <TaskRowActions
                     item={item}
-                    isRestoring={restoringItemIds.has(item.id)}
+                    isRestoring={restoringItemIds.has(item.id)} deletion={deletingItems.get(archiveOperationKey(item))}
                     onRestore={onRestore}
                     onDelete={onDelete}
                     onDeleteWorktree={onDeleteWorktree}
@@ -1280,7 +1317,7 @@ function TaskArchiveTable({
               <td className="px-3 py-2 align-top">
                 <TaskRowActions
                   item={item}
-                  isRestoring={restoringItemIds.has(item.id)}
+                  isRestoring={restoringItemIds.has(item.id)} deletion={deletingItems.get(archiveOperationKey(item))}
                   onRestore={onRestore}
                   onDelete={onDelete}
                   onDeleteWorktree={onDeleteWorktree}

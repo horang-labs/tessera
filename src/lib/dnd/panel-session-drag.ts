@@ -7,9 +7,11 @@ import {
 } from '@/types/panel';
 import { TASK_DND_MIME, TASK_ENTITY_DND_MIME, TASK_MULTI_DND_MIME } from '@/types/task';
 import {
+  buildWorktreeFileSessionId,
   buildWorkspaceFileSessionId,
   type WorkspaceFileTabKind,
 } from '@/lib/workspace-tabs/special-session';
+import type { WorkspaceTarget } from '@/types/worktree';
 
 export interface PanelSessionDragPayload {
   tabId: string;
@@ -266,6 +268,36 @@ export function setWorkspaceFileDragData(
   const specialSessionId = buildWorkspaceFileSessionId(sourceSessionId, kind, filePath);
   const workspaceFilePayload: WorkspaceFileDragPayload = {
     sourceSessionId,
+    kind,
+    path: filePath,
+    ...(absolutePath ? { absolutePath } : {}),
+  };
+  setPanelSessionDragData(dataTransfer, specialSessionId);
+  dataTransfer.setData(WORKSPACE_FILE_DRAG_MIME, JSON.stringify(workspaceFilePayload));
+  dataTransfer.setData('text/plain', filePath);
+  dataTransfer.effectAllowed = 'copyMove';
+}
+
+/**
+ * Worktree-backed explorers have no source Session, but their file views use
+ * the same special-session panel contract as Session-backed explorers.
+ */
+export function setWorkspaceTargetFileDragData(
+  dataTransfer: Pick<DataTransfer, 'setData' | 'effectAllowed'>,
+  target: WorkspaceTarget,
+  kind: WorkspaceFileTabKind,
+  filePath: string,
+  absolutePath?: string | null,
+): void {
+  if (target.kind === 'session') {
+    setWorkspaceFileDragData(dataTransfer, target.id, kind, filePath, absolutePath);
+    return;
+  }
+  const specialSessionId = buildWorktreeFileSessionId(target.id, filePath, kind);
+  const workspaceFilePayload: WorkspaceFileDragPayload = {
+    // Path-insertion consumers require an owner identifier, but do not use it
+    // for routing; retain the worktree ID there for this target kind.
+    sourceSessionId: target.id,
     kind,
     path: filePath,
     ...(absolutePath ? { absolutePath } : {}),

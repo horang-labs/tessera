@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { nodeFileTrace } from '@vercel/nft';
+import replayRuntime from './verify-image-replay-runtime.cjs';
 
 const rootDir = process.cwd();
 const runtimeDir = path.join(rootDir, '.electron-runtime');
@@ -13,6 +14,9 @@ const ELECTRON_ENTRYPOINTS = [
   'dist-electron/electron/preload.js',
   'dist-electron/electron/tray.js',
   'dist-electron/electron/server-child.js',
+  // This worker is plain CommonJS, so electron:compile does not emit it.
+  // Trace it explicitly to include its replay module and QuickJS WASM assets.
+  'runtime/image-reference-replay-worker.cjs',
 ];
 
 function toPosix(relPath) {
@@ -254,6 +258,7 @@ async function writeRuntimePackageJson() {
     await fs.readFile(path.join(rootDir, 'package.json'), 'utf8')
   );
   const runtimeDependencies = await collectRuntimeDependencies();
+  const nextBuild = JSON.parse(await fs.readFile(requiredServerFilesPath, 'utf8'));
 
   const runtimePackageJson = {
     name: sourcePackageJson.name,
@@ -264,6 +269,7 @@ async function writeRuntimePackageJson() {
     homepage: sourcePackageJson.homepage,
     main: 'dist-electron/electron/main.js',
     dependencies: runtimeDependencies,
+    tesseraPtyLatency: nextBuild.config?.env?.NEXT_PUBLIC_TESSERA_PTY_LATENCY === '1',
   };
 
   await fs.writeFile(
@@ -344,6 +350,7 @@ async function main() {
   await ensureExecutableRuntimeFiles();
 
   await writeRuntimePackageJson();
+  await replayRuntime.verifyImageReplayRuntime(runtimeDir);
 
   const totalBytes = (
     await Promise.all(

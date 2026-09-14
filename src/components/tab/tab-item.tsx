@@ -46,6 +46,8 @@ export interface TabItemProps {
   isDragging?: boolean;
   style?: React.CSSProperties;
   onActivate: (tabId: string) => void;
+  onSelectForMerge?: (tabId: string, mode: 'toggle' | 'range' | 'add-range', position: { x: number; y: number }) => void;
+  isMergeSelected?: boolean;
   onClose: (tabId: string) => void;
   onDragStart: (tabId: string, event: React.DragEvent) => void;
   onDragOver: (tabId: string, event: React.DragEvent) => void;
@@ -162,6 +164,8 @@ export const TabItem = memo(function TabItem({
   isDragging = false,
   style,
   onActivate,
+  onSelectForMerge,
+  isMergeSelected = false,
   onClose,
   onDragStart,
   onDragOver,
@@ -336,17 +340,23 @@ export const TabItem = memo(function TabItem({
   // Event handlers — all stable references via useCallback
 
   const handleClick = useCallback(
-    function handleClick() {
+    function handleClick(event: React.MouseEvent) {
       const transition = transitionTabClickSuppression(
         suppressClickAfterDragRef.current,
         'click',
       );
       suppressClickAfterDragRef.current = transition.suppressed;
       if (!transition.shouldActivate || isEditingTitle) return;
+      if (onSelectForMerge && !event.altKey && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelectForMerge(tab.id, event.shiftKey ? (event.ctrlKey || event.metaKey ? 'add-range' : 'range') : 'toggle', { x: event.clientX, y: event.clientY });
+        return;
+      }
       void captureTelemetryUiControl('tab.select', 'tab_bar');
       onActivate(tab.id);
     },
-    [isEditingTitle, onActivate, tab.id],
+    [isEditingTitle, onActivate, onSelectForMerge, tab.id],
   );
 
   const handlePointerDown = useCallback(function handlePointerDown() {
@@ -359,6 +369,7 @@ export const TabItem = memo(function TabItem({
   const handleDoubleClick = useCallback(
     function handleDoubleClick(e: React.MouseEvent) {
       e.stopPropagation();
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
       setTitleInput(displayTitle);
       setIsEditingTitle(true);
     },
@@ -540,6 +551,7 @@ export const TabItem = memo(function TabItem({
 
   return (
     <ShortcutTooltip
+      hoverDelayMs={600}
       id="prev-tab"
       label={t('shortcut.prevTab')}
       secondaryId="next-tab"
@@ -566,6 +578,10 @@ export const TabItem = memo(function TabItem({
           'shadow-[inset_2px_0_0_var(--accent)]',
         ],
         isSessionDragHover && !isDragOver && 'border-b-(--accent) bg-(--accent)/10',
+        isMergeSelected && !isDragging && [
+          'bg-[color-mix(in_srgb,var(--accent)_16%,var(--chat-header-bg))]',
+          'text-(--text-primary) hover:bg-[color-mix(in_srgb,var(--accent)_22%,var(--chat-header-bg))]',
+        ],
       )}
       onClick={handleClick}
       onPointerDown={handlePointerDown}
@@ -580,9 +596,10 @@ export const TabItem = memo(function TabItem({
       data-tab-id={tab.id}
       data-project-dir={tab.projectDir ?? 'global'}
       data-active={String(isActive)}
+      data-merge-selected={String(isMergeSelected)}
       data-dragging={String(isDragging)}
       aria-grabbed={isDragging || undefined}
-    >
+      >
       {/* Leading indicator — same dots, colors and priority as the sidebar/board */}
       {statusKind && (
         <span

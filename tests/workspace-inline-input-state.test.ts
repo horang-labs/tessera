@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DIRECTORY_RENAME_DOUBLE_CLICK_MS,
+  isRapidDirectoryRenameDoubleClick,
   resolveInlineSubmitIntent,
   shouldOpenOnRowClick,
   shouldToggleDirectoryOnClick,
@@ -56,9 +58,22 @@ test("a rename back to the name it already has issues no request", () => {
   );
 });
 
-test("a folder toggles on the first click and drops a double-click's second click", () => {
+test("a folder treats a slow second click as another toggle, not a double-click", () => {
   assert.equal(shouldToggleDirectoryOnClick(1), true);
-  assert.equal(shouldToggleDirectoryOnClick(2), false);
+  assert.equal(shouldToggleDirectoryOnClick(2, false), true);
+  assert.equal(shouldToggleDirectoryOnClick(2, true), false);
+});
+
+test("only a genuinely rapid second click qualifies to rename a folder", () => {
+  const click = (timestamp: number) => isRapidDirectoryRenameDoubleClick({
+    clickCount: 2,
+    path: "docs",
+    previousPath: "docs",
+    previousTimestamp: 100,
+    timestamp,
+  });
+  assert.equal(click(100 + DIRECTORY_RENAME_DOUBLE_CLICK_MS), true);
+  assert.equal(click(101 + DIRECTORY_RENAME_DOUBLE_CLICK_MS), false);
 });
 
 test("a rename preselects the name without its extension", () => {

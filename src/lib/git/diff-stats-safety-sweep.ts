@@ -10,7 +10,7 @@
  * touching the push paths.
  */
 
-import { crossEnvironmentFilesystemPathKey } from '@/lib/filesystem/path-equivalence';
+import { normalizeGitReadPath } from './git-read-cache';
 
 export interface DiffStatsSafetySweepDependencies {
   /** Users with a live transport; nobody connected means nobody to broadcast to. */
@@ -19,7 +19,7 @@ export interface DiffStatsSafetySweepDependencies {
   getActiveSessionIds(userId: string): Iterable<string>;
   getSessionWorkDir(sessionId: string): string | null;
   /** True when the cached entry is missing or older than the TTL. */
-  needsRefresh(workDir: string): boolean;
+  needsRefresh(workDir: string, userId: string): boolean;
   recompute(workDir: string, userId: string): void;
 }
 
@@ -38,22 +38,21 @@ export function runDiffStatsSafetySweep(
   dependencies: DiffStatsSafetySweepDependencies,
 ): DiffStatsSafetySweepResult {
   const refreshed: string[] = [];
-  // First user seen for a workDir wins: a shared worktree only needs one
-  // recompute, and the broadcast fans out to every session on that workDir.
+  // Deduplicate sessions within each user; users may select different environments.
   const ownerByWorkDir = new Map<string, { workDir: string; userId: string }>();
 
   for (const userId of dependencies.getConnectedUserIds()) {
     for (const sessionId of dependencies.getActiveSessionIds(userId)) {
       const workDir = dependencies.getSessionWorkDir(sessionId);
       if (!workDir) continue;
-      const key = crossEnvironmentFilesystemPathKey(workDir);
+      const key = JSON.stringify([userId, normalizeGitReadPath(workDir)]);
       if (ownerByWorkDir.has(key)) continue;
       ownerByWorkDir.set(key, { workDir, userId });
     }
   }
 
   for (const { workDir, userId } of ownerByWorkDir.values()) {
-    if (!dependencies.needsRefresh(workDir)) continue;
+    if (!dependencies.needsRefresh(workDir, userId)) continue;
     dependencies.recompute(workDir, userId);
     refreshed.push(workDir);
   }

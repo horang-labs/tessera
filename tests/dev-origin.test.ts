@@ -20,14 +20,20 @@ test('a development server can allow its own origin without changing another ser
     assert.equal(await isOriginAllowed(request), true);
     assert.equal(await isOriginAllowed({ ...request, origin: 'http://untrusted.example:3100' }), false);
     process.env.NODE_ENV = 'production';
+    delete process.env.TESSERA_PRODUCTION_DB;
     assert.equal(await isOriginAllowed(request), false);
     assert.equal(await isOriginAllowed({ ...request, origin: 'http://172.17.241.221:3101' }), true);
+    process.env.TESSERA_PRODUCTION_DB = '0';
+    assert.equal(await isOriginAllowed(request), true);
+    assert.equal(await isOriginAllowed({ ...request, origin: 'http://untrusted.example:3100' }), false);
+    process.env.TESSERA_PRODUCTION_DB = '1';
+    assert.equal(await isOriginAllowed(request), false);
     process.env.NODE_ENV = 'development';
     process.env.TESSERA_DEV_ORIGIN = 'not-a-url';
     assert.equal(await isOriginAllowed(request), false);
     assert.equal(await isOriginAllowed({ ...request, origin: 'http://localhost:3100' }), true);
   } finally {
-    for (const key of ['TESSERA_DATA_DIR', 'PORT', 'NODE_ENV', 'TESSERA_DEV_ORIGIN']) {
+    for (const key of ['TESSERA_DATA_DIR', 'PORT', 'NODE_ENV', 'TESSERA_DEV_ORIGIN', 'TESSERA_PRODUCTION_DB']) {
       if (previous[key] === undefined) delete process.env[key];
       else process.env[key] = previous[key];
     }
