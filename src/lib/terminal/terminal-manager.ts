@@ -1432,7 +1432,7 @@ export class TerminalManager {
     userId: string,
     text: string,
   ): Promise<TerminalSessionSnapshot> {
-    return this.submitSemanticSessionPrompt(sessionId, userId, text, true);
+    return this.submitSemanticSessionPrompt(sessionId, userId, text);
   }
 
   /** ChatView may be the first input after a restored TUI, before a lifecycle hook exists. */
@@ -1458,7 +1458,7 @@ export class TerminalManager {
       return pending.promise;
     }
 
-    const promise = this.submitSemanticSessionPrompt(sessionId, userId, text, false);
+    const promise = this.submitSemanticSessionPrompt(sessionId, userId, text);
     runtime.semanticPromptSubmissions.set(submissionId, { sessionId, text, promise });
     try {
       const snapshot = await promise;
@@ -1478,16 +1478,17 @@ export class TerminalManager {
     sessionId: string,
     userId: string,
     text: string,
-    requireObservedState: boolean,
   ): Promise<TerminalSessionSnapshot> {
     const body = normalizeSemanticPrompt(text);
     if (!body.trim()) {
       throw new TerminalSessionInputError('The Session prompt must not be empty.');
     }
     const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    // Restored providers may wait for their first input before emitting any
+    // lifecycle hook. CLI and ChatView must allow the same restored-runtime input.
     if (
       runtime.prefillPending
-      || (!runtime.lastSessionState && (requireObservedState || !runtime.restoresProviderSession))
+      || (!runtime.lastSessionState && !runtime.restoresProviderSession)
     ) {
       throw new TerminalSessionInputError('The Session provider TUI is not ready for input.');
     }
