@@ -42,6 +42,8 @@ import { attachRemoteAddressHeader } from '../src/lib/http/remote-address-header
 import { directListeners } from '../src/lib/http/direct-listeners';
 import { loadMachineSettings } from '../src/lib/settings/machine-settings';
 import { SettingsManager } from '../src/lib/settings/manager';
+import { startArchivedWorktreeRetention } from '../src/lib/archive/archive-retention-startup';
+import { stopArchivedWorktreeRetention } from '../src/lib/archive/archive-retention-runner';
 import { registerCurrentProjectAtStartup } from '../src/lib/projects/current-project-registration';
 import { createPairingPresentation } from '../src/lib/auth/pairing-presentation';
 import {
@@ -271,6 +273,7 @@ initDatabase().then(async () => {
       });
 
       wsServer.start(server);
+      await startArchivedWorktreeRetention();
       void restoreSessionRuntimes((request) => providerLaunchModule.launch(request));
       startOomDiagnostics();
       // Only now can a direct listener serve /ws, so bind it after the
@@ -362,6 +365,7 @@ initDatabase().then(async () => {
 
       logger.info('Stopping rate limit poller...');
       rateLimitPoller.stop();
+      stopArchivedWorktreeRetention();
 
       logger.info('Stopping task PR poller...');
       taskPrPoller.stop();

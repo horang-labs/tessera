@@ -33,14 +33,16 @@ test('settings API enforces confirmation and hands cleanup to the paced runner',
 });
 
 test('startup retention waits until the server is ready and runs one worktree per pass', () => {
-  const server = read('server.ts');
   const runner = read('src/lib/archive/archive-retention-runner.ts');
-
-  assert.doesNotMatch(server, /await pruneExpiredArchivedWorktrees/);
-  assert.ok(
-    server.indexOf('configureArchivedWorktreeRetention(startupRetentionPolicy)')
-      > server.indexOf('wsServer.start(server)'),
-  );
+  for (const entry of ['server.ts', 'electron/server-child.ts']) {
+    const server = read(entry);
+    assert.doesNotMatch(server, /await pruneExpiredArchivedWorktrees/);
+    assert.match(server, /stopArchivedWorktreeRetention\(\)/);
+    assert.ok(
+      server.indexOf('startArchivedWorktreeRetention()')
+        > server.indexOf('wsServer.start(server)'),
+    );
+  }
   assert.match(runner, /maxWorktreeAttempts: 1/);
   assert.match(runner, /options\.runImmediately \? 0 : IDLE_PASS_DELAY_MS/);
 });
