@@ -14,9 +14,10 @@ export interface ImageLightboxProps {
   src: string;
   alt?: string;
   onClose: () => void;
+  autoFocus?: boolean;
 }
 
-export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
+export function ImageLightbox({ src, alt, onClose, autoFocus = false }: ImageLightboxProps) {
   const { t } = useI18n();
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -127,6 +128,7 @@ export function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
       <button
         {...telemetryClickAttributes('message.image.close', 'message')}
         type="button"
+        autoFocus={autoFocus}
         onClick={(event) => {
           event.stopPropagation();
           closeLightbox();
