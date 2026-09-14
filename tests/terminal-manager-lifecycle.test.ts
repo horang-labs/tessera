@@ -500,44 +500,70 @@ test('semantic Session prompt acceptance does not wait for a wedged headless sna
   ]);
 });
 
-test('ChatView can submit the first prompt after restoring a live terminal runtime', async () => {
-  const spawned: FakePty[] = [];
-  const manager = new TerminalManager(
-    () => {},
-    async () => createFactory(spawned),
-    undefined,
-    { semanticPromptSubmitDelayMs: 10 },
-  );
-  await manager.startDetached(createOptions({
-    launchSpec: { restoresProviderSession: true },
-  }));
+for (const source of ['CLI', 'ChatView'] as const) {
+  test(`${source} can submit the first prompt after restoring a live terminal runtime`, async () => {
+    const spawned: FakePty[] = [];
+    const manager = new TerminalManager(
+      () => {},
+      async () => createFactory(spawned),
+      undefined,
+      { semanticPromptSubmitDelayMs: 10 },
+    );
+    await manager.startDetached(createOptions({
+      launchSpec: { restoresProviderSession: true },
+    }));
 
-  await manager.submitSessionChatPrompt(
-    'session-a', 'user-a', 'restored follow-up', 'submission-a',
-  );
+    const submitted = source === 'CLI'
+      ? await manager.submitSessionPrompt('session-a', 'user-a', 'restored follow-up')
+      : await manager.submitSessionChatPrompt(
+        'session-a', 'user-a', 'restored follow-up', 'submission-a',
+      );
+    assert.equal(submitted.runtimeState, 'running');
 
-  assert.deepEqual(spawned[0].writes, [
-    '\x1b[200~restored follow-up\x1b[201~',
-    '\r',
-  ]);
-});
+    assert.deepEqual(spawned[0].writes, [
+      '\x1b[200~restored follow-up\x1b[201~',
+      '\r',
+    ]);
+  });
 
-test('ChatView does not type into a fresh provider runtime before its first lifecycle state', async () => {
-  const spawned: FakePty[] = [];
-  const manager = new TerminalManager(
-    () => {},
-    async () => createFactory(spawned),
-    undefined,
-    { semanticPromptSubmitDelayMs: 10 },
-  );
-  await manager.startDetached(createOptions());
+  test(`${source} does not type into a fresh provider runtime before its first lifecycle state`, async () => {
+    const spawned: FakePty[] = [];
+    const manager = new TerminalManager(
+      () => {},
+      async () => createFactory(spawned),
+      undefined,
+      { semanticPromptSubmitDelayMs: 10 },
+    );
+    await manager.startDetached(createOptions());
 
-  await assert.rejects(
-    manager.submitSessionChatPrompt('session-a', 'user-a', 'too early', 'submission-a'),
-    (error: unknown) => error instanceof Error && error.name === 'TerminalSessionInputError',
-  );
-  assert.deepEqual(spawned[0].writes, []);
-});
+    await assert.rejects(
+      source === 'CLI'
+        ? manager.submitSessionPrompt('session-a', 'user-a', 'too early')
+        : manager.submitSessionChatPrompt('session-a', 'user-a', 'too early', 'submission-a'),
+      (error: unknown) => error instanceof Error && error.name === 'TerminalSessionInputError',
+    );
+    assert.deepEqual(spawned[0].writes, []);
+  });
+
+  test(`${source} does not interleave with pending prefill in a restored runtime`, async () => {
+    const spawned: FakePty[] = [];
+    const manager = new TerminalManager(() => {}, async () => createFactory(spawned));
+    await manager.startDetached(createOptions({
+      launchSpec: { restoresProviderSession: true, prefillInput: 'existing draft' },
+    }));
+    try {
+      await assert.rejects(
+        source === 'CLI'
+          ? manager.submitSessionPrompt('session-a', 'user-a', 'too early')
+          : manager.submitSessionChatPrompt('session-a', 'user-a', 'too early', 'submission-a'),
+        (error: unknown) => error instanceof Error && error.name === 'TerminalSessionInputError',
+      );
+      assert.deepEqual(spawned[0].writes, []);
+    } finally {
+      await manager.close('terminal-a', 'user-a');
+    }
+  });
+}
 
 test('ChatView retries reuse an accepted submission without writing the prompt twice', async () => {
   const spawned: FakePty[] = [];
