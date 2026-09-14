@@ -166,6 +166,13 @@ test('Markdown preview search highlights matches without corrupting the input ca
   assert.match(codeViewSource, /registry\?\.delete\(/);
 });
 
+test('Markdown preview receives focus so native arrow keys scroll its viewport', () => {
+  assert.match(codeViewSource, /markdownViewportRef/);
+  assert.match(codeViewSource, /markdownViewportRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(codeViewSource, /ref=\{markdownViewportRef\}/);
+  assert.match(codeViewSource, /tabIndex=\{shouldRenderMarkdownPreview \? 0 : undefined\}/);
+});
+
 test('a dirty preview tab is pinned so it cannot be replaced out from under the draft', () => {
   assert.match(fileTabSource, /pinTab\(tabId\)/);
 });
