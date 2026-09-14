@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 
 import {
   deleteCodexThread,
+  isAbsentCodexThreadError,
   renameCodexThread,
   setCodexThreadArchived,
   type CodexThreadControlContext,
@@ -77,7 +78,15 @@ export async function syncCodexThreadsArchived(
 
   try {
     for (const target of targets) {
-      await setCodexThreadArchived(target.context, target.threadId, archived);
+      try {
+        await setCodexThreadArchived(target.context, target.threadId, archived);
+      } catch (error) {
+        if (archived && isAbsentCodexThreadError(error)) {
+          logger.info({ sessionId: target.sessionId, threadId: target.threadId }, 'Codex thread was already absent during archive');
+          continue;
+        }
+        throw error;
+      }
       completed.push(target);
     }
   } catch (error) {

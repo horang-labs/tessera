@@ -122,6 +122,21 @@ test('archive RPC failure preserves local state and task partial success is comp
   assert.equal(dbTasks.getTask('task-archive')?.archived, false);
 });
 
+test('archiving a purged Codex rollout preserves the local archive operation', async () => {
+  dbSessions.createSession('archive-purged-rollout', 'project-lifecycle', 'Purged rollout', 'codex', {
+    workDir: dataDir,
+    providerState: JSON.stringify({ threadId: 'thread-purged-rollout' }),
+  });
+  setCodexThreadControlRequestExecutorForTests(async () => {
+    const { CodexThreadControlError } = await import('../src/lib/cli/providers/codex/thread-control-client');
+    throw new CodexThreadControlError('no rollout found for thread id thread-purged-rollout', -32000);
+  });
+
+  await archiveSession('archive-purged-rollout', true, 'user-1');
+
+  assert.equal(dbSessions.getSession('archive-purged-rollout')?.archived, 1);
+});
+
 for (const scope of ['session', 'task'] as const) {
   test(`${scope} archive waits for live Codex writers to exit before the archive RPC`, async (t) => {
     const taskId = `writer-${scope}-task`;
