@@ -60,9 +60,9 @@ test('fork rejects invalid identity and never accepts the source as its child', 
   await assert.rejects(forkCodexThread({}, 'thread-source'), /invalid forked thread ID/);
 });
 
-test('delete treats an already absent Codex thread as idempotent success', async () => {
+test('delete treats an absent Codex thread as idempotent success', async () => {
   setCodexThreadControlRequestExecutorForTests(async () => {
-    throw new CodexThreadControlError('Thread not found', -32000);
+    throw new CodexThreadControlError('no rollout found for thread id thread-gone', -32000);
   });
   await assert.doesNotReject(deleteCodexThread({}, 'thread-gone'));
 });
