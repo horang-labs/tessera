@@ -364,7 +364,18 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
     for await (cell of cells) {
       cellCount++;
       unknown = undefined; captured = 0; commandCursor = 0; usedResults = new Set();
+      deadline = performance.now() + cellTimeoutMs;
       if (typeof cell.source !== 'string' || cell.source.length > MAX_SOURCE) { evaluate('__clear();void 0;'); continue; }
+      let source;
+      try { source = displayOnlySource(cell.source); }
+      catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        // Parsing precedes execution: none of this cell's store writes or tool
+        // calls happened. Keep prior state and continue with a corrected retry.
+        diagnostics.push({ callId: cell.id, unresolved: String(error) });
+        if (!cell.closed) break;
+        continue;
+      }
       cell.texts = textBlocks(cell.output);
       cell.json = cell.texts.flatMap(t => { try { return [JSON.parse(t)]; } catch { return []; } });
       cell.commands = cell.json.filter(o => isObject(o) && typeof o.output === 'string' && ('exit_code' in o || 'session_id' in o));
@@ -384,7 +395,7 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
             && keys.every(key => Object.hasOwn(recordedValues[`generation:${item.id}`], key));
         }
         evaluate(`__completeValues=${JSON.stringify(completeValues)};__recordedValues=${JSON.stringify(recordedValues)};__jobs=[];__pending={};__done=false;__error=null;void 0;`);
-        evaluate(`(async()=>{${displayOnlySource(cell.source)}\n})().then(()=>__done=true,e=>{__done=true;__error=String(e)});void 0;`);
+        evaluate(`(async()=>{${source}\n})().then(()=>__done=true,e=>{__done=true;__error=String(e)});void 0;`);
         for (;;) {
           while (runtime.hasPendingJob()) {
             const result = runtime.executePendingJobs();

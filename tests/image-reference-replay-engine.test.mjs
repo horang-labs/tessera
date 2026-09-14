@@ -16,6 +16,20 @@ function fixture() {
   return { recording, append, call, output, event };
 }
 
+test('syntax errors skip only the failed cell and preserve state for corrected image calls', async () => {
+  const f = fixture();
+  f.call('seed', 'store("ref","/reference.png");'); f.output('seed');
+  f.call('invalid', 'store("ref","/wrong.png");text("oops");});');
+  f.output('invalid', [{ type: 'input_text', text: 'Script error:\nSyntaxError: Unexpected token' }]);
+  f.call('retry', 'await tools.image_gen__imagegen({prompt:"retry",referenced_image_paths:[load("ref")]});');
+  f.event('exec-retry', 'retry'); f.output('retry');
+  const result = await replayCells(f.recording);
+  assert.equal(result.cells, 3);
+  assert.match(result.diagnostics.find(d => d.callId === 'invalid').unresolved, /SyntaxError/);
+  assert.equal(result.invocations[0]?.resultId, 'exec-retry');
+  assert.deepEqual(result.invocations[0].referencedImagePaths, ['/reference.png']);
+});
+
 test('recorded image validation failure preserves stored values for a corrected retry', async () => {
   const f = fixture();
   f.call('rejected', 'store("prompt","retry");await tools.image_gen__imagegen({prompt:"first",referenced_image_paths:["/a.png"]});');
