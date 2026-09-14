@@ -1346,6 +1346,7 @@ export const zh: I18nMessages = {
       file: '从文件读取的图像',
       'explicit-path': '指定路径',
     },
+    inputResolutionFailed: '无法从此记录中还原输入图像引用。',
     unresolved: '有 {{count}} 张请求图像无法解析。',
     prompt: '提示词',
     revised: '修订后的提示词',

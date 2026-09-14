@@ -38,8 +38,8 @@ function buildDependencies(
     getConnectedUserIds,
     getActiveSessionIds: (userId) => getActiveSessionIds(userId),
     getSessionWorkDir: (sessionId) => getManagedSessionWorkDir(sessionId),
-    needsRefresh: (workDir) =>
-      getCachedDiffStats(workDir) === undefined || isDiffStatsStale(workDir),
+    needsRefresh: (workDir, userId) =>
+      getCachedDiffStats(workDir, userId) === undefined || isDiffStatsStale(workDir, Date.now(), userId),
     recompute: (workDir, userId) => scheduleRecompute(workDir, userId),
   };
 }

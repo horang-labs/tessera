@@ -1,3 +1,4 @@
+import { getGitReadGeneration } from '@/lib/git/git-read-cache';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -10,6 +11,7 @@ import type { WorktreeDiffStats } from '@/types/worktree-diff-stats';
 interface CacheEntry {
   stats: WorktreeDiffStats | null;
   computedAt: number;
+  generation: number;
 }
 
 /**
@@ -20,10 +22,12 @@ interface CacheEntry {
 function seedCacheEntry(workDir: string, computedAt: number): void {
   const state = (globalThis as unknown as Record<
     symbol,
-    { entries: Map<string, CacheEntry> } | undefined
+    { entries: Map<string, CacheEntry>; readKeys: Map<string, string> } | undefined
   >)[Symbol.for('tessera.worktreeDiffStatsCache')];
   assert.ok(state, 'importing the cache module should create its global state');
+  state.readKeys.set(JSON.stringify([workDir, null]), workDir);
   state.entries.set(workDir, {
+    generation: getGitReadGeneration(),
     stats: {
       added: 8,
       removed: 0,

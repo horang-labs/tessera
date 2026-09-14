@@ -1,6 +1,29 @@
 import logger from '@/lib/logger';
-import { getGitPanelData } from './git-panel';
-import type { GitPanelData } from '@/types/git';
+import { getGitPanelData, type GitPanelSnapshot } from './git-panel';
+import { GitReadCache, gitReadKey, invalidateGitPanelReads } from './git-read-cache';
+import type { AgentEnvironment } from '@/lib/settings/types';
+import type { GitPanelData, GitDiffData } from '@/types/git';
+
+// Only repository data is shared. Session/task/PR metadata is assembled per caller.
+
+export function readGitPanelSnapshot(
+  workDir: string,
+  environment: AgentEnvironment,
+  userId: string | undefined,
+  compute: () => Promise<GitPanelSnapshot>,
+): Promise<GitPanelSnapshot> {
+  return getState().snapshotReads.read(gitReadKey(workDir, environment, userId, 'panel-snapshot'), compute);
+}
+
+export function readGitDiff(
+  workDir: string,
+  environment: AgentEnvironment,
+  userId: string | undefined,
+  relativePath: string,
+  compute: () => Promise<GitDiffData>,
+): Promise<GitDiffData> {
+  return getState().diffReads.read(gitReadKey(workDir, environment, userId, 'file-diff', [relativePath]), compute);
+}
 
 const DEBOUNCE_MS = 300;
 
@@ -11,9 +34,11 @@ type Listener = (
 ) => void;
 
 interface CacheState {
+  snapshotReads: GitReadCache<GitPanelSnapshot>;
+  diffReads: GitReadCache<GitDiffData>;
+  broadcasts: Map<string, object>;
   pendingTimers: Map<string, NodeJS.Timeout>;
   pendingUserIds: Map<string, Set<string>>;
-  inFlight: Map<string, Promise<GitPanelData | null>>;
   listeners: Set<Listener>;
 }
 
@@ -23,13 +48,19 @@ const g = globalThis as unknown as { [GLOBAL_KEY]?: CacheState };
 function getState(): CacheState {
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = {
+      snapshotReads: new GitReadCache<GitPanelSnapshot>(250),
+      diffReads: new GitReadCache<GitDiffData>(250),
+      broadcasts: new Map(),
       pendingTimers: new Map(),
       pendingUserIds: new Map(),
-      inFlight: new Map(),
       listeners: new Set(),
     };
   }
-  return g[GLOBAL_KEY]!;
+  const state = g[GLOBAL_KEY]!;
+  state.snapshotReads ??= new GitReadCache<GitPanelSnapshot>(250);
+  state.diffReads ??= new GitReadCache<GitDiffData>(250);
+  state.broadcasts ??= new Map();
+  return state;
 }
 
 export function subscribeGitPanelData(listener: Listener): () => void {
@@ -58,31 +89,26 @@ async function runCompute(
   sessionId: string,
   userIds: string[],
 ): Promise<GitPanelData | null> {
-  const state = getState();
-  const existing = state.inFlight.get(sessionId);
-  if (existing) return existing;
-
-  const promise = (async () => {
+  // Users may select different Git environments. Never broadcast the first
+  // user's snapshot to everyone who happened to trigger the debounce window.
+  const results = await Promise.all((userIds.length ? userIds : [undefined]).map(async (userId) => {
+    const key = JSON.stringify([sessionId, userId]);
+    const token = {};
+    const broadcasts = getState().broadcasts;
+    broadcasts.set(key, token);
+    let data: GitPanelData | null = null;
     try {
-      let data: GitPanelData | null = null;
-      try {
-        data = await getGitPanelData(sessionId, userIds[0]);
-      } catch (error) {
-        // Sessions without a work_dir, non-git directories, etc. all throw
-        // GitPanelError. Treat as "nothing to broadcast" — the live UI keeps
-        // whatever it already had.
-        logger.debug({ error, sessionId }, 'getGitPanelData failed in recompute');
-        data = null;
-      }
-      notifyListeners(sessionId, data, userIds);
-      return data;
-    } finally {
-      state.inFlight.delete(sessionId);
+      data = await getGitPanelData(sessionId, userId);
+    } catch (error) {
+      logger.debug({ error, sessionId }, 'getGitPanelData failed in recompute');
     }
-  })();
-
-  state.inFlight.set(sessionId, promise);
-  return promise;
+    if (broadcasts.get(key) === token) {
+      broadcasts.delete(key);
+      notifyListeners(sessionId, data, userId ? [userId] : []);
+    }
+    return data;
+  }));
+  return results[0] ?? null;
 }
 
 /**
@@ -95,6 +121,7 @@ export function scheduleGitPanelRecompute(
   sessionId: string,
   userId?: string,
 ): void {
+  invalidateGitPanelReads();
   const state = getState();
 
   if (userId) {
@@ -126,7 +153,9 @@ export function scheduleGitPanelRecompute(
 export function flushGitPanelRecompute(
   sessionId: string,
   userId?: string,
+  options: { invalidate?: boolean } = {},
 ): Promise<GitPanelData | null> {
+  if (options.invalidate !== false) invalidateGitPanelReads();
   const state = getState();
   const timer = state.pendingTimers.get(sessionId);
   if (timer) {

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { buildGitBatchScript } from '../src/lib/git/git-panel';
+import { buildGitBatchScript, parseGitBatchOutput } from '../src/lib/worktrees/git-query-batch';
 import { createGitShellRunner } from '../src/lib/worktrees/git-runner';
 
 const execFileAsync = promisify(execFile);
@@ -17,14 +17,15 @@ test('batched git probe preserves empty and NUL-delimited command output', async
     const unusualName = "odd ' name.txt";
     fs.writeFileSync(path.join(repoDir, unusualName), 'untracked\n');
 
-    const script = buildGitBatchScript([
+    const commands = [
       { key: 'repoRoot', args: ['rev-parse', '--show-toplevel'] },
       {
         key: 'status',
         args: ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
       },
       { key: 'missingRemote', args: ['remote', 'get-url', "doesn't-exist"] },
-    ]);
+    ];
+    const script = buildGitBatchScript(commands);
     // Through the shell runner, which is how the panel runs the batch: only the
     // wsl.exe hop differs on a bridged setup, and that hop is `spawnCli`'s.
     const { stdout } = await createGitShellRunner('wsl', { timeoutMs: 10_000 })(
@@ -32,20 +33,11 @@ test('batched git probe preserves empty and NUL-delimited command output', async
       { cwd: repoDir },
     );
 
-    const results = new Map(
-      stdout.trimEnd().split('\n').map((line) => {
-        const [key, encodedField] = line.split('\t');
-        assert.ok(encodedField?.startsWith('b64:'));
-        return [
-          key,
-          Buffer.from(encodedField.slice(4), 'base64').toString('utf8'),
-        ] as const;
-      }),
-    );
-
-    assert.equal(results.get('repoRoot')?.trim(), repoDir);
-    assert.match(results.get('status') ?? '', /odd ' name\.txt\0/);
-    assert.equal(results.get('missingRemote'), '');
+    const results = parseGitBatchOutput(stdout, commands);
+    assert.equal(results.get('repoRoot')?.stdout, repoDir);
+    assert.match(results.get('status')?.stdout ?? '', /odd ' name\.txt\0/);
+    assert.equal(results.get('missingRemote')?.stdout, '');
+    assert.notEqual(results.get('missingRemote')?.exitCode, 0);
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
   }

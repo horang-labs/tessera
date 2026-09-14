@@ -4,12 +4,14 @@ import { getGitPanelData, GitPanelError } from "@/lib/git/git-panel";
 import { scheduleGitRemoteRefresh } from "@/lib/git/git-remote-refresh";
 import { jsonError } from "@/lib/http/json-error";
 import logger from "@/lib/logger";
+import { startLatencySpan } from '@/lib/terminal/terminal-server-latency';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await params;
+  const endLatency = startLatencySpan('git-panel-request', id);
 
   try {
     const auth = await requireAuthenticatedUserId(request, {
@@ -43,5 +45,7 @@ export async function GET(
 
     logger.error({ error, sessionId: id }, "Failed to load git panel data");
     return jsonError("internal_error", "Failed to load git panel data", 500);
+  } finally {
+    endLatency();
   }
 }

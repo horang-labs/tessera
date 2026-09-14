@@ -138,7 +138,7 @@ const BASE_PREVIEW_MARKDOWN_COMPONENTS: Components = {
   table({ children }) {
     return (
       <div className="my-2 overflow-x-auto rounded-md border border-(--divider) first:mt-0 last:mb-0">
-        <table className="w-full border-collapse text-sm">{children}</table>
+        <table className="w-full table-fixed border-collapse text-sm">{children}</table>
       </div>
     );
   },
@@ -253,7 +253,7 @@ const DOCUMENT_PREVIEW_MARKDOWN_COMPONENTS: Components = {
   table({ children }) {
     return (
       <div className="my-5 overflow-x-auto rounded-md border border-(--divider) first:mt-0 last:mb-0">
-        <table className="w-full border-collapse text-sm">{children}</table>
+        <table className="w-full table-fixed border-collapse text-sm">{children}</table>
       </div>
     );
   },

@@ -7,6 +7,8 @@ import {
   EyeOff,
   FilePlus2,
   FileText,
+  FileJson,
+  ImageIcon,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -34,6 +36,7 @@ import {
 import { useWorkspaceFileList } from "@/hooks/use-workspace-file-list";
 import { useProjectViewSession } from "@/hooks/use-project-view-workspace-state";
 import { isHiddenWorkspaceRelativePath } from "@/lib/workspace-files/hidden-workspace-path";
+import { restoreWorkspaceFileScroll } from "@/lib/workspace-files/workspace-file-scroll";
 import {
   selectExpandedWorkspacePaths,
   useWorkspaceFileViewStore,
@@ -44,7 +47,10 @@ import {
   previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
 import { resolveWorkspaceTarget, workspaceTargetKey } from '@/types/worktree';
-import { setWorkspaceDirectoryDragData, setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
+import {
+  setWorkspaceDirectoryDragData,
+  setWorkspaceTargetFileDragData,
+} from "@/lib/dnd/panel-session-drag";
 import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import {
@@ -54,6 +60,7 @@ import {
 import { WorkspaceInlineInputRow } from "@/components/workspace/workspace-inline-input-row";
 import { useWorkspaceInlineInput } from "@/components/workspace/use-workspace-inline-input";
 import {
+  isRapidDirectoryRenameDoubleClick,
   shouldOpenOnRowClick,
   shouldToggleDirectoryOnClick,
 } from "@/components/workspace/workspace-inline-input-state";
@@ -93,6 +100,26 @@ interface WorkspaceDirectoryNode {
 }
 
 type WorkspaceTreeNode = WorkspaceDirectoryNode | WorkspaceFileNode;
+
+function WorkspaceFileIcon({ name }: { name: string }) {
+  const extension = name.split('.').pop()?.toLowerCase();
+  if (extension && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif'].includes(extension)) {
+    return <ImageIcon className="h-3.5 w-3.5 shrink-0 text-emerald-500" />;
+  }
+  if (extension === 'json') return <FileJson className="h-3.5 w-3.5 shrink-0 text-amber-500" />;
+  return <FileText className={cn('h-3.5 w-3.5 shrink-0', extension === 'md' ? 'text-sky-500' : 'text-(--text-secondary)')} />;
+}
+
+function WorkspaceFileName({ name }: { name: string }) {
+  const dot = name.lastIndexOf('.');
+  const hasExtension = dot > 0 && dot < name.length - 1;
+  return (
+    <span className="flex min-w-0 flex-1 text-[13px] leading-5">
+      <span className="truncate">{hasExtension ? name.slice(0, dot) : name}</span>
+      {hasExtension ? <span className="shrink-0">{name.slice(dot)}</span> : null}
+    </span>
+  );
+}
 
 type PathContextMenuState = WorkspacePathContextMenuState<WorkspaceTreeNode>;
 
@@ -215,12 +242,17 @@ export function WorkspaceFilePanel({
     () => resolveWorkspaceTarget(sessionId, worktreeId),
     [sessionId, worktreeId],
   );
-  const targetKey = target ? workspaceTargetKey(target) : null;
+  const targetKey = useMemo(() => target ? workspaceTargetKey(target) : null, [target]);
   const canMutate = target !== null;
   const isDocumentVisible = useDocumentVisibility();
   const peekTarget = useWorkspacePeekStore((state) => state.target);
   const previousPeekTargetRef = useRef(peekTarget);
   const previousFileListTargetKeyRef = useRef(targetKey);
+  const directoryRenameDoubleClickRef = useRef<{
+    path: string;
+    qualified: boolean;
+    timestamp: number;
+  } | null>(null);
   const subscriberId = useStableWorkspaceFilesSubscriberId("workspace-file-panel");
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -320,6 +352,15 @@ export function WorkspaceFilePanel({
   });
 
   const isSearching = query.trim().length > 0;
+  const scrollRef = useCallback((viewport: HTMLDivElement | null) => {
+    if (!viewport || !targetKey || isSearching) return;
+    const store = useWorkspaceFileViewStore.getState();
+    return restoreWorkspaceFileScroll(
+      viewport,
+      store.scrollTopByWorkspace[targetKey] ?? 0,
+      (scrollTop) => store.setScrollTop(targetKey, scrollTop),
+    );
+  }, [targetKey, isSearching]);
   useEffect(function loadGlobalSearchResults() {
     const trimmed = query.trim();
     const abortController = new AbortController();
@@ -553,12 +594,22 @@ export function WorkspaceFilePanel({
     toggleStoredPath(targetKey, path);
   }
 
-  /**
-   * Toggle on the first click with no double-click delay. Chromium marks the
-   * second click with detail > 1, so it is dropped instead of toggling back.
-  */
+  /** Keep native double-click support, but use a tighter app-level threshold. */
   function handleDirectoryClick(event: MouseEvent, path: string) {
-    if (!shouldToggleDirectoryOnClick(event.detail)) return;
+    const previousClick = directoryRenameDoubleClickRef.current;
+    const qualifiedDoubleClick = isRapidDirectoryRenameDoubleClick({
+      clickCount: event.detail,
+      path,
+      previousPath: previousClick?.path,
+      previousTimestamp: previousClick?.timestamp,
+      timestamp: event.timeStamp,
+    });
+    directoryRenameDoubleClickRef.current = {
+      path,
+      qualified: qualifiedDoubleClick,
+      timestamp: event.timeStamp,
+    };
+    if (!shouldToggleDirectoryOnClick(event.detail, qualifiedDoubleClick)) return;
     toggleDirectory(path);
   }
 
@@ -683,11 +734,14 @@ export function WorkspaceFilePanel({
 
       return (
         <div key={`dir:${node.path}`} className="flex flex-col">
-          <div className="group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)">
+          <div className={cn("group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)", selectedPath === node.path && "bg-(--accent)/10")}>
           <button
             type="button"
             {...telemetryClickAttributes("files.directory.toggle", "files_panel")}
-            onClick={(event) => handleDirectoryClick(event, node.path)}
+            onClick={(event) => {
+              setSelectedPath(node.path);
+              handleDirectoryClick(event, node.path);
+            }}
             onKeyDown={(event) => {
               if (!canMutate || event.key !== "F2") return;
               event.preventDefault();
@@ -699,7 +753,7 @@ export function WorkspaceFilePanel({
               setWorkspaceDirectoryDragData(event.dataTransfer, sessionId, node.path, absolutePath);
             }}
             draggable={Boolean(sessionId)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 border-l-2 border-l-transparent py-1.5 pr-2 text-left text-(--text-secondary) transition-colors group-hover:text-(--text-primary)"
+            className="flex h-7 min-w-0 flex-1 items-center gap-1.5 border-l-2 border-l-transparent pr-2 text-left text-(--text-primary) transition-colors focus-visible:outline-1 focus-visible:outline-(--accent) focus-visible:-outline-offset-1"
             style={{ paddingLeft }}
             title={node.path}
             aria-expanded={expanded}
@@ -710,15 +764,17 @@ export function WorkspaceFilePanel({
                 expanded && "rotate-90",
               )}
             />
-            <FolderIcon className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
+            <FolderIcon className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
             <span
-              // The double-click-to-rename target is the name text alone.
+              // The name alone owns rename, with a tighter threshold than the
+              // browser's native double-click setting.
               onDoubleClick={(event) => {
                 if (!canMutate) return;
+                if (!directoryRenameDoubleClickRef.current?.qualified) return;
                 event.stopPropagation();
                 beginRename(node);
               }}
-              className="min-w-0 flex-1 truncate font-mono text-[11px]"
+              className="min-w-0 flex-1 truncate text-[13px] leading-5"
             >
               {node.name}
             </span>
@@ -727,7 +783,7 @@ export function WorkspaceFilePanel({
             ) : null}
           </button>
           </div>
-          {expanded ? children : null}
+          {expanded ? <div className="relative"><span aria-hidden="true" className="pointer-events-none absolute inset-y-0 w-px bg-(--divider)" style={{ left: paddingLeft + 9 }} />{children}</div> : null}
         </div>
       );
     }
@@ -746,9 +802,8 @@ export function WorkspaceFilePanel({
           "group relative border-l-2 transition-colors",
           isSelected
             ? "border-l-(--accent) bg-(--accent)/10 text-(--text-primary)"
-            : "border-l-transparent text-(--text-secondary) hover:bg-(--sidebar-hover) hover:text-(--text-primary)",
+            : "border-l-transparent text-(--text-primary) hover:bg-(--sidebar-hover)",
         )}
-        style={{ paddingLeft: paddingLeft + 19 }}
         onContextMenu={(event) => {
           setSelectedPath(node.path);
           openRowContextMenu(event, node, absolutePath);
@@ -784,12 +839,13 @@ export function WorkspaceFilePanel({
             beginRename(node);
           }}
           onDragStart={(event) => {
-            if (!sessionId) return;
+            if (!target) return;
             setSelectedPath(node.path);
-            setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", node.path, absolutePath);
+            setWorkspaceTargetFileDragData(event.dataTransfer, target, "file", node.path, absolutePath);
           }}
-          draggable={Boolean(sessionId)}
-          className="flex w-full min-w-0 items-center gap-2 border-l-transparent py-1.5 pr-8 text-left transition-colors"
+          draggable={Boolean(target)}
+          className="flex h-7 w-full min-w-0 items-center gap-1.5 pr-2 text-left transition-colors focus-visible:outline-1 focus-visible:outline-(--accent) focus-visible:-outline-offset-1"
+          style={{ paddingLeft: paddingLeft + 20 }}
           title={node.isSymlink ? `${node.path} (symbolic link)` : node.path}
           data-testid={`workspace-file-row-${node.path}`}
           data-symlink={node.isSymlink ? "true" : undefined}
@@ -800,11 +856,9 @@ export function WorkspaceFilePanel({
               aria-label="Symbolic link"
             />
           ) : (
-            <FileText className="h-3.5 w-3.5 shrink-0 text-(--text-muted) group-hover:text-(--text-primary)" />
+            <WorkspaceFileIcon name={node.name} />
           )}
-          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-            {node.name}
-          </span>
+          <WorkspaceFileName name={node.name} />
         </button>
       </div>
     );
@@ -924,16 +978,16 @@ export function WorkspaceFilePanel({
           />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[10px] uppercase tracking-[0.18em] text-(--text-muted)">
+        <div className="flex min-h-0 flex-1 flex-col gap-1 py-2">
+          <div className="flex items-center justify-between px-3 pb-1">
+            <span className="text-[11px] font-medium text-(--text-secondary)">
               Workspace files
             </span>
             <span className="font-mono text-[11px] text-(--text-muted) tabular-nums">
               {visibleFiles.length.toLocaleString()}
             </span>
           </div>
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea key={targetKey} ref={scrollRef} className="min-h-0 flex-1">
             {/* The rows stop their own context menu, so this one only ever
                 fires on the empty space past the last row. */}
             <div

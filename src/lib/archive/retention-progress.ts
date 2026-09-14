@@ -9,4 +9,3 @@ export interface ArchiveRetentionProgress {
   startedAt: string | null;
   finishedAt: string | null;
 }
-

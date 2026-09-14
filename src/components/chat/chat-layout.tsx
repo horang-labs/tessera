@@ -35,6 +35,7 @@ const UpdateNotifier = dynamic(
 );
 import { SelectionActionBar } from "./selection-action-bar";
 import { usePanelStore, selectActiveTab } from "@/stores/panel-store";
+import { parseWorkspaceSpecialSessionId } from "@/lib/workspace-tabs/special-session";
 import { useTabStore } from "@/stores/tab-store";
 import { useTaskStore } from "@/stores/task-store";
 import { TabBar } from "@/components/tab/tab-bar";
@@ -144,7 +145,10 @@ export function ChatLayout() {
   );
   const activePanelWorktreeId = usePanelStore((state) => {
     const activeTabData = state.tabPanels[activeTabId];
-    return activeTabData?.panels[activeTabData.activePanelId]?.worktreeId ?? null;
+    const panel = activeTabData?.panels[activeTabData.activePanelId];
+    const fileRef = panel?.sessionId ? parseWorkspaceSpecialSessionId(panel.sessionId) : null;
+    return (fileRef && 'sourceWorktreeId' in fileRef ? fileRef.sourceWorktreeId : null)
+      ?? panel?.worktreeId ?? null;
   });
   const peekWorktreeId = useWorkspacePeekStore(
     (state) => state.target?.worktreeId ?? null,

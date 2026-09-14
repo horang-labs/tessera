@@ -88,6 +88,8 @@ export async function GET(
       rawPath: request.nextUrl.searchParams.get('path') ?? '',
       root: resolved.root,
       sourceId: id,
+      rangeHeader: request.headers.get('range'),
+      signal: request.signal,
     });
   } catch (error) {
     return toErrorResponse(error, id, 'load');

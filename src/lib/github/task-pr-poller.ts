@@ -6,6 +6,7 @@
  */
 
 import logger from '@/lib/logger';
+import { startLatencySpan } from '@/lib/terminal/terminal-server-latency';
 import { isElectronRuntime } from '@/lib/electron-runtime';
 import { resolveServerDefaultUserId } from '@/lib/server-default-user';
 import { SettingsManager } from '@/lib/settings/manager';
@@ -62,6 +63,7 @@ class TaskPrPoller {
   private async pollOnce(reason: string): Promise<void> {
     if (this.running) return;
     this.running = true;
+    const endLatency = startLatencySpan('task-pr-poll');
     try {
       const startedAt = Date.now();
       const agentEnvironment = await resolvePollerAgentEnvironment();
@@ -86,6 +88,7 @@ class TaskPrPoller {
     } catch (err) {
       logger.error({ err, reason }, 'PR poll error');
     } finally {
+      endLatency();
       this.running = false;
     }
   }
