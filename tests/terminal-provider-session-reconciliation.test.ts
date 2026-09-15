@@ -46,7 +46,7 @@ test('the common identity adapter normalizes provider hook payloads', () => {
   );
 });
 
-test('the first provider observation binds the existing PTY session without forking', () => {
+test('the first Codex observation persists resume identity when SessionStart was missed', () => {
   dbSessions.createSession('unbound-parent', 'project-1', 'Unbound PTY', 'codex', {
     providerState: JSON.stringify({ kind: 'terminal', launched: true }),
   });
@@ -60,6 +60,11 @@ test('the first provider observation binds the existing PTY session without fork
     kind: 'unchanged',
     sessionId: 'unbound-parent',
     previousSessionId: 'unbound-parent',
+  });
+  assert.deepEqual(JSON.parse(dbSessions.getSession('unbound-parent')?.provider_state ?? '{}'), {
+    kind: 'terminal',
+    launched: true,
+    codexSessionId: 'provider-initial',
   });
 });
 
