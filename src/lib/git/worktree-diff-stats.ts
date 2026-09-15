@@ -67,7 +67,10 @@ interface DiffStatsGitBatchOutput {
 
 const DIFF_STATS_COMMANDS = [
   { key: 'insideWorkTree', args: ['rev-parse', '--is-inside-work-tree'] },
-  { key: 'numstat', args: ['diff', '--numstat', 'HEAD', '--'] },
+  {
+    key: 'numstat',
+    args: ['-c', 'core.quotePath=false', 'diff', '--numstat', 'HEAD', '--'],
+  },
   { key: 'nameStatus', args: ['diff', '--name-status', 'HEAD', '--'] },
   { key: 'untracked', args: ['ls-files', '--others', '--exclude-standard', '-z'] },
 ];
@@ -392,7 +395,14 @@ async function collectNumstat(
   workDir: string,
   agentEnvironment: AgentEnvironment,
 ): Promise<NumstatAggregate | null> {
-  const stdout = await runGit(workDir, ['diff', '--numstat', 'HEAD', '--'], agentEnvironment);
+  const stdout = await runGit(workDir, [
+    '-c',
+    'core.quotePath=false',
+    'diff',
+    '--numstat',
+    'HEAD',
+    '--',
+  ], agentEnvironment);
   return stdout === null ? null : parseNumstat(stdout);
 }
 
