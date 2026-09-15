@@ -44,12 +44,20 @@ function registerIdentity(
   tesseraSessionId: string,
   identity: TerminalProviderSessionIdentity,
 ): void {
-  bindTerminalProviderSession({
-    providerId: identity.providerId,
-    providerSessionId: identity.providerSessionId,
-    tesseraSessionId,
-    transcriptPath: identity.transcriptPath,
-  });
+  getDb().transaction(() => {
+    bindTerminalProviderSession({
+      providerId: identity.providerId,
+      providerSessionId: identity.providerSessionId,
+      tesseraSessionId,
+      transcriptPath: identity.transcriptPath,
+    });
+    // SessionStart may be lost while later hooks still identify the rollout.
+    // Persist the resume id from every trusted Codex identity observation so
+    // runtime recovery cannot mistake an established conversation for a new one.
+    if (identity.providerId === 'codex') {
+      dbSessions.markCodexTerminalSession(tesseraSessionId, identity.providerSessionId);
+    }
+  })();
 }
 
 function createChildSession(
