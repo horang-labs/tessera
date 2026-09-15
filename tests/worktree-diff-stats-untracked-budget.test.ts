@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
+  collectUntrackedLineCounts,
   computeWorktreeDiffStats,
   computeWorktreeFileDiffStats,
-  UNTRACKED_LINECOUNT_MAX_FILES,
 } from '@/lib/git/worktree-diff-stats';
 
 function createGitWorktree(): string {
@@ -39,10 +39,11 @@ test('small untracked sets contribute exact added-line totals', async () => {
   }
 });
 
-test('oversized untracked sets stay bounded and report additions as incomplete', async () => {
+test('crossing 1000 small untracked files does not discard every new-file line count', async () => {
   const root = createGitWorktree();
+  const fileCount = 1001;
   try {
-    for (let index = 0; index <= UNTRACKED_LINECOUNT_MAX_FILES; index += 1) {
+    for (let index = 0; index < fileCount; index += 1) {
       fs.writeFileSync(path.join(root, `untracked-${index}.txt`), 'line\n');
     }
 
@@ -50,11 +51,30 @@ test('oversized untracked sets stay bounded and report additions as incomplete',
     const fileStats = await computeWorktreeFileDiffStats(root, 'native');
 
     assert.ok(stats);
-    assert.equal(stats.added, 0);
-    assert.equal(stats.addedLinesIncomplete, true);
-    assert.equal(stats.newFiles, UNTRACKED_LINECOUNT_MAX_FILES + 1);
-    assert.equal(stats.changedFiles, UNTRACKED_LINECOUNT_MAX_FILES + 1);
-    assert.equal(fileStats?.size, 0);
+    assert.equal(stats.added, fileCount);
+    assert.equal(stats.addedLinesIncomplete, undefined);
+    assert.equal(stats.newFiles, fileCount);
+    assert.equal(stats.changedFiles, fileCount);
+    assert.equal(fileStats?.size, fileCount);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the aggregate byte budget bounds dependency-like trees without a file-count cliff', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-diff-budget-'));
+  try {
+    fs.writeFileSync(path.join(root, 'first.txt'), 'one\n');
+    fs.writeFileSync(path.join(root, 'second.txt'), 'two\n');
+
+    const counts = await collectUntrackedLineCounts(
+      root,
+      ['first.txt', 'second.txt'],
+      { maxBytes: 4, maxDurationMs: 10_000 },
+    );
+
+    assert.deepEqual(Array.from(counts.byPath), [['first.txt', 1]]);
+    assert.equal(counts.incomplete, true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
