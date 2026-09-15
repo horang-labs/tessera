@@ -7,25 +7,22 @@ import {
   isWindowsHostedWslRoot,
   WorkspaceFileWatchManager,
 } from '@/lib/workspace-files/workspace-file-watch-manager';
+import type { WslInotifyBridgeOptions } from '@/lib/workspace-files/wsl-inotify-bridge';
 
 interface TestWatchEntry {
-  bridgeActive: boolean;
-  closeTimer: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
   files: Set<string>;
   pendingRescanDirs: Map<string, boolean>;
   ready: boolean;
   readyPromise: Promise<void>;
+  status: 'starting' | 'active' | 'fallback';
   symlinks: Set<string>;
-  watchMode: 'watch' | 'poll';
+  watchMode: 'watch' | 'wsl-bridge';
   watcher: { close(): Promise<void>;  } | null;
 }
 
 function managerInternals(manager: WorkspaceFileWatchManager): {
   entriesByRoot: Map<string, TestWatchEntry>;
-  refreshPollIndex(entry: TestWatchEntry): Promise<void>;
-  closeEntryNow(entry: TestWatchEntry): void;
-  runPendingRescans(entry: TestWatchEntry): Promise<void>;
   handleBridgeEvent(
     entry: TestWatchEntry,
     event: { eventName: string; relativePath: string },
@@ -51,7 +48,7 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5_000): Promise<v
 async function silenceNativeWatcher(entry: TestWatchEntry): Promise<void> {
   const watcher = entry.watcher;
   entry.watcher = null;
-  entry.watchMode = 'poll';
+  entry.watchMode = 'wsl-bridge';
   await watcher?.close();
 }
 
@@ -155,106 +152,50 @@ test('ensureSnapshotForRoot stays passive for watch-capable roots without an ent
   assert.equal(managerInternals(manager).entriesByRoot.size, 0);
 });
 
-test('poll-mode refresh diffs the index, notifies listeners, and delays teardown', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-poll-'));
-  writeFileSync(path.join(root, 'seed.txt'), 'seed');
-  const manager = new WorkspaceFileWatchManager();
-  const internals = managerInternals(manager);
+test('WSL bridge readiness and events never build a recursive workspace index', async () => {
+  const root = '\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\large-project';
+  let bridgeOptions: WslInotifyBridgeOptions | undefined;
+  let bridgeStops = 0;
+  const manager = new WorkspaceFileWatchManager({
+    platform: 'win32',
+    acquireWslBridge: (options) => {
+      bridgeOptions = options;
+      queueMicrotask(options.onEstablished);
+      return { stop: () => { bridgeStops += 1; } };
+    },
+  });
   let changeCount = 0;
-
   const dispose = await manager.subscribeRootChanges({
-    listenerId: 'terminal:poll-test',
+    listenerId: 'terminal:wsl-event-only',
     root,
     onChange: () => { changeCount += 1; },
   });
-  const canonicalRoot = realpathSync(root);
-  const entry = internals.entriesByRoot.get(canonicalRoot);
+  const entry = managerInternals(manager).entriesByRoot.get(root);
   assert.ok(entry);
-  await entry.readyPromise;
-  await waitFor((async () => { while (changeCount < 1) await new Promise((r) => setTimeout(r, 10)); })());
-
-  // Simulate a network-share root: no watcher, poll-based indexing.
-  await entry.watcher?.close();
-  entry.watcher = null;
-  entry.watchMode = 'poll';
-
-  writeFileSync(path.join(root, 'added.txt'), 'new');
-  await internals.refreshPollIndex(entry);
-  assert.ok(entry.files.has('added.txt'));
-  assert.ok(entry.files.has('seed.txt'));
-  assert.ok(changeCount >= 2, `listener should observe poll diff (changeCount=${changeCount})`);
-
-  const beforeContentOnlyRefresh = changeCount;
-  writeFileSync(path.join(root, 'seed.txt'), 'changed content');
-  await internals.refreshPollIndex(entry);
-  assert.ok(
-    changeCount > beforeContentOnlyRefresh,
-    'bridge fallback should invalidate listeners for content-only changes',
-  );
-
-  rmSync(path.join(root, 'added.txt'));
-  await internals.refreshPollIndex(entry);
-  assert.equal(entry.files.has('added.txt'), false);
-
-  // Poll entries are kept warm briefly instead of closing on last unsubscribe.
-  dispose();
-  assert.ok(internals.entriesByRoot.has(canonicalRoot), 'poll entry should linger after dispose');
-  assert.ok(entry.closeTimer, 'poll entry should have a scheduled close');
-  clearTimeout(entry.closeTimer);
-  entry.closeTimer = null;
-  internals.closeEntryNow(entry);
-  assert.equal(internals.entriesByRoot.has(canonicalRoot), false);
-});
-
-test('an empty directory reaches the index and its creation is a change', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-empty-dir-'));
-  writeFileSync(path.join(root, 'seed.txt'), 'seed');
-  mkdirSync(path.join(root, 'already'), { recursive: true });
-  const manager = new WorkspaceFileWatchManager();
-  const internals = managerInternals(manager);
-  let changeCount = 0;
-
-  const dispose = await manager.subscribeRootChanges({
-    listenerId: 'terminal:empty-dir',
-    root,
-    onChange: () => { changeCount += 1; },
-  });
-  const canonicalRoot = realpathSync(root);
-  const entry = internals.entriesByRoot.get(canonicalRoot);
-  assert.ok(entry);
-  await entry.readyPromise;
-  await silenceNativeWatcher(entry);
 
   try {
-    assert.deepEqual(
-      (await manager.getIndexedSnapshotForRoot(root))?.directories,
-      ['already'],
-      'the initial walk indexes directories in their own right',
-    );
+    await entry.readyPromise;
+    await waitUntil(() => changeCount === 1);
+    assert.equal(entry.watchMode, 'wsl-bridge');
+    assert.equal(entry.files.size, 0, 'WSL readiness must not recursively enumerate files');
+    assert.equal(await manager.ensureSnapshotForRoot(root), null);
 
-    // A folder with nothing in it changes no file, so unless directories are
-    // diffed too the explorer never hears about it.
-    const beforeMkdir = changeCount;
-    mkdirSync(path.join(root, 'fresh'), { recursive: true });
-    await internals.refreshPollIndex(entry);
+    bridgeOptions?.onEvent({ eventName: 'addDir', relativePath: 'new-populated-folder' });
+    await waitUntil(() => changeCount === 2);
+    assert.equal(entry.files.size, 0, 'bridge events must not create a recursive index');
+    assert.equal(entry.pendingRescanDirs.size, 0, 'bridge events must not queue subtree scans');
 
-    assert.deepEqual(
-      (await manager.getIndexedSnapshotForRoot(root))?.directories,
-      ['already', 'fresh'],
-    );
-    assert.ok(changeCount > beforeMkdir, 'creating an empty folder must notify subscribers');
-
-    const beforeRmdir = changeCount;
-    rmSync(path.join(root, 'fresh'), { recursive: true });
-    await internals.refreshPollIndex(entry);
-    assert.deepEqual((await manager.getIndexedSnapshotForRoot(root))?.directories, ['already']);
-    assert.ok(changeCount > beforeRmdir, 'removing an empty folder must notify subscribers');
+    bridgeOptions?.onDown('simulated registration loss');
+    assert.equal(entry.status, 'starting', 'a bridge outage waits for re-registration');
+    bridgeOptions?.onEstablished();
+    await waitUntil(() => changeCount === 3);
+    assert.equal(entry.status, 'active');
+    assert.equal(entry.files.size, 0, 're-registration must not trigger a catch-up scan');
   } finally {
     dispose();
-    if (entry.closeTimer) clearTimeout(entry.closeTimer);
-    internals.closeEntryNow(entry);
-    rmSync(root, { force: true, recursive: true });
   }
+  assert.equal(bridgeStops, 1);
+  assert.equal(managerInternals(manager).entriesByRoot.size, 0);
 });
 
 test('a symlink created after startup lands in the live index with its marker', async () => {
@@ -307,117 +248,6 @@ test('a symlink created after startup lands in the live index with its marker', 
   }
 });
 
-test('a directory copied in during the initial walk still reaches the index', async () => {
-  // What a worktree preparation script does: `cp -R` a directory in while the
-  // index is still being built. The walk cannot see what appears in a directory
-  // it has already listed, and inotify cannot report the contents of a
-  // directory filled faster than a watch reaches it — verified against
-  // inotify-tools 3.22, where `cp -R` delivers the top-level CREATE,ISDIR and
-  // nothing for a nested file. Only re-reading recovers it.
-  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-copy-race-'));
-  const manager = new WorkspaceFileWatchManager();
-  const internals = managerInternals(manager);
-  writeFileSync(path.join(root, 'seed.ts'), '');
-
-  const dispose = await manager.subscribeRootChanges({
-    listenerId: 'terminal:copy-race',
-    root,
-    onChange: () => {},
-  });
-  const entry = internals.entriesByRoot.get(realpathSync(root))!;
-  await entry.readyPromise;
-  await silenceNativeWatcher(entry);
-
-  try {
-    // Reopen the window the preparation script writes into: the walk is running
-    // and has already listed the root, so the directory created below is one it
-    // provably never sees. Held open explicitly because a walk over a temp dir
-    // finishes in milliseconds, while the real one crosses a 9P share against a
-    // script that runs for twenty seconds.
-    entry.ready = false;
-    mkdirSync(path.join(root, '.codex/skills/graphify'), { recursive: true });
-    writeFileSync(path.join(root, '.codex/hooks.json'), '{}');
-    writeFileSync(path.join(root, '.codex/skills/graphify/SKILL.md'), 'skill');
-    internals.handleBridgeEvent(entry, { eventName: 'addDir', relativePath: '.codex' });
-
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    assert.equal(
-      entry.files.has('.codex/hooks.json'),
-      false,
-      'nothing can be reconciled before the walk that owns the index finishes',
-    );
-    // The point of the fix: the invalidation waits instead of being discarded.
-    assert.ok(
-      entry.pendingRescanDirs.has('.codex'),
-      'an invalidation raised during the initial walk must survive it',
-    );
-
-    // What bootstrapEntry does once the walk lands.
-    entry.ready = true;
-    await internals.runPendingRescans(entry);
-
-    assert.ok(
-      entry.files.has('.codex/skills/graphify/SKILL.md'),
-      'the whole copied subtree belongs in the index, including what no event named',
-    );
-    assert.ok(entry.files.has('.codex/hooks.json'));
-    assert.ok(entry.files.has('seed.ts'), 'the walk result must survive the rescan');
-  } finally {
-    dispose();
-    // A poll-mode entry lingers for POLL_UNUSED_GRACE_MS after its last
-    // listener; the test must not wait that out.
-    if (entry.closeTimer) clearTimeout(entry.closeTimer);
-    internals.closeEntryNow(entry);
-    rmSync(root, { force: true, recursive: true });
-  }
-});
-
-test('an event names a directory to re-read, not the index contents', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-invalidate-'));
-  const manager = new WorkspaceFileWatchManager();
-  const internals = managerInternals(manager);
-  mkdirSync(path.join(root, 'existing'), { recursive: true });
-  writeFileSync(path.join(root, 'existing/kept.ts'), '');
-
-  const dispose = await manager.subscribeRootChanges({
-    listenerId: 'terminal:invalidate',
-    root,
-    onChange: () => {},
-  });
-  const entry = internals.entriesByRoot.get(realpathSync(root))!;
-  await entry.readyPromise;
-  await silenceNativeWatcher(entry);
-
-  try {
-    // A file whose creation event was lost, arriving only as a modification —
-    // exactly what inotify delivers for a file written into a directory it was
-    // still registering a watch for.
-    writeFileSync(path.join(root, 'existing/missed-create.ts'), 'x');
-    internals.handleBridgeEvent(entry, {
-      eventName: 'change',
-      relativePath: 'existing/missed-create.ts',
-    });
-    await waitUntil(() => entry.files.has('existing/missed-create.ts'));
-
-    // And the reverse: an event for a file that is already gone must not leave
-    // a ghost behind, however the event described it.
-    rmSync(path.join(root, 'existing/missed-create.ts'));
-    internals.handleBridgeEvent(entry, {
-      eventName: 'add',
-      relativePath: 'existing/missed-create.ts',
-    });
-    await waitUntil(() => !entry.files.has('existing/missed-create.ts'));
-    assert.ok(entry.files.has('existing/kept.ts'), 'the rest of the directory is untouched');
-  } finally {
-    dispose();
-    // A poll-mode entry lingers for POLL_UNUSED_GRACE_MS after its last
-    // listener; the test must not wait that out.
-    if (entry!.closeTimer) clearTimeout(entry!.closeTimer);
-    internals.closeEntryNow(entry!);
-    rmSync(root, { force: true, recursive: true });
-  }
-});
-
 test('a bridge event for content written to an existing file notifies root listeners', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-content-change-'));
   const manager = new WorkspaceFileWatchManager();
@@ -454,42 +284,6 @@ test('a bridge event for content written to an existing file notifies root liste
     assert.equal(changeCount, 2, 'content-only changes must refresh terminal diff stats');
   } finally {
     dispose();
-    if (entry.closeTimer) clearTimeout(entry.closeTimer);
-    internals.closeEntryNow(entry);
-    rmSync(root, { force: true, recursive: true });
-  }
-});
-
-test('a removed directory takes its subtree out of the index', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'tessera-workspace-unlink-dir-'));
-  const manager = new WorkspaceFileWatchManager();
-  const internals = managerInternals(manager);
-  mkdirSync(path.join(root, 'doomed/nested'), { recursive: true });
-  writeFileSync(path.join(root, 'doomed/nested/deep.ts'), '');
-  writeFileSync(path.join(root, 'survivor.ts'), '');
-
-  const dispose = await manager.subscribeRootChanges({
-    listenerId: 'terminal:unlink-dir',
-    root,
-    onChange: () => {},
-  });
-  const entry = internals.entriesByRoot.get(realpathSync(root))!;
-  await entry.readyPromise;
-  await silenceNativeWatcher(entry);
-
-  try {
-    assert.ok(entry.files.has('doomed/nested/deep.ts'));
-    rmSync(path.join(root, 'doomed'), { force: true, recursive: true });
-    internals.handleBridgeEvent(entry, { eventName: 'unlinkDir', relativePath: 'doomed' });
-
-    await waitUntil(() => !entry.files.has('doomed/nested/deep.ts'));
-    assert.ok(entry.files.has('survivor.ts'));
-  } finally {
-    dispose();
-    // A poll-mode entry lingers for POLL_UNUSED_GRACE_MS after its last
-    // listener; the test must not wait that out.
-    if (entry!.closeTimer) clearTimeout(entry!.closeTimer);
-    internals.closeEntryNow(entry!);
     rmSync(root, { force: true, recursive: true });
   }
 });
