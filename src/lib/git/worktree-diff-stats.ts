@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from '@/lib/logger';
 import { resolvePathForHostFilesystem } from '@/lib/filesystem/host-path';
+import { isLikelyBinary } from '@/lib/workspace-files/workspace-file-io';
 import { createGitRunner, supportsGitShellBatch } from '@/lib/worktrees/git-runner';
 import { buildGitBatchScript, parseGitBatchOutput, runGitQueryBatch } from '@/lib/worktrees/git-query-batch';
 import type { AgentEnvironment } from '@/lib/settings/types';
@@ -141,15 +142,31 @@ async function countFileNewlinesCapped(
 
   return await new Promise<number | null>((resolve) => {
     let count = 0;
+    let sampledBytes = 0;
+    let settled = false;
     const stream = fs.createReadStream(filePath);
+    const finish = (result: number | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     stream.on('data', (chunk: string | Buffer) => {
       const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+      if (sampledBytes < 8_000) {
+        const sample = buf.subarray(0, 8_000 - sampledBytes);
+        sampledBytes += sample.byteLength;
+        if (isLikelyBinary(sample)) {
+          stream.destroy();
+          finish(0);
+          return;
+        }
+      }
       for (let i = 0; i < buf.length; i++) {
         if (buf[i] === 0x0a) count++;
       }
     });
-    stream.on('error', () => resolve(null));
-    stream.on('end', () => resolve(count));
+    stream.on('error', () => finish(null));
+    stream.on('end', () => finish(count));
   });
 }
 
