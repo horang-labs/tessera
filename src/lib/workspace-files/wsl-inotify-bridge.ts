@@ -11,8 +11,8 @@ const execFileAsync = promisify(execFile);
  * The 9P redirector that backs \\wsl.localhost cannot deliver filesystem
  * notifications to Windows (watchers stall or error), so this bridge runs
  * `inotifywait` inside the distro — where inotify is native and instant — and
- * streams its events back over stdout. If inotifywait is unavailable in the
- * distro the bridge reports down and callers fall back to polling.
+ * streams its events back over stdout. Readiness is only reported after
+ * inotifywait confirms that every recursive watch has been registered.
  */
 
 export interface WslUncRoot {
@@ -45,7 +45,6 @@ export interface WslInotifyBridgeHandle {
 
 const WSL_UNC_HOSTS = new Set(["wsl.localhost", "wsl$"]);
 const RESTART_DELAY_MS = 3_000;
-const MAX_RESTARTS = 2;
 const STABLE_UPTIME_MS = 30_000;
 const DISTRO_STATE_TTL_MS = 5_000;
 const DISTRO_WAIT_POLL_MS = 15_000;
@@ -173,7 +172,21 @@ export class WslInotifyBridge {
   private stderrTail = "";
   private stopped = false;
 
-  constructor(private readonly options: WslInotifyBridgeOptions) {}
+  constructor(
+    private readonly options: WslInotifyBridgeOptions,
+    private readonly runtime: {
+      spawnProcess(args: string[]): ChildProcess;
+      isDistroRunning(distro: string): Promise<boolean>;
+      restartDelayMs: number;
+    } = {
+      spawnProcess: (args) => spawn("wsl.exe", args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      }),
+      isDistroRunning: isWslDistroRunning,
+      restartDelayMs: RESTART_DELAY_MS,
+    },
+  ) {}
 
   start(): void {
     if (this.stopped || this.child) return;
@@ -183,19 +196,29 @@ export class WslInotifyBridge {
 
     let child: ChildProcess;
     try {
-      child = spawn("wsl.exe", buildWslInotifyArguments({
+      child = this.runtime.spawnProcess(buildWslInotifyArguments({
         root: this.options.root,
         ...(this.options.excludeRegex ? { excludeRegex: this.options.excludeRegex } : {}),
         ...(this.options.eventMask ? { eventMask: this.options.eventMask } : {}),
-      }), {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
+      }));
     } catch (error) {
-      this.reportDown(`spawn failed: ${error instanceof Error ? error.message : String(error)}`);
+      const reason = `spawn failed: ${error instanceof Error ? error.message : String(error)}`;
+      this.options.onDown(reason);
+      void this.recoverAfterExit(null, reason);
       return;
     }
     this.child = child;
+
+    let handledExit = false;
+    const handleExit = (code: number | null, reason: string) => {
+      if (handledExit) return;
+      handledExit = true;
+      if (this.child === child) this.child = null;
+      this.clearStableUptimeTimer();
+      if (this.stopped) return;
+      this.options.onDown(reason);
+      void this.recoverAfterExit(code, reason);
+    };
 
     child.stdout?.on("data", (chunk: Buffer) => this.consumeStdout(chunk.toString("utf8")));
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -208,24 +231,20 @@ export class WslInotifyBridge {
       }
     });
     child.on("error", (error) => {
-      this.child = null;
-      this.clearStableUptimeTimer();
-      this.reportDown(`unable to launch wsl.exe: ${error.message}`);
+      handleExit(null, `unable to launch wsl.exe: ${error.message}`);
     });
     child.on("close", (code) => {
-      this.child = null;
-      this.clearStableUptimeTimer();
-      if (this.stopped) return;
-      if (!this.established) {
-        this.reportDown(`inotifywait unavailable in distro (exit ${code}): ${this.stderrTail.trim()}`);
-        return;
-      }
-      void this.recoverAfterExit(code);
+      const detail = this.stderrTail.trim();
+      const phase = this.established ? "after establishment" : "before watches were established";
+      handleExit(
+        code,
+        `inotifywait exited ${phase} (exit ${code})${detail ? `: ${detail}` : ""}`,
+      );
     });
   }
 
-  private async recoverAfterExit(code: number | null): Promise<void> {
-    const running = await isWslDistroRunning(this.options.root.distro);
+  private async recoverAfterExit(code: number | null, reason: string): Promise<void> {
+    const running = await this.runtime.isDistroRunning(this.options.root.distro);
     if (this.stopped) return;
 
     if (!running) {
@@ -238,7 +257,7 @@ export class WslInotifyBridge {
       this.distroWaitTimer = setInterval(() => {
         void (async () => {
           if (this.stopped || this.child) return;
-          if (!(await isWslDistroRunning(this.options.root.distro))) return;
+          if (!(await this.runtime.isDistroRunning(this.options.root.distro))) return;
           if (this.distroWaitTimer) {
             clearInterval(this.distroWaitTimer);
             this.distroWaitTimer = null;
@@ -251,21 +270,18 @@ export class WslInotifyBridge {
       return;
     }
 
-    if (this.restartCount >= MAX_RESTARTS) {
-      this.reportDown(`inotifywait exited repeatedly (exit ${code})`);
-      return;
-    }
     this.restartCount += 1;
     logger.warn({
       distro: this.options.root.distro,
       posixPath: this.options.root.posixPath,
       code,
       attempt: this.restartCount,
-    }, "WSL inotify bridge exited; restarting");
+      reason,
+    }, "WSL inotify bridge unavailable; retrying watcher registration");
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       this.start();
-    }, RESTART_DELAY_MS);
+    }, this.runtime.restartDelayMs);
     this.restartTimer.unref?.();
   }
 
@@ -312,12 +328,6 @@ export class WslInotifyBridge {
     this.stableUptimeTimer = null;
   }
 
-  private reportDown(reason: string): void {
-    if (this.stopped) return;
-    this.stopped = true;
-    this.clearStableUptimeTimer();
-    this.options.onDown(reason);
-  }
 }
 
 interface SharedBridgeSubscriber {

@@ -18,17 +18,16 @@ import {
 import {
   buildInotifyExcludeRegex,
   type BridgeEvent,
-  isWslDistroRunning,
   parseWslUncRoot,
   sharedWslInotifyBridgePool,
+  type WslInotifyBridgeOptions,
   type WslUncRoot,
 } from "./wsl-inotify-bridge";
 
 type WsSendToUser = (userId: string, message: ServerTransportMessage) => void;
 
 type WatchStatus = "starting" | "active" | "fallback";
-type WatchMode = "watch" | "poll";
-type WatchEventName = "add" | "addDir" | "change" | "unlink" | "unlinkDir";
+type WatchMode = "watch" | "wsl-bridge";
 
 interface WorkspaceFileSubscriber {
   connectionId: string;
@@ -45,8 +44,6 @@ interface WorkspaceRootChangeListener {
 
 interface WorkspaceWatchEntry {
   bridge: { stop(): void } | null;
-  bridgeActive: boolean;
-  closeTimer: NodeJS.Timeout | null;
   debounceTimer: NodeJS.Timeout | null;
   /**
    * Directories in their own right. A folder with no files in it changes no
@@ -55,7 +52,6 @@ interface WorkspaceWatchEntry {
    */
   directories: Set<string>;
   files: Set<string>;
-  lastIndexedAt: number;
   pendingAddedPaths: Set<string>;
   pendingChangedPaths: Set<string>;
   pendingDeletedPaths: Set<string>;
@@ -63,12 +59,8 @@ interface WorkspaceWatchEntry {
   /** Directories to re-read, mapped to whether the whole subtree is suspect. */
   pendingRescanDirs: Map<string, boolean>;
   pendingTreeChanged: boolean;
-  pollTimer: NodeJS.Timeout | null;
   ready: boolean;
   readyPromise: Promise<void>;
-  /** A full re-walk was asked for while one was already running or not yet possible. */
-  refreshRequested: boolean;
-  refreshing: boolean;
   rescanning: boolean;
   root: string;
   rootChangeListeners: Map<string, WorkspaceRootChangeListener>;
@@ -85,17 +77,6 @@ interface WorkspaceWatchEntry {
 
 const CHANGE_DEBOUNCE_MS = 300;
 const MAX_CHANGED_PATHS_PER_EVENT = 200;
-// Past this many invalidated directories, re-reading each one costs more than
-// one walk of the whole tree, so the rescan collapses into a full refresh. The
-// same trade-off the event batch makes when it stops tracking individual paths.
-const MAX_RESCAN_DIRECTORIES = 64;
-// Sweep cadence for poll-mode roots. With a live inotify bridge the sweep is
-// only a consistency backstop; without one it is the sole change source and
-// must stay near-real-time.
-const POLL_SWEEP_FAST_MS = 2_000;
-const POLL_SWEEP_SLOW_MS = 60_000;
-const POLL_UNUSED_GRACE_MS = 60_000;
-const POLL_IDLE_CLOSE_MS = 5 * 60_000;
 
 // Recursive watching through the Windows WSL 9P redirector is unreliable:
 // chokidar takes 10s+ to become ready, emits EISDIR storms, and starves the
@@ -110,6 +91,11 @@ function subscriberKey(connectionId: string, sessionId: string, subscriberId: st
 }
 
 async function resolveCanonicalWorkspaceRoot(root: string): Promise<string> {
+  // Resolving a WSL UNC path asks the Windows redirector to traverse into WSL
+  // before the guest-side watcher even starts. The session resolver already
+  // supplies the canonical UNC spelling, so keep registration independent of
+  // that avoidable network filesystem operation.
+  if (parseWslUncRoot(root)) return root;
   try {
     return await fs.realpath(root);
   } catch {
@@ -135,6 +121,14 @@ export class WorkspaceFileWatchManager {
   private readonly closedConnectionCleanupTimers = new Map<string, NodeJS.Timeout>();
   private readonly entriesByRoot = new Map<string, WorkspaceWatchEntry>();
   private readonly rootBySessionId = new Map<string, string>();
+
+  constructor(private readonly runtime: {
+    platform: NodeJS.Platform;
+    acquireWslBridge(options: WslInotifyBridgeOptions): { stop(): void };
+  } = {
+    platform: process.platform,
+    acquireWslBridge: (options) => sharedWslInotifyBridgePool.acquire(options),
+  }) {}
 
   async subscribe(options: {
     agentEnvironment: AgentEnvironment;
@@ -169,7 +163,6 @@ export class WorkspaceFileWatchManager {
 
     const entry = this.getOrCreateEntry(root);
     entry.subscribers.set(key, options);
-    this.cancelScheduledClose(entry);
 
     options.sendToUser(options.userId, {
       type: "workspace_file_watch_status",
@@ -190,12 +183,11 @@ export class WorkspaceFileWatchManager {
         sessionId: current.sessionId,
         subscriberId: current.subscriberId,
         workDir: entry.root,
-        status: entry.status === "active" ? "active" : "fallback",
+        status: entry.status,
         version: entry.version,
       });
-      // The first HTTP listing may precede native subscription establishment.
-      // Once the initial index is ready, invalidate that listing even if no
-      // subsequent native event arrives (the file may already be in the index).
+      // The first HTTP listing may precede watcher establishment. Refresh the
+      // directories the client already loaded once event delivery is live.
       current.sendToUser(current.userId, {
         type: "workspace_files_changed",
         workDir: entry.root,
@@ -224,7 +216,6 @@ export class WorkspaceFileWatchManager {
       onChange: options.onChange,
     };
     entry.rootChangeListeners.set(options.listenerId, listener);
-    this.cancelScheduledClose(entry);
 
     let active = true;
     const dispose = () => {
@@ -317,52 +308,28 @@ export class WorkspaceFileWatchManager {
   async getIndexedSnapshotForRoot(root: string): Promise<WorkspaceFileWalkResult | null> {
     const canonicalRoot = await resolveCanonicalWorkspaceRoot(root);
     const entry = this.entriesByRoot.get(canonicalRoot);
-    if (!entry || entry.status !== "active" || entry.truncated) return null;
+    if (
+      !entry
+      || entry.watchMode === "wsl-bridge"
+      || entry.status !== "active"
+      || entry.truncated
+    ) return null;
 
     await entry.readyPromise;
     if (entry.status !== "active" || entry.truncated) return null;
-    return this.serveSnapshot(entry);
+    return applyMaxFiles(entry.files, entry.symlinks, entry.directories);
   }
 
   /**
-   * Like getIndexedSnapshotForRoot, but for Windows-hosted WSL roots it also creates
-   * and bootstraps the index on first use, so repeat requests are served from
-   * memory instead of re-walking the share. Watch-capable roots keep the
-   * passive behavior: no entry is created on behalf of a plain REST read.
+   * Watch-backed indexes are an optimization for native roots only. WSL roots
+   * deliberately stay out of the recursive index: their file explorer reads
+   * one visible directory at a time, while an explicit global-search request
+   * performs its own walk.
    */
   async ensureSnapshotForRoot(root: string): Promise<WorkspaceFileWalkResult | null> {
     const canonicalRoot = await resolveCanonicalWorkspaceRoot(root);
-    const existing = this.entriesByRoot.get(canonicalRoot);
-    if (!existing && !isWindowsHostedWslRoot(canonicalRoot)) {
-      return this.getIndexedSnapshotForRoot(canonicalRoot);
-    }
-
-    const entry = existing ?? this.getOrCreateEntry(canonicalRoot);
-    await entry.readyPromise;
-    if (entry.status !== "active" || entry.truncated) return null;
-    return this.serveSnapshot(entry);
-  }
-
-  /** Fire-and-forget index prewarm for a Windows-hosted WSL workspace. */
-  warmSessionWorkspace(sessionId: string, agentEnvironment: AgentEnvironment): void {
-    void (async () => {
-      const root = await this.resolveRootForSession(sessionId, agentEnvironment);
-      if (!root || !isWindowsHostedWslRoot(root)) return;
-      const entry = this.getOrCreateEntry(root);
-      this.touchEntry(entry);
-      await entry.readyPromise;
-    })().catch((error) => {
-      logger.warn({ error, sessionId }, "Workspace index prewarm failed");
-    });
-  }
-
-  private serveSnapshot(entry: WorkspaceWatchEntry): WorkspaceFileWalkResult {
-    this.touchEntry(entry);
-    const staleAfterMs = entry.bridgeActive ? POLL_SWEEP_SLOW_MS : POLL_SWEEP_FAST_MS;
-    if (entry.watchMode === "poll" && Date.now() - entry.lastIndexedAt > staleAfterMs) {
-      void this.refreshPollIndex(entry);
-    }
-    return applyMaxFiles(entry.files, entry.symlinks, entry.directories);
+    if (isWindowsHostedWslRoot(canonicalRoot)) return null;
+    return this.getIndexedSnapshotForRoot(canonicalRoot);
   }
 
   private async resolveRootForSession(
@@ -385,23 +352,17 @@ export class WorkspaceFileWatchManager {
 
     const entry: WorkspaceWatchEntry = {
       bridge: null,
-      bridgeActive: false,
-      closeTimer: null,
       debounceTimer: null,
       directories: new Set(),
       files: new Set(),
-      lastIndexedAt: 0,
       pendingAddedPaths: new Set(),
       pendingChangedPaths: new Set(),
       pendingDeletedPaths: new Set(),
       pendingHasMoreChangedPaths: false,
       pendingRescanDirs: new Map(),
       pendingTreeChanged: false,
-      pollTimer: null,
       ready: false,
       readyPromise: Promise.resolve(),
-      refreshRequested: false,
-      refreshing: false,
       rescanning: false,
       root,
       rootChangeListeners: new Map(),
@@ -410,7 +371,7 @@ export class WorkspaceFileWatchManager {
       symlinks: new Set(),
       truncated: false,
       version: 0,
-      watchMode: wslRoot ? "poll" : "watch",
+      watchMode: wslRoot ? "wsl-bridge" : "watch",
       watcher: null,
       watcherReadyPromise: Promise.resolve(),
       wslRoot,
@@ -424,13 +385,21 @@ export class WorkspaceFileWatchManager {
   private async bootstrapEntry(entry: WorkspaceWatchEntry): Promise<void> {
     await entry.watcherReadyPromise;
     if (this.entriesByRoot.get(entry.root) !== entry) return;
+    if (entry.watchMode === "wsl-bridge") {
+      entry.ready = true;
+      if (entry.status !== "fallback") entry.status = "active";
+      logger.info({
+        root: entry.root,
+        distro: entry.wslRoot?.distro,
+      }, "WSL workspace watcher ready without recursive indexing");
+      return;
+    }
     try {
       const snapshot = await walkWorkspaceFiles(entry.root);
       entry.directories = new Set(snapshot.directories);
       entry.files = new Set(snapshot.files);
       entry.symlinks = new Set(snapshot.symlinks);
       entry.truncated = snapshot.truncated;
-      entry.lastIndexedAt = Date.now();
       entry.ready = true;
 
       if (entry.status !== "fallback") {
@@ -442,36 +411,27 @@ export class WorkspaceFileWatchManager {
         truncated: entry.truncated,
       }, "Workspace file watch index ready");
     } catch (error) {
-      // Still ready: the index is empty and `status` keeps callers off it, but
-      // a permanently unready entry would queue invalidations forever and never
-      // act on one. Serving falls back to a direct walk in the meantime.
+      // Still ready: the index is empty and `status` keeps callers off it.
       entry.ready = true;
       entry.status = "fallback";
       logger.warn({ error, root: entry.root }, "Failed to bootstrap workspace file index");
     }
 
-    // The walk observed each directory once, at whatever moment it arrived
-    // there. Anything written to a directory it had already passed — a worktree
-    // preparation script copying files in, most of all — is only in the
-    // invalidations collected meanwhile.
-    if (entry.refreshRequested) {
-      entry.refreshRequested = false;
-      void this.refreshPollIndex(entry);
-    }
     void this.runPendingRescans(entry);
   }
 
   private startWatcher(entry: WorkspaceWatchEntry): void {
-    if (entry.watchMode === "poll") {
-      this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
-      const useBridge = Boolean(entry.wslRoot && process.platform === "win32");
+    if (entry.watchMode === "wsl-bridge") {
+      const useBridge = Boolean(entry.wslRoot && this.runtime.platform === "win32");
       if (entry.wslRoot && useBridge) {
         this.startBridge(entry, entry.wslRoot);
+      } else {
+        entry.status = "fallback";
       }
       logger.info({
         root: entry.root,
         bridge: useBridge,
-      }, "Workspace root is a network share; using poll-based indexing");
+      }, "Workspace root is a WSL share; using event-only bridge watching");
       return;
     }
 
@@ -483,9 +443,8 @@ export class WorkspaceFileWatchManager {
       void watcher?.close().catch((closeError) => {
         logger.warn({ error: closeError }, "Failed to close workspace file watcher");
       });
-      this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
       this.emitWatchStatus(entry, "fallback", "watch_error");
-      logger.warn({ error, root: entry.root }, "Workspace native watcher failed; using polling");
+      logger.warn({ error, root: entry.root }, "Workspace native watcher failed");
     };
     const watcher = startNativeWorkspaceWatcher(entry.root, (error, events) => {
       if (this.entriesByRoot.get(entry.root) !== entry) return;
@@ -506,41 +465,6 @@ export class WorkspaceFileWatchManager {
     });
     entry.watcher = watcher;
     entry.watcherReadyPromise = watcher.ready.catch(fail);
-  }
-
-  /**
-   * Turn a watch event into an invalidation rather than an index mutation.
-   *
-   * Trusting the event stream as the index means every event the kernel or the
-   * bridge fails to deliver is a file the tree never shows again. Recording
-   * which directory to re-read instead makes a lost event cost nothing as long
-   * as *some* event for that directory arrives — and the poll sweep is the
-   * backstop for when none does.
-   */
-  private applyWatchEvent(
-    entry: WorkspaceWatchEntry,
-    eventName: WatchEventName,
-    relativePath: string,
-  ): void {
-    const parentDir = workspaceRelativeDirname(relativePath);
-    if (eventName === "change") {
-      this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
-    }
-    switch (eventName) {
-      case "add":
-      case "change":
-      case "unlink":
-        this.invalidateDirectory(entry, parentDir, false);
-        return;
-      case "addDir":
-      case "unlinkDir":
-        // The subtree, not just the entry: a directory that appears is already
-        // full by the time a watch reaches it, and one that disappears takes
-        // its contents with it. Either way what was held for it is unusable.
-        this.invalidateDirectory(entry, relativePath, true);
-        this.invalidateDirectory(entry, parentDir, false);
-        return;
-    }
   }
 
   private invalidateDirectory(
@@ -575,17 +499,11 @@ export class WorkspaceFileWatchManager {
 
     entry.rescanning = true;
     let changed = false;
-    let rootChangeNotified = false;
     try {
       while (entry.pendingRescanDirs.size > 0) {
         if (this.entriesByRoot.get(entry.root) !== entry) return;
         const targets = Array.from(entry.pendingRescanDirs.entries());
         entry.pendingRescanDirs.clear();
-
-        if (targets.length > MAX_RESCAN_DIRECTORIES) {
-          rootChangeNotified = await this.refreshPollIndex(entry) || rootChangeNotified;
-          continue;
-        }
 
         // Shallowest first, so a subtree rescan subsumes the individual
         // directories under it instead of racing them.
@@ -607,7 +525,7 @@ export class WorkspaceFileWatchManager {
       // path, while Git listeners need invalidation even without a path delta.
       if (entry.pendingChangedPaths.size > 0 || entry.pendingHasMoreChangedPaths) {
         this.flushChanges(entry);
-      } else if (!rootChangeNotified) {
+      } else {
         this.notifyRootChangeListeners(entry);
       }
       return;
@@ -715,40 +633,41 @@ export class WorkspaceFileWatchManager {
     return changed;
   }
 
-  private setPollCadence(entry: WorkspaceWatchEntry, intervalMs: number): void {
-    if (entry.pollTimer) clearInterval(entry.pollTimer);
-    const timer = setInterval(() => {
-      if (entry.subscribers.size === 0 && entry.rootChangeListeners.size === 0) return;
-      void this.refreshPollIndex(entry);
-    }, intervalMs);
-    timer.unref?.();
-    entry.pollTimer = timer;
-  }
-
   private startBridge(entry: WorkspaceWatchEntry, wslRoot: WslUncRoot): void {
-    const bridge = sharedWslInotifyBridgePool.acquire({
+    let resolveFirstEstablished!: () => void;
+    let firstEstablished = false;
+    entry.watcherReadyPromise = new Promise<void>((resolve) => {
+      resolveFirstEstablished = resolve;
+    });
+    const bridge = this.runtime.acquireWslBridge({
       root: wslRoot,
       excludeRegex: buildInotifyExcludeRegex(wslRoot.posixPath),
       onEvent: (event) => this.handleBridgeEvent(entry, event),
       onEstablished: () => {
         if (this.entriesByRoot.get(entry.root) !== entry) return;
-        entry.bridgeActive = true;
-        this.setPollCadence(entry, POLL_SWEEP_SLOW_MS);
-        // Reconcile anything that changed while watches were being set up.
-        void this.refreshPollIndex(entry);
+        entry.status = "active";
+        if (!firstEstablished) {
+          firstEstablished = true;
+          resolveFirstEstablished();
+        } else {
+          // The bridge was temporarily disconnected. Refresh only directories
+          // the UI already has open; do not walk the workspace to guess what
+          // happened during the gap.
+          entry.pendingTreeChanged = true;
+          this.scheduleChangeFlush(entry);
+          this.emitWatchStatus(entry, "active");
+        }
         logger.info({ root: entry.root, distro: wslRoot.distro }, "WSL inotify bridge established");
       },
       onDown: (reason) => {
-        entry.bridgeActive = false;
         if (this.entriesByRoot.get(entry.root) !== entry) return;
-        entry.status = "fallback";
-        this.setPollCadence(entry, POLL_SWEEP_FAST_MS);
-        this.emitWatchStatus(entry, "fallback", "wsl_bridge_unavailable");
+        entry.status = "starting";
+        this.emitWatchStatus(entry, "starting", "wsl_bridge_reconnecting");
         logger.warn({
           root: entry.root,
           distro: wslRoot.distro,
           reason,
-        }, "WSL inotify bridge unavailable; falling back to fast polling (install inotify-tools in the distro for real-time sync)");
+        }, "WSL inotify bridge unavailable; waiting for watcher re-registration");
       },
     });
     entry.bridge = bridge;
@@ -757,115 +676,36 @@ export class WorkspaceFileWatchManager {
   private handleBridgeEvent(entry: WorkspaceWatchEntry, event: BridgeEvent): void {
     const relativePath = normalizeWorkspaceRelativePath(event.relativePath);
     if (!relativePath || isIgnoredWorkspacePath(relativePath, undefined, { includeHidden: true })) return;
-    // A moved-in directory carries no per-file events, and a nested one may not
-    // even announce itself — applyWatchEvent invalidates the subtree so the
-    // rescan reads it rather than trusting what arrived. Events that land
-    // before the initial walk finishes are recorded the same way; the walk can
-    // only see the tree as it was when it passed each directory, so whatever it
-    // raced is exactly what these invalidations recover.
-    this.applyWatchEvent(entry, event.eventName, relativePath);
+    switch (event.eventName) {
+      case "add":
+        this.addPendingPath(entry, entry.pendingAddedPaths, relativePath);
+        this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
+        entry.pendingTreeChanged = true;
+        break;
+      case "unlink":
+        this.addPendingPath(entry, entry.pendingDeletedPaths, relativePath);
+        this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
+        entry.pendingTreeChanged = true;
+        break;
+      case "change":
+        this.addPendingPath(entry, entry.pendingChangedPaths, relativePath);
+        break;
+      case "addDir":
+      case "unlinkDir":
+        entry.pendingTreeChanged = true;
+        break;
+    }
+    this.scheduleChangeFlush(entry);
   }
 
-  private async refreshPollIndex(entry: WorkspaceWatchEntry): Promise<boolean> {
-    // A sweep already under way started reading the tree before this request
-    // existed, so it cannot answer it. Remember the request and re-run once it
-    // finishes instead of dropping it — dropping is how a burst of writes ends
-    // up permanently missing from the index.
-    if (entry.refreshing || !entry.ready) {
-      entry.refreshRequested = true;
-      return false;
-    }
-    // Touching \\wsl.localhost boots a stopped distro; after `wsl --shutdown`
-    // stay quiet and serve the last snapshot until the distro is back.
-    if (
-      entry.wslRoot
-      && process.platform === "win32"
-      && !(await isWslDistroRunning(entry.wslRoot.distro))
-    ) {
-      return false;
-    }
-    if (entry.refreshing || !entry.ready) {
-      entry.refreshRequested = true;
-      return false;
-    }
-    entry.refreshing = true;
-    entry.refreshRequested = false;
-    let rootChangeNotified = false;
-    try {
-      const snapshot = await walkWorkspaceFiles(entry.root);
-      if (this.entriesByRoot.get(entry.root) !== entry) return false;
-      const previous = entry.files;
-      const previousSymlinks = entry.symlinks;
-      const previousDirectories = entry.directories;
-      const next = new Set(snapshot.files);
-      const nextSymlinks = new Set(snapshot.symlinks);
-      const nextDirectories = new Set(snapshot.directories);
-      entry.directories = nextDirectories;
-      entry.files = next;
-      entry.symlinks = nextSymlinks;
-      entry.truncated = snapshot.truncated;
-      entry.lastIndexedAt = Date.now();
-
-      // A folder created or removed with nothing in it moves no file path, so
-      // the file diff below cannot see it at all.
-      let changed = previousDirectories.size !== nextDirectories.size
-        || Array.from(nextDirectories).some((dirPath) => !previousDirectories.has(dirPath));
-      for (const filePath of next) {
-        if (previous.has(filePath)) continue;
-        changed = true;
-        this.addPendingPath(entry, entry.pendingAddedPaths, filePath);
-        this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
-      }
-      for (const filePath of previous) {
-        if (next.has(filePath)) continue;
-        changed = true;
-        this.addPendingPath(entry, entry.pendingDeletedPaths, filePath);
-        this.addPendingPath(entry, entry.pendingChangedPaths, filePath);
-      }
-      // Swapping a file for a link to the same path leaves the name set
-      // untouched, so only the marker moves. Treat that as a tree change or the
-      // badge would stay stale until some unrelated edit forces a reload. It
-      // also backfills markers for adds the inotify bridge reported without
-      // stat'ing the entry (a 9P stat per event is too expensive there).
-      if (!changed) {
-        for (const filePath of nextSymlinks) {
-          if (previousSymlinks.has(filePath)) continue;
-          changed = true;
-          break;
-        }
-      }
-      if (!changed) {
-        for (const filePath of previousSymlinks) {
-          if (nextSymlinks.has(filePath)) continue;
-          changed = true;
-          break;
-        }
-      }
-      if (changed) {
-        entry.pendingTreeChanged = true;
-        if (entry.debounceTimer) {
-          clearTimeout(entry.debounceTimer);
-          entry.debounceTimer = null;
-        }
-        this.flushChanges(entry);
-        rootChangeNotified = true;
-      } else if (!entry.bridgeActive && entry.rootChangeListeners.size > 0) {
-        // A filename-only snapshot cannot see edits to an existing file. In
-        // bridge fallback mode, periodically invalidate terminal git stats so
-        // content-only changes are still observed.
-        this.notifyRootChangeListeners(entry);
-        rootChangeNotified = true;
-      }
-    } catch (error) {
-      logger.warn({ error, root: entry.root }, "Workspace poll index refresh failed");
-    } finally {
-      entry.refreshing = false;
-      if (entry.refreshRequested && this.entriesByRoot.get(entry.root) === entry) {
-        entry.refreshRequested = false;
-        void this.refreshPollIndex(entry);
-      }
-    }
-    return rootChangeNotified;
+  private scheduleChangeFlush(entry: WorkspaceWatchEntry): void {
+    if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
+    const timer = setTimeout(() => {
+      entry.debounceTimer = null;
+      this.flushChanges(entry);
+    }, CHANGE_DEBOUNCE_MS);
+    timer.unref?.();
+    entry.debounceTimer = timer;
   }
 
   private addPendingPath(
@@ -938,7 +778,7 @@ export class WorkspaceFileWatchManager {
 
   private emitWatchStatus(
     entry: WorkspaceWatchEntry,
-    status: Extract<WatchStatus, "active" | "fallback">,
+    status: WatchStatus,
     reason?: string,
   ): void {
     for (const subscriber of entry.subscribers.values()) {
@@ -954,56 +794,17 @@ export class WorkspaceFileWatchManager {
     }
   }
 
-  private touchEntry(entry: WorkspaceWatchEntry): void {
-    if (entry.watchMode !== "poll") return;
-    if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) return;
-    this.scheduleClose(entry, POLL_IDLE_CLOSE_MS);
-  }
-
-  private scheduleClose(entry: WorkspaceWatchEntry, delayMs: number): void {
-    if (entry.closeTimer) clearTimeout(entry.closeTimer);
-    const timer = setTimeout(() => {
-      entry.closeTimer = null;
-      this.closeEntryNow(entry);
-    }, delayMs);
-    timer.unref?.();
-    entry.closeTimer = timer;
-  }
-
-  private cancelScheduledClose(entry: WorkspaceWatchEntry): void {
-    if (!entry.closeTimer) return;
-    clearTimeout(entry.closeTimer);
-    entry.closeTimer = null;
-  }
-
   private closeEntryIfUnused(entry: WorkspaceWatchEntry): void {
-    if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) {
-      this.cancelScheduledClose(entry);
-      return;
-    }
-
-    // Poll-mode entries are expensive to rebuild (a full walk over a network
-    // share), so keep them warm briefly for quick tab re-entry. Watcher-backed
-    // entries keep the original immediate teardown.
-    if (entry.watchMode === "poll") {
-      this.scheduleClose(entry, POLL_UNUSED_GRACE_MS);
-      return;
-    }
+    if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) return;
     this.closeEntryNow(entry);
   }
 
   private closeEntryNow(entry: WorkspaceWatchEntry): void {
     if (entry.subscribers.size > 0 || entry.rootChangeListeners.size > 0) return;
 
-    this.cancelScheduledClose(entry);
-    if (entry.pollTimer) {
-      clearInterval(entry.pollTimer);
-      entry.pollTimer = null;
-    }
     if (entry.bridge) {
       entry.bridge.stop();
       entry.bridge = null;
-      entry.bridgeActive = false;
     }
     this.entriesByRoot.delete(entry.root);
     for (const [sessionId, root] of Array.from(this.rootBySessionId.entries())) {
