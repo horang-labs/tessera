@@ -97,3 +97,26 @@ test('an untracked file above the byte cap is unknown rather than a false +0', a
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('binary newline bytes do not become source-code additions', async () => {
+  const root = createGitWorktree();
+  try {
+    fs.writeFileSync(
+      path.join(root, 'image.png'),
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]),
+        Buffer.alloc(2_000, 0x0a),
+      ]),
+    );
+
+    const stats = await computeWorktreeDiffStats(root, 'native');
+    const fileStats = await computeWorktreeFileDiffStats(root, 'native');
+
+    assert.ok(stats);
+    assert.equal(stats.added, 0);
+    assert.equal(stats.addedLinesIncomplete, undefined);
+    assert.deepEqual(fileStats?.get('image.png'), { added: 0, removed: 0 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
