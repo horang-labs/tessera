@@ -685,7 +685,10 @@ function getChangedFilesBatchCommands(): GitBatchCommand[] {
       key: "status",
       args: ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     },
-    { key: "numstat", args: ["diff", "--numstat", "HEAD", "--"] },
+    {
+      key: "numstat",
+      args: ["-c", "core.quotePath=false", "diff", "--numstat", "HEAD", "--"],
+    },
     {
       key: "untracked",
       args: ["ls-files", "--others", "--exclude-standard", "-z"],
