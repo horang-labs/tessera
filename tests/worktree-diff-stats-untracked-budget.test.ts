@@ -120,3 +120,55 @@ test('binary newline bytes do not become source-code additions', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('an unchanged untracked file reuses its line count without spending another read budget', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-diff-cache-'));
+  try {
+    fs.writeFileSync(path.join(root, 'cached.txt'), 'one\ntwo\n');
+
+    const first = await collectUntrackedLineCounts(
+      root,
+      ['cached.txt'],
+      { maxBytes: 1024, maxDurationMs: 10_000 },
+    );
+    const cached = await collectUntrackedLineCounts(
+      root,
+      ['cached.txt'],
+      { maxBytes: 0, maxDurationMs: 10_000 },
+    );
+
+    assert.deepEqual(Array.from(first.byPath), [['cached.txt', 2]]);
+    assert.deepEqual(Array.from(cached.byPath), [['cached.txt', 2]]);
+    assert.equal(cached.incomplete, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the untracked line cache rejects a changed filesystem identity', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-diff-cache-stale-'));
+  const filePath = path.join(root, 'changed.txt');
+  try {
+    fs.writeFileSync(filePath, 'one\n');
+    const first = await collectUntrackedLineCounts(
+      root,
+      ['changed.txt'],
+      { maxBytes: 1024, maxDurationMs: 10_000 },
+    );
+
+    fs.writeFileSync(filePath, 'two\n');
+    const future = new Date(Date.now() + 5_000);
+    fs.utimesSync(filePath, future, future);
+    const changed = await collectUntrackedLineCounts(
+      root,
+      ['changed.txt'],
+      { maxBytes: 0, maxDurationMs: 10_000 },
+    );
+
+    assert.deepEqual(Array.from(first.byPath), [['changed.txt', 1]]);
+    assert.deepEqual(Array.from(changed.byPath), []);
+    assert.equal(changed.incomplete, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
