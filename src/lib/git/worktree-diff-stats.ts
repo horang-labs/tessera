@@ -22,7 +22,41 @@ const UNTRACKED_LINECOUNT_MAX_DURATION_MS = 1_500;
 // Cap concurrent file reads so even a large-but-under-limit untracked set can't
 // exhaust file descriptors.
 const NEWLINE_COUNT_CONCURRENCY = 16;
+// Enough for the entire visible Git list plus a second large worktree, while
+// keeping path strings and filesystem identities in a fixed-size memory bound.
+const UNTRACKED_LINECOUNT_CACHE_MAX_ENTRIES = 2_048;
 const DIFF_STATS_BATCH_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+interface CachedUntrackedLineCount {
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  count: number | null;
+}
+
+interface InFlightUntrackedLineCount extends CachedUntrackedLineCount {
+  promise: Promise<number | null>;
+}
+
+interface UntrackedLineCountCacheState {
+  entries: Map<string, CachedUntrackedLineCount>;
+  inFlight: Map<string, InFlightUntrackedLineCount>;
+}
+
+const UNTRACKED_LINECOUNT_CACHE_KEY = Symbol.for('tessera.untrackedLineCountCache');
+const cacheGlobal = globalThis as unknown as {
+  [UNTRACKED_LINECOUNT_CACHE_KEY]?: UntrackedLineCountCacheState;
+};
+
+function getUntrackedLineCountCacheState(): UntrackedLineCountCacheState {
+  if (!cacheGlobal[UNTRACKED_LINECOUNT_CACHE_KEY]) {
+    cacheGlobal[UNTRACKED_LINECOUNT_CACHE_KEY] = {
+      entries: new Map(),
+      inFlight: new Map(),
+    };
+  }
+  return cacheGlobal[UNTRACKED_LINECOUNT_CACHE_KEY]!;
+}
 
 interface DiffStatsGitBatchOutput {
   insideWorkTree: string | null;
@@ -124,23 +158,38 @@ async function isGitWorkTree(
   return out !== null && out.trim() === 'true';
 }
 
-async function countFileNewlinesCapped(
+function sameFilesystemIdentity(
+  value: Pick<CachedUntrackedLineCount, 'size' | 'mtimeMs' | 'ctimeMs'>,
+  stat: fs.Stats,
+): boolean {
+  return value.size === stat.size
+    && value.mtimeMs === stat.mtimeMs
+    && value.ctimeMs === stat.ctimeMs;
+}
+
+function rememberUntrackedLineCount(
   filePath: string,
-  reserveBytes: (bytes: number) => boolean,
-): Promise<number | null> {
-  let stat: fs.Stats;
-  try {
-    stat = await fs.promises.stat(filePath);
-  } catch {
-    return null;
+  stat: fs.Stats,
+  count: number | null,
+): number | null {
+  const entries = getUntrackedLineCountCacheState().entries;
+  entries.delete(filePath);
+  entries.set(filePath, {
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs,
+    count,
+  });
+  while (entries.size > UNTRACKED_LINECOUNT_CACHE_MAX_ENTRIES) {
+    const oldest = entries.keys().next().value;
+    if (oldest === undefined) break;
+    entries.delete(oldest);
   }
+  return count;
+}
 
-  if (!stat.isFile() || stat.size > UNTRACKED_MAX_BYTES) {
-    return null;
-  }
-  if (!reserveBytes(stat.size)) return null;
-
-  return await new Promise<number | null>((resolve) => {
+function readFileNewlineCount(filePath: string): Promise<number | null> {
+  return new Promise<number | null>((resolve) => {
     let count = 0;
     let sampledBytes = 0;
     let settled = false;
@@ -168,6 +217,58 @@ async function countFileNewlinesCapped(
     stream.on('error', () => finish(null));
     stream.on('end', () => finish(count));
   });
+}
+
+async function countFileNewlinesCapped(
+  filePath: string,
+  reserveBytes: (bytes: number) => boolean,
+): Promise<number | null> {
+  const state = getUntrackedLineCountCacheState();
+  let stat: fs.Stats;
+  try {
+    stat = await fs.promises.stat(filePath);
+  } catch {
+    state.entries.delete(filePath);
+    return null;
+  }
+
+  const cached = state.entries.get(filePath);
+  if (cached && sameFilesystemIdentity(cached, stat)) {
+    // Refresh insertion order so the bounded Map behaves as an LRU cache.
+    state.entries.delete(filePath);
+    state.entries.set(filePath, cached);
+    return cached.count;
+  }
+  if (cached) state.entries.delete(filePath);
+
+  const inFlight = state.inFlight.get(filePath);
+  if (inFlight && sameFilesystemIdentity(inFlight, stat)) {
+    return inFlight.promise;
+  }
+
+  if (!stat.isFile() || stat.size > UNTRACKED_MAX_BYTES) {
+    return rememberUntrackedLineCount(filePath, stat, null);
+  }
+  if (!reserveBytes(stat.size)) return null;
+
+  const promise = readFileNewlineCount(filePath).then((count) => (
+    count === null ? null : rememberUntrackedLineCount(filePath, stat, count)
+  ));
+  const pending: InFlightUntrackedLineCount = {
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs,
+    count: null,
+    promise,
+  };
+  state.inFlight.set(filePath, pending);
+  try {
+    return await promise;
+  } finally {
+    if (state.inFlight.get(filePath) === pending) {
+      state.inFlight.delete(filePath);
+    }
+  }
 }
 
 export interface UntrackedLineCountBudget {
