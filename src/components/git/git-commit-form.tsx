@@ -60,7 +60,7 @@ export function GitCommitForm({
    * happens to say the same word.
    */
   primaryAction: GitPrimaryAction;
-  totals: { files: number; added: number; removed: number };
+  totals: { files: number; added: number; addedIncomplete?: boolean; removed: number };
 }) {
   const { t } = useI18n();
   const busy = pendingVerb !== null;
@@ -127,10 +127,15 @@ export function GitCommitForm({
           ) : (
             <>
               {t("gitPanel.commit.selectionSummary", { files: totals.files })}
-              {totals.added > 0 || totals.removed > 0 ? (
+              {totals.added > 0 || totals.addedIncomplete || totals.removed > 0 ? (
                 <>
                   {" · "}
-                  <span className="text-(--status-success-text)">+{totals.added}</span>
+                  <span
+                    className="text-(--status-success-text)"
+                    title={totals.addedIncomplete ? "Some untracked files were not opened for line counting." : undefined}
+                  >
+                    +{totals.added}{totals.addedIncomplete ? "…" : ""}
+                  </span>
                   {" "}
                   <span className="text-(--status-error-text)">-{totals.removed}</span>
                 </>

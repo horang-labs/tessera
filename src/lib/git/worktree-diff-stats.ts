@@ -16,7 +16,7 @@ const UNTRACKED_MAX_BYTES = 512 * 1024;
 // `node_modules`), skip the per-file line-count I/O entirely. Reading every file
 // to count newlines would otherwise open thousands of descriptors at once and
 // stall the event loop (or hit EMFILE). We still report the count of new files.
-const UNTRACKED_LINECOUNT_MAX_FILES = 1000;
+export const UNTRACKED_LINECOUNT_MAX_FILES = 1000;
 // Cap concurrent file reads so even a large-but-under-limit untracked set can't
 // exhaust file descriptors.
 const NEWLINE_COUNT_CONCURRENCY = 16;
@@ -289,6 +289,7 @@ export async function computeWorktreeDiffStats(
     if (!numstat || !nameStatus || !untracked) return null;
 
     let added = numstat.added;
+    let addedLinesIncomplete = false;
     const removed = numstat.removed;
     let changedFiles = numstat.changedFiles;
     const deletedFiles = nameStatus.deletedFiles;
@@ -299,6 +300,7 @@ export async function computeWorktreeDiffStats(
       // folding their line totals into `added`.
       newFiles = untracked.paths.length;
       changedFiles += untracked.paths.length;
+      addedLinesIncomplete = untracked.paths.length > 0;
     } else {
       const untrackedCounts = await mapWithConcurrency(
         untracked.paths,
@@ -310,12 +312,15 @@ export async function computeWorktreeDiffStats(
         changedFiles += 1;
         if (count !== null) {
           added += count;
+        } else {
+          addedLinesIncomplete = true;
         }
       }
     }
 
     return {
       added,
+      ...(addedLinesIncomplete ? { addedLinesIncomplete: true } : {}),
       removed,
       changedFiles,
       newFiles,
@@ -385,11 +390,8 @@ async function buildWorktreeFileDiffStats(
 
   const files = new Map(numstat.files);
   if (untrackedPaths.length > UNTRACKED_LINECOUNT_MAX_FILES) {
-    // Too many untracked files to read individually — record them with an
-    // unknown (zero) added count rather than opening every file.
-    for (const relPath of untrackedPaths) {
-      files.set(relPath, { added: 0, removed: 0 });
-    }
+    // Absence means unknown. Do not turn an intentionally-skipped line count
+    // into a false per-file `+0` value.
     return files;
   }
 
@@ -403,7 +405,9 @@ async function buildWorktreeFileDiffStats(
   );
 
   for (const { relPath, count } of untrackedCounts) {
-    files.set(relPath, { added: count ?? 0, removed: 0 });
+    if (count !== null) {
+      files.set(relPath, { added: count, removed: 0 });
+    }
   }
 
   return files;
