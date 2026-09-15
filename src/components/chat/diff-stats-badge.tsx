@@ -9,7 +9,8 @@ function formatShort(n: number): string {
 }
 
 function buildTooltip(stats: WorktreeDiffStats): string {
-  const parts = [`+${stats.added.toLocaleString()} −${stats.removed.toLocaleString()}`];
+  const addedSuffix = stats.addedLinesIncomplete ? ' or more' : '';
+  const parts = [`+${stats.added.toLocaleString()}${addedSuffix} −${stats.removed.toLocaleString()}`];
   const files: string[] = [];
   if (stats.changedFiles > 0) {
     files.push(`${stats.changedFiles} file${stats.changedFiles === 1 ? '' : 's'} changed`);
@@ -17,6 +18,9 @@ function buildTooltip(stats: WorktreeDiffStats): string {
   if (stats.newFiles > 0) files.push(`${stats.newFiles} new`);
   if (stats.deletedFiles > 0) files.push(`${stats.deletedFiles} deleted`);
   if (files.length > 0) parts.push(files.join(' · '));
+  if (stats.addedLinesIncomplete) {
+    parts.push('Some untracked files were not opened for line counting.');
+  }
   return parts.join('\n');
 }
 
@@ -37,7 +41,9 @@ function DiffStatsBadgeImpl({ stats, className }: DiffStatsBadgeProps) {
       )}
       title={buildTooltip(stats)}
     >
-      <span className="text-(--status-success-text)">+{formatShort(stats.added)}</span>
+      <span className="text-(--status-success-text)">
+        +{formatShort(stats.added)}{stats.addedLinesIncomplete ? '…' : ''}
+      </span>
       <span className="text-(--status-error-text)">−{formatShort(stats.removed)}</span>
     </span>
   );

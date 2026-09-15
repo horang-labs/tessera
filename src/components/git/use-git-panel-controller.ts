@@ -601,12 +601,16 @@ export function useGitPanelController(
   // above still reports the whole tree.
   const commitTotals = useMemo(() => {
     let added = 0;
+    let addedIncomplete = false;
     let removed = 0;
     for (const file of commitFiles) {
       added += file.diffStats?.added ?? 0;
       removed += file.diffStats?.removed ?? 0;
+      if (file.state === "untracked" && !file.diffStats) {
+        addedIncomplete = true;
+      }
     }
-    return { files: commitFiles.length, added, removed };
+    return { files: commitFiles.length, added, addedIncomplete, removed };
   }, [commitFiles]);
 
   const isSelectedForCommit = useCallback(

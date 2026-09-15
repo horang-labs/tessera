@@ -40,6 +40,19 @@ test('the desktop diff target exposes the whole worktree stat without relying on
   assert.match(html, />−4</);
 });
 
+test('the desktop diff target marks a bounded untracked total as incomplete', () => {
+  const html = renderToStaticMarkup(
+    <GitWorkingTreeDiffStatButton
+      stats={{ ...DIRTY_DATA.diffStats!, addedLinesIncomplete: true }}
+      accessibleLabel="Open Changed files: ≥12 additions, 4 deletions across 2 files"
+      onOpen={() => {}}
+    />,
+  );
+
+  assert.match(html, />\+12…</);
+  assert.match(html, /≥12 additions/);
+});
+
 test('every loaded worktree keeps the desktop Git control', () => {
   assert.equal(supportsDesktopGitControl(DIRTY_DATA), true);
   assert.equal(supportsDesktopGitControl({ ...DIRTY_DATA, changedFiles: [] }), true);
