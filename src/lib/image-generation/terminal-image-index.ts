@@ -17,6 +17,7 @@ import { IMAGE_REFERENCE_REPLAY_ENABLED, IMAGE_REFERENCE_REPLAY_VERSION, replayI
 import { repairReplayedInputs } from './replay-repair';
 import { applyReplayWorkerFailure, UNRESOLVED_INPUT_REFERENCES } from './replay-diagnostics';
 import { readImageTranscriptBatch, type ImageCheckpoint } from './incremental-reader';
+import { normalizeImageTraces } from './trace-identity';
 
 interface SavedState {
   index: ImageIndexState;
@@ -60,6 +61,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
   const saved: SavedState | undefined = cached ? JSON.parse(cached.state_json) : undefined;
   let index = saved?.index ?? createImageIndex();
   if (cached && !saved?.rebuilding) index.traces = JSON.parse(cached.cards_json);
+  index.traces = normalizeImageTraces(index.traces);
   let rebuilding = saved?.rebuilding ?? false;
   const replayVersionChanged = saved?.replayVersion !== IMAGE_REFERENCE_REPLAY_VERSION;
   let reset = replayVersionChanged;
@@ -166,7 +168,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
       if (rebuilding && cached) {
         // Rebuilding metadata must not discard owned input files. Seed only exact
         // call/reference matches, without carrying any previous result or status.
-        const previousCards = new Map((JSON.parse(cached.cards_json) as ImageIndexState['traces']).map(trace => [trace.id, trace]));
+        const previousCards = new Map(normalizeImageTraces(JSON.parse(cached.cards_json)).map(trace => [trace.id, trace]));
         const presentIds = new Set(index.traces.map(trace => trace.id));
         for (const invocation of replay.invocations) {
           const id = `${invocation.callId}-${invocation.ordinal}`;
