@@ -3,6 +3,7 @@ import test from 'node:test';
 import { repairReplayedInputs, type ReplayedInvocation } from '../src/lib/image-generation/replay-repair';
 import type { ImageIndexState } from '../src/lib/image-generation/incremental-state';
 import type { ImageGenerationTrace } from '../src/lib/image-generation/traces';
+import { applyReplayWorkerFailure, replayFailureReason, UNRESOLVED_INPUT_REFERENCES } from '../src/lib/image-generation/replay-diagnostics';
 
 const timestamp = '2026-09-13T00:00:00.000Z';
 const trace = (id: string, extra: Partial<ImageGenerationTrace> = {}): ImageGenerationTrace => ({
@@ -106,4 +107,81 @@ test('completed orphan retains cached inputs from its pending call', () => {
   assert.equal(index.traces[0].inputs, inputs);
   assert.equal(index.traces[0].status, 'completed');
   assert.deepEqual(index.pending, []);
+});
+
+test('call diagnostics reach only exact unresolved result identities, preserving earlier successful inputs', () => {
+  const index = state(['first', 'later', 'unrelated'].map(id => trace(`result-hist-tool-${id}`, {
+    resultMessageId: id, inputResolutionError: UNRESOLVED_INPUT_REFERENCES, unresolvedInputCount: 0,
+  })));
+  repairReplayedInputs(index, [invocation(0, { resultId: 'first' })], [{
+    callId: 'batch', resultIds: ['first', 'later'], error: "ReferenceError: 'yield_control' is not defined",
+  }]);
+  const first = index.traces.find(card => card.resultMessageId === 'first')!;
+  assert.equal(first.inputs.length, 1);
+  assert.equal(first.inputResolutionError, undefined);
+  assert.match(index.traces.find(card => card.resultMessageId === 'later')!.inputResolutionError!, /function or variable/);
+  assert.equal(index.traces.find(card => card.resultMessageId === 'unrelated')!.inputResolutionError, UNRESOLVED_INPUT_REFERENCES);
+});
+
+test('diagnostics never associate orphan results by prompt or adjacent call position', () => {
+  const index = state([trace('result-hist-tool-orphan', { inputResolutionError: UNRESOLVED_INPUT_REFERENCES })]);
+  repairReplayedInputs(index, [], [{ callId: 'batch', error: 'SyntaxError: invalid token' }]);
+  assert.equal(index.traces[0].inputResolutionError, UNRESOLVED_INPUT_REFERENCES);
+});
+
+test('conflicting result ownership does not choose a diagnostic', () => {
+  const index = state([trace('result-hist-tool-orphan', { inputResolutionError: UNRESOLVED_INPUT_REFERENCES })]);
+  repairReplayedInputs(index, [], [
+    { callId: 'one', resultIds: ['orphan'], error: 'SyntaxError' },
+    { callId: 'two', resultIds: ['orphan'], error: 'ReferenceError' },
+  ]);
+  assert.equal(index.traces[0].inputResolutionError, UNRESOLVED_INPUT_REFERENCES);
+});
+
+test('later successful replay clears a previous call failure', () => {
+  const index = state([trace('result-hist-tool-result0', { inputResolutionError: UNRESOLVED_INPUT_REFERENCES })]);
+  repairReplayedInputs(index, [], [{ callId: 'batch', resultIds: ['result0'], unresolved: 'Unrecorded return field: value' }]);
+  assert.match(index.traces[0].inputResolutionError!, /missing from the recording/);
+  repairReplayedInputs(index, [invocation(0)]);
+  assert.equal(index.traces.length, 1);
+  assert.equal(index.traces[0].inputResolutionError, undefined);
+});
+
+test('worker failure reports session replay limits without replacing successful inputs or a known call failure', () => {
+  const index = state([
+    trace('unresolved', { inputResolutionError: UNRESOLVED_INPUT_REFERENCES }),
+    trace('resolved', { unresolvedInputCount: 0 }),
+    trace('specific', { inputResolutionError: 'Input reference replay failed: A tool return value is missing.' }),
+  ]);
+  applyReplayWorkerFailure(index, new Error('Replay recording memory limit exceeded'));
+  assert.equal(index.traces[0].inputResolutionError, 'Input reference replay could not run: The replay memory limit was reached.');
+  assert.equal(index.traces[1].inputResolutionError, undefined);
+  assert.equal(index.traces[2].inputResolutionError, 'Input reference replay failed: A tool return value is missing.');
+});
+
+test('diagnostic UI explanations are bounded and never echo arbitrary transcript contents', () => {
+  assert.equal(replayFailureReason('private tool output '.repeat(10000)), 'The recorded call could not be replayed with the available metadata.');
+  assert.match(replayFailureReason('Image body descriptor is unavailable during metadata replay'), /image contents/);
+  assert.match(replayFailureReason('Repeated prompts cannot be uniquely associated with image results.'), /uniquely matched/);
+  assert.match(replayFailureReason('Image replay time limit exceeded'), /time limit/);
+  assert.match(replayFailureReason('Historical tool catalog is unavailable'), /tool catalog/);
+  assert.match(replayFailureReason('Timer and recorded tool completion ordering is unknown'), /completion order/);
+  assert.match(replayFailureReason('Replay state unavailable after interruption'), /earlier call/);
+  assert.match(replayFailureReason('Execution was terminated'), /terminated/);
+});
+
+test('a successful worker retry removes stale worker failures even if result association remains unknown', () => {
+  const index = state([trace('result-hist-tool-orphan', { inputResolutionError: UNRESOLVED_INPUT_REFERENCES })]);
+  applyReplayWorkerFailure(index, new Error('Image replay time limit exceeded'));
+  assert.match(index.traces[0].inputResolutionError!, /time limit/);
+  repairReplayedInputs(index, [], []);
+  assert.equal(index.traces[0].inputResolutionError, UNRESOLVED_INPUT_REFERENCES);
+});
+
+test('a later cell error does not replace the known reason that recent image history is insufficient', () => {
+  const index = state([]);
+  repairReplayedInputs(index, [invocation(0, { referencedImagePaths: undefined, numLastImagesToInclude: 3 })], [
+    { callId: 'batch', resultIds: ['result0'], error: 'ReferenceError: later_variable is not defined' },
+  ]);
+  assert.match(index.traces[0].inputResolutionError!, /requested 3 recent images, but only 0/);
 });

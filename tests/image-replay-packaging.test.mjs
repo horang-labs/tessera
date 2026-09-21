@@ -16,7 +16,7 @@ test('packaged replay starts in isolation and missing dependencies or WASM fail 
   const archive = path.join(directory, 'app.asar');
   try {
     await fs.mkdir(path.join(source, 'runtime'), { recursive: true });
-    for (const name of ['image-reference-replay-worker.cjs', 'image-reference-replay.cjs', 'image-record-reader.cjs']) {
+    for (const name of ['image-reference-replay-worker.cjs', 'image-reference-replay.cjs', 'image-record-reader.cjs', 'replay-state-codec.cjs']) {
       await fs.copyFile(path.join(__dirname, '..', 'runtime', name), path.join(source, 'runtime', name));
     }
     const pending = ['quickjs-emscripten', 'acorn'];
@@ -37,7 +37,7 @@ test('packaged replay starts in isolation and missing dependencies or WASM fail 
       await verifyImageReplayRuntime(archive);
     });
     for (const relative of ['node_modules/quickjs-emscripten', 'node_modules/quickjs-emscripten-core',
-      'runtime/image-reference-replay-worker.cjs', 'runtime/image-record-reader.cjs',
+      'runtime/image-reference-replay-worker.cjs', 'runtime/image-record-reader.cjs', 'runtime/replay-state-codec.cjs',
       'node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm']) {
       await t.test(`fails with missing ${relative}`, async () => {
         const target = path.join(source, relative);

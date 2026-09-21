@@ -1,5 +1,6 @@
 import type { ImageIndexState } from './incremental-state';
 import type { ImageGenerationTrace, ResolvedTraceImage } from './traces';
+import { applyReplayDiagnostics, UNRESOLVED_INPUT_REFERENCES, type ReplayDiagnostic } from './replay-diagnostics';
 
 export interface ReplayedInvocation {
   callId: string;
@@ -15,10 +16,10 @@ export interface ReplayedInvocation {
   recentImages?: ResolvedTraceImage[];
 }
 
-const UNRESOLVED = 'Input references could not be reconstructed from this recording.';
+const UNRESOLVED = UNRESOLVED_INPUT_REFERENCES;
 
 /** Reconcile only exact replay evidence; identical prompts are not an identity. */
-export function repairReplayedInputs(index: ImageIndexState, invocations: ReplayedInvocation[]): ImageGenerationTrace[] {
+export function repairReplayedInputs(index: ImageIndexState, invocations: ReplayedInvocation[], diagnostics: ReplayDiagnostic[] = []): ImageGenerationTrace[] {
   const original = [...index.traces];
   const consumed = new Set<ImageGenerationTrace>();
   const repaired: ImageGenerationTrace[] = [];
@@ -88,7 +89,9 @@ export function repairReplayedInputs(index: ImageIndexState, invocations: Replay
           if (trace.inputs.some((image) => image.locator.kind !== 'cache')) needsCaching.push(trace);
         } else {
           trace.inputs = [];
-          trace.inputResolutionError = UNRESOLVED;
+          trace.inputResolutionError = Number.isInteger(count) && count >= 0 && count <= 5
+            ? `Input references unavailable: requested ${count} recent images, but only ${invocation.recentImages?.length ?? 0} recorded image occurrences are available.`
+            : 'Input references unavailable: the recorded recent-image count is invalid.';
         }
       }
     }
@@ -109,6 +112,7 @@ export function repairReplayedInputs(index: ImageIndexState, invocations: Replay
     }
   }
   index.traces.push(...repaired);
+  applyReplayDiagnostics(index, diagnostics);
   index.traces.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const running = new Set(index.traces.filter((trace) => trace.status === 'running').map((trace) => trace.id));
   index.pending = [...new Set([...index.pending, ...repaired.filter((trace) => trace.status === 'running').map((trace) => trace.id)])].filter((id) => running.has(id));

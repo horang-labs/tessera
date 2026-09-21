@@ -13,14 +13,16 @@ import logger from '@/lib/logger';
 import { appendImage, createImageIndex, type ImageIndexState } from './incremental-state';
 import { cacheImageFile, imageSessionCacheDirectory } from './cache-files';
 import { imageFromTool, isImageGenerationResult, resultImage } from './traces';
-import { IMAGE_REFERENCE_REPLAY_ENABLED, replayImageReferences } from './replay-worker';
+import { IMAGE_REFERENCE_REPLAY_ENABLED, IMAGE_REFERENCE_REPLAY_VERSION, replayImageReferences } from './replay-worker';
 import { repairReplayedInputs } from './replay-repair';
+import { applyReplayWorkerFailure, UNRESOLVED_INPUT_REFERENCES } from './replay-diagnostics';
 import { readImageTranscriptBatch, type ImageCheckpoint } from './incremental-reader';
 
 interface SavedState {
   index: ImageIndexState;
   rebuilding?: boolean;
   replayOffset?: number;
+  replayVersion?: number;
   replayRetryAfter?: number;
   sidecarOffset?: number;
   decoder: { readResponseItemConversation: boolean; pendingToolCalls: Array<[string, CodexTranscriptDecoderState['pendingToolCalls'] extends Map<string, infer V> ? V : never]> };
@@ -59,9 +61,12 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
   let index = saved?.index ?? createImageIndex();
   if (cached && !saved?.rebuilding) index.traces = JSON.parse(cached.cards_json);
   let rebuilding = saved?.rebuilding ?? false;
-  let reset = false;
-  let replayOffset = saved?.replayOffset ?? -1;
-  let replayRetryAfter = saved?.replayRetryAfter ?? 0;
+  const replayVersionChanged = saved?.replayVersion !== IMAGE_REFERENCE_REPLAY_VERSION;
+  let reset = replayVersionChanged;
+  let replayVersion = saved?.replayVersion;
+  let replayOffset = replayVersionChanged ? -1 : saved?.replayOffset ?? -1;
+  // Invalidate the old checkpoint once; subsequent failed retries retain backoff.
+  let replayRetryAfter = replayVersionChanged && saved?.replayOffset !== -1 ? 0 : saved?.replayRetryAfter ?? 0;
   let decoder = saved ? { ...saved.decoder, pendingToolCalls: new Map(saved.decoder.pendingToolCalls) } : createCodexTranscriptDecoderState();
   const directory = imageSessionCacheDirectory(session.id);
   const sidecarPath = path.join(directory, 'replay.jsonl');
@@ -136,7 +141,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
             ? message.toolParams.revisedPrompt : 'Image generation',
           revisedPrompt: typeof message.toolParams.revisedPrompt === 'string' ? message.toolParams.revisedPrompt : undefined,
           inputs: [], unresolvedInputCount: 0,
-          inputResolutionError: 'Input references could not be reconstructed from this recording.',
+          inputResolutionError: UNRESOLVED_INPUT_REFERENCES,
           status: message.status, result, timestamp: message.timestamp, error: message.error });
       }
       // The replay worker owns exec state. The JSONL decoder only needs result metadata.
@@ -175,7 +180,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
             unresolvedInputCount: previous.unresolvedInputCount, status: 'running', timestamp: invocation.timestamp });
         }
       }
-      const needsCaching = repairReplayedInputs(index, replay.invocations);
+      const needsCaching = repairReplayedInputs(index, replay.invocations, replay.diagnostics);
       for (const trace of needsCaching) {
         for (const input of trace.inputs) {
           if (signal?.aborted) throw new Error('Image replay aborted');
@@ -187,11 +192,13 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
         trace.inputs = trace.inputs.filter(input => input.locator.kind !== 'cache' || Boolean(input.locator.path));
       }
       replayOffset = scanned.checkpoint.offset;
+      replayVersion = IMAGE_REFERENCE_REPLAY_VERSION;
       replayRetryAfter = 0;
       logger.debug({ sessionId: session.id, cells: replay.cells,
         unresolved: replay.diagnostics.filter(item => item.unresolved).length }, 'Image reference replay');
     } catch (error) {
       if (!signal?.aborted) {
+        applyReplayWorkerFailure(index, error);
         logger.warn({ sessionId: session.id, error }, 'Image reference replay failed');
         // Back off worker failures, while allowing transient failures to recover without a transcript append.
         replayRetryAfter = Date.now() + 30_000;
@@ -203,9 +210,9 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
     await fs.rm(imageSessionCacheDirectory(session.id), { recursive: true, force: true });
     return { more: false };
   }
-  if (!signal?.aborted && (scanned.bytesRead > 0 || !cached || reset || replayOffset !== saved?.replayOffset || replayRetryAfter !== saved?.replayRetryAfter)) {
+  if (!signal?.aborted && (scanned.bytesRead > 0 || !cached || reset || replayOffset !== saved?.replayOffset || replayVersion !== saved?.replayVersion || replayRetryAfter !== saved?.replayRetryAfter)) {
     const keepPrevious = rebuilding && scanned.more;
-    saveImageCache(session.id, scanned.checkpoint, { index: { ...index, traces: keepPrevious ? index.traces : [] }, rebuilding: keepPrevious, replayOffset, replayRetryAfter, sidecarOffset,
+    saveImageCache(session.id, scanned.checkpoint, { index: { ...index, traces: keepPrevious ? index.traces : [] }, rebuilding: keepPrevious, replayOffset, replayVersion, replayRetryAfter, sidecarOffset,
       decoder: { readResponseItemConversation: decoder.readResponseItemConversation, pendingToolCalls: [...decoder.pendingToolCalls] } },
     keepPrevious && cached ? JSON.parse(cached.cards_json) : index.traces);
   }
