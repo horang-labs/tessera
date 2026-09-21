@@ -76,6 +76,18 @@ test('disk-backed index restores a pending call, reads only appends and serves c
     assert.equal(completed.length, 1);
     assert.equal(completed[0].status, 'completed');
     assert.deepEqual(completed[0].inputs, first[0].inputs);
+    // Reproduce a legacy corrupt cache directly, bypassing today's write guard.
+    const duplicateCards = [{ ...completed[0], result: undefined, resultMessageId: undefined,
+      inputs: [], status: 'error' as const }, ...completed];
+    getDb().prepare('UPDATE image_generation_cache SET cards_json=? WHERE session_id=?')
+      .run(JSON.stringify(duplicateCards), session.id);
+    const served = readImageCards(session.id);
+    assert.equal(served.length, 1, 'legacy duplicate IDs cannot shadow completed cards at the image API boundary');
+    assert.equal(await readText(served.find(t => t.id === completed[0].id)!.result!.locator), 'test-image-bytes');
+    assert.equal(await readText(served.find(t => t.id === completed[0].id)!.inputs[0].locator), 'test-image-bytes');
+    const corrupt = readImageCache(session.id)!;
+    saveImageCache(session.id, JSON.parse(corrupt.source_json), JSON.parse(corrupt.state_json), duplicateCards);
+    assert.equal(JSON.parse(readImageCache(session.id)!.cards_json).length, 1, 'writes persist unique card identities');
     const inputPath = path.join(directory, 'reference.png');
     await fs.writeFile(inputPath, Buffer.from('reference-image-bytes'));
     await fs.appendFile(file, record('response_item', { type: 'custom_tool_call', call_id: 'store-paths', name: 'exec',

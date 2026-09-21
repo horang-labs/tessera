@@ -1,6 +1,7 @@
 import type { ImageIndexState } from './incremental-state';
 import type { ImageGenerationTrace, ResolvedTraceImage } from './traces';
 import { applyReplayDiagnostics, UNRESOLVED_INPUT_REFERENCES, type ReplayDiagnostic } from './replay-diagnostics';
+import { normalizeImageTraces, traceResultId } from './trace-identity';
 
 export interface ReplayedInvocation {
   callId: string;
@@ -20,7 +21,7 @@ const UNRESOLVED = UNRESOLVED_INPUT_REFERENCES;
 
 /** Reconcile only exact replay evidence; identical prompts are not an identity. */
 export function repairReplayedInputs(index: ImageIndexState, invocations: ReplayedInvocation[], diagnostics: ReplayDiagnostic[] = []): ImageGenerationTrace[] {
-  const original = [...index.traces];
+  const original = normalizeImageTraces(index.traces);
   const consumed = new Set<ImageGenerationTrace>();
   const repaired: ImageGenerationTrace[] = [];
   const needsCaching: ImageGenerationTrace[] = [];
@@ -37,8 +38,24 @@ export function repairReplayedInputs(index: ImageIndexState, invocations: Replay
     const pendingTrace = original.find((trace) => trace.id === id && !consumed.has(trace)
       && (!trace.resultMessageId || trace.resultMessageId === invocation.resultId));
     const previous = resultTrace ?? pendingTrace;
-    const inputPrevious = pendingTrace ?? previous;
+    const cacheScore = (candidate: ImageGenerationTrace): number => {
+      if (invocation.referencedImagePaths) {
+        if (JSON.stringify(candidate.referencedImagePaths) !== JSON.stringify(invocation.referencedImagePaths)) return 0;
+        return candidate.inputs.filter(image => image.locator.kind === 'cache' && image.locator.path).length;
+      }
+      if (candidate.numLastImagesToInclude !== invocation.numLastImagesToInclude) return 0;
+      const recent = invocation.numLastImagesToInclude ? invocation.recentImages?.slice(-invocation.numLastImagesToInclude) : [];
+      return candidate.inputs.filter((image, position) => {
+        const occurrence = recent?.[position];
+        return occurrence && image.locator.kind === 'cache' && image.locator.path
+          && image.sourceMessageId && image.sourceMessageId === occurrence.sourceMessageId
+          && image.source === occurrence.source && image.label === occurrence.label;
+      }).length;
+    };
+    const inputPrevious = [pendingTrace, resultTrace].filter((candidate): candidate is ImageGenerationTrace => Boolean(candidate))
+      .sort((a, b) => cacheScore(b) - cacheScore(a))[0] ?? previous;
     if (previous) consumed.add(previous);
+    if (pendingTrace) consumed.add(pendingTrace);
     const trace: ImageGenerationTrace = {
       ...previous,
       id,
@@ -63,12 +80,16 @@ export function repairReplayedInputs(index: ImageIndexState, invocations: Replay
       if (invocation.referencedImagePaths) {
         const sameReferences = inputPrevious?.referencedImagePaths
           && JSON.stringify(inputPrevious.referencedImagePaths) === JSON.stringify(invocation.referencedImagePaths);
-        if (sameReferences && inputPrevious.inputs.every((image) => image.locator.kind === 'cache')) {
+        if (sameReferences && inputPrevious.inputs.length === invocation.referencedImagePaths.length
+          && inputPrevious.unresolvedInputCount === 0
+          && inputPrevious.inputs.every((image) => image.locator.kind === 'cache' && Boolean(image.locator.path))) {
           // Cached files outlive the original runtime's temporary input paths.
           trace.inputs = inputPrevious.inputs;
           trace.unresolvedInputCount = inputPrevious.unresolvedInputCount;
         } else {
-          trace.inputs = invocation.referencedImagePaths.map((path) => ({
+          trace.inputs = invocation.referencedImagePaths.map((path) => (sameReferences
+            ? inputPrevious.inputs.find(image => image.locator.kind === 'cache' && image.locator.path
+              && (image.agentPath === path || image.label === path)) : undefined) ?? ({
             source: 'explicit-path', label: path, agentPath: path, locator: { kind: 'path', path },
           }));
           if (trace.inputs.length) needsCaching.push(trace);
@@ -101,7 +122,9 @@ export function repairReplayedInputs(index: ImageIndexState, invocations: Replay
   const belongsToCompleteCall = (trace: ImageGenerationTrace) => completeCalls.some((callId) =>
     trace.invocationMessageId === `hist-tool-${callId}` || (trace.id.startsWith(`${callId}-`) && /^\d+$/.test(trace.id.slice(callId.length + 1))));
   const repairedIds = new Set(repaired.map((trace) => trace.id));
+  const repairedResults = new Set(repaired.map(traceResultId).filter(Boolean));
   index.traces = original.filter((trace) => !consumed.has(trace)
+    && !(traceResultId(trace) ? repairedResults.has(traceResultId(trace)) : repairedIds.has(trace.id))
     && (!belongsToCompleteCall(trace) || Boolean(trace.resultMessageId))).map((trace) =>
     repairedIds.has(trace.id) && trace.resultMessageId
       ? { ...trace, id: `result-hist-tool-${trace.resultMessageId}` } : trace);
@@ -111,10 +134,10 @@ export function repairReplayedInputs(index: ImageIndexState, invocations: Replay
       trace.unresolvedInputCount = 0;
     }
   }
-  index.traces.push(...repaired);
+  index.traces = normalizeImageTraces([...index.traces, ...repaired]);
   applyReplayDiagnostics(index, diagnostics);
   index.traces.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const running = new Set(index.traces.filter((trace) => trace.status === 'running').map((trace) => trace.id));
   index.pending = [...new Set([...index.pending, ...repaired.filter((trace) => trace.status === 'running').map((trace) => trace.id)])].filter((id) => running.has(id));
-  return needsCaching;
+  return needsCaching.filter(trace => index.traces.includes(trace));
 }

@@ -4,6 +4,7 @@ import { repairReplayedInputs, type ReplayedInvocation } from '../src/lib/image-
 import type { ImageIndexState } from '../src/lib/image-generation/incremental-state';
 import type { ImageGenerationTrace } from '../src/lib/image-generation/traces';
 import { applyReplayWorkerFailure, replayFailureReason, UNRESOLVED_INPUT_REFERENCES } from '../src/lib/image-generation/replay-diagnostics';
+import { normalizeImageTraces } from '../src/lib/image-generation/trace-identity';
 
 const timestamp = '2026-09-13T00:00:00.000Z';
 const trace = (id: string, extra: Partial<ImageGenerationTrace> = {}): ImageGenerationTrace => ({
@@ -14,6 +15,99 @@ const state = (traces: ImageGenerationTrace[]): ImageIndexState => ({ traces, le
 const invocation = (ordinal: number, extra: Partial<ReplayedInvocation> = {}): ReplayedInvocation => ({
   callId: 'batch', ordinal, prompt: 'same prompt', referencedImagePaths: [`/input/${ordinal}.png`],
   resultId: `result${ordinal}`, timestamp, status: 'completed', ...extra,
+});
+
+test('partial batches replace failed placeholders and remain unique across repeated reconciliation', () => {
+  const failed = trace('batch-0', { status: 'error', result: undefined });
+  const result = trace('result-hist-tool-result0', { resultMessageId: 'result0',
+    result: { source: 'generated', label: 'result', locator: { kind: 'cache', path: '/result.png' } } });
+  for (const originals of [[failed, result], [result, failed], [failed, result, failed]]) {
+    const index = state(originals);
+    const calls = [invocation(0), invocation(1, { resultId: undefined, status: 'running' })];
+    for (let retry = 0; retry < 5; retry++) {
+      repairReplayedInputs(index, calls);
+      assert.equal(index.traces.length, 2);
+      assert.equal(new Set(index.traces.map(t => t.id)).size, 2);
+      const served = index.traces.find(t => t.id === 'batch-0')!;
+      assert.equal(served.result?.locator.kind, 'cache');
+      assert.equal(served.inputs.length, 1);
+      assert.equal(served.status, 'completed');
+      assert.deepEqual(index.pending, ['batch-1']);
+    }
+  }
+});
+
+test('legacy duplicate cards normalize independently of failed-card order and preserve distinct results', () => {
+  const completed = trace('batch-0', { resultMessageId: 'one',
+    result: { source: 'generated', label: 'one', locator: { kind: 'cache', path: '/one' } } });
+  const failed = trace('batch-0', { status: 'error' });
+  for (const cards of [[failed, completed], [completed, failed]]) {
+    assert.deepEqual(normalizeImageTraces(cards), [completed]);
+  }
+  const other = { ...completed, resultMessageId: 'two', result: { ...completed.result!, label: 'two', locator: { kind: 'cache' as const, path: '/two' } } };
+  const normalized = normalizeImageTraces([failed, completed, other, { ...completed, id: 'result-hist-tool-one' }]);
+  assert.equal(normalized.length, 2);
+  assert.equal(new Set(normalized.map(t => t.id)).size, 2);
+  assert.deepEqual(new Set(normalized.map(t => t.resultMessageId)), new Set(['one', 'two']));
+  assert.deepEqual(normalizeImageTraces(normalized), normalized);
+});
+
+test('empty and partially cached references retry missing files without discarding existing cache ownership', () => {
+  const index = state([trace('batch-0', { referencedImagePaths: ['/input/0.png'], inputs: [], unresolvedInputCount: 1 })]);
+  assert.equal(repairReplayedInputs(index, [invocation(0)]).length, 1);
+  assert.equal(index.traces[0].inputs[0].locator.kind, 'path');
+  const cached = { source: 'explicit-path' as const, label: '/input/1.png', locator: { kind: 'cache' as const, path: '/owned.png' } };
+  const partial = state([trace('batch-0', { referencedImagePaths: ['/input/0.png', '/input/1.png'], inputs: [cached], unresolvedInputCount: 1 })]);
+  assert.equal(repairReplayedInputs(partial, [invocation(0, { referencedImagePaths: ['/input/0.png', '/input/1.png'] })]).length, 1);
+  assert.equal(partial.traces[0].inputs[0].locator.kind, 'path');
+  assert.equal(partial.traces[0].inputs[1], cached);
+});
+
+test('loss of result association retains the observed result without duplicate IDs or phantom growth', () => {
+  const index = state([trace('batch-0', { resultMessageId: 'result0',
+    result: { source: 'generated', label: 'observed', locator: { kind: 'cache', path: '/observed' } } })]);
+  const calls = [invocation(0, { resultId: undefined, status: 'running' })];
+  for (let retry = 0; retry < 4; retry++) {
+    repairReplayedInputs(index, calls);
+    assert.equal(index.traces.length, 2);
+    assert.equal(new Set(index.traces.map(t => t.id)).size, 2);
+    assert.equal(index.traces.find(t => t.resultMessageId === 'result0')?.result?.label, 'observed');
+  }
+  repairReplayedInputs(index, [invocation(0)]);
+  assert.equal(index.traces.length, 1);
+  assert.equal(index.traces[0].result?.label, 'observed');
+});
+
+test('an empty placeholder cannot discard input files already owned by the exact result', () => {
+  const inputs: ImageGenerationTrace['inputs'] = [{ source: 'explicit-path', label: '/input/0.png', locator: { kind: 'cache', path: '/owned.png' } }];
+  const index = state([
+    trace('batch-0', { status: 'error', referencedImagePaths: ['/input/0.png'], inputs: [] }),
+    trace('result-hist-tool-result0', { resultMessageId: 'result0', referencedImagePaths: ['/input/0.png'], inputs, unresolvedInputCount: 0 }),
+  ]);
+  assert.deepEqual(repairReplayedInputs(index, [invocation(0)]), []);
+  assert.equal(index.traces.length, 1);
+  assert.equal(index.traces[0].inputs, inputs);
+});
+
+test('mixed legacy aliases preserve every result and normalize idempotently across input orders', () => {
+  const cards = Array.from({ length: 30 }, (_, n) => trace(n % 3 ? `batch-${n % 4}` : `result-hist-tool-result${n % 10}`, {
+    resultMessageId: `result${n % 10}`,
+    result: { source: 'generated', label: `result${n % 10}`, locator: { kind: 'cache', path: `/result${n % 10}` } },
+  }));
+  cards.push(...Array.from({ length: 4 }, (_, n) => trace(`batch-${n}`, { status: 'error' })));
+  let seed = 1234;
+  for (let run = 0; run < 50; run++) {
+    const shuffled = [...cards];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const j = seed % (i + 1); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const normalized = normalizeImageTraces(shuffled);
+    assert.equal(new Set(normalized.map(t => t.id)).size, normalized.length);
+    assert.equal(new Set(normalized.map(t => t.resultMessageId).filter(Boolean)).size, 10);
+    for (const t of normalized.filter(t => t.result)) assert.equal(t.result?.label, t.resultMessageId);
+    assert.deepEqual(normalizeImageTraces(normalized), normalized);
+  }
 });
 
 test('repairs three out-of-order orphan results using result identity', () => {

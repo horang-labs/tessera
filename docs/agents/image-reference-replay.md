@@ -77,6 +77,17 @@ whole replay and are reported separately.
 
 ## Required regression coverage
 
+Cache reconciliation has its own identity contract: every public card ID must
+select exactly the card displayed by the UI, and each recorded result must survive
+without being attached to unrelated inputs. Both its pending placeholder and its
+orphan result are consumed when a call is repaired, including incomplete batches.
+Metadata-only normalization at database reads and writes repairs legacy duplicate
+IDs even when replay or the transcript is unavailable. Distinct conflicting results
+retain their result IDs instead of competing for an invocation URL. Replay version
+3 also rebuilds persisted checkpoints. Reference reuse requires matching metadata
+and nonempty cached locators; an empty input list is not proof of successful caching.
+Partial cached inputs retain ownership while missing references are retried.
+
 1. A multi-image loop yields between images, resumes through recorded waits and
    reconstructs every observed input. Interruption/termination after a yield must
    not invent subsequent calls or stored values.
