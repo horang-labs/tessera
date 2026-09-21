@@ -13,7 +13,8 @@ test('disk-backed index restores a pending call, reads only appends and serves c
   const { registerProject } = await import('@/lib/db/projects');
   const { createSession, getSession, deleteSession } = await import('@/lib/db/sessions');
   const { bindTerminalProviderSession } = await import('@/lib/db/terminal-provider-sessions');
-  const { readImageCache, readImageCards } = await import('@/lib/db/image-generation-cache');
+  const { readImageCache, readImageCards, saveImageCache } = await import('@/lib/db/image-generation-cache');
+  const { IMAGE_REFERENCE_REPLAY_VERSION } = await import('@/lib/image-generation/replay-worker');
   const { syncTerminalImageIndex } = await import('@/lib/image-generation/terminal-image-index');
   const { readTraceImageStream } = await import('@/lib/image-generation/session-traces');
   const readText = async (locator: Parameters<typeof readTraceImageStream>[0]) => {
@@ -102,6 +103,44 @@ test('disk-backed index restores a pending call, reads only appends and serves c
     await fs.unlink(sidecarPath);
     while ((await syncTerminalImageIndex(session, '')).more) { /* exact cached references survive metadata rebuild */ }
     assert.deepEqual(readImageCards(session.id).find(card => card.id === 'dynamic-0')?.inputs, dynamic.inputs);
+    // A runtime upgrade must replay an unchanged sidecar while keeping cached
+    // explicit inputs whose original files have already disappeared.
+    const beforeUpgrade = readImageCache(session.id)!;
+    const oldState = JSON.parse(beforeUpgrade.state_json);
+    assert.equal(oldState.replayVersion, IMAGE_REFERENCE_REPLAY_VERSION);
+    delete oldState.replayVersion;
+    oldState.replayRetryAfter = Date.now() + 60_000;
+    const oldCards = JSON.parse(beforeUpgrade.cards_json);
+    oldCards[0].inputs = [];
+    oldCards[0].inputResolutionError = 'Input references could not be reconstructed from this recording.';
+    saveImageCache(session.id, JSON.parse(beforeUpgrade.source_json), oldState, oldCards);
+    const workerKey = Symbol.for('tessera.imageReplayWorker');
+    const workers = globalThis as unknown as Record<symbol, { run: (...args: unknown[]) => Promise<unknown> }>;
+    const realWorker = workers[workerKey];
+    let requests = 0;
+    try {
+      workers[workerKey] = { run: async () => { requests++; throw new Error('Image replay time limit exceeded'); } };
+      await syncTerminalImageIndex(session, '');
+      const failed = JSON.parse(readImageCache(session.id)!.state_json);
+      assert.equal(requests, 1, 'old-version backoff cannot postpone upgrade replay');
+      assert.equal(failed.replayVersion, undefined, 'a failed replay cannot mark the new engine version as applied');
+      assert.equal(failed.replayOffset, -1);
+      await syncTerminalImageIndex(session, '');
+      assert.equal(requests, 1, 'failed upgrade attempts still respect retry backoff');
+      failed.replayRetryAfter = 0;
+      saveImageCache(session.id, JSON.parse(beforeUpgrade.source_json), failed, readImageCards(session.id));
+      workers[workerKey] = { run: async (...args) => { requests++; return realWorker.run(...args); } };
+      await syncTerminalImageIndex(session, '');
+      const upgraded = readImageCache(session.id)!;
+      assert.equal(requests, 2);
+      assert.equal(JSON.parse(upgraded.state_json).replayVersion, IMAGE_REFERENCE_REPLAY_VERSION);
+      assert.equal(upgraded.source_json, beforeUpgrade.source_json, 'upgrade does not need a transcript append');
+      assert.deepEqual(readImageCards(session.id)[0].inputs, first[0].inputs);
+      assert.equal(readImageCards(session.id)[0].inputResolutionError, undefined);
+      assert.deepEqual(readImageCards(session.id).find(card => card.id === 'dynamic-0')?.inputs, dynamic.inputs);
+      await syncTerminalImageIndex(session, '');
+      assert.equal(requests, 2, 'current-version unchanged recordings reuse the replay checkpoint');
+    } finally { workers[workerKey] = realWorker; }
     await fs.unlink(generatedPath);
     const viewedPath = path.join(directory, 'viewed.png');
     await fs.writeFile(viewedPath, 'viewed-image-bytes');

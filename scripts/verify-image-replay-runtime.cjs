@@ -5,7 +5,7 @@ const { Worker } = require('node:worker_threads');
 const asar = require('@electron/asar');
 
 const workerPath = 'runtime/image-reference-replay-worker.cjs';
-const runtimeFiles = [workerPath, 'runtime/image-reference-replay.cjs', 'runtime/image-record-reader.cjs'];
+const runtimeFiles = [workerPath, 'runtime/image-reference-replay.cjs', 'runtime/image-record-reader.cjs', 'runtime/replay-state-codec.cjs'];
 
 /** Verify shipped bytes in isolation: never resolve dependencies from the build worktree. */
 async function verifyImageReplayRuntime(source) {
