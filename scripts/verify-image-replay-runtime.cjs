@@ -14,6 +14,8 @@ async function verifyImageReplayRuntime(source) {
   const read = async relative => archive ? asar.extractFile(source, relative) : fs.readFile(path.join(source, relative));
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-image-runtime-'));
   try {
+    // Node resolves modules through real paths (macOS /var -> /private/var).
+    const runtimeRoot = await fs.realpath(temporary);
     const copy = async relative => {
       const bytes = await read(relative);
       const target = path.join(temporary, relative);
@@ -65,7 +67,7 @@ async function verifyImageReplayRuntime(source) {
           return resolved;
         };
         require(path.join(workerData.root, ${JSON.stringify(workerPath)}));
-      `, { eval: true, execArgv: [], workerData: { root: temporary },
+      `, { eval: true, execArgv: [], workerData: { root: runtimeRoot },
         resourceLimits: { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 8 } });
       let finished = false;
       const finish = async error => {
