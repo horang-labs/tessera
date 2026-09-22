@@ -73,6 +73,16 @@ class Recording {
     this.cells = []; this.active = new Map(); this.yielded = new Map(); this.hints = new Map(); this.resultKeys = new Map(); this.offset = 0;
     this.images = []; this.generation = 0; this.metadataBytes = 0; this.retainedBytes = 0;
     this.unownedEvents = new Map();
+    this.incompleteTurns = new Set();
+  }
+  omitRecord(reason, offset, timestamp = '') {
+    if (this.cells.length >= MAX_CELLS) throw Error('Replay cell limit exceeded');
+    this.cells.push({ id: `omitted-${offset}`, omitted: reason, timestamp, offset, events: [], closed: true });
+    this.incompleteTurns.add(this.turnId ?? '');
+    // The omitted record may have changed state or introduced a newer image.
+    this.images = [];
+    for (const cell of new Set([...this.active.values(), ...this.yielded.values()])) cell.stateOverlap = true;
+    this.generation++;
   }
   append(raw, offset) {
     let record;
@@ -83,13 +93,14 @@ class Recording {
     } else record = raw;
     if (!record) return;
     offset = record.__tesseraRecordOffset ?? offset;
+    if (record.__tesseraOmittedRecord) { this.omitRecord(record.__tesseraOmittedRecord, offset); return; }
     const p = record.payload;
     if (!isObject(p)) return;
     if ((record.type === 'turn_context' || (record.type === 'event_msg' && p.type === 'task_started'))
       && typeof p.turn_id === 'string') this.turnId = p.turn_id;
     const timestamp = record.timestamp ?? '';
-    const retain = () => {
-      this.retainedBytes += Buffer.byteLength(JSON.stringify(record));
+    const retain = (extraBytes = 0) => {
+      this.retainedBytes += Buffer.byteLength(JSON.stringify(record)) + extraBytes;
       if (this.retainedBytes > 16 * 1024 * 1024) throw Error('Replay recording memory limit exceeded');
     };
     if (record.type === 'response_item' && ['function_call', 'custom_tool_call'].includes(p.type)
@@ -104,6 +115,7 @@ class Recording {
       return;
     }
     if (record.type === 'response_item' && p.type === 'custom_tool_call' && ['exec', 'functions.exec'].includes(p.name)) {
+      if (typeof p.input !== 'string') { this.omitRecord('Recorded JavaScript source is unavailable', offset, timestamp); return; }
       if (this.cells.length >= MAX_CELLS) throw Error('Replay cell limit exceeded');
       this.metadataBytes += Buffer.byteLength(p.input ?? '');
       if (this.metadataBytes > 16 * 1024 * 1024) throw Error('Replay source limit exceeded');
@@ -159,8 +171,19 @@ class Recording {
       const generation = item.kind === 'image_gen.generation' || item.type === 'imageGeneration';
       const active = new Set([...this.active.values(), ...this.yielded.values()].filter(cell =>
         !p.turn_id || !cell.turnId || cell.turnId === p.turn_id));
-      if (active.size === 1) { retain(); active.values().next().value.events.push({ item, offset }); }
-      else if (generation && typeof item.id === 'string') { retain(); this.unownedEvents.set(item.id, { item, offset }); }
+      const completeScope = !this.incompleteTurns.has(p.turn_id ?? this.turnId ?? '');
+      if (active.size === 1 && completeScope) { retain(); active.values().next().value.events.push({ item, offset }); }
+      else if (generation && typeof item.id === 'string' && !this.unownedEvents.has(item.id)) {
+        // Preserve the eligible execs AT THIS EVENT, not whichever exec happens
+        // to be current when replay ends. Turn changes and later invocations
+        // must not turn a matching prompt into false ownership evidence.
+        const scope = {
+          candidateCallIds: [...active].map(cell => cell.id),
+          knownTurn: completeScope && typeof p.turn_id === 'string' && [...active].every(cell => cell.turnId === p.turn_id),
+        };
+        retain(Buffer.byteLength(JSON.stringify(scope)));
+        this.unownedEvents.set(item.id, { item, offset, ...scope });
+      }
       this.generation++;
       if (generation && item.status !== 'failed' && !item.failure && (item.savedPath || item.result?.__tesseraImage?.length > 0)) {
         this.images.push({ sourceMessageId: `hist-tool-${item.id}`, source: 'generated', label: 'Generated image',
@@ -245,17 +268,63 @@ class ReplaySession {
   }
 }
 
+/** Repair captured arguments, without executing an unrecorded continuation.
+ * A yielded exec can outlive ALL its image calls. Exec liveness only bounds the
+ * candidates; unique pending image invocations establish the final association.
+ * Require a one-to-one exact match in both directions before changing anything.
+ */
+function resolvePendingImages(recording, invocations, bounds, opaqueCalls) {
+  const assigned = new Set(invocations.map(i => i.resultId).filter(Boolean));
+  const pending = new Map();
+  for (const invocation of invocations) {
+    if (invocation.resultId) continue;
+    const group = pending.get(invocation.prompt) ?? [];
+    group.push(invocation); pending.set(invocation.prompt, group);
+  }
+  const byInvocation = new Map(), matches = [];
+  for (const event of recording.unownedEvents.values()) {
+    if (!event.knownTurn || assigned.has(event.item.id)
+      || event.candidateCallIds.some(id => opaqueCalls.has(id))) continue;
+    const scope = new Set(event.candidateCallIds);
+    const candidates = (pending.get(event.item.revisedPrompt) ?? []).filter(invocation =>
+      scope.has(invocation.callId) && bounds.get(invocation) <= event.offset);
+    for (const invocation of candidates) byInvocation.set(invocation, (byInvocation.get(invocation) ?? 0) + 1);
+    // Ambiguous edges still block every involved invocation, but retaining their
+    // complete cross product would defeat the metadata memory bound.
+    if (candidates.length === 1) matches.push({ event, invocation: candidates[0] });
+  }
+  for (const { event, invocation } of matches) {
+    if (byInvocation.get(invocation) !== 1) continue;
+    invocation.resultId = event.item.id;
+    invocation.status = event.item.status === 'failed' || event.item.failure ? 'error' : 'completed';
+    delete invocation.error;
+    if (invocation.status === 'error') invocation.error = typeof event.item.failure === 'string'
+      ? event.item.failure : 'Image generation failed';
+    delete invocation.inputResolutionError;
+  }
+}
+
 async function replayCells(recording, { cells = recording.cells, ...options } = {}) {
   const invocations = [], diagnostics = [];
-  let state, count = 0;
+  const invocationBounds = new WeakMap();
+  const opaqueCalls = new Set();
+  let state, count = 0, stateComplete = true;
   for await (const cell of cells) {
     let result;
-    try { result = await replayCell(recording, cell, { ...options, state }); }
+    try {
+      result = cell.omitted
+        ? { invocations: [], diagnostics: [{ callId: cell.id, unresolved: `Recorded metadata unavailable: ${cell.omitted}` }], stateInvalid: true }
+        : await replayCell(recording, cell, { ...options, state, stateComplete, invocationBounds });
+    }
     catch (error) {
-      result = { invocations: [], diagnostics: [{ callId: cell.id, unresolved: String(error) }], state: undefined };
+      result = { invocations: [], diagnostics: [{ callId: cell.id, unresolved: String(error) }], stateInvalid: true };
     }
     count++;
     state = result.state;
+    // Failure before reaching any image call is not evidence that this exec
+    // had none. Do not let its missing candidates manufacture uniqueness.
+    if (result.stateInvalid && !result.invocations.length) opaqueCalls.add(cell.id);
+    if (result.stateInvalid || !cell.closed) stateComplete = false;
     invocations.push(...result.invocations);
     const resultIds = cell.events.filter(e => e.item.kind === 'image_gen.generation' || e.item.type === 'imageGeneration').map(e => e.item.id);
     diagnostics.push(...result.diagnostics.map(d => ({ ...d, resultIds })));
@@ -263,10 +332,11 @@ async function replayCells(recording, { cells = recording.cells, ...options } = 
     // still have useful evidence, but cannot inherit an unfinished snapshot.
     if (!cell.closed) state = undefined;
   }
+  resolvePendingImages(recording, invocations, invocationBounds, opaqueCalls);
   return { invocations, diagnostics, cells: count };
 }
 
-async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memoryLimitBytes = MAX_STATE, state } = {}) {
+async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memoryLimitBytes = MAX_STATE, state, stateComplete, invocationBounds } = {}) {
   const engine = await getQuickJS();
   const runtime = engine.newRuntime(); runtime.setMemoryLimit(memoryLimitBytes); runtime.setMaxStackSize(512 * 1024);
   let deadline = performance.now() + cellTimeoutMs;
@@ -275,6 +345,8 @@ async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memory
   const vm = runtime.newContext();
   const invocations = [], diagnostics = [];
   let cell, unknown, captured, commandCursor, usedResults;
+  let completedOffset = currentCell.offset;
+  let stateInvalid = false;
   const evaluate = code => {
     const result = vm.evalCode(code);
     if (result.error) {
@@ -306,6 +378,7 @@ async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memory
             ...(event ? { resultId: event.item.id } : {}),
             ...(parsed.numLastImagesToInclude ? { recentImages: cell.recent } : {}) };
           invocations.push(invocation);
+          invocationBounds.set(invocation, completedOffset);
           if (!event && cell.recordedFailure) {
             // Validation can reject before a generation event exists. Preserve
             // the actual rejection and preceding store writes for later retries.
@@ -447,8 +520,15 @@ async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memory
         construct: (target, args) => args.length ? Reflect.construct(target, args) : unrecordedValue(),
         get: (target, key) => key === 'now' ? unrecordedValue : Reflect.get(target, key),
       });
-      const loadState = load;
-      globalThis.load = key => { const reason = __checkStateOrder(); if (reason) throw Error(reason); return loadState(key); };
+      const loadState = load, hasStateKey = __hasStateKey;
+      globalThis.load = key => {
+        const reason = __checkStateOrder(); if (reason) throw Error(reason);
+        if (!${stateComplete === true} && !hasStateKey(key)) {
+          const missing = 'Replay state unavailable: earlier execution could not be reconstructed';
+          __unknown(missing); throw Error(missing);
+        }
+        return loadState(key);
+      };
       globalThis.tools = new Proxy({}, {get: (_, name) => args => {
         const reply = JSON.parse(__recordedTool(String(name), JSON.stringify(args)));
         if (reply.unknown) return Promise.reject(Error(reply.unknown));
@@ -466,7 +546,11 @@ async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memory
       unknown = undefined; captured = 0; commandCursor = 0; usedResults = new Set();
       if (state) evaluate(`__importState(${JSON.stringify(state)});void 0;`);
       deadline = performance.now() + cellTimeoutMs;
-      if (typeof cell.source !== 'string' || cell.source.length > MAX_SOURCE) { state = undefined; continue; }
+      if (typeof cell.source !== 'string' || cell.source.length > MAX_SOURCE) {
+        state = undefined; stateInvalid = true;
+        diagnostics.push({ callId: cell.id, unresolved: 'Recorded JavaScript source exceeds replay limit or is unavailable' });
+        continue;
+      }
       let source;
       try { source = displayOnlySource(cell.source); }
       catch (error) {
@@ -542,6 +626,7 @@ async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memory
               const invocation = calls[0], event = events[0];
               usedResults.add(event.item.id);
               invocation.resultId = event.item.id;
+              completedOffset = Math.max(completedOffset, event.offset);
               invocation.status = event.item.status === 'failed' || event.item.failure ? 'error' : 'completed';
               if (invocation.status === 'error') {
                 invocation.error = typeof event.item.failure === 'string' ? event.item.failure : 'Image generation failed';
@@ -553,33 +638,40 @@ async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memory
             }
             break;
           }
-          evaluate('__jobs.sort((a,b)=>a.order-b.order).shift().run();void 0;');
+          completedOffset = Math.max(completedOffset, evaluate('__jobs.sort((a,b)=>a.order-b.order)[0].order'));
+          evaluate('__jobs.shift().run();void 0;');
         }
         const done = evaluate('__done'), error = evaluate('__error');
         const termination = !done && cell.terminated ? 'Execution was terminated before the remaining calls completed' : undefined;
         diagnostics.push({ callId: cell.id, unresolved: unknown ?? termination, error, done });
         // Unknown tool effects may invalidate old values. Never let later cells
         // use stale bindings after a replay divergence.
-        if (unknown || (!done && cell.closed && !cell.terminated) || (error && !cell.recordedFailure)) evaluate('__clear();void 0;');
+        if (unknown || (!done && cell.closed && !cell.terminated) || (error && !cell.recordedFailure)) {
+          evaluate('__clear();void 0;'); stateInvalid = true;
+        }
         // A closed ambiguous cell must not suppress independent later calls.
         if (!done && cell.closed) {
           for (const invocation of invocations.filter(i => i.callId === cell.id && !i.resultId)) { invocation.status = 'error'; invocation.inputResolutionError = 'Image result association is absent from the recording.'; }
         }
         state = evaluate('__exportState()');
         if (Buffer.byteLength(state) > 8 * 1024 * 1024) throw Error('Replay stored state memory limit exceeded');
-        if (cell.stateOverlap) state = undefined;
+        if (cell.stateOverlap) { state = undefined; stateInvalid = true; }
         if (!cell.closed) break;
       } catch (error) {
         diagnostics.length = 0;
-        if (exited) { state = cell.stateOverlap ? undefined : stateAtExit; diagnostics.push({ callId: cell.id, done: true }); break; }
-        state = undefined;
+        if (exited) {
+          stateInvalid ||= cell.stateOverlap || Boolean(unknown);
+          state = stateInvalid ? undefined : stateAtExit;
+          diagnostics.push({ callId: cell.id, done: true }); break;
+        }
+        state = undefined; stateInvalid = true;
         diagnostics.push({ callId: cell.id, unresolved: String(error) });
         // Dispose this exhausted isolate. The coordinator creates a fresh one
         // for the next cell, including after CPU and heap limit failures.
         break;
       }
     }
-    return { invocations, diagnostics, cells: cellCount, state };
+    return { invocations, diagnostics, cells: cellCount, state, stateInvalid };
   } finally { runtime.setInterruptHandler(() => false); vm.dispose(); runtime.dispose(); }
 }
 

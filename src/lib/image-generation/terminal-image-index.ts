@@ -12,16 +12,18 @@ import type { EnhancedMessage } from '@/types/chat';
 import logger from '@/lib/logger';
 import { appendImage, createImageIndex, type ImageIndexState } from './incremental-state';
 import { cacheImageFile, imageSessionCacheDirectory } from './cache-files';
-import { imageFromTool, isImageGenerationResult, resultImage } from './traces';
+import { imageFromTool, isImageGenerationResult, resultImage, type ResolvedTraceImage } from './traces';
 import { IMAGE_REFERENCE_REPLAY_ENABLED, IMAGE_REFERENCE_REPLAY_VERSION, replayImageReferences } from './replay-worker';
 import { repairReplayedInputs } from './replay-repair';
 import { applyReplayWorkerFailure, UNRESOLVED_INPUT_REFERENCES } from './replay-diagnostics';
 import { readImageTranscriptBatch, type ImageCheckpoint } from './incremental-reader';
 import { normalizeImageTraces } from './trace-identity';
+import { restoreOwnedImages } from './owned-images';
 
 interface SavedState {
   index: ImageIndexState;
   rebuilding?: boolean;
+  rebuildImages?: ResolvedTraceImage[];
   replayOffset?: number;
   replayVersion?: number;
   replayRetryAfter?: number;
@@ -63,6 +65,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
   if (cached && !saved?.rebuilding) index.traces = JSON.parse(cached.cards_json);
   index.traces = normalizeImageTraces(index.traces);
   let rebuilding = saved?.rebuilding ?? false;
+  let rebuildImages = saved?.rebuildImages;
   const replayVersionChanged = saved?.replayVersion !== IMAGE_REFERENCE_REPLAY_VERSION;
   let reset = replayVersionChanged;
   let replayVersion = saved?.replayVersion;
@@ -81,6 +84,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
   const checkpoint: ImageCheckpoint | undefined = cached && sidecarValid ? JSON.parse(cached.source_json) : undefined;
   try {
   const scanned = await readImageTranscriptBatch(filePath, checkpoint, () => {
+    if (cached) rebuildImages ??= index.ledger;
     index = createImageIndex(); decoder = createCodexTranscriptDecoderState(); rebuilding = Boolean(cached); reset = true; replayOffset = -1; replayRetryAfter = 0; sidecarOffset = 0;
   }, async (record, offset) => {
     if (sidecarOffset === 0) await sidecar.truncate(0);
@@ -151,6 +155,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
     }
   }, signal);
   if (sidecarOffset === 0) await sidecar.truncate(0);
+  if (rebuilding && cached) restoreOwnedImages(index, normalizeImageTraces(JSON.parse(cached.cards_json)), rebuildImages ?? []);
   if (!scanned.more && !signal?.aborted && replayOffset !== scanned.checkpoint.offset
     && (scanned.bytesRead > 0 || Date.now() >= replayRetryAfter)) {
     try {
@@ -214,7 +219,7 @@ async function sync(session: SessionRow, userId: string, signal?: AbortSignal): 
   }
   if (!signal?.aborted && (scanned.bytesRead > 0 || !cached || reset || replayOffset !== saved?.replayOffset || replayVersion !== saved?.replayVersion || replayRetryAfter !== saved?.replayRetryAfter)) {
     const keepPrevious = rebuilding && scanned.more;
-    saveImageCache(session.id, scanned.checkpoint, { index: { ...index, traces: keepPrevious ? index.traces : [] }, rebuilding: keepPrevious, replayOffset, replayVersion, replayRetryAfter, sidecarOffset,
+    saveImageCache(session.id, scanned.checkpoint, { index: { ...index, traces: keepPrevious ? index.traces : [] }, rebuilding: keepPrevious, rebuildImages: keepPrevious ? rebuildImages : undefined, replayOffset, replayVersion, replayRetryAfter, sidecarOffset,
       decoder: { readResponseItemConversation: decoder.readResponseItemConversation, pendingToolCalls: [...decoder.pendingToolCalls] } },
     keepPrevious && cached ? JSON.parse(cached.cards_json) : index.traces);
   }

@@ -13,9 +13,14 @@ class MetadataDecoder {
   }
   reset() {
     this.length = 0; this.stack = []; this.string = null; this.primitive = false; this.invalid = false;
+    this.omission = undefined;
+  }
+  discard(reason) {
+    this.length = 0; this.stack = []; this.string = null; this.invalid = true;
+    this.omission = reason;
   }
   emit(bytes) {
-    if (this.length + bytes.length > MAX_METADATA) throw Error('Image replay metadata record exceeds 1 MiB');
+    if (this.length + bytes.length > MAX_METADATA) { this.discard('Image replay metadata record exceeds 1 MiB'); return; }
     if (this.output.length < this.length + bytes.length) {
       const next = Buffer.alloc(Math.min(MAX_METADATA, Math.max(this.output.length * 2, this.length + bytes.length)));
       this.output.copy(next, 0, 0, this.length); this.output = next;
@@ -69,6 +74,11 @@ class MetadataDecoder {
   push(buffer, absoluteOffset) {
     const records = [];
     for (let i = 0; i < buffer.length;) {
+      if (this.omission) {
+        const newline = buffer.indexOf(10, i);
+        if (newline < 0) break;
+        i = newline;
+      }
       const byte = buffer[i];
       if (this.string) {
         const s = this.string;
@@ -104,13 +114,16 @@ class MetadataDecoder {
             }
           } catch { /* Ignore malformed JSONL records, but still advance their byte boundary. */ }
         }
-        if (!records.length || records.at(-1).end !== absoluteOffset + i + 1) records.push({ record: null, offset: this.recordStart, end: absoluteOffset + i + 1 });
+        if (!records.length || records.at(-1).end !== absoluteOffset + i + 1) records.push({
+          record: this.omission || this.invalid || this.length ? {
+            __tesseraOmittedRecord: this.omission ?? 'Malformed JSONL record', __tesseraRecordOffset: this.recordStart,
+          } : null, offset: this.recordStart, end: absoluteOffset + i + 1 });
         this.recordStart = absoluteOffset + i + 1; this.reset(); i++; continue;
       }
       if (this.primitive && [44, 93, 125, 32, 9, 13].includes(byte)) { this.primitive = false; this.consumed(); }
       if (byte === 34) { this.startString(absoluteOffset + i); i++; continue; }
       if (byte === 123 || byte === 91) {
-        if (this.stack.length >= 64) throw Error('Image replay metadata nesting limit exceeded');
+        if (this.stack.length >= 64) { this.discard('Image replay metadata nesting limit exceeded'); i++; continue; }
         this.stack.push({ kind: byte === 123 ? 'object' : 'array', path: this.valuePath(), expectKey: byte === 123, index: 0 });
       }
       else if (byte === 125 || byte === 93) { this.stack.pop(); this.consumed(); }

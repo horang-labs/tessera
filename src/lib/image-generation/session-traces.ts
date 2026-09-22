@@ -64,11 +64,14 @@ export async function ensureTraceInputAgentPaths(
   const inputDir = join(tmpdir(), 'tessera-image-generation-inputs', userKey);
 
   await Promise.all(traces.flatMap((trace) => [...trace.inputs, ...(trace.result ? [trace.result] : [])].map(async (input) => {
-    if (input.agentPath || input.locator.kind === 'transcript') return;
     if (input.locator.kind === 'cache') {
-      input.agentPath = normalizeCwdForCliEnvironment(input.locator.path, environment);
+      // An owned copy may outlive the CLI's temporary source. Thumbnails and
+      // path insertion must refer to the same surviving file.
+      if (input.locator.path) input.agentPath = normalizeCwdForCliEnvironment(input.locator.path, environment);
+      else delete input.agentPath;
       return;
     }
+    if (input.agentPath || input.locator.kind === 'transcript') return;
     if (input.locator.kind === 'path') {
       input.agentPath = input.locator.path;
       return;

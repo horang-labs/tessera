@@ -6,7 +6,7 @@ import type { ReplayDiagnostic } from './replay-diagnostics';
 // Metadata-only replay passed the bounded RSS and recorded-image regressions.
 export const IMAGE_REFERENCE_REPLAY_ENABLED = true;
 // Bump when replay semantics change so unchanged recordings are re-evaluated.
-export const IMAGE_REFERENCE_REPLAY_VERSION = 3;
+export const IMAGE_REFERENCE_REPLAY_VERSION = 5;
 
 interface ReplayResult {
   invocations: ReplayedInvocation[];

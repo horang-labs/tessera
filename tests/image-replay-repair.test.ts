@@ -5,6 +5,7 @@ import type { ImageIndexState } from '../src/lib/image-generation/incremental-st
 import type { ImageGenerationTrace } from '../src/lib/image-generation/traces';
 import { applyReplayWorkerFailure, replayFailureReason, UNRESOLVED_INPUT_REFERENCES } from '../src/lib/image-generation/replay-diagnostics';
 import { normalizeImageTraces } from '../src/lib/image-generation/trace-identity';
+import { restoreOwnedImages } from '../src/lib/image-generation/owned-images';
 
 const timestamp = '2026-09-13T00:00:00.000Z';
 const trace = (id: string, extra: Partial<ImageGenerationTrace> = {}): ImageGenerationTrace => ({
@@ -167,6 +168,28 @@ test('unavailable recent images report reconstruction failure without invented c
   repairReplayedInputs(index, [invocation(0, { referencedImagePaths: undefined, numLastImagesToInclude: 3 })]);
   assert.ok(index.traces[0].inputResolutionError);
   assert.equal(index.traces[0].unresolvedInputCount, 0);
+});
+
+test('a known recent occurrence with absent image bytes reports a missing input instead of a broken thumbnail', () => {
+  const index = state([]);
+  repairReplayedInputs(index, [invocation(0, { referencedImagePaths: undefined, numLastImagesToInclude: 1,
+    recentImages: [{ source: 'conversation', label: 'Conversation image', sourceMessageId: 'user-image', locator: { kind: 'cache', path: '' } }] })]);
+  assert.equal(index.traces[0].inputs.length, 0);
+  assert.equal(index.traces[0].unresolvedInputCount, 1);
+});
+
+test('rebuilding cannot resurrect removed results, offset-only user images or conflicting owned files', () => {
+  const owned = { source: 'generated' as const, label: 'Generated image', sourceMessageId: 'hist-tool-one', locator: { kind: 'cache' as const, path: '/one.png' } };
+  const index = state([trace('result-hist-tool-two', { resultMessageId: 'two' })]);
+  index.ledger = [{ ...owned, sourceMessageId: 'hist-tool-two', locator: { kind: 'cache', path: '' } },
+    { source: 'conversation', sourceMessageId: 'image-42-0', label: 'Image', locator: { kind: 'cache', path: '' } }];
+  restoreOwnedImages(index, [trace('result-hist-tool-one', { result: owned, resultMessageId: 'one' })],
+    [owned, { ...index.ledger[1], locator: { kind: 'cache', path: '/old-offset-image.png' } }]);
+  assert.equal(index.traces.length, 1); assert.equal(index.traces[0].result, undefined);
+  assert.ok(index.ledger.every(i => i.locator.kind === 'cache' && !i.locator.path));
+  index.traces = [trace('result-hist-tool-one', { resultMessageId: 'one' })];
+  restoreOwnedImages(index, [], [owned, { ...owned, locator: { kind: 'cache', path: '/conflicting.png' } }]);
+  assert.equal(index.traces[0].result, undefined);
 });
 
 test('recent inline and path inputs are returned for caching', () => {
