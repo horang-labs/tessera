@@ -11,7 +11,7 @@ const runtimeFiles = [workerPath, 'runtime/image-reference-replay.cjs', 'runtime
 async function verifyImageReplayRuntime(source) {
   const archive = source.endsWith('.asar');
   const entries = archive ? asar.listPackage(source).map(entry => entry.replace(/^[/\\]+/, '').replaceAll('\\', '/')) : [];
-  const read = async relative => archive ? asar.extractFile(source, relative) : fs.readFile(path.join(source, relative));
+  const read = async relative => archive ? asar.extractFile(source, path.normalize(relative)) : fs.readFile(path.join(source, relative));
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-image-runtime-'));
   try {
     // Node resolves modules through real paths (macOS /var -> /private/var).
@@ -36,7 +36,7 @@ async function verifyImageReplayRuntime(source) {
       const manifest = JSON.parse((await read(`${prefix}/package.json`)).toString());
       if (archive) {
         for (const entry of entries.filter(entry => entry.startsWith(`${prefix}/`))) {
-          const stat = asar.statFile(source, entry);
+          const stat = asar.statFile(source, path.normalize(entry));
           if (stat.files) continue;
           if (stat.link) throw Error(`Unexpected runtime symlink: ${entry}`);
           await copy(entry);
