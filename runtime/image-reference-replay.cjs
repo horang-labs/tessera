@@ -3,6 +3,7 @@
 // This module runs only in the replay worker. Transcript code never runs in Node.
 const { getQuickJS } = require('quickjs-emscripten');
 const { parse } = require('acorn');
+const { BOOTSTRAP: STATE_CODEC } = require('./replay-state-codec.cjs');
 const { MetadataDecoder, readMetadataRecords } = require('./image-record-reader.cjs');
 const { createHash } = require('node:crypto');
 const fs = require('node:fs/promises');
@@ -54,10 +55,24 @@ function displayOnlySource(source) {
   return source;
 }
 
+// Calls overlap when a yielded exec is still alive while another exec starts.
+// Shared-state ordering cannot be inferred by running each whole cell in turn.
+function mayUseSharedState(source) {
+  try {
+    const visit = node => {
+      if (!node || typeof node !== 'object') return false;
+      if (node.type === 'ThisExpression' || node.type === 'Identifier' && ['store', 'load', 'eval', 'Function', 'globalThis'].includes(node.name)) return true;
+      return Object.values(node).some(value => Array.isArray(value) ? value.some(visit) : visit(value));
+    };
+    return visit(parse(source, { ecmaVersion: 'latest', sourceType: 'module' }));
+  } catch { return true; }
+}
+
 class Recording {
   constructor() {
-    this.cells = []; this.active = new Map(); this.yielded = new Map(); this.waits = new Map(); this.hints = new Map(); this.resultKeys = new Map(); this.offset = 0;
+    this.cells = []; this.active = new Map(); this.yielded = new Map(); this.hints = new Map(); this.resultKeys = new Map(); this.offset = 0;
     this.images = []; this.generation = 0; this.metadataBytes = 0; this.retainedBytes = 0;
+    this.unownedEvents = new Map();
   }
   append(raw, offset) {
     let record;
@@ -70,6 +85,8 @@ class Recording {
     offset = record.__tesseraRecordOffset ?? offset;
     const p = record.payload;
     if (!isObject(p)) return;
+    if ((record.type === 'turn_context' || (record.type === 'event_msg' && p.type === 'task_started'))
+      && typeof p.turn_id === 'string') this.turnId = p.turn_id;
     const timestamp = record.timestamp ?? '';
     const retain = () => {
       this.retainedBytes += Buffer.byteLength(JSON.stringify(record));
@@ -92,6 +109,11 @@ class Recording {
       if (this.metadataBytes > 16 * 1024 * 1024) throw Error('Replay source limit exceeded');
       retain();
       const cell = { id: p.call_id, source: p.input, timestamp, offset, events: [], output: undefined, closed: false, recent: this.images.slice(-5) };
+      cell.turnId = this.turnId;
+      cell.mayUseState = mayUseSharedState(p.input);
+      for (const other of new Set([...this.active.values(), ...this.yielded.values()])) {
+        if (cell.mayUseState && other.mayUseState) cell.stateOverlap = other.stateOverlap = true;
+      }
       this.cells.push(cell); this.active.set(p.call_id, cell); this.generation++;
       return;
     }
@@ -103,6 +125,7 @@ class Recording {
         // Yielded execs need an explicit continuation association; do not pretend
         // the output closes the computation or associate later images by timing.
         cell.yielded = textBlocks(p.output).some(t => /Script running with cell ID/.test(t));
+        cell.terminated = textBlocks(p.output).some(t => /^Script terminated|^aborted by user/.test(t));
         cell.closed = !cell.yielded; this.active.delete(p.call_id); this.generation++;
         const yieldedId = textBlocks(p.output).map(t => t.match(/Script running with cell ID ([\w-]+)/)?.[1]).find(Boolean);
         if (yieldedId) this.yielded.set(yieldedId, cell);
@@ -118,6 +141,12 @@ class Recording {
             const id = hint.match(/\/(exec-[\w-]+)\.png\b/)?.[1];
             if (id && hint.length < 8192) {
               this.hints.set(id, hint); this.generation++;
+              // A returned result ID identifies its exec even while other
+              // yielded execs are still alive. Never assign by arrival order.
+              if (cell && this.unownedEvents.has(id)) {
+                cell.events.push(this.unownedEvents.get(id));
+                this.unownedEvents.delete(id);
+              }
               if (Array.isArray(value?.keys) && value.keys.every(key => typeof key === 'string')) this.resultKeys.set(id, value.keys);
             }
           }
@@ -128,8 +157,10 @@ class Recording {
     const item = p.item;
     if (record.type === 'event_msg' && p.type === 'item_completed' && isObject(item)) {
       const generation = item.kind === 'image_gen.generation' || item.type === 'imageGeneration';
-      const active = new Set([...this.active.values(), ...this.yielded.values()]);
+      const active = new Set([...this.active.values(), ...this.yielded.values()].filter(cell =>
+        !p.turn_id || !cell.turnId || cell.turnId === p.turn_id));
       if (active.size === 1) { retain(); active.values().next().value.events.push({ item, offset }); }
+      else if (generation && typeof item.id === 'string') { retain(); this.unownedEvents.set(item.id, { item, offset }); }
       this.generation++;
       if (generation && item.status !== 'failed' && !item.failure && (item.savedPath || item.result?.__tesseraImage?.length > 0)) {
         this.images.push({ sourceMessageId: `hist-tool-${item.id}`, source: 'generated', label: 'Generated image',
@@ -160,9 +191,8 @@ async function prefixHash(file, offset) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
-// Read bounded windows and release each completed prefix after replay. The VM
-// remains alive across windows, so store/load can retain Maps, proxies and other
-// values without serializing them or keeping the transcript that created them.
+// Read bounded windows and release each completed prefix after replay. Only the
+// bounded store snapshot crosses cell boundaries, never their source or globals.
 async function* streamCells(recording, filePath, end) {
   let offset = 0, count = 0;
   while (offset < end) {
@@ -183,7 +213,7 @@ async function* streamCells(recording, filePath, end) {
     // Only unfinished calls count toward the retained-record limit. Include
     // their complete metadata, not just their JavaScript source.
     recording.metadataBytes = recording.cells.reduce((n, cell) => n + Buffer.byteLength(cell.source ?? ''), 0);
-    recording.retainedBytes = Buffer.byteLength(JSON.stringify(recording.cells));
+    recording.retainedBytes = Buffer.byteLength(JSON.stringify([recording.cells, [...recording.unownedEvents.values()]]));
   }
   for (const cell of recording.cells) {
     if (++count > MAX_CELLS) throw Error('Replay cell limit exceeded');
@@ -215,11 +245,33 @@ class ReplaySession {
   }
 }
 
-async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes = MAX_STATE, cells = recording.cells } = {}) {
+async function replayCells(recording, { cells = recording.cells, ...options } = {}) {
+  const invocations = [], diagnostics = [];
+  let state, count = 0;
+  for await (const cell of cells) {
+    let result;
+    try { result = await replayCell(recording, cell, { ...options, state }); }
+    catch (error) {
+      result = { invocations: [], diagnostics: [{ callId: cell.id, unresolved: String(error) }], state: undefined };
+    }
+    count++;
+    state = result.state;
+    invocations.push(...result.invocations);
+    const resultIds = cell.events.filter(e => e.item.kind === 'image_gen.generation' || e.item.type === 'imageGeneration').map(e => e.item.id);
+    diagnostics.push(...result.diagnostics.map(d => ({ ...d, resultIds })));
+    // A missing terminal output is local to this exec. Later independent calls
+    // still have useful evidence, but cannot inherit an unfinished snapshot.
+    if (!cell.closed) state = undefined;
+  }
+  return { invocations, diagnostics, cells: count };
+}
+
+async function replayCell(recording, currentCell, { cellTimeoutMs = 2000, memoryLimitBytes = MAX_STATE, state } = {}) {
   const engine = await getQuickJS();
   const runtime = engine.newRuntime(); runtime.setMemoryLimit(memoryLimitBytes); runtime.setMaxStackSize(512 * 1024);
   let deadline = performance.now() + cellTimeoutMs;
-  runtime.setInterruptHandler(() => performance.now() > deadline);
+  let exited = false, stateAtExit;
+  runtime.setInterruptHandler(() => exited || performance.now() > deadline);
   const vm = runtime.newContext();
   const invocations = [], diagnostics = [];
   let cell, unknown, captured, commandCursor, usedResults;
@@ -234,6 +286,7 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
   const unknownValue = reason => { unknown = reason; return { unknown: reason }; };
   const native = vm.newFunction('__recordedTool', (nameHandle, argsHandle) => {
     try {
+      if (exited) return vm.newString(JSON.stringify({ unknown: 'Execution already exited' }));
       const name = vm.getString(nameHandle), encoded = vm.getString(argsHandle);
       if (encoded.length > MAX_ARGUMENTS) return vm.newString(JSON.stringify(unknownValue('Tool arguments exceeded replay limit')));
       const args = JSON.parse(encoded);
@@ -272,7 +325,7 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
         const block = cell.images[index];
         if (index >= 0 && block && viewEvents.length === cell.images.length) {
           usedResults.add(`view:${index}`);
-          reply = { valueRef: `view:${index}`, partial: true };
+          reply = { order: viewEvents[index].offset, valueRef: `view:${index}`, partial: true };
         } else reply = cell.recordedFailure ? { rejection: cell.recordedFailure } : unknownValue('Image view return is absent or does not match the requested path');
       } else if (name === 'exec_command' || name === 'write_stdin') {
         const commandEvents = cell.events.filter(e => e.item.type === 'CommandExecution');
@@ -281,9 +334,9 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
           const item = matches[0].item;
           const output = item.formatted_output ?? item.aggregated_output;
           const observed = cell.commands.filter(c => c.output === output);
-          if (observed.length === 1) reply = { value: observed[0], partial: true };
-          else if (commandEvents.length === 1 && cell.commands.length === 1) reply = { value: cell.commands[0], partial: true };
-          else if (typeof output === 'string') reply = { value: { output, exit_code: item.exit_code }, partial: true };
+          if (observed.length === 1) reply = { order: matches[0].offset, value: observed[0], partial: true };
+          else if (commandEvents.length === 1 && cell.commands.length === 1) reply = { order: matches[0].offset, value: cell.commands[0], partial: true };
+          else if (typeof output === 'string') reply = { order: matches[0].offset, value: { output, exit_code: item.exit_code }, partial: true };
           else reply = unknownValue('Command return is absent from the recording');
         } else if (!commandEvents.length && cell.commands.length === 1 && commandCursor++ === 0) {
           reply = { value: cell.commands[0], partial: true };
@@ -304,21 +357,56 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
   });
   const mark = vm.newFunction('__unknown', value => { unknown = vm.getString(value); return vm.undefined; });
   vm.setProp(vm.global, '__recordedTool', native); native.dispose(); vm.setProp(vm.global, '__unknown', mark); mark.dispose();
+  const exitNative = vm.newFunction('__requestExit', encoded => {
+    stateAtExit = vm.getString(encoded);
+    if (Buffer.byteLength(stateAtExit) > 8 * 1024 * 1024) throw Error('Replay stored state memory limit exceeded');
+    exited = true; return vm.undefined;
+  });
+  vm.setProp(vm.global, '__requestExit', exitNative); exitNative.dispose();
+  const yieldNative = vm.newFunction('__canResumeYield', () => {
+    const remaining = cell.events.some(e => (e.item.kind === 'image_gen.generation' || e.item.type === 'imageGeneration') && !usedResults.has(e.item.id));
+    return !cell.terminated || remaining ? vm.true : vm.false;
+  });
+  vm.setProp(vm.global, '__canResumeYield', yieldNative); yieldNative.dispose();
+  const checkState = vm.newFunction('__checkStateOrder', () => {
+    if (cell.stateOverlap) {
+      unknown = 'Concurrent execution state ordering is unavailable';
+      return vm.newString(unknown);
+    }
+    return vm.undefined;
+  });
+  vm.setProp(vm.global, '__checkStateOrder', checkState); checkState.dispose();
   try {
+    evaluate(STATE_CODEC);
     evaluate(`(() => {
-      const values = new Map();
-      globalThis.store = (key, value) => values.set(key, value);
-      globalThis.load = key => values.get(key);
-      globalThis.__clear = () => values.clear();
       const displayImage = () => {};
       globalThis.image = displayImage;
-      globalThis.text = globalThis.generatedImage = () => {};
+      globalThis.text = globalThis.generatedImage = globalThis.audio = globalThis.notify = () => {};
+      globalThis.yield_control = () => __canResumeYield() ? Promise.resolve() : new Promise(() => {});
+      globalThis.exit = () => { __requestExit(__exportState()); throw Error('Replay exit'); };
+      Object.defineProperty(globalThis, 'ALL_TOOLS', { get() {
+        const reason = 'Historical tool catalog is absent from the recording'; __unknown(reason); throw Error(reason);
+      }});
+      let timerId = 0, clock = 0;
+      const timers = new Map();
+      globalThis.setTimeout = (fn, delay = 0) => {
+        if (typeof fn !== 'function') throw TypeError('Timer callback must be a function');
+        const id = ++timerId;
+        timers.set(id, { at: clock + Math.max(0, Number(delay) || 0), fn });
+        return id;
+      };
+      globalThis.clearTimeout = id => { timers.delete(id); };
+      globalThis.__timerCount = () => timers.size;
+      globalThis.__runTimer = () => {
+        const [id, timer] = [...timers].sort((a,b) => a[1].at-b[1].at || a[0]-b[0])[0];
+        timers.delete(id); clock = timer.at; timer.fn();
+      };
       const targets = new WeakMap();
       let enumeration = 0;
       const keys = Object.keys;
       Object.keys = value => { enumeration++; try { return keys(value); } finally { enumeration--; } };
       globalThis.__displayImage = (fn, value) => {
-        if (fn === displayImage && targets.get(value)?.image_url?.__tesseraOmittedImage) return;
+        if (fn === displayImage && targets.get(value)?.raw.image_url?.__tesseraOmittedImage) return;
         return fn(value.image_url);
       };
       globalThis.__jobs = []; globalThis.__done = false; globalThis.__error = null;
@@ -348,7 +436,19 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
           if (complete) return Reflect.ownKeys(target);
           const reason = 'Unrecorded return field enumeration'; __unknown(reason); throw Error(reason);
         }
-      }); targets.set(proxy, value); return proxy; };
+      }); targets.set(proxy, { raw: value, complete }); return proxy; };
+      __installReplayStateCodec({ unwrap: value => targets.get(value), wrap: partial });
+      const unrecordedValue = () => {
+        const reason = 'Historical clock or random value is absent from the recording'; __unknown(reason); throw Error(reason);
+      };
+      Math.random = unrecordedValue;
+      Date = new Proxy(Date, {
+        apply: unrecordedValue,
+        construct: (target, args) => args.length ? Reflect.construct(target, args) : unrecordedValue(),
+        get: (target, key) => key === 'now' ? unrecordedValue : Reflect.get(target, key),
+      });
+      const loadState = load;
+      globalThis.load = key => { const reason = __checkStateOrder(); if (reason) throw Error(reason); return loadState(key); };
       globalThis.tools = new Proxy({}, {get: (_, name) => args => {
         const reply = JSON.parse(__recordedTool(String(name), JSON.stringify(args)));
         if (reply.unknown) return Promise.reject(Error(reply.unknown));
@@ -361,10 +461,22 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
       }});
     })();void 0;`);
     let cellCount = 0;
-    for await (cell of cells) {
+    for (cell of [currentCell]) {
       cellCount++;
       unknown = undefined; captured = 0; commandCursor = 0; usedResults = new Set();
-      if (typeof cell.source !== 'string' || cell.source.length > MAX_SOURCE) { evaluate('__clear();void 0;'); continue; }
+      if (state) evaluate(`__importState(${JSON.stringify(state)});void 0;`);
+      deadline = performance.now() + cellTimeoutMs;
+      if (typeof cell.source !== 'string' || cell.source.length > MAX_SOURCE) { state = undefined; continue; }
+      let source;
+      try { source = displayOnlySource(cell.source); }
+      catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        // Parsing precedes execution: none of this cell's store writes or tool
+        // calls happened. Keep prior state and continue with a corrected retry.
+        diagnostics.push({ callId: cell.id, unresolved: String(error) });
+        if (!cell.closed) break;
+        continue;
+      }
       cell.texts = textBlocks(cell.output);
       cell.json = cell.texts.flatMap(t => { try { return [JSON.parse(t)]; } catch { return []; } });
       cell.commands = cell.json.filter(o => isObject(o) && typeof o.output === 'string' && ('exit_code' in o || 'session_id' in o));
@@ -384,15 +496,23 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
             && keys.every(key => Object.hasOwn(recordedValues[`generation:${item.id}`], key));
         }
         evaluate(`__completeValues=${JSON.stringify(completeValues)};__recordedValues=${JSON.stringify(recordedValues)};__jobs=[];__pending={};__done=false;__error=null;void 0;`);
-        evaluate(`(async()=>{${displayOnlySource(cell.source)}\n})().then(()=>__done=true,e=>{__done=true;__error=String(e)});void 0;`);
+        evaluate(`(async()=>{${source}\n})().then(()=>__done=true,e=>{__done=true;__error=String(e)});void 0;`);
         for (;;) {
-          while (runtime.hasPendingJob()) {
-            const result = runtime.executePendingJobs();
+          if (exited) throw Error('Replay exit');
+          while (runtime.hasPendingJob() && !evaluate('__done')) {
+            const result = runtime.executePendingJobs(1);
             if (result.error) {
               let error; try { error = vm.dump(result.error); } finally { result.error.dispose(); }
               throw Error(error?.message ?? 'Replay interrupted');
             }
           }
+          if (exited) throw Error('Replay exit');
+          if (evaluate('__done')) break;
+          const timers = evaluate('__timerCount()');
+          if (timers && (evaluate('__jobs.length') || Object.keys(evaluate('__pending')).length)) {
+            unknown = 'Timer and recorded tool completion ordering is unavailable'; break;
+          }
+          if (timers) { evaluate('__runTimer();void 0;'); continue; }
           const currentCalls = invocations.filter(i => i.callId === cell.id);
           const queuedOrders = evaluate('__jobs.map(job=>job.order)');
           const ambiguous = currentCalls.filter(i => i.resultId
@@ -436,22 +556,30 @@ async function replayCells(recording, { cellTimeoutMs = 2000, memoryLimitBytes =
           evaluate('__jobs.sort((a,b)=>a.order-b.order).shift().run();void 0;');
         }
         const done = evaluate('__done'), error = evaluate('__error');
-        diagnostics.push({ callId: cell.id, unresolved: unknown, error, done });
+        const termination = !done && cell.terminated ? 'Execution was terminated before the remaining calls completed' : undefined;
+        diagnostics.push({ callId: cell.id, unresolved: unknown ?? termination, error, done });
         // Unknown tool effects may invalidate old values. Never let later cells
         // use stale bindings after a replay divergence.
-        if (unknown || (!done && cell.closed) || (error && !cell.recordedFailure)) evaluate('__clear();void 0;');
+        if (unknown || (!done && cell.closed && !cell.terminated) || (error && !cell.recordedFailure)) evaluate('__clear();void 0;');
         // A closed ambiguous cell must not suppress independent later calls.
         if (!done && cell.closed) {
           for (const invocation of invocations.filter(i => i.callId === cell.id && !i.resultId)) { invocation.status = 'error'; invocation.inputResolutionError = 'Image result association is absent from the recording.'; }
         }
+        state = evaluate('__exportState()');
+        if (Buffer.byteLength(state) > 8 * 1024 * 1024) throw Error('Replay stored state memory limit exceeded');
+        if (cell.stateOverlap) state = undefined;
         if (!cell.closed) break;
       } catch (error) {
+        diagnostics.length = 0;
+        if (exited) { state = cell.stateOverlap ? undefined : stateAtExit; diagnostics.push({ callId: cell.id, done: true }); break; }
+        state = undefined;
         diagnostics.push({ callId: cell.id, unresolved: String(error) });
-        // CPU/heap exhaustion invalidates the whole isolate; do not continue it.
+        // Dispose this exhausted isolate. The coordinator creates a fresh one
+        // for the next cell, including after CPU and heap limit failures.
         break;
       }
     }
-    return { invocations, diagnostics, cells: cellCount };
+    return { invocations, diagnostics, cells: cellCount, state };
   } finally { runtime.setInterruptHandler(() => false); vm.dispose(); runtime.dispose(); }
 }
 

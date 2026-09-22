@@ -85,6 +85,19 @@ export function pickLatestVersion(versions: Iterable<string>): string | null {
 
 export function isNewerVersion(candidate: string | null, current: string): boolean {
   if (!candidate) return false;
-  if (!parseVersion(candidate) || !parseVersion(current)) return false;
+  const parsedCandidate = parseVersion(candidate);
+  const parsedCurrent = parseVersion(current);
+  if (!parsedCandidate || !parsedCurrent) return false;
+
+  // Hotfix builds are opt-in replacements for their base release. Semver ranks
+  // that release higher, but prompting to install it would undo the hotfix.
+  if (
+    parsedCurrent.prerelease[0] === 'hotfix'
+    && parsedCandidate.prerelease.length === 0
+    && parsedCandidate.major === parsedCurrent.major
+    && parsedCandidate.minor === parsedCurrent.minor
+    && parsedCandidate.patch === parsedCurrent.patch
+  ) return false;
+
   return compareVersions(candidate, current) > 0;
 }

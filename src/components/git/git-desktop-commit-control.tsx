@@ -88,7 +88,9 @@ export function GitWorkingTreeDiffStatButton({
       data-testid="desktop-commit-diff-stat"
       className="hidden h-full shrink-0 items-center gap-1.5 border-l border-(--divider) px-2.5 font-mono text-[11px] font-medium tabular-nums transition-colors hover:bg-(--sidebar-hover) xl:flex"
     >
-      <span className="text-(--status-success-text)">+{formatCompactCount(stats.added)}</span>
+      <span className="text-(--status-success-text)">
+        +{formatCompactCount(stats.added)}{stats.addedLinesIncomplete ? "…" : ""}
+      </span>
       <span className="text-(--status-error-text)">−{formatCompactCount(stats.removed)}</span>
     </button>
   );
@@ -211,7 +213,7 @@ function GitDesktopCommitControlView({
 
   const composerLabel = t("gitPanel.commit.composerLabel", { worktree: worktreeName });
   const diffLabel = t("gitPanel.commit.diffStatLabel", {
-    added: stats?.added ?? 0,
+    added: stats?.addedLinesIncomplete ? `≥${stats.added}` : (stats?.added ?? 0),
     removed: stats?.removed ?? 0,
     files: stats?.changedFiles ?? 0,
   });

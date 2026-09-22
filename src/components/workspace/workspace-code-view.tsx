@@ -381,6 +381,7 @@ export function WorkspaceCodeView({
   const [isFindOpen, setIsFindOpen] = useState(false);
   const [monacoFindRequest, setMonacoFindRequest] = useState(0);
   const markdownContentRef = useRef<HTMLDivElement>(null);
+  const markdownViewportRef = useRef<HTMLDivElement>(null);
   const loadedContent =
     mode === "diff"
       ? (data as GitDiffData | null)?.diff ?? ""
@@ -456,8 +457,14 @@ export function WorkspaceCodeView({
     if (target instanceof Element && target.closest(".monaco-editor")) return;
     // Let mouse events reach panel activation without stealing native media or toolbar focus.
     if (target instanceof Element && target.closest('[data-testid="workspace-video-viewer"]')) return;
+    if (shouldRenderMarkdownPreview) {
+      // Native arrow-key scrolling applies to the focused scroll container.
+      // The preview viewport is separate from this root so it needs focus itself.
+      markdownViewportRef.current?.focus({ preventScroll: true });
+      return;
+    }
     event.currentTarget.focus({ preventScroll: true });
-  }, []);
+  }, [shouldRenderMarkdownPreview]);
 
   async function copyContent() {
     try {
@@ -708,7 +715,11 @@ export function WorkspaceCodeView({
           </div>
         </div>
       ) : null}
-      <div className={shouldRenderMarkdownPreview ? "relative min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}>
+      <div
+        ref={markdownViewportRef}
+        className={shouldRenderMarkdownPreview ? "relative min-h-0 flex-1 overflow-auto" : "min-h-0 flex-1 overflow-hidden"}
+        tabIndex={shouldRenderMarkdownPreview ? 0 : undefined}
+      >
         {imageRawUrl && fileData ? (
           <WorkspaceImageViewer
             key={imageRawUrl}

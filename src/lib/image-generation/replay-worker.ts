@@ -1,13 +1,16 @@
 import { Worker } from 'node:worker_threads';
 import path from 'node:path';
 import type { ReplayedInvocation } from './replay-repair';
+import type { ReplayDiagnostic } from './replay-diagnostics';
 
 // Metadata-only replay passed the bounded RSS and recorded-image regressions.
 export const IMAGE_REFERENCE_REPLAY_ENABLED = true;
+// Bump when replay semantics change so unchanged recordings are re-evaluated.
+export const IMAGE_REFERENCE_REPLAY_VERSION = 3;
 
 interface ReplayResult {
   invocations: ReplayedInvocation[];
-  diagnostics: Array<{ callId: string; unresolved?: string; error?: string; done?: boolean }>;
+  diagnostics: ReplayDiagnostic[];
   cells: number;
 }
 interface ReplayRequest { sessionId: string; path: string; offset: number; reset?: boolean }

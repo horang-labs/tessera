@@ -35,3 +35,20 @@ test('commit message generation is attached to the message input rather than the
   const footer = markup.match(/data-testid="git-commit-footer"[^>]*>([\s\S]*)<\/div><\/div>$/)?.[1] ?? '';
   assert.doesNotMatch(footer, /data-testid="git-commit-generate-button"/);
 });
+
+test('commit selection does not present skipped untracked lines as an exact total', () => {
+  const markup = renderToStaticMarkup(createElement(GitCommitForm, {
+    pendingVerb: null,
+    generateError: null,
+    generating: false,
+    message: '',
+    onCommit: () => {},
+    onGenerate: () => {},
+    onMessageChange: () => {},
+    primaryAction: commitAction,
+    totals: { files: 1000, added: 286, addedIncomplete: true, removed: 102 },
+  }));
+
+  assert.match(markup, />\+286…</);
+  assert.match(markup, /Some untracked files were not opened for line counting/);
+});

@@ -237,7 +237,11 @@ export function ImageGenerationTraceCard({
               </p>
             ) : null}
             {trace.inputResolutionError ? (
-              <p className="flex items-center gap-1 text-[10px] text-amber-600"><AlertTriangle className="h-3 w-3" />{t("imagePanel.inputResolutionFailed")}</p>
+              <p className="flex items-start gap-1 text-[10px] text-amber-600">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>{trace.inputResolutionError === "Input references could not be reconstructed from this recording."
+                  ? t("imagePanel.inputResolutionFailed") : trace.inputResolutionError}</span>
+              </p>
             ) : trace.unresolvedInputCount > 0 ? (
               <p className="flex items-center gap-1 text-[10px] text-amber-600"><AlertTriangle className="h-3 w-3" />{t("imagePanel.unresolved", { count: trace.unresolvedInputCount })}</p>
             ) : null}

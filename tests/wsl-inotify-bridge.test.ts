@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import type { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import {
   buildWslInotifyArguments,
@@ -7,8 +10,64 @@ import {
   parseWslRunningDistros,
   parseWslUncRoot,
   SharedWslInotifyBridgePool,
+  WslInotifyBridge,
   type WslInotifyBridgeOptions,
 } from '@/lib/workspace-files/wsl-inotify-bridge';
+
+function fakeChild(): ChildProcess {
+  const child = new EventEmitter() as ChildProcess;
+  Object.assign(child, {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: () => true,
+  });
+  return child;
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for bridge state');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test('bridge retries registration when inotifywait exits before establishing watches', async () => {
+  const children: ChildProcess[] = [];
+  const downReasons: string[] = [];
+  let established = 0;
+  const bridge = new WslInotifyBridge({
+    root: { distro: 'Ubuntu-24.04', posixPath: '/home/work/project' },
+    onEvent: () => {},
+    onEstablished: () => { established += 1; },
+    onDown: (reason) => downReasons.push(reason),
+  }, {
+    spawnProcess: () => {
+      const child = fakeChild();
+      children.push(child);
+      queueMicrotask(() => {
+        if (children.length === 1) {
+          child.emit('close', 1);
+        } else {
+          child.stderr?.emit('data', Buffer.from('Watches established.\n'));
+        }
+      });
+      return child;
+    },
+    isDistroRunning: async () => true,
+    restartDelayMs: 1,
+  });
+
+  try {
+    bridge.start();
+    await waitUntil(() => established === 1);
+    assert.equal(children.length, 2);
+    assert.equal(downReasons.length, 1);
+    assert.match(downReasons[0]!, /before watches were established \(exit 1\)/);
+  } finally {
+    bridge.stop();
+  }
+});
 
 test('shared bridge pool retains one WSL process for identical roots', async () => {
   let created = 0;

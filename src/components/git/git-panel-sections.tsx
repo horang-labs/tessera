@@ -75,7 +75,8 @@ function formatDiffMetric(
   changedFileCount: number,
 ): string {
   if (!data.diffStats) return String(changedFileCount);
-  return `+${formatShortCount(data.diffStats.added)} -${formatShortCount(data.diffStats.removed)} / ${data.diffStats.changedFiles}`;
+  const addedSuffix = data.diffStats.addedLinesIncomplete ? "…" : "";
+  return `+${formatShortCount(data.diffStats.added)}${addedSuffix} -${formatShortCount(data.diffStats.removed)} / ${data.diffStats.changedFiles}`;
 }
 
 function formatPrState(state: NonNullable<GitPanelData["prStatus"]>["state"]): string {
@@ -715,7 +716,7 @@ export function GitPanelContentSection({
     onSetAllSelected: (selected: boolean) => void;
     onSetSelected: (paths: readonly string[], selected: boolean) => void;
     selectionKey: string | null;
-    totals: { files: number; added: number; removed: number };
+    totals: { files: number; added: number; addedIncomplete?: boolean; removed: number };
   };
   conflictHandoff: {
     available: boolean;

@@ -11,6 +11,7 @@ import remarkGfm from 'remark-gfm';
 import type { PluggableList } from 'unified';
 import { renderMarkdownCode, renderMarkdownPre } from './markdown-code';
 import { MarkdownLink } from './markdown-link';
+import { PreviewMarkdownImage } from './preview-markdown-image';
 
 const PREVIEW_MARKDOWN_REMARK_PLUGINS: PluggableList = [[remarkGfm, { singleTilde: false }]];
 type PreviewMarkdownCodeProps = ComponentProps<'code'> & { node?: unknown };
@@ -320,11 +321,11 @@ function createPreviewMarkdownComponents(
         : 'my-3 max-h-[32rem] max-w-full rounded-md border border-(--divider) object-contain first:mt-0 last:mb-0';
 
       return (
-        <img
+        <PreviewMarkdownImage
+          key={resolvedSrc}
           src={resolvedSrc}
           alt={alt ?? ''}
           title={title}
-          loading="lazy"
           className={imageClassName}
         />
       );

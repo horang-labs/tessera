@@ -18,10 +18,6 @@ import logger from '../logger';
 import { SERVER_PTY_LATENCY_ENABLED, traceServerLatency } from '../terminal/terminal-server-latency';
 import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
-import {
-  installDiffStatsSafetySweep,
-  uninstallDiffStatsSafetySweep,
-} from '../git/diff-stats-safety-sweep-runner';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
 import { bindTerminalRuntimeSender, terminalManager } from '../terminal/shared-terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
@@ -162,8 +158,6 @@ export class WebSocketServer {
 
     // Relay worktree diff-stats updates to connected users
     installDiffStatsBroadcast();
-    // Backstop for when every push trigger goes quiet at once (see the sweep module)
-    installDiffStatsSafetySweep(() => this.connections.keys());
     // Relay git panel state updates (commits, branch, changedFiles, prStatus)
     installGitPanelBroadcast();
 
@@ -643,7 +637,6 @@ export class WebSocketServer {
    */
   async shutdown(): Promise<void> {
     this.heartbeat.stop();
-    uninstallDiffStatsSafetySweep();
     this.analysisUnsubscribe?.();
     this.analysisUnsubscribe = null;
     await terminalManager.shutdownAll();
