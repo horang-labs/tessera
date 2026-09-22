@@ -73,6 +73,9 @@ whole replay and are reported separately.
   unresolved. This phase repairs captured input metadata only. It does not resume
   speculative continuations or invent tool responses/state. Prompt similarity and
   chronological proximity are never used as substitutes for this evidence.
+  An eligible exec that failed before discovering any image arguments is an
+  opaque competitor, not evidence of zero image calls. It blocks this fallback;
+  an explicit returned result ID remains usable.
 - Cells replay in invocation order. An intervening exec that modifies stored state
   while another exec is yielded is not a fully modeled concurrent timeline. A
   conservative source capability scan blocks shared-state reads and discards
@@ -83,6 +86,37 @@ whole replay and are reported separately.
 - Omitted image/audio bodies, external filesystem changes, unknown tool results,
   runtime clocks/randomness and an absent historical catalog cannot be recovered
   by adding more JavaScript syntax support.
+
+## Failure isolation and owned-image continuity (replay version 5)
+
+An omitted or malformed metadata record creates an explicit replay barrier. The
+streaming reader skips that record without retaining its oversized body, then
+continues at the next JSONL boundary. The barrier invalidates stored state and
+recent-image history and prevents same-turn ownership guesses across the gap.
+An omitted JavaScript source receives the same treatment. A later known turn can
+still reconstruct independent calls. Session-wide budgets remain enforced.
+
+State completeness is separate from the set of known keys. After an unavailable
+execution, `load('missing')` must not act like a known-absent key and silently
+choose `load('missing') || '/default.png'`. It reports unavailable state. A later
+explicit `store` can establish a known key again; independent literal references
+remain usable. Per-cell failures do not stop subsequent execs.
+
+Rebuilding an index preserves owned files for stable tool/image result IDs still
+observed in the new recording. It does not resurrect removed events, match user
+images by unstable byte offsets, reuse conflicting locators, or change failed
+results to completed. Previous ledger metadata survives multi-batch rebuilds.
+An empty recent-image cache locator counts as missing instead of producing a
+broken thumbnail with a successful input count. Path insertion uses the surviving
+owned cache file, translated for the agent environment, even when an older
+`agentPath` names a deleted original.
+
+Public image URLs include a locator revision. Content-addressed cache paths make
+this metadata-only: rebuilding an association changes the URL and causes an open
+Images tab to load the corrected content. A request for an obsolete revision
+returns a non-cacheable 404 instead of placing new bytes under an old URL. Raw
+non-indexed path locators identify a path, not arbitrary external file mutations.
+Version 5 retries old persisted failures without requiring a transcript append.
 
 ## Required regression coverage
 
@@ -125,7 +159,14 @@ Partial cached inputs retain ownership while missing references are retried.
    across/within execs, multiple results competing for one call, failures after
    successful generation, turn boundaries and later same-prompt calls. Verify the
    streaming path across metadata windows and unchanged/append polls as well as
-   in-memory fixtures. Seeded permutations must never interchange references.
+  in-memory fixtures. Seeded permutations must never interchange references.
+10. Oversized metadata, excessive nesting, malformed JSONL and omitted JavaScript
+    source must be followed by a successful independent call in the same replay.
+    State-dependent defaults and recent-image history cannot cross the gap.
+11. Rebuild with original reference/result files deleted; verify stable owned
+    images survive, removed events do not reappear, and insertion paths remain
+    readable to the configured agent. Corrected input/result URLs must update a
+    visible image without a page reload and reject obsolete revisions.
 
 ## September 21 validation and September 22 correction
 
@@ -157,6 +198,31 @@ and survived reload. During scan and cache retry the server including its worker
 rose from 167.9 MiB to 212.8 MiB working set and settled at 188.1 MiB; private bytes
 peaked 65.1 MiB above baseline. The unrelated messages API was mocked and terminal
 creation blocked, so this is Images-flow evidence, not session-start or total-app QA.
+
+The subsequent version-5 audit repeated the current recording on a newly packaged
+Windows backend: 34/34 resolved results and 84 image responses, including automatic
+version-3 cache recovery at the unchanged source offset. Additional isolated
+fixtures verified visible input/result replacement without reload, obsolete URLs
+returning 404, rebuilding recent references/results after deleting only synthetic
+originals, cache-backed `/mnt/c/...` insertion paths, and continued independent
+generation after a 1.28 MiB metadata record. Dependent unknown state stayed
+unresolved instead of selecting a fabricated default image.
+
+Across the Images tests, packaged server working set rose from 171.2 MiB to
+216.2 MiB and ended at 204.8 MiB; private bytes peaked 70.0 MiB above baseline.
+These measurements include replay workers, exclude renderer/production processes,
+and retain the same messages-API mock and terminal-creation block. Screenshots
+01–14, HTTP assertions, runner sources and memory evidence are in Windows
+Downloads `Tessera-image-audit-QA-0922`. Synthetic session-start error toasts are
+outside this Images-only fixture; they are not evidence of successful CLI startup.
+
+A separate disposable real Codex PTY verified the recovered image path through
+browser DOM drag events in the list, direct Peek, Peek after the actual list
+detach event, and reopened Peek. Each exact path reached the attached surface's
+`terminal_input` and Codex returned an image-attachment marker. This tests the
+browser drop handlers and Windows-to-WSL PTY route, not a physical mouse gesture;
+no prompt was submitted. The regression suite passed 134 tests with one optional
+historical fixture skipped; the current real recording was tested separately above.
 
 Relevant implementation: `runtime/image-reference-replay.cjs`,
 `runtime/replay-state-codec.cjs`,

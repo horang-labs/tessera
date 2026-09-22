@@ -3,6 +3,7 @@ import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
 import * as dbSessions from '@/lib/db/sessions';
 import { jsonError } from '@/lib/http/json-error';
 import { readSessionImageGenerationTraces, readTraceImageStream } from '@/lib/image-generation/session-traces';
+import { imageRevision } from '@/lib/image-generation/image-revision';
 
 export async function GET(
   request: NextRequest,
@@ -20,6 +21,12 @@ export async function GET(
   const trace = (await readSessionImageGenerationTraces(session, auth.userId)).find((item) => item.id === traceId);
   const locator = trace?.inputs[index]?.locator;
   if (!locator) return jsonError('not_found', 'Input image not found', 404);
+  const revision = request.nextUrl.searchParams.get('v');
+  if (revision && revision !== imageRevision(locator)) {
+    const response = jsonError('not_found', 'Image revision is no longer current', 404);
+    response.headers.set('Cache-Control', 'no-store');
+    return response;
+  }
   const image = await readTraceImageStream(locator, auth.userId, request.signal);
   if (!image) return jsonError('file_not_found', 'Input image is unavailable', 404);
   return new NextResponse(image.stream, {

@@ -30,3 +30,14 @@ test('oversized unstructured text and embedded image text never reach replay as 
   assert.deepEqual(record.payload.output[0].text,{__tesseraOmitted:true});
   assert.ok(record.payload.output[1].text.__tesseraImage);
 });
+
+test('oversized structured records and excessive nesting do not suppress the next valid record', () => {
+  for (const offending of [JSON.stringify({ payload: { blocks: Array(20).fill('x'.repeat(64000)) } }),
+    '{"payload":' + '['.repeat(80) + '0' + ']'.repeat(80) + '}']) {
+    const bytes = Buffer.from(offending + '\n' + JSON.stringify({ type: 'turn_context', payload: { turn_id: 'later' } }) + '\n');
+    const decoder = new MetadataDecoder(), records = [];
+    for (let offset = 0; offset < bytes.length; offset += 4096) records.push(...decoder.push(bytes.subarray(offset, offset + 4096), offset));
+    assert.equal(records.at(-1).record.payload.turn_id, 'later');
+    assert.ok(records[0].record.__tesseraOmittedRecord, 'a skipped record must invalidate replay state rather than vanish silently');
+  }
+});

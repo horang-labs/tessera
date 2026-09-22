@@ -188,3 +188,24 @@ test('unrecorded clocks and randomness cannot fabricate image paths', async () =
     assert.deepEqual(result.invocations.map(i=>i.resultId),['exec-independent']);
   }
 });
+
+test('lost stored state cannot silently take a missing-key fallback path in a later exec', async () => {
+  for (const source of ['await tools.unknown_tool({});', 'while(true){}']) {
+    const f = fixture();
+    f.call('seed', `store('ref','/actual.png');`); f.output('seed');
+    f.call('uncertain', source); f.output('uncertain');
+    f.image('dependent', `[load('ref') || '/invented-default.png']`);
+    f.image('independent');
+    const result = await replayCells(f.recording, { cellTimeoutMs: 30 });
+    assert.ok(!result.invocations.some(i => i.callId === 'dependent'), 'unknown state must differ from an absent key');
+    assert.equal(result.invocations.at(-1).resultId, 'exec-independent');
+  }
+});
+
+test('explicit writes can recover individual keys after lost state, while other keys stay unknown', async () => {
+  const f = fixture(); f.call('uncertain', 'await tools.unknown_tool({});'); f.output('uncertain');
+  f.call('write', `store('known','/known.png');`); f.output('write');
+  f.image('known', `[load('known')]`); f.image('unknown', `[load('unknown') || '/invented.png']`);
+  const result = await replayCells(f.recording);
+  assert.deepEqual(result.invocations.map(i => i.referencedImagePaths), [['/known.png']]);
+});

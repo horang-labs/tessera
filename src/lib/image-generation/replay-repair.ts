@@ -107,6 +107,8 @@ export function repairReplayedInputs(index: ImageIndexState, invocations: Replay
               && cached.source === image.source && cached.label === image.label;
             return sameOccurrence ? cached : { ...image };
           });
+          trace.unresolvedInputCount = trace.inputs.filter(image => image.locator.kind === 'cache' && !image.locator.path).length;
+          trace.inputs = trace.inputs.filter(image => image.locator.kind !== 'cache' || Boolean(image.locator.path));
           if (trace.inputs.some((image) => image.locator.kind !== 'cache')) needsCaching.push(trace);
         } else {
           trace.inputs = [];

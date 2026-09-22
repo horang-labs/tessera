@@ -1,5 +1,6 @@
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { EnhancedMessage } from '@/types/chat';
+import { imageRevision } from './image-revision';
 
 export type ImageLocator =
   | { kind: 'inline'; data: string; mimeType: string }
@@ -430,7 +431,7 @@ export function toPublicImageGenerationTraces(
         return {
           ...input,
           ...(path ? { path } : {}),
-          url: `/api/sessions/${encodeURIComponent(sessionId)}/image-generations/${encodeURIComponent(trace.id)}/inputs/${index}`,
+          url: `/api/sessions/${encodeURIComponent(sessionId)}/image-generations/${encodeURIComponent(trace.id)}/inputs/${index}?v=${imageRevision(locator)}`,
         };
       }),
       ...(result ? {
@@ -439,7 +440,7 @@ export function toPublicImageGenerationTraces(
           label: result.label,
           ...(result.agentPath ? { path: result.agentPath } : {}),
           ...(result.sourceMessageId ? { sourceMessageId: result.sourceMessageId } : {}),
-          url: `/api/sessions/${encodeURIComponent(sessionId)}/image-generations/${encodeURIComponent(trace.id)}/result`,
+          url: `/api/sessions/${encodeURIComponent(sessionId)}/image-generations/${encodeURIComponent(trace.id)}/result?v=${imageRevision(result.locator)}`,
         },
       } : {}),
     };

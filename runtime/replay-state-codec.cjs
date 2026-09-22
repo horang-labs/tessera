@@ -102,6 +102,7 @@ globalThis.__installReplayStateCodec = ({ unwrap, wrap }) => {
     call(mapSet, values, key, value);
   };
   globalThis.load = key => call(mapGet, values, key);
+  globalThis.__hasStateKey = key => call(mapHas, values, key);
   globalThis.__clear = () => call(mapClear, values);
   globalThis.__exportState = () => encode(values);
   globalThis.__importState = serialized => { values = decode(serialized); };

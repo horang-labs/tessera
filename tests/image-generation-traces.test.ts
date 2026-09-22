@@ -180,3 +180,17 @@ test('generated results use savedPath instead of retaining duplicate inline byte
     '/home/work/generated.png',
   );
 });
+
+test('changed image ownership invalidates both thumbnail URLs while unchanged images remain stable', () => {
+  const [trace] = projectImageGenerationTraces([
+    exec('call', `tools.image_gen__imagegen({ prompt: 'make it', referenced_image_paths: ['/input.png'] })`),
+    inlineGeneratedResult('generated', 'IMAGE_BYTES'),
+  ]);
+  const before = toPublicImageGenerationTraces('session', [trace])[0];
+  trace.inputs[0].locator = { kind: 'cache', path: '/cache/corrected-input.png' };
+  trace.result!.locator = { kind: 'cache', path: '/cache/corrected-result.png' };
+  const after = toPublicImageGenerationTraces('session', [trace])[0];
+  assert.notEqual(after.inputs[0].url, before.inputs[0].url, 'an already decoded img must receive a new src');
+  assert.notEqual(after.result!.url, before.result!.url);
+  assert.deepEqual(toPublicImageGenerationTraces('session', [trace])[0], after);
+});

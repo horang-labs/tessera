@@ -184,3 +184,13 @@ test('seeded completion permutations never interchange distinct references or re
     }
   }
 });
+
+test('an unreplayed competing exec cannot make a same-prompt result look uniquely owned', async () => {
+  const f = fixture();
+  f.call('unknown', `await tools.unrecorded_tool({});await tools.image_gen__imagegen({prompt:'same',referenced_image_paths:['/unrecorded-owner.png']});`);
+  f.yielded('unknown'); f.image('known', 'same', '/wrong-owner.png');
+  f.event('exec-unknown', 'same'); f.yielded('known');
+  const r = await replayCells(f.recording);
+  assert.equal(r.invocations.length, 1);
+  assert.equal(r.invocations[0].resultId, undefined, 'a hidden competing call is not evidence of uniqueness');
+});
