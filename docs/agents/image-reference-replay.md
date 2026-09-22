@@ -62,8 +62,17 @@ whole replay and are reported separately.
   Recorded turn IDs exclude execs from other turns, while exact returned result
   IDs associate otherwise ambiguous events with an exec. Missing turn IDs remain
   unknown. Unfinished earlier cells do not prevent later independent replay.
-  Multiple live execs in the same turn can still leave unassociated results when
-  no output identifies their owner; prompt similarity must not resolve this.
+  Exec liveness alone is not image-call liveness: an exec may have finished every
+  image and still be waiting on unrelated work or have no terminal output.
+  For otherwise unowned results, record the eligible exec IDs at event arrival.
+  After replay, compare only their still-unassigned image invocations, requiring
+  known matching turn ownership, an exact prompt, and a one-to-one match in both
+  directions. A call discovered after a recorded tool completion cannot claim a
+  result from before that completion. Already assigned calls, other turns and
+  future execs do not compete; duplicate prompts and unknown turn ownership remain
+  unresolved. This phase repairs captured input metadata only. It does not resume
+  speculative continuations or invent tool responses/state. Prompt similarity and
+  chronological proximity are never used as substitutes for this evidence.
 - Cells replay in invocation order. An intervening exec that modifies stored state
   while another exec is yielded is not a fully modeled concurrent timeline. A
   conservative source capability scan blocks shared-state reads and discards
@@ -84,7 +93,8 @@ orphan result are consumed when a call is repaired, including incomplete batches
 Metadata-only normalization at database reads and writes repairs legacy duplicate
 IDs even when replay or the transcript is unavailable. Distinct conflicting results
 retain their result IDs instead of competing for an invocation URL. Replay version
-3 also rebuilds persisted checkpoints. Reference reuse requires matching metadata
+4 also retries persisted version-3 failures without requiring a transcript append.
+Reference reuse requires matching metadata
 and nonempty cached locators; an empty input list is not proof of successful caching.
 Partial cached inputs retain ownership while missing references are retried.
 
@@ -109,14 +119,26 @@ Partial cached inputs retain ownership while missing references are retried.
    the VM. Keep per-cell CPU, VM heap and worker limits in place.
 8. Verify the reported session in the real Windows backend + WSL filesystem
    topology. Distinguish worker evidence from full packaged Images-tab evidence.
+9. A yielded parallel batch with all images matched must not suppress the next
+   batch's last results, including results after an interruption and without a
+   final returned-ID hint. Cover inverse completion order, repeated prompts
+   across/within execs, multiple results competing for one call, failures after
+   successful generation, turn boundaries and later same-prompt calls. Verify the
+   streaming path across metadata windows and unchanged/append polls as well as
+   in-memory fixtures. Seeded permutations must never interchange references.
 
-## September 21 validation
+## September 21 validation and September 22 correction
 
 The frozen user recording contained 25 completed generation events. Packaged
-Windows backend + WSL transcript QA restored inputs for 23, including both
-reported second-in-loop failures. Two results remain unassociated: multiple execs
-were live in the same turn, and their returned output did not identify those
-result IDs. They remain unresolved rather than being assigned by prompt similarity.
+Windows backend + WSL transcript QA originally restored inputs for 23, including
+both reported second-in-loop failures. The two unresolved results were incorrectly
+classified as unrecoverable: the earlier exec had already produced all five of its
+images, while the next exec's last two calls had fully reconstructed arguments and
+unique exact prompt matches within the recorded scope. Missing final exec output
+was not evidence that the inputs themselves were missing. Version 4 repairs these
+associations after argument replay. The frozen initial recording now resolves
+25/25 results, the subsequent snapshot 26/26, and the September 22 snapshot of
+the same session 34/34. Keep these counts separate from arbitrary-session coverage.
 The same test removed the persisted replay version without appending to the
 transcript and verified that the old failed cache was repaired again.
 
@@ -126,9 +148,20 @@ and settled at 189.2 MiB. Private bytes peaked 46.8 MiB above baseline. The unre
 messages API was mocked; these numbers measure the Images flow, not total app or
 renderer memory. Image bodies were streamed to cache without entering QuickJS.
 
+September 22 packaged Windows backend + WSL file QA used the frozen 102,465,095-byte
+current transcript: 34 completed results, zero unresolved inputs, and 84 successful
+input/result image HTTP responses. Both previously missing references decoded in
+the real Images tab. Downgrading the isolated cache to version 3 reproduced two
+failed cards; a sync restored both at the same source offset, persisted version 4,
+and survived reload. During scan and cache retry the server including its worker
+rose from 167.9 MiB to 212.8 MiB working set and settled at 188.1 MiB; private bytes
+peaked 65.1 MiB above baseline. The unrelated messages API was mocked and terminal
+creation blocked, so this is Images-flow evidence, not session-start or total-app QA.
+
 Relevant implementation: `runtime/image-reference-replay.cjs`,
 `runtime/replay-state-codec.cjs`,
 `runtime/image-reference-replay-worker.cjs`, `runtime/image-record-reader.cjs`,
 `src/lib/image-generation/replay-worker.ts`, and
 `tests/image-reference-replay-engine.test.mjs`,
+`tests/image-replay-association.test.mjs`,
 `tests/image-replay-runtime-contract.test.mjs`, and `tests/replay-state-codec.test.mjs`.

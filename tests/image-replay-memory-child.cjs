@@ -19,9 +19,13 @@ async function main() {
   if (!existingTranscript) {
   const transcript = fs.createWriteStream(original);
   const record = payload => JSON.stringify({type:'response_item',payload})+'\n';
+  await write(transcript, JSON.stringify({type:'turn_context',payload:{turn_id:'memory-turn'}})+'\n');
+  await write(transcript, record({type:'custom_tool_call',name:'exec',call_id:'memory-unfinished',input:'await new Promise(()=>{});'}));
+  await write(transcript, record({type:'custom_tool_call_output',call_id:'memory-unfinished',output:'Script running with cell ID unfinished'}));
   await write(transcript, record({type:'custom_tool_call',name:'exec',call_id:'memory-image',
     input:'await tools.image_gen__imagegen({prompt:"bounded replay memory",referenced_image_paths:["/fixture/reference.png"]});'}));
-  await write(transcript, '{"type":"event_msg","payload":{"type":"item_completed","item":{"id":"exec-memory","kind":"image_gen.generation","status":"completed","revisedPrompt":"bounded replay memory","result":"');
+  // Both execs are live: this exercises late association as well as streaming.
+  await write(transcript, '{"type":"event_msg","payload":{"type":"item_completed","turn_id":"memory-turn","item":{"id":"exec-memory","kind":"image_gen.generation","status":"completed","revisedPrompt":"bounded replay memory","result":"');
   const chunk = 'A'.repeat(64 * 1024);
   for (let remaining=rawBytes; remaining>0; remaining-=Math.min(remaining,chunk.length)) await write(transcript,chunk.slice(0,Math.min(remaining,chunk.length)));
   await write(transcript, '"}}}\n');
@@ -55,7 +59,7 @@ async function main() {
   });
   metadata.end(); await once(metadata,'finish');
   assert.equal(scan.more,false);
-  if (!existingTranscript) { assert.equal(metadataRecords,3); assert.equal(markers,1); }
+  if (!existingTranscript) { assert.equal(metadataRecords,6); assert.equal(markers,1); }
   else { assert.ok(metadataRecords>3); assert.ok(markers>0); }
   const sidecarBytes=fs.statSync(sidecar).size;
   assert.ok(sidecarBytes<(existingTranscript?32*1024*1024:64*1024),'metadata sidecar scales with image payload');
