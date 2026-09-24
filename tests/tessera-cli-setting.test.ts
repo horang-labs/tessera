@@ -5,8 +5,13 @@ import { normalizeUserSettings } from '@/lib/settings/provider-defaults';
 import { useCommandStore } from '@/stores/command-store';
 import { useSettingsStore } from '@/stores/settings-store';
 
-test('Tessera CLI injection defaults off and only accepts an explicit boolean true', () => {
-  assert.equal(normalizeUserSettings({}).tesseraCliEnabled, false);
+test('first-run settings hide Recent Work and enable Tessera CLI', () => {
+  const settings = normalizeUserSettings({});
+  assert.equal(settings.showRecentWork, false);
+  assert.equal(settings.tesseraCliEnabled, true);
+});
+
+test('Tessera CLI injection preserves explicit boolean choices', () => {
   assert.equal(normalizeUserSettings({ tesseraCliEnabled: true }).tesseraCliEnabled, true);
   assert.equal(normalizeUserSettings({ tesseraCliEnabled: false }).tesseraCliEnabled, false);
   assert.equal(
