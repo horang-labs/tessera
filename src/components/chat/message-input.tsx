@@ -92,6 +92,8 @@ import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
 import { SESSION_DRAG_MIME } from '@/types/panel';
 import {
   getWorkspaceFileDragPath,
+  getInternalPathDropPaths,
+  hasPathInsertDragData,
   hasWorkspaceFileDragData,
 } from '@/lib/dnd/panel-session-drag';
 import { PanelSplitPicker } from './panel-split-picker';
@@ -104,7 +106,7 @@ import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { exportSessionReference, formatContinueConversationPrompt } from '@/lib/session/session-reference';
 import { CollectionQuickCreateSheet } from './collection-quick-create-sheet';
 import type { Collection } from '@/types/collection';
-import { insertWorkspaceFileReferenceAtCursor } from '@/lib/chat/workspace-file-reference';
+import { insertWorkspaceFileReferencesAtCursor } from '@/lib/chat/workspace-file-reference';
 import {
   CODEX_DEFAULT_SERVICE_TIER,
   CODEX_FAST_COMMAND,
@@ -614,14 +616,14 @@ export function MessageInput({
   }, []);
 
   const isWorkspaceFileDrag = useCallback((e: React.DragEvent) => {
-    return hasWorkspaceFileDragData(e.dataTransfer);
+    return hasWorkspaceFileDragData(e.dataTransfer) || hasPathInsertDragData(e.dataTransfer);
   }, []);
 
-  const insertWorkspaceFileReference = useCallback((filePath: string) => {
+  const insertWorkspaceFileReferences = useCallback((filePaths: string[]) => {
     const textarea = textareaRef.current;
     if (!textarea) {
       setInputValueFromProgrammaticEdit((prev) => {
-        const { nextValue } = insertWorkspaceFileReferenceAtCursor(prev, prev.length, filePath);
+        const { nextValue } = insertWorkspaceFileReferencesAtCursor(prev, prev.length, filePaths);
         setDraftInput(sessionId, nextValue);
         return nextValue;
       });
@@ -631,10 +633,10 @@ export function MessageInput({
 
     const cursorPos = textarea.selectionStart;
     const currentValue = textarea.value;
-    const { nextCursorPos, nextValue } = insertWorkspaceFileReferenceAtCursor(
+    const { nextCursorPos, nextValue } = insertWorkspaceFileReferencesAtCursor(
       currentValue,
       cursorPos,
-      filePath,
+      filePaths,
     );
 
     setInputValueFromProgrammaticEdit(nextValue);
@@ -689,9 +691,10 @@ export function MessageInput({
       e.stopPropagation();
       setFileDragDepth(0);
       const filePath = getWorkspaceFileDragPath(e.dataTransfer);
-      if (filePath) {
-        insertWorkspaceFileReference(filePath);
-      }
+      const paths = hasPathInsertDragData(e.dataTransfer)
+        ? getInternalPathDropPaths(e.dataTransfer)
+        : filePath ? [filePath] : [];
+      if (paths.length > 0) insertWorkspaceFileReferences(paths);
       return;
     }
 
@@ -710,7 +713,7 @@ export function MessageInput({
   }, [
     handleFileDrop,
     handleSessionRefDrop,
-    insertWorkspaceFileReference,
+    insertWorkspaceFileReferences,
     isNativeFileDrag,
     isWorkspaceFileDrag,
   ]);
