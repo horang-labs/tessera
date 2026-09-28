@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- Authenticated, session-scoped image routes cannot use Next's unauthenticated optimizer. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, Download, ImageIcon, LoaderCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Copy, Download, ImageIcon, LayoutGrid, List, LoaderCircle, RefreshCw, Search, X, ArrowLeft } from "lucide-react";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { clearPathInsertDragData, setPathInsertDragData } from "@/lib/dnd/panel-session-drag";
 import type { PublicImageGenerationTrace } from "@/lib/image-generation/traces";
@@ -12,6 +12,7 @@ import { telemetryClickAttributes } from "@/lib/telemetry/ui-click";
 import { captureTelemetryEvent } from "@/lib/telemetry/client";
 import { createImageGenerationCardTracker } from "@/lib/image-generation/card-tracker";
 import { cn } from "@/lib/utils";
+import { readUiStorageItem, writeUiStorageItem } from "@/lib/persistence/ui-storage";
 import { toast } from "@/stores/notification-store";
 
 const REFRESH_INTERVAL_MS = 2_000;
@@ -136,13 +137,7 @@ export function ImageGenerationsPanel({ sessionId, isActive = true }: { sessionI
 
   return (
     <>
-      <div className="h-full overflow-y-auto p-2" data-testid="image-generations-panel">
-        <div className="flex flex-col gap-2">
-          {[...traces].reverse().map((trace) => (
-            <ImageGenerationTraceCard key={trace.id} trace={trace} onOpenImage={setLightboxImage} />
-          ))}
-        </div>
-      </div>
+      <ImageGenerationGallery key={sessionId} traces={traces} onOpenImage={setLightboxImage} />
       {lightboxImage ? (
         <ImageLightbox
           src={lightboxImage.src}
@@ -152,6 +147,112 @@ export function ImageGenerationsPanel({ sessionId, isActive = true }: { sessionI
       ) : null}
     </>
   );
+}
+
+type GalleryView = "cards" | "list";
+type ThumbnailSize = "small" | "medium" | "large";
+const VIEW_STORAGE_KEY = "tessera.image-gallery.view.v1";
+const SIZE_STORAGE_KEY = "tessera.image-gallery.size.v1";
+const THUMBNAIL_WIDTHS: Record<ThumbnailSize, number> = { small: 104, medium: 132, large: 208 };
+
+function ImageGenerationGallery({ traces, onOpenImage }: {
+  traces: PublicImageGenerationTrace[];
+  onOpenImage: (image: LightboxImage) => void;
+}) {
+  const { t, language } = useI18n();
+  const [view, setView] = useState<GalleryView>(() => readUiStorageItem(VIEW_STORAGE_KEY) === "list" ? "list" : "cards");
+  const [size, setSize] = useState<ThumbnailSize>(() => {
+    const saved = readUiStorageItem(SIZE_STORAGE_KEY);
+    return saved === "small" || saved === "large" ? saved : "medium";
+  });
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = traces.find((trace) => trace.id === selectedId);
+  const search = query.trim().toLocaleLowerCase();
+  const visible = [...traces].reverse().filter((trace) => !search ||
+    [trace.prompt, trace.revisedPrompt, trace.result?.path, trace.result?.label].some((text) => text?.toLocaleLowerCase().includes(search)));
+  const dateFormatter = new Intl.DateTimeFormat(language, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const controlClass = "rounded-md p-1.5 text-(--text-muted) hover:bg-(--sidebar-hover) hover:text-(--text-primary) focus-visible:outline-2 focus-visible:outline-(--accent)";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-testid="image-generations-panel">
+      <div className="shrink-0 space-y-2 border-b border-(--chat-header-border) p-2">
+        {selected ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <button type="button" className={controlClass} onClick={() => setSelectedId(null)} aria-label={t("imagePanel.backToGallery")} title={t("imagePanel.backToGallery")}>
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <span className="truncate text-xs text-(--text-primary)">{galleryImageTitle(selected)}</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[11px] tabular-nums text-(--text-muted)">{t("imagePanel.imageCount", { count: visible.length, total: traces.length })}</span>
+              <div className="flex items-center gap-1">
+                {view === "cards" ? (
+                  <select aria-label={t("imagePanel.thumbnailSize")} className="max-w-28 rounded-md border border-(--chat-header-border) bg-(--background) px-1 py-1 text-[11px] text-(--text-primary)" value={size} onChange={(event) => {
+                    const next = event.target.value as ThumbnailSize;
+                    setSize(next);
+                    writeUiStorageItem(SIZE_STORAGE_KEY, next);
+                  }}>
+                    <option value="small">{t("imagePanel.sizeSmall")}</option>
+                    <option value="medium">{t("imagePanel.sizeMedium")}</option>
+                    <option value="large">{t("imagePanel.sizeLarge")}</option>
+                  </select>
+                ) : null}
+                <div role="group" aria-label={t("imagePanel.viewMode")} className="flex rounded-lg border border-(--chat-header-border) p-0.5">
+                  {(["cards", "list"] as const).map((mode) => (
+                    <button key={mode} type="button" aria-label={t(`imagePanel.${mode}View`)} title={t(`imagePanel.${mode}View`)} aria-pressed={view === mode} className={cn(controlClass, view === mode && "bg-(--sidebar-hover) text-(--accent)")} onClick={() => {
+                      setView(mode);
+                      writeUiStorageItem(VIEW_STORAGE_KEY, mode);
+                    }}>
+                      {mode === "cards" ? <LayoutGrid className="h-3.5 w-3.5" /> : <List className="h-3.5 w-3.5" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-md border border-(--chat-header-border) bg-(--background) px-2 focus-within:border-(--accent)">
+              <Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("imagePanel.search")} aria-label={t("imagePanel.search")} className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-(--text-primary) outline-none" />
+              {query ? <button type="button" className={controlClass} aria-label={t("imagePanel.clearSearch")} onClick={() => setQuery("")}><X className="h-3 w-3" /></button> : null}
+            </div>
+          </>
+        )}
+      </div>
+      <div className={cn("min-h-0 flex-1 overflow-y-auto p-2", selected && "hidden")} data-testid="image-gallery" data-view={view}>
+        {visible.length === 0 ? <EmptyState text={t("imagePanel.noMatches")} /> : (
+          <div className={cn(view === "cards" ? "grid gap-2" : "flex flex-col gap-1")} style={view === "cards" ? { gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${THUMBNAIL_WIDTHS[size]}px), 1fr))` } : undefined}>
+            {visible.map((trace) => {
+              const date = new Date(trace.timestamp);
+              const title = galleryImageTitle(trace);
+              return (
+                <article key={trace.id} data-testid="image-gallery-item" className={cn("min-w-0 overflow-hidden rounded-lg border border-(--chat-header-border) bg-(--background)", view === "list" && "flex items-center gap-2 p-1.5")}>
+                  <div className={cn("relative bg-(--sidebar-hover)", view === "list" && "w-14 shrink-0 overflow-hidden rounded-md")}>
+                    <ResultHeroMedia key={trace.result?.url ?? "pending"} result={trace.result} status={trace.status} onOpenImage={onOpenImage} layout="thumbnail" />
+                    {view === "cards" && trace.status !== "completed" ? <span className="pointer-events-none absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t(`imagePanel.status.${trace.status}`)}</span> : null}
+                  </div>
+                  <button type="button" onClick={() => setSelectedId(trace.id)} aria-label={t("imagePanel.openDetails", { name: title })} className={cn("min-w-0 text-left hover:bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--accent)", view === "cards" ? "block w-full p-2" : "flex-1 rounded p-1")}>
+                    <span className="block truncate text-[11px] font-medium text-(--text-primary)" title={title}>{title}</span>
+                    <span className="mt-0.5 block truncate text-[10px] text-(--text-muted)" title={trace.revisedPrompt ?? trace.prompt}>{trace.revisedPrompt ?? trace.prompt}</span>
+                    <span className="mt-1 flex items-center gap-1.5 text-[9px] text-(--text-muted)">
+                      <span className={cn(trace.status === "running" && "text-amber-600", trace.status === "error" && "text-red-600")}>{t(`imagePanel.status.${trace.status}`)}</span>
+                      {!Number.isNaN(date.getTime()) ? <time dateTime={trace.timestamp} className="truncate">{dateFormatter.format(date)}</time> : null}
+                    </span>
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {selected ? <div className="min-h-0 flex-1 overflow-y-auto p-2" data-testid="image-gallery-details"><ImageGenerationTraceCard key={selected.id} trace={selected} onOpenImage={onOpenImage} /></div> : null}
+    </div>
+  );
+}
+
+function galleryImageTitle(trace: PublicImageGenerationTrace): string {
+  return trace.result?.path?.split(/[\\/]/).at(-1)?.trim() || trace.result?.label || trace.prompt.trim().split(/\r?\n/)[0] || trace.id;
 }
 
 export function ImageGenerationTraceCard({
@@ -265,7 +366,9 @@ function ResultHeroMedia({
   result,
   status,
   onOpenImage,
+  layout = "detail",
 }: {
+  layout?: "detail" | "thumbnail";
   result: PublicImageGenerationTrace["result"];
   status: PublicImageGenerationTrace["status"];
   onOpenImage: (image: LightboxImage) => void;
@@ -277,7 +380,7 @@ function ResultHeroMedia({
   return (
     <div
       className="group relative w-full overflow-hidden transition-[aspect-ratio] duration-300 ease-out"
-      style={{ aspectRatio: dimensions ? `${dimensions.width} / ${dimensions.height}` : "4 / 3" }}
+      style={{ aspectRatio: layout === "thumbnail" ? "1" : dimensions ? `${dimensions.width} / ${dimensions.height}` : "4 / 3" }}
     >
       {result ? (
         <button

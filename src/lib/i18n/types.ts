@@ -1308,6 +1308,19 @@ export interface I18nMessages {
     };
   };
   imagePanel: {
+    viewMode: string;
+    cardsView: string;
+    listView: string;
+    thumbnailSize: string;
+    sizeSmall: string;
+    sizeMedium: string;
+    sizeLarge: string;
+    imageCount: string;
+    search: string;
+    clearSearch: string;
+    noMatches: string;
+    openDetails: string;
+    backToGallery: string;
     selectSession: string;
     loading: string;
     loadFailed: string;
