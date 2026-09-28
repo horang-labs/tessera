@@ -409,6 +409,7 @@ export function GitPanel({
         <>
           <GitPanelContentSection
             sessionId={sessionId}
+            workspaceTarget={fileTarget}
             targetSelected={Boolean(sessionId || worktreeId)}
             data={controller.data}
             loading={controller.loading}

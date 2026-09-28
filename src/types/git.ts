@@ -85,6 +85,8 @@ export interface GitPanelData {
   repoName: string;
   worktreeName: string;
   worktreePath: string;
+  /** Checkout root in the CLI's filesystem syntax, for prompt path insertion. */
+  agentWorktreePath?: string;
   /** For display. A detached HEAD is spelled `detached@<sha>`; see `detached`. */
   branch: string;
   /** True when HEAD is detached, so `branch` names no branch Git would push. */

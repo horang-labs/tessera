@@ -2,6 +2,7 @@ import { readGitPanelSnapshot, readGitDiff } from './git-panel-cache';
 import { readFile } from "fs/promises";
 import path from "path";
 import {
+  formatPathForAgentDisplay,
   getFilesystemPathBasename,
   resolveWslDisplayPathAgainstWindowsHostedPath,
 } from "@/lib/filesystem/path-environment";
@@ -1079,6 +1080,7 @@ async function buildGitPanelData(
     repoName: getFilesystemPathBasename(repoRoot),
     worktreeName: getWorktreeDisplayName(workDir),
     worktreePath: workDir,
+    agentWorktreePath: formatPathForAgentDisplay(workDir, agentEnvironment),
     branch:
       branchRaw || (detachedHead ? `detached@${detachedHead}` : "unknown"),
     detached: !branchRaw,

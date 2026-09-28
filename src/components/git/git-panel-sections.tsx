@@ -32,7 +32,8 @@ import {
 import { WorkspaceTreeExpansionControls } from "@/components/workspace/workspace-tree-expansion-controls";
 import { shouldOpenOnRowClick } from "@/components/workspace/workspace-inline-input-state";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
-import { setWorkspaceFileDragData } from "@/lib/dnd/panel-session-drag";
+import { clearPathInsertDragData, setPathInsertDragData, setWorkspaceTargetFileDragData } from "@/lib/dnd/panel-session-drag";
+import type { WorkspaceTarget } from "@/types/worktree";
 import { useI18n } from "@/lib/i18n";
 import {
   canUseElectronFileActions,
@@ -708,6 +709,7 @@ export function GitPanelContentSection({
   revert,
   selectedPath,
   sessionId,
+  workspaceTarget,
   targetSelected = Boolean(sessionId),
   setSelectedPath,
   onCopyFilePath,
@@ -770,6 +772,7 @@ export function GitPanelContentSection({
   };
   selectedPath: string | null;
   sessionId: string | null;
+  workspaceTarget?: WorkspaceTarget | null;
   targetSelected?: boolean;
   setSelectedPath: (path: string | null) => void;
   onCopyFilePath: (relativePath: string) => void;
@@ -979,6 +982,12 @@ export function GitPanelContentSection({
                               expanded={expanded}
                               title={row.path}
                               data-testid={`git-panel-folder-${row.path}`}
+                              draggable={Boolean(data.worktreePath)}
+                              onDragStart={(event) => {
+                                const absolutePath = toAbsoluteWorkspacePath(data.agentWorktreePath ?? data.worktreePath, row.path);
+                                if (absolutePath) setPathInsertDragData(event.dataTransfer, [absolutePath]);
+                              }}
+                              onDragEnd={clearPathInsertDragData}
                               onClick={() => toggleFolder(row.path)}
                             />
                           </div>
@@ -988,16 +997,19 @@ export function GitPanelContentSection({
                       const isSelected = file.path === selectedPath;
                       const canOpenReadOnly = file.state !== "deleted";
                       const absolutePath = toAbsoluteWorkspacePath(data.worktreePath, file.path);
+                      const agentPath = toAbsoluteWorkspacePath(data.agentWorktreePath ?? data.worktreePath, file.path);
                       return (
                         <div key={file.path} className="relative">
                           {Array.from({ length: row.depth }, (_, depth) => <WorkspaceTreeBranchGuide key={depth} depth={depth} />)}
                           <div
-                            draggable={Boolean(sessionId)}
+                            draggable={Boolean(absolutePath)}
                             onDragStart={(event) => {
-                              if (!sessionId) return;
                               setSelectedPath(file.path);
-                              setWorkspaceFileDragData(event.dataTransfer, sessionId, "diff", file.path, absolutePath);
+                              const target = workspaceTarget ?? (sessionId ? { kind: "session" as const, id: sessionId } : null);
+                              if (target) setWorkspaceTargetFileDragData(event.dataTransfer, target, "diff", file.path, absolutePath);
+                              if (agentPath) setPathInsertDragData(event.dataTransfer, [agentPath]);
                             }}
+                            onDragEnd={clearPathInsertDragData}
                             className={cn(workspaceTreeFileRowClassName(isSelected), "group/git-file-row")}
                             data-testid={`git-panel-file-row-${file.path}`}
                             onContextMenu={(event) => {
@@ -1095,14 +1107,17 @@ export function GitPanelContentSection({
                                   {...telemetryClickAttributes("git.file.open", "git_panel")}
                                   onDragStart={(event) => {
                                     event.stopPropagation();
-                                    if (!sessionId || !canOpenReadOnly) {
+                                    if (!absolutePath || !canOpenReadOnly) {
                                       event.preventDefault();
                                       return;
                                     }
                                     setSelectedPath(file.path);
-                                    setWorkspaceFileDragData(event.dataTransfer, sessionId, "file", file.path, absolutePath);
+                                    const target = workspaceTarget ?? (sessionId ? { kind: "session" as const, id: sessionId } : null);
+                                    if (target) setWorkspaceTargetFileDragData(event.dataTransfer, target, "file", file.path, absolutePath);
+                                    if (agentPath) setPathInsertDragData(event.dataTransfer, [agentPath]);
                                   }}
-                                  draggable={Boolean(sessionId && canOpenReadOnly)}
+                                  onDragEnd={clearPathInsertDragData}
+                                  draggable={Boolean(absolutePath && canOpenReadOnly)}
                                   disabled={!canOpenReadOnly}
                                   className="inline-flex rounded-md p-1 text-(--text-muted) hover:bg-(--chat-bg) hover:text-(--text-primary) disabled:pointer-events-none disabled:opacity-35"
                                   aria-label={`Open file ${file.path}`}
