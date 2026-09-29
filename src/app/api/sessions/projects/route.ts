@@ -17,7 +17,7 @@ import {
 } from '@/lib/projects/current-project';
 import logger from '@/lib/logger';
 import { getSessionHistoryModifiedAt } from '@/lib/session-history';
-import { getCachedBulk } from '@/lib/git/worktree-diff-stats-bulk';
+import { getCachedOrScheduleBulk } from '@/lib/git/worktree-diff-stats-bulk';
 
 function maxActivityTimestamp(left: string, right: string | null): string {
   if (!right) return left;
@@ -86,11 +86,18 @@ export async function GET(req: NextRequest) {
         ...(runtimeConfigs.get(row.id) ?? {}),
         sortOrder: row.sort_order,
       }));
-      // Every direct chat in a Project shares the Project checkout. This cold
-      // cross-project request may read its cache, but must never enqueue work
-      // for every persisted Session. The focused task request warms it later.
+      // Warm each checkout from the initial list, independently of Session
+      // selection. The shared queue computes one at a time and broadcasts the
+      // results without blocking this response or scheduling per Session.
       const projectDiffWorkDir = projectWorktree?.filesystemPath ?? project.decoded_path;
-      const diffStatsByWorkDir = getCachedBulk([projectDiffWorkDir], undefined, userId);
+      const diffStatsByWorkDir = getCachedOrScheduleBulk([
+        projectDiffWorkDir,
+        ...result.linkedWorktrees.map((worktree) =>
+          worktree.worktreeBranch && !worktree.worktreeDeletedAt
+            ? worktree.workDir
+            : undefined,
+        ),
+      ], userId);
       const projectDiffStats = diffStatsByWorkDir.get(projectDiffWorkDir) ?? undefined;
       const sessions = mapped.map((s) => ({
         ...s,
