@@ -116,10 +116,11 @@ test('Claude-reported transitions on the pane still create the session they anno
   }
 });
 
-test('a conversation moved to the background is registered as a background session, not the pane', async (t) => {
+test('a conversation moved to the background is ignored: no new session, the pane stays put', async (t) => {
   const pane = claudePane(t, 'handoff');
   const moved = 'bbbbbbbb-3333-4444-8555-666666666666';
-  // A handoff has no fork link; the CLI only reports it as a background job.
+  // A handoff has no fork link; the CLI only reports it as a background job. Its
+  // worker resumes the conversation, so it may report `resume` as well as `startup`.
   t.mock.method(
     cliProviderRegistry.getProvider('claude-code'),
     'isTerminalConversationHeldInBackground',
@@ -127,19 +128,27 @@ test('a conversation moved to the background is registered as a background sessi
   );
   const before = sessionCount();
 
-  await postHook(pane.token, { hook_event_name: 'SessionStart', session_id: moved, source: 'startup' });
+  const statuses = [
+    await postHook(pane.token, { hook_event_name: 'SessionStart', session_id: moved, source: 'startup' }),
+    await postHook(pane.token, { hook_event_name: 'SessionStart', session_id: moved, source: 'resume' }),
+    await postHook(pane.token, { hook_event_name: 'UserPromptSubmit', session_id: moved, prompt: 'worker prompt' }),
+  ];
 
-  assert.equal(sessionCount(), before + 1);
+  assert.deepEqual(statuses, [204, 204, 204]);
+  assert.equal(sessionCount(), before, 'the moved conversation must not become a new session');
+  assert.equal(getTerminalProviderSession('claude-code', moved), undefined);
   assert.equal(pane.rebind.mock.callCount(), 0, 'the pane keeps its own conversation');
-  const child = dbSessions.getSession(getTerminalProviderSession('claude-code', moved)!.tessera_session_id);
-  assert.equal(JSON.parse(child!.provider_state ?? '{}').terminalProviderSessionActivation, 'background');
+  assert.equal(dbSessions.getSession(pane.sessionId)?.title, 'Conversation handoff');
 });
 
 test('Claude hook identity classifier keeps legitimate ownership cases', () => {
-  const base = { expectedProviderSessionId: 'own', observedProviderSessionId: 'other', heldInBackground: false };
+  const base = { expectedProviderSessionId: 'own', observedProviderSessionId: 'other', handedOffToBackground: false };
   assert.equal(shouldIgnoreForeignClaudeHookIdentity({ ...base, expectedProviderSessionId: undefined, event: 'SessionStart', source: 'startup' }), false);
   assert.equal(shouldIgnoreForeignClaudeHookIdentity({ ...base, observedProviderSessionId: 'own', event: 'PostToolUse' }), false);
-  assert.equal(shouldIgnoreForeignClaudeHookIdentity({ ...base, event: 'PostToolUse', heldInBackground: true }), false);
+  for (const source of ['startup', 'resume', 'clear', 'fork']) {
+    assert.equal(shouldIgnoreForeignClaudeHookIdentity({ ...base, event: 'SessionStart', source, handedOffToBackground: true }), true, `handoff ${source}`);
+  }
+  assert.equal(shouldIgnoreForeignClaudeHookIdentity({ ...base, observedProviderSessionId: 'own', event: 'PostToolUse', handedOffToBackground: true }), false, 'the pane\'s own id is never a handoff');
   for (const source of ['resume', 'clear', 'fork']) {
     assert.equal(shouldIgnoreForeignClaudeHookIdentity({ ...base, event: 'SessionStart', source }), false, source);
     assert.equal(shouldIgnoreForeignClaudeHookIdentity({ ...base, event: 'UserPromptSubmit', source }), true, `${source} is only trusted on SessionStart`);

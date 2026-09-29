@@ -281,22 +281,23 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
           }) ?? null
         : null;
       const discoveredInBackground = payload.tessera_session_activation === 'background'
-        || Boolean(backgroundFork)
-        // A conversation moved to the background has no fork link, only a daemon job.
-        || (isClaude
-          && Boolean(expectedProviderSessionId)
-          && expectedProviderSessionId !== providerIdentity.providerSessionId
-          && await cliProviderRegistry.getProvider(entry.providerId)
-            .isTerminalConversationHeldInBackground?.({
-              providerSessionId: providerIdentity.providerSessionId,
-              userId: entry.userId,
-            }) === true);
+        || Boolean(backgroundFork);
+      // A conversation moved to the background has no fork link, only a daemon job.
+      const handedOffToBackground = isClaude
+        && !discoveredInBackground
+        && Boolean(expectedProviderSessionId)
+        && expectedProviderSessionId !== providerIdentity.providerSessionId
+        && await cliProviderRegistry.getProvider(entry.providerId)
+          .isTerminalConversationHeldInBackground?.({
+            providerSessionId: providerIdentity.providerSessionId,
+            userId: entry.userId,
+          }) === true;
       if (isClaude && shouldIgnoreForeignClaudeHookIdentity({
         expectedProviderSessionId,
         observedProviderSessionId: providerIdentity.providerSessionId,
         event,
         source: readString(payload.source),
-        heldInBackground: discoveredInBackground,
+        handedOffToBackground,
       })) {
         logger.debug({
           providerId: entry.providerId,

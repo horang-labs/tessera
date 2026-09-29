@@ -229,8 +229,8 @@ export interface CliProvider {
   /**
    * Whether the CLI itself holds this conversation in a background job. A
    * conversation moved to the background changes session id without any
-   * fork link, and the CLI refuses to resume it in a PTY — it can only be
-   * attached. Same filesystem caveat as `resolveBackgroundTerminalSessionFork`.
+   * fork link, so a hook reporting it must not be read as a new session on
+   * the PTY. Same filesystem caveat as `resolveBackgroundTerminalSessionFork`.
    */
   isTerminalConversationHeldInBackground?(options: {
     providerSessionId: string;

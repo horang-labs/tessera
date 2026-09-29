@@ -3,8 +3,12 @@ export interface ClaudeTerminalHookIdentityInput {
   observedProviderSessionId: string;
   event: string;
   source?: string;
-  /** Claude records the observed conversation as a live background daemon job. */
-  heldInBackground: boolean;
+  /**
+   * Claude holds the observed conversation in a background daemon job that is
+   * not a tracked `/fork` child: the conversation on this terminal was moved to
+   * the background and is continuing there.
+   */
+  handedOffToBackground: boolean;
 }
 
 // SessionStart `source` values Claude reports when the conversation on *this*
@@ -15,16 +19,18 @@ const OWN_TRANSITION_SOURCES = new Set(['resume', 'clear', 'fork']);
 
 /**
  * A pane token identifies the owning Tessera terminal, not the Claude process
- * that inherits its environment and hook settings. A nested `claude -p`, a
- * background worker, or the placeholder conversation that replaces a PTY's
- * conversation when it is moved to the background all post validly
- * authenticated hooks under session ids the pane never launched.
+ * that inherits its environment and hook settings. A background worker, or the
+ * placeholder conversation that replaces a PTY's conversation when it is moved
+ * to the background, posts validly authenticated hooks under session ids the
+ * pane never launched.
  *
  * A changed session id alone therefore proves nothing. It is the pane's own
  * transition only when Claude says so (`SessionStart` with `resume`, `clear` or
- * `fork`); a conversation Claude holds in the background is registered as a
- * background session instead of moving the pane. Everything else came from a
- * process that is not on this terminal's screen and must not create a session.
+ * `fork`). A conversation that was moved to the background is the one already on
+ * this terminal continuing elsewhere — its worker may well report `resume` — so
+ * it is ignored, whatever the source, rather than registered as a new session.
+ * Everything else came from a process that is not on the terminal's screen and
+ * must not create a session either.
  */
 export function shouldIgnoreForeignClaudeHookIdentity(
   input: ClaudeTerminalHookIdentityInput,
@@ -34,11 +40,11 @@ export function shouldIgnoreForeignClaudeHookIdentity(
     observedProviderSessionId,
     event,
     source,
-    heldInBackground,
+    handedOffToBackground,
   } = input;
   if (!expectedProviderSessionId || expectedProviderSessionId === observedProviderSessionId) {
     return false;
   }
-  if (heldInBackground) return false;
+  if (handedOffToBackground) return true;
   return event !== 'SessionStart' || !OWN_TRANSITION_SOURCES.has(source ?? '');
 }
