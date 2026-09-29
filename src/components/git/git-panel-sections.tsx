@@ -60,6 +60,7 @@ import { GitActionFailureBanner } from "./git-action-failure-banner";
 import { GitConflictResolveWithAiButton } from "./git-conflict-ai-button";
 import type { GitActionFailureReport } from "./git-action-report";
 import { GitCommitForm } from "./git-commit-form";
+import { GitChangedFileList } from "./git-changed-file-list";
 import { GitPrimaryActionBar } from "./git-primary-action";
 import {
   telemetryClickAttributes,
@@ -968,9 +969,8 @@ export function GitPanelContentSection({
                     </span>
                   </Button>
                 </div>
-                <ScrollArea className={cn(phoneScrollableContent ? "overflow-y-visible" : "flex-1")}>
-                  <div className="flex flex-col">
-                    {fileRows.map((row) => {
+                <GitChangedFileList rows={fileRows} scrollable={!phoneScrollableContent}>
+                    {(row) => {
                       if (row.kind === "folder") {
                         const expanded = !(folderState.target === commit.selectionKey && folderState.collapsed.has(row.path));
                         return (
@@ -1143,9 +1143,8 @@ export function GitPanelContentSection({
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
-                </ScrollArea>
+                    }}
+                </GitChangedFileList>
                 {data.changedFilesTruncated ? (
                   <div className="px-2 pb-1 text-[10px] leading-snug text-(--text-muted)">
                     {data.changedFilesTotal != null
