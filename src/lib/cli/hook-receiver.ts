@@ -37,6 +37,7 @@ import {
   isCodexHookPayloadOnForeignPane,
   shouldIgnoreForeignCodexHookIdentity,
 } from './providers/codex/terminal-hook-identity';
+import { shouldIgnoreForeignClaudeHookIdentity } from './providers/claude-code/terminal-hook-identity';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -248,22 +249,23 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     if (activeSessionId && providerIdentity) {
       const boundProviderSessionId = getTerminalProviderSessionForTesseraSession(activeSessionId)
         ?.provider_session_id;
-      let expectedCodexProviderSessionId = boundProviderSessionId;
-      if (isCodex && !expectedCodexProviderSessionId) {
+      const isClaude = entry.providerId === 'claude-code';
+      let expectedProviderSessionId = boundProviderSessionId;
+      if ((isCodex || isClaude) && !expectedProviderSessionId) {
         const activeSession = getSession(activeSessionId);
-        expectedCodexProviderSessionId = activeSession
+        expectedProviderSessionId = activeSession
           ? readPersistedTerminalProviderSessionId(activeSession)
           : undefined;
       }
       if (isCodex && shouldIgnoreForeignCodexHookIdentity({
-        expectedProviderSessionId: expectedCodexProviderSessionId,
+        expectedProviderSessionId,
         observedProviderSessionId: providerIdentity.providerSessionId,
         event,
         source: readString(payload.source),
       })) {
         logger.debug({
           providerId: entry.providerId,
-          expectedProviderSessionId: expectedCodexProviderSessionId,
+          expectedProviderSessionId,
           observedProviderSessionId: providerIdentity.providerSessionId,
           terminalId: entry.terminalId,
           event,
@@ -279,7 +281,33 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
           }) ?? null
         : null;
       const discoveredInBackground = payload.tessera_session_activation === 'background'
-        || Boolean(backgroundFork);
+        || Boolean(backgroundFork)
+        // A conversation moved to the background has no fork link, only a daemon job.
+        || (isClaude
+          && Boolean(expectedProviderSessionId)
+          && expectedProviderSessionId !== providerIdentity.providerSessionId
+          && await cliProviderRegistry.getProvider(entry.providerId)
+            .isTerminalConversationHeldInBackground?.({
+              providerSessionId: providerIdentity.providerSessionId,
+              userId: entry.userId,
+            }) === true);
+      if (isClaude && shouldIgnoreForeignClaudeHookIdentity({
+        expectedProviderSessionId,
+        observedProviderSessionId: providerIdentity.providerSessionId,
+        event,
+        source: readString(payload.source),
+        heldInBackground: discoveredInBackground,
+      })) {
+        logger.debug({
+          providerId: entry.providerId,
+          expectedProviderSessionId,
+          observedProviderSessionId: providerIdentity.providerSessionId,
+          terminalId: entry.terminalId,
+          event,
+          source: readString(payload.source),
+        }, 'Foreign Claude hook identity ignored');
+        return send(204);
+      }
       const observation = observeTerminalProviderSession({
         pane: entry,
         identity: providerIdentity,

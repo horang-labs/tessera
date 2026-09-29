@@ -94,6 +94,42 @@ export function createClaudeTerminalSessionObserver(
 }
 
 /**
+ * Whether Claude holds this conversation in a background daemon job.
+ *
+ * Moving a running conversation to the background hands it to a daemon under a
+ * new session id. Unlike a background `/fork`, that job records no
+ * `forkSessionId`/`forkParentSessionId`, so `readClaudeFork` cannot see it. A
+ * foreground session never has a job directory, so this cannot claim a PTY's
+ * own conversation.
+ */
+export async function isClaudeSessionInBackgroundJob(options: {
+  providerSessionId: string;
+  /** Whose CLI this is. Decides which filesystem holds the job file. */
+  userId?: string;
+  /** Overrides the resolved environment (tests). */
+  environment?: FilesystemBrowseEnvironment;
+  /** Overrides the jobs root (tests). */
+  jobsDir?: string;
+}): Promise<boolean> {
+  const { providerSessionId } = options;
+  if (!providerSessionId) return false;
+  const environment = options.environment ?? await getAgentEnvironment(options.userId);
+  const jobsRoot = await resolveClaudeJobsDir({ environment, jobsDir: options.jobsDir });
+  let state: Record<string, unknown>;
+  try {
+    state = JSON.parse(
+      fs.readFileSync(path.join(jobsRoot, providerSessionId.slice(0, 8), 'state.json'), 'utf8'),
+    ) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  // The directory is named by the first 8 characters only, so the full id has to
+  // match — another conversation may share the prefix.
+  return state.backend === 'daemon'
+    && (state.sessionId === providerSessionId || state.resumeSessionId === providerSessionId);
+}
+
+/**
  * Whether the identity a hook just reported belongs to a background `/fork`
  * child rather than to this PTY. Returns the child's own details when it does,
  * `null` when it does not — Claude keeps the parent conversation on the PTY, so

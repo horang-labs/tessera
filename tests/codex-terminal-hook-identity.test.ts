@@ -268,7 +268,7 @@ test('a real Claude fork on a Claude pane still creates a child session', async 
     hook_event_name: 'SessionStart',
     session_id: forkedClaudeSessionId,
     transcript_path: `/home/work/.claude/projects/-tmp-project-1/${forkedClaudeSessionId}.jsonl`,
-    source: 'startup',
+    source: 'fork',
   });
 
   const sessionsAfter = (getDb().prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count;

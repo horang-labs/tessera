@@ -227,6 +227,17 @@ export interface CliProvider {
   }): Promise<{ workDir?: string } | null>;
 
   /**
+   * Whether the CLI itself holds this conversation in a background job. A
+   * conversation moved to the background changes session id without any
+   * fork link, and the CLI refuses to resume it in a PTY — it can only be
+   * attached. Same filesystem caveat as `resolveBackgroundTerminalSessionFork`.
+   */
+  isTerminalConversationHeldInBackground?(options: {
+    providerSessionId: string;
+    userId?: string;
+  }): Promise<boolean>;
+
+  /**
    * Recognizes, from what the PTY currently shows, that the running conversation
    * was reset in place (`/clear`, `/new`). Codex and OpenCode mint the next
    * session id lazily — nothing is reported until the next prompt — so the

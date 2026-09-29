@@ -50,6 +50,7 @@ import { hasClaudeSubscription } from '../../subscription-auth';
 import { buildClaudeRateLimitSnapshot } from '@/lib/status-display/rate-limit-snapshots';
 import {
   createClaudeTerminalSessionObserver,
+  isClaudeSessionInBackgroundJob,
   resolveClaudeBackgroundTerminalSessionFork,
 } from './terminal-session-observer';
 import {
@@ -146,6 +147,8 @@ export class ClaudeCodeAdapter implements CliProvider {
   createTerminalSessionObserver = createClaudeTerminalSessionObserver;
 
   resolveBackgroundTerminalSessionFork = resolveClaudeBackgroundTerminalSessionFork;
+
+  isTerminalConversationHeldInBackground = isClaudeSessionInBackgroundJob;
 
   /** Identity of the transcript file backing this session (see CliProvider). */
   async readTerminalTranscriptFingerprint(options: {

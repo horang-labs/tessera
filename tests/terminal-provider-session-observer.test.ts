@@ -9,6 +9,7 @@ import {
 } from '@/lib/cli/providers/codex/terminal-session-observer';
 import {
   createClaudeTerminalSessionObserver,
+  isClaudeSessionInBackgroundJob,
   resolveClaudeBackgroundTerminalSessionFork,
   resolveClaudeJobsDir,
 } from '@/lib/cli/providers/claude-code/terminal-session-observer';
@@ -219,4 +220,29 @@ test('Bridged CLI homes ignore this server\'s own config vars', async (t) => {
     await resolveClaudeJobsDir({ environment: 'native' }),
     path.join(path.resolve(serverSideConfigDir), 'jobs'),
   );
+});
+
+test('a conversation moved to the background is recognized from its daemon job, not from a fork link', async (t) => {
+  const jobsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-claude-jobs-'));
+  t.after(() => fs.rmSync(jobsDir, { recursive: true, force: true }));
+  const moved = 'bbbbbbbb-3333-4444-8555-666666666666';
+  const writeJob = (id: string, state: Record<string, unknown>) => {
+    fs.mkdirSync(path.join(jobsDir, id.slice(0, 8)), { recursive: true });
+    fs.writeFileSync(path.join(jobsDir, id.slice(0, 8), 'state.json'), JSON.stringify(state));
+  };
+  const held = (providerSessionId: string) => isClaudeSessionInBackgroundJob({
+    providerSessionId,
+    environment: 'native',
+    jobsDir,
+  });
+
+  writeJob(moved, { backend: 'daemon', template: 'bg', sessionId: moved, resumeSessionId: moved });
+  assert.equal(await held(moved), true, 'no forkSessionId/forkParentSessionId is needed');
+  // The directory is named by 8 characters only, so another conversation sharing
+  // them must not be claimed by this job.
+  assert.equal(await held('bbbbbbbb-9999-4999-8999-000000000000'), false);
+  assert.equal(await held('dddddddd-1111-4222-8333-444444444444'), false, 'a foreground session has no job');
+  writeJob('eeeeeeee-1111-4222-8333-444444444444', { backend: 'local', sessionId: 'eeeeeeee-1111-4222-8333-444444444444' });
+  assert.equal(await held('eeeeeeee-1111-4222-8333-444444444444'), false, 'only daemon jobs refuse a resume');
+  assert.equal(await held(''), false);
 });
