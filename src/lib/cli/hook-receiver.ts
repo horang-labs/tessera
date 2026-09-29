@@ -33,7 +33,10 @@ import {
   mapCodexHookLifecycle,
   type CodexHookOrigin,
 } from '@/lib/cli/providers/codex/terminal-hook-lifecycle';
-import { shouldIgnoreForeignCodexHookIdentity } from './providers/codex/terminal-hook-identity';
+import {
+  isCodexHookPayloadOnForeignPane,
+  shouldIgnoreForeignCodexHookIdentity,
+} from './providers/codex/terminal-hook-identity';
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -206,6 +209,19 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     const event = readString(payload.hook_event_name) || readString(payload.hookEventName);
     const isCodex = entry.providerId === 'codex';
     const isOpenCode = entry.providerId === 'opencode';
+    // A `codex exec` started from a Claude/OpenCode pane inherits the pane token
+    // and would otherwise be read as that pane's own provider (a phantom /fork).
+    if (isCodexHookPayloadOnForeignPane(
+      entry.providerId,
+      readString(payload.transcript_path) || readString(payload.transcriptPath),
+    )) {
+      logger.debug({
+        providerId: entry.providerId,
+        terminalId: entry.terminalId,
+        event,
+      }, 'Codex hook from a foreign pane ignored');
+      return send(204);
+    }
     const activeSessionId = entry.sessionId
       ? terminalManager.getSessionIdForTerminal(entry.terminalId, entry.userId)
       : null;

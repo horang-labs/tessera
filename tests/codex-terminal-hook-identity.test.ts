@@ -21,6 +21,9 @@ let sessionHistory: typeof import('@/lib/session-history').sessionHistory;
 let shouldIgnoreForeignCodexHookIdentity: typeof import(
   '@/lib/cli/providers/codex/terminal-hook-identity'
 ).shouldIgnoreForeignCodexHookIdentity;
+let isCodexHookPayloadOnForeignPane: typeof import(
+  '@/lib/cli/providers/codex/terminal-hook-identity'
+).isCodexHookPayloadOnForeignPane;
 
 before(async () => {
   await import('@/lib/cli/providers/bootstrap');
@@ -56,6 +59,7 @@ before(async () => {
   revokePaneToken = paneTokens.revokePaneToken;
   terminalManager = sharedManager.terminalManager;
   shouldIgnoreForeignCodexHookIdentity = hookIdentity.shouldIgnoreForeignCodexHookIdentity;
+  isCodexHookPayloadOnForeignPane = hookIdentity.isCodexHookPayloadOnForeignPane;
   sessionHistory = history.sessionHistory;
 });
 
@@ -203,6 +207,94 @@ test('Codex /clear remains an allowed hook-driven identity transition', async (t
   assert.equal(rebind.mock.callCount(), 1);
   assert.ok(child);
   assert.doesNotMatch(child.title, /\(Fork\)$/);
+});
+
+test('a codex exec launched from a Claude pane cannot spawn a phantom fork session', async (t) => {
+  const tesseraSessionId = 'claude-pane-codex-exec-parent';
+  const codexRolloutId = '01a0ecc2-b21f-7793-8d7e-6c4659a8fc1b';
+  const terminalId = `session-${tesseraSessionId}`;
+  const userId = 'claude-pane-codex-exec-user';
+
+  dbSessions.createSession(tesseraSessionId, 'project-1', 'Claude conversation', 'claude-code', {
+    providerState: JSON.stringify({ kind: 'terminal' }),
+  });
+  const token = mintPaneToken({ terminalId, userId, sessionId: tesseraSessionId, providerId: 'claude-code' });
+  t.after(() => revokePaneToken(token));
+  t.mock.method(terminalManager, 'getSessionIdForTerminal', () => tesseraSessionId);
+  const rebind = t.mock.method(terminalManager, 'rebindSession', () => true);
+  const sessionsBefore = (getDb().prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count;
+
+  const transcriptPath = `/home/work/.codex/sessions/2026/09/29/rollout-2026-09-29T19-42-57-${codexRolloutId}.jsonl`;
+  const statuses = [
+    await postHook(token, {
+      hook_event_name: 'SessionStart',
+      session_id: codexRolloutId,
+      transcript_path: transcriptPath,
+      source: 'startup',
+    }),
+    await postHook(token, {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: codexRolloutId,
+      transcript_path: transcriptPath,
+      prompt: 'codex exec prompt must not rename the Claude session',
+    }),
+  ];
+
+  const sessionsAfter = (getDb().prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count;
+  assert.deepEqual(statuses, [204, 204]);
+  assert.equal(sessionsAfter, sessionsBefore, 'a Codex hook must not create a session on a Claude pane');
+  assert.equal(getTerminalProviderSession('claude-code', codexRolloutId), undefined);
+  assert.equal(rebind.mock.callCount(), 0);
+  assert.equal(await sessionHistory.historyExists(tesseraSessionId), false);
+  assert.equal(dbSessions.getSession(tesseraSessionId)?.title, 'Claude conversation');
+});
+
+test('a real Claude fork on a Claude pane still creates a child session', async (t) => {
+  const tesseraSessionId = 'claude-pane-real-fork-parent';
+  const forkedClaudeSessionId = '3f1c9a52-7d0e-4b8a-9c11-2e5d6f7a8b90';
+  const terminalId = `session-${tesseraSessionId}`;
+  const userId = 'claude-pane-real-fork-user';
+
+  dbSessions.createSession(tesseraSessionId, 'project-1', 'Claude parent', 'claude-code', {
+    providerState: JSON.stringify({ kind: 'terminal' }),
+  });
+  const token = mintPaneToken({ terminalId, userId, sessionId: tesseraSessionId, providerId: 'claude-code' });
+  t.after(() => revokePaneToken(token));
+  t.mock.method(terminalManager, 'getSessionIdForTerminal', () => tesseraSessionId);
+  t.mock.method(terminalManager, 'rebindSession', () => true);
+  const sessionsBefore = (getDb().prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count;
+
+  const status = await postHook(token, {
+    hook_event_name: 'SessionStart',
+    session_id: forkedClaudeSessionId,
+    transcript_path: `/home/work/.claude/projects/-tmp-project-1/${forkedClaudeSessionId}.jsonl`,
+    source: 'startup',
+  });
+
+  const sessionsAfter = (getDb().prepare('SELECT COUNT(*) AS count FROM sessions').get() as { count: number }).count;
+  assert.equal(status, 204);
+  assert.equal(sessionsAfter, sessionsBefore + 1, 'Claude /fork discovery must keep working');
+  assert.ok(getTerminalProviderSession('claude-code', forkedClaudeSessionId));
+});
+
+test('foreign-pane Codex payload detection keys on the rollout file name only', () => {
+  const rollout = 'rollout-2026-09-29T19-42-57-01a0ecc2-b21f-7793-8d7e-6c4659a8fc1b.jsonl';
+  for (const transcriptPath of [
+    `/home/work/.codex/sessions/2026/09/29/${rollout}`,
+    `/home/work/.tessera/codex-overlay/session-abc/sessions/2026/09/28/${rollout}`,
+    `C:\\Users\\work\\.codex\\sessions\\2026\\09\\29\\${rollout}`,
+    `\\\\wsl.localhost\\Ubuntu-24.04\\home\\work\\.codex\\sessions\\${rollout}`,
+  ]) {
+    assert.equal(isCodexHookPayloadOnForeignPane('claude-code', transcriptPath), true, transcriptPath);
+    assert.equal(isCodexHookPayloadOnForeignPane('opencode', transcriptPath), true, transcriptPath);
+    assert.equal(isCodexHookPayloadOnForeignPane('codex', transcriptPath), false, 'Codex panes keep their own rollouts');
+  }
+  assert.equal(
+    isCodexHookPayloadOnForeignPane('claude-code', '/home/work/.claude/projects/-x/3f1c9a52-7d0e-4b8a-9c11-2e5d6f7a8b90.jsonl'),
+    false,
+  );
+  assert.equal(isCodexHookPayloadOnForeignPane('claude-code', undefined), false);
+  assert.equal(isCodexHookPayloadOnForeignPane('claude-code', ''), false);
 });
 
 test('Codex hook identity classifier preserves legitimate ownership cases', () => {
