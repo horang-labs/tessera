@@ -28,3 +28,28 @@ export function shouldIgnoreForeignCodexHookIdentity(
   }
   return event !== 'SessionStart' || source !== 'clear';
 }
+
+// Codex names every rollout `rollout-<timestamp>-<id>.jsonl`, in the account
+// home and in Tessera's per-session overlay alike. Claude transcripts are
+// `<uuid>.jsonl`, so the basename alone tells the two apart. Only the string is
+// inspected — no filesystem access — so Windows/UNC/POSIX spellings all work.
+const CODEX_ROLLOUT_BASENAME = /(?:^|[\\/])rollout-[^\\/]+\.jsonl$/;
+
+/**
+ * A pane token identifies the owning Tessera terminal, not the provider that
+ * inherits its environment. A `codex exec` launched from a Claude (or OpenCode)
+ * pane posts validly authenticated hooks whose session id and rollout path
+ * belong to Codex; read as the pane's own provider, that id looks like a
+ * `/fork` and spawns a session no Claude transcript backs.
+ *
+ * Claude legitimately changes session id (`/fork`, `/resume`, `/clear`), so the
+ * id alone cannot be judged — the transcript path says which provider wrote it.
+ */
+export function isCodexHookPayloadOnForeignPane(
+  paneProviderId: string,
+  transcriptPath: string | undefined,
+): boolean {
+  return paneProviderId !== 'codex'
+    && Boolean(transcriptPath)
+    && CODEX_ROLLOUT_BASENAME.test(transcriptPath as string);
+}
