@@ -24,6 +24,7 @@ assert.match(fixture.sessionId, /^[\da-f-]{36}$/);
 assert.match(fixture.automationId, /^[\da-f-]{36}$/);
 assert.ok(Number.isInteger(fixture.expectedCount) && fixture.expectedCount > 0);
 assert.ok(fixture.marker && fixture.draft);
+assert.ok(['delivery', 'takeover'].includes(fixture.scenario));
 const processes = JSON.parse(execFileSync('powershell.exe', ['-NoProfile', '-Command',
   'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress'], {encoding: 'utf8'}));
 const main = processes.find(p => p.ProcessId === instance.electronProcessId);
@@ -69,6 +70,26 @@ try {
   assert.equal(await draft.inputValue(), fixture.draft);
   assert.notEqual(await draft.getAttribute('readonly'), null);
   await screenshot('01-armed-draft-visible');
+  if (fixture.scenario === 'takeover') {
+    await surface.getByTestId('automation-session-controls').getByRole('button', {name: 'Pause to type', exact: true}).click();
+    const ownership = await api('/api/sessions/' + fixture.sessionId + '/automation-input');
+    assert.equal(ownership.mode, 'human');
+    assert.notEqual(ownership.epoch, armed.inputOwnership.epoch, 'Pause must revoke the armed epoch');
+    assert.equal(await draft.inputValue(), fixture.draft);
+    assert.equal(await draft.getAttribute('readonly'), null);
+    const paused = await api(detailUrl);
+    assert.equal(paused.automation.state, 'paused');
+    assert.equal(paused.inFlightRunId, null);
+    for (let poll = 0; poll < 3; poll++) {
+      await page.waitForTimeout(2000);
+      assert.equal((await api(detailUrl)).automation.dispatchCount, armed.automation.dispatchCount);
+    }
+    await screenshot('02-armed-pause-human-draft-retained');
+    Object.assign(evidence, {armed, paused, ownership, surface: fixture.surface, scenario: fixture.scenario});
+    console.log('PASS: Pause revokes armed input ownership, retains draft and dispatch count');
+  } else {
+  await surface.getByRole('button', {name: 'Back to terminal', exact: true}).click();
+  await screenshot('02-visible-native-pty-waiting');
   // Observe a real provider response through the same owned runtime, not an echo
   // of the outbound prompt or a fake supervisor/terminal implementation.
   const deadline = Date.now() + 90_000;
@@ -88,20 +109,19 @@ try {
   assert.equal(runs.items.length, fixture.expectedCount);
   assert.ok(runs.items.every(run => run.state === 'delivered' && run.sessionId === fixture.sessionId));
   assert.equal(runs.items[0].effectiveSelection.model, armed.automation.savedSelection.model);
-  await screenshot('02-provider-response-and-limit');
+  await screenshot('03-provider-response-and-limit');
   // Repeated scheduler polling must not create another delivery at the old turn.
   for (let poll = 0; poll < 3; poll++) {
     await page.waitForTimeout(2000);
     assert.equal((await api(detailUrl + '/runs')).items.length, fixture.expectedCount);
   }
-  await surface.getByTestId('automation-session-controls').getByRole('button', {name: 'Pause to type', exact: true}).click();
-  const ownership = await api('/api/sessions/' + fixture.sessionId + '/automation-input');
-  assert.equal(ownership.mode, 'human');
+  await surface.getByRole('button', {name: 'View as chat', exact: true}).click();
   assert.equal(await draft.inputValue(), fixture.draft);
   assert.equal(await draft.getAttribute('readonly'), null);
-  await screenshot('03-takeover-draft-retained');
-  Object.assign(evidence, {armed, detail, runs, runtime, ownership, duplicatePolls: 3, surface: fixture.surface});
-  console.log('PASS: real packaged wake, exactly one new delivery, finite limit, takeover preserves draft');
+  await screenshot('04-exhaustion-human-draft-retained');
+  Object.assign(evidence, {armed, detail, runs, runtime, duplicatePolls: 3, surface: fixture.surface, scenario: fixture.scenario});
+  console.log('PASS: real packaged wake, exactly one new delivery, finite limit returns human input and retains draft');
+  }
 } finally {
   fs.writeFileSync(path.join(fixture.evidenceDir, 'wake-result.json'), JSON.stringify(evidence, null, 2));
   await browser.close(); // Disconnect only; manifest cleanup owns process termination.
