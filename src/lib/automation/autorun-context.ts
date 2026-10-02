@@ -21,6 +21,7 @@ export interface NativeRecord {
   type?: string; uuid?: string; parentUuid?: string; sessionId?: string; promptId?: string;
   isSidechain?: boolean; isMeta?: boolean; isSynthetic?: boolean; isCompactSummary?: boolean;
   subtype?: string; message?: { id?: string; content?: string | NativeBlock[] };
+  permissionMode?: string; aiTitle?: string;
   payload?: { id?: string; type?: string; turn_id?: string; thread_source?: string; error?: unknown;
     role?: string; content?: NativeBlock[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: string | NativeBlock[]; last_agent_message?: string };
 }
@@ -75,6 +76,14 @@ function claudeCutoff(records: LocatedRecord[], request: AnalysisSnapshotRequest
     const v = record.value;
     if (v.type === 'user' && v.promptId && v.promptId !== correlation.nativePromptId && !v.isSidechain) break;
     if (v.isSidechain) refuse('unsafe-runtime');
+    if (v.type === 'permission-mode' || v.type === 'ai-title') {
+      // These Claude records are non-conversational, with exactly three fields.
+      // A UUID, parent, prompt or message must never bypass turn validation here.
+      const field = v.type === 'permission-mode' ? 'permissionMode' : 'aiTitle';
+      if (v.sessionId !== request.providerConversationId) refuse('ambiguous-cutoff');
+      if (Object.keys(v).length !== 3 || typeof v[field] !== 'string' || !v[field].trim()) refuse('malformed');
+      continue;
+    }
     if (['queue-operation', 'atis-latch', 'last-prompt', 'cost-state', 'mode'].includes(v.type ?? '') && !v.uuid && v.sessionId === request.providerConversationId) continue;
     if (v.isCompactSummary || (v.type === 'system' && v.subtype === 'compact_boundary')) refuse('compacted-latest-turn');
     if (v.sessionId !== request.providerConversationId || !v.uuid || !v.parentUuid || !lineage.has(v.parentUuid)) refuse('ambiguous-cutoff');
