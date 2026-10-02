@@ -558,7 +558,17 @@ export class WebSocketClient {
       this.rawInputCallbacks.get(request.requestId)?.(false);
     }, TERMINAL_PROMPT_RESPONSE_TIMEOUT_MS);
     this.rawInputCallbacks.set(request.requestId, accepted => {
-      clearTimeout(timer); this.rawInputCallbacks.delete(request.requestId); confirmed?.(accepted);
+      clearTimeout(timer);
+      this.rawInputCallbacks.delete(request.requestId);
+      // Exact Enter marks submission; only the correlated server receipt accepts it.
+      // Telemetry never inspects the retained draft or publishes terminal identity.
+      if (accepted && data === '\r') {
+        void captureTelemetryPromptSubmitted(terminalId, {
+          source: 'pty_direct',
+          provider_id: this.terminalPromptProviders.get(terminalId),
+        });
+      }
+      confirmed?.(accepted);
     });
     const sent = this.send(request);
     if (!sent) {

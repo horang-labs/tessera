@@ -17,6 +17,10 @@ test('successful chat and terminal submissions emit content-free semantic teleme
     /captureTelemetryPromptSubmitted\(sessionId, \{[\s\S]*?source: 'pty_chat_view',[\s\S]*?provider_id:/,
   );
 
+  const rawReceipt = wsClientSource.match(/this\.rawInputCallbacks\.set\(request\.requestId, accepted => \{[\s\S]*?\n    \}\);/)?.[0];
+  assert.ok(rawReceipt, 'raw input must settle through its correlated receipt');
+  assert.match(rawReceipt, /if \(accepted && data === '\\r'\) \{\s*void captureTelemetryPromptSubmitted\(terminalId/);
+
   for (const match of wsClientSource.matchAll(/captureTelemetryPromptSubmitted\([^,]+,\s*\{[\s\S]*?\}\);/g)) {
     assert.doesNotMatch(
       match[0],
