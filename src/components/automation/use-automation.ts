@@ -1,20 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { getSessionInputOwnership, subscribeSessionInputOwnership } from '@/lib/automation/client-state';
-import { createAutomationStore, type AutomationScope } from '@/stores/automation-store';
+import { useAuthStore } from '@/stores/auth-store';
+import { getAutomationStore, subscribeAutomationScope, type AutomationScope } from '@/stores/automation-store';
 
 export function useAutomationStore(scope: AutomationScope) {
   const sessionId = 'sessionId' in scope ? scope.sessionId : null;
   const worktreeId = 'worktreeId' in scope ? scope.worktreeId : null;
-  const store = useMemo(() => createAutomationStore(sessionId ? { sessionId } : { worktreeId: worktreeId! }), [sessionId, worktreeId]);
-  useEffect(() => {
-    void store.getState().refresh();
-    const timer = setInterval(() => void store.getState().refresh(), 5000);
-    const onFocus = () => void store.getState().refresh();
-    window.addEventListener('focus', onFocus);
-    return () => { clearInterval(timer); window.removeEventListener('focus', onFocus); };
-  }, [store]);
+  const ownerId = useAuthStore(state => state.user?.id ?? 'signed-out');
+  const scoped = sessionId ? { sessionId } : { worktreeId: worktreeId! };
+  const store = getAutomationStore(ownerId, scoped).store;
+  useEffect(() => subscribeAutomationScope(ownerId, sessionId ? { sessionId } : { worktreeId: worktreeId! }), [ownerId, sessionId, worktreeId]);
   return store;
 }
 

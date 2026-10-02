@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { CheckCircle, AlertTriangle, Shield, MessageCircleQuestion, X, Loader2 } from 'lucide-react';
-import { Notification } from '@/types/notification';
+import type { AppNotificationV2 } from '@/types/notification';
 import { useNotificationStore } from '@/stores/notification-store';
 import { useSessionStore } from '@/stores/session-store';
 import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
@@ -17,7 +17,7 @@ import logger from '@/lib/logger';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 
 interface ToastNotificationProps {
-  notification: Notification;
+  notification: AppNotificationV2;
   onDismiss: () => void;
   onClick: () => void;
 }
@@ -43,7 +43,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
   const [submitError, setSubmitError] = useState<string | null>(null);
   const onDismissRef = useRef(onDismiss);
 
-  const isCompleted = notification.type === 'completed';
+  const isCompleted = notification.type === 'completed' || notification.type === 'autorun_complete';
   const hasActions = notification.actions && notification.actions.length > 0;
   const autoDismissDelay = isCompleted
     ? COMPLETED_TOAST_DURATION_MS
@@ -146,7 +146,7 @@ export function ToastNotification({ notification, onDismiss, onClick }: ToastNot
             </div>
 
             <p className="text-[0.625rem] text-(--toast-muted) leading-snug line-clamp-2 mt-0.5">
-              {notification.preview}
+              {'attention' in notification && <strong>{t(notification.type === 'autorun_complete' ? 'notifications.autorunComplete' : 'notifications.autorunAttention')} · </strong>}{notification.preview}
             </p>
 
             {submitError && (

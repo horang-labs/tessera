@@ -4,6 +4,8 @@ import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import type { AutomationRun, SessionSelectionSnapshot } from '@/lib/automation/contracts';
 import { useI18n } from '@/lib/i18n';
 import { localDue } from './automation-form';
+import { AutomationReason } from './automation-reason';
+import { useProjectViewSession } from '@/hooks/use-project-view-workspace-state';
 import { automationButton } from './ownership-actions';
 
 export function SavedSelection({ selection }: { selection: SessionSelectionSnapshot }) {
@@ -21,16 +23,21 @@ export function AutomationHistory({ runs, onResolve, onOpenSession }: {
     <p className="text-xs text-(--text-muted)">{t('automation.noSuccess')}</p>
     {runs.length === 0 && <p>{t('automation.noRuns')}</p>}
     {runs.map(run => <article key={run.id} className="grid gap-2 border-l-2 border-(--divider) pl-3 text-sm">
-      <p><strong>{run.state === 'delivered' ? t('automation.sent') : run.state}</strong> · <time dateTime={new Date(run.dueAt).toISOString()}>{localDue(run.dueAt)}</time></p>
-      <p>{t('automation.runtime')}: {run.observedRuntime}</p>
+      <p><strong>{run.state === 'delivered' ? t('automation.sent') : t(`automation.delivery_${run.state}`)}</strong> · <time dateTime={new Date(run.dueAt).toISOString()}>{localDue(run.dueAt)}</time></p>
+      <p>{t('automation.runtime')}: {run.observedRuntime === 'turn-complete' ? t('automation.workerEnded') : run.observedRuntime}</p>
       {run.coalescedCount > 0 && <p>{t('automation.coalesced')}: {run.coalescedCount}</p>}
-      {run.reason && <p>{t('automation.reason')}: {run.reason}</p>}
+      <AutomationReason reason={run.reason} />
       <SavedSelection selection={run.effectiveSelection} />
-      {run.sessionId && <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} type="button" className={`${automationButton} justify-self-start underline`} onClick={() => onOpenSession(run.sessionId!)}>{t('automation.openSession')} · {run.sessionId}</button>}
+      {run.sessionId && <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} type="button" className={`${automationButton} justify-self-start underline`} onClick={() => onOpenSession(run.sessionId!)}><SessionLinkLabel sessionId={run.sessionId!} /></button>}
       {run.state === 'unknown' && <>
         <p className="text-xs">{t('automation.recovery')}</p>
         <button {...telemetryClickAttributes('automation.history.recover', 'automation')} className={`${automationButton} justify-self-start`} type="button" onClick={() => onResolve(run.id)}>{t('automation.recover')}</button>
       </>}
     </article>)}
   </section>;
+}
+
+function SessionLinkLabel({ sessionId }: { sessionId: string }) {
+  const session = useProjectViewSession(sessionId); const { t } = useI18n();
+  return <>{t('automation.openSession')} · {session?.title ?? t('automation.target')}</>;
 }

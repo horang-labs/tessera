@@ -780,6 +780,8 @@ export const en: I18nMessages = {
     },
   },
   notifications: {
+    autorunComplete: 'Autorun: goal judged complete',
+    autorunAttention: 'Autorun needs your attention',
     title: 'Notifications',
     noNotifications: 'No notifications',
     markAllAsRead: 'Mark all as read',

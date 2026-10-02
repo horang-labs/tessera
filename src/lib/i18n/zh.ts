@@ -780,6 +780,8 @@ export const zh: I18nMessages = {
     },
   },
   notifications: {
+    autorunComplete: 'Autorun：目标达成判断',
+    autorunAttention: 'Autorun：需要确认',
     title: '通知',
     noNotifications: '暂无通知',
     markAllAsRead: '全部标记为已读',

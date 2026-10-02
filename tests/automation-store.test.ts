@@ -127,3 +127,12 @@ test('edit inspection exposes an unresolved attempt before opening the form', as
   assert.equal(current?.inputOwnership?.mode, 'draining');
   assert.equal(current?.inFlightRunId, 'run-1');
 });
+
+test('pause retains the 202 control receipt for drain presentation without unlocking input', async () => {
+  const receipt = { automation: { ...automationFixture(), state: 'paused' }, inputOwnership: { ...ownershipFixture(), mode: 'draining' }, inFlightRunId: 'run-1' };
+  const store = createAutomationStore({ sessionId: 'session-1' }, async (_url, init) => init?.method === 'POST'
+    ? Response.json(receipt, { status: 202 }) : Response.json({ items: [receipt.automation], nextCursor: null }));
+  assert.equal(await store.getState().pause('rule-1'), true);
+  assert.equal(store.getState().lastControl?.status, 202);
+  assert.equal(store.getState().lastControl?.body.inFlightRunId, 'run-1');
+});
