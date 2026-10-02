@@ -39,6 +39,7 @@ export type TelemetryUiSurface = (typeof TELEMETRY_UI_SURFACES)[number];
 export const TELEMETRY_UI_CONTROLS = [
   'automation.open.wake',
   'automation.autorun.objective_edit',
+  'automation.history.recover_confirm',
   'automation.history.new',
   'automation.autorun.sources',
   'automation.diagnostics',

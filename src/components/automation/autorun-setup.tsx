@@ -17,9 +17,9 @@ export function AutorunPreviewView({ preview, objectiveOverride, onObjective, on
   return <section className="grid gap-3">
     <p className="text-sm">{t('automation.goal')} · {t(objectiveOverride || preview.objective?.kind === 'explicit' ? 'automation.explicitGoal' : 'automation.verifiedGoal')}</p>
     {preview.objective ? <>
-      <p className="whitespace-pre-wrap line-clamp-3">{preview.objective.text}</p>
+      <p className="whitespace-pre-wrap line-clamp-3">{objectiveOverride.trim() || preview.objective.text}</p>
       <details><summary {...click('automation.autorun.sources', 'automation')}>{t('automation.viewSource')}</summary>
-        <p className="whitespace-pre-wrap break-words">{preview.objective.text}</p>
+        <p className="whitespace-pre-wrap break-words">{objectiveOverride.trim() || preview.objective.text}</p>
         {preview.objective.kind === 'verified-human' && preview.objective.sources.map(source => <blockquote key={source.recordId} className="whitespace-pre-wrap border-l pl-2">{source.excerpt}</blockquote>)}
       </details>
     </> : <p>{t('automation.goalMissing')}</p>}
@@ -50,7 +50,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
   const draftKey = old ? `${old.id}:${intent}` : 'autorun:new';
   const draftFields = (store.getState().drafts[`${draftKey}:fields`] ?? {}) as Record<string, string>;
   const draft = store.getState().drafts[draftKey] as Partial<AutorunInput> | undefined;
-  const [override, setOverride] = useState(draftFields.objective ?? (draft?.autorun?.objective.kind === 'explicit' ? draft.autorun.objective.text : ''));
+  const [override, setOverride] = useState(draftFields.objective ?? (draft?.autorun?.objective.kind === 'explicit' ? draft.autorun.objective.text : old?.autorun.objective.kind === 'explicit' ? old.autorun.objective.text : ''));
   const selection = chooseAutorunSupervisor(preview, old?.autorun.supervisor ?? draft?.autorun?.supervisor);
   const [supervisor, setSupervisor] = useState<SupervisorSelection | null>(selection);
   const [saving, setSaving] = useState(false);

@@ -34,3 +34,15 @@ test('decision history retains loaded pages after refresh and only reveals new e
   store.getState().showNewDecisions('rule-1');
   assert.deepEqual(store.getState().decisions['rule-1'].items.map(item => item.id), ['new', 'decision-1', 'old']);
 });
+
+test('an older detail read cannot replace a newer authoritative revision', async () => {
+  const { automationFixture } = await import('./fixtures/automation');
+  let release!: (r: Response) => void;
+  let calls = 0;
+  const body = (revision: number) => ({ automation: { ...automationFixture(), revision }, inputOwnership: null, inFlightRunId: null });
+  const store = createAutomationStore({ sessionId: 'session-1' }, async () => ++calls === 1 ? new Promise<Response>(r => { release = r; }) : Response.json(body(3)));
+  const old = store.getState().inspect('rule-1');
+  await store.getState().inspect('rule-1');
+  release(Response.json(body(1))); await old;
+  assert.equal(store.getState().details['rule-1'].automation.revision, 3);
+});

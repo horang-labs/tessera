@@ -18,8 +18,8 @@ import { AutorunHistory, AutorunEvidence } from './autorun-history';
 import { useAutomationContext } from './automation-context';
 
 type SetupIntent = 'start' | 'resume' | 'edit' | 'replace';
-export function AutomationManager({ scope, store, onClose, onOpenSession, supported = true, initialId }: {
-  scope: AutomationScope; store: AutomationStoreApi; onClose: () => void; onOpenSession: (id: string) => void; supported?: boolean; initialId?: string;
+export function AutomationManager({ scope, store, onClose, onOpenSession, supported = true, initialId, initialResume = false }: {
+  scope: AutomationScope; store: AutomationStoreApi; onClose: () => void; onOpenSession: (id: string) => void; supported?: boolean; initialId?: string; initialResume?: boolean;
 }) {
   const { t } = useI18n();
   const state = useStore(store);
@@ -41,9 +41,12 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
   useEffect(() => {
     returnFocus.current = document.activeElement as HTMLElement;
     dialog.current?.showModal();
-    if (initialId) store.setState({ view: { ...store.getState().view, selectedId: initialId, setup: false } });
+    if (initialId) {
+      store.setState({ view: { ...store.getState().view, selectedId: initialId, setup: false } });
+      if (initialResume) void store.getState().inspect(initialId).then(current => { if (current) void setup('resume',current.automation); });
+    }
     return () => { const target = returnFocus.current; if (target?.isConnected && target.getClientRects().length) target.focus({ preventScroll: true }); };
-  }, [store, initialId]);
+  }, [store, initialId, initialResume]);
   useEffect(() => {
     if (!view.selectedId) return;
     const refresh = () => {
@@ -82,15 +85,17 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
   const heldId = ownership.automationId ?? (rule?.state === 'enabled' ? rule.id : null);
   return createPortal(<dialog {...telemetryIgnoreAttributes('event_boundary')} data-automation-dialog ref={dialog} aria-label={t('automation.title')}
     className="m-auto max-h-[94dvh] w-[min(96vw,42rem)] overflow-auto rounded-xl border border-(--divider) bg-(--chat-bg) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-(--text-primary) shadow-xl backdrop:bg-black/50"
-    onCancel={event => { event.preventDefault(); onClose(); }}
-    onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); if (evidenceId) setEvidenceId(null); else onClose(); } }} onClick={event => event.stopPropagation()}>
+    onCancel={event => { event.preventDefault(); event.stopPropagation(); if (evidenceId) setEvidenceId(null); else onClose(); }}
+    onKeyDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
     <header className="sticky top-0 z-10 mb-4 flex flex-wrap items-center justify-between gap-2 bg-(--chat-bg) py-2">
       <div><h2 className="font-semibold">{context.title}</h2><p className="text-xs">{context.subtitle} · {t('automation.title')}</p></div>
       <button {...click('automation.manager.close', 'automation')} className={automationButton} type="button" onClick={onClose}>{t('automation.close')}</button>
+      {rule && rule.state !== 'deleted' && (showSetup || evidenceId) && <button {...click('automation.delete','automation')} className={automationButton} type="button" onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>}
       {heldId && <button {...click('automation.pause', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().pause(heldId)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>}
     </header>
     {(view.selectedId || view.setup || evidenceId) && <button {...click('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else { updateView({ setup: false, selectedId: null }); } }}>{t('automation.back')}</button>}
     <AutomationError code={error} />
+    {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...click('automation.delete.confirm','automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...click('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>
     {sessionId && <p role="status" className="my-2 text-xs">{t(`automation.${ownership.mode}`)}</p>}
     {showSetup ? <section className="grid gap-3">
       <p className="text-xs">{t('automation.local')}</p>{sessionId && <p className="text-xs">{t('automation.safety')}</p>}
@@ -106,10 +111,10 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
         </> : <>
           {sessionId && <p>{t('automation.fixedHelp')}</p>}
           <AutomationForm key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
-            defaultName={context.title} draft={state.drafts[sessionId ? 'heartbeat' : 'schedule']} onDraft={draft => store.setState(s => ({ drafts: { ...s.drafts, [sessionId ? 'heartbeat' : 'schedule']: draft } }))}
+            defaultName={context.title} replacing={intent === 'replace'} draft={state.drafts[sessionId ? 'heartbeat' : 'schedule']} onDraft={draft => store.setState(s => ({ drafts: { ...s.drafts, [sessionId ? 'heartbeat' : 'schedule']: draft } }))}
             onSave={async (input, previous) => {
               if (intent === 'replace' && rule) {
-                if (!preview || !['completed', 'running'].includes(preview.readiness.kind)) { store.setState({ error: 'INPUT_BOUNDARY_UNPROVEN' }); return false; }
+                if (previewLoading || preview?.readiness.kind === 'idle') { store.setState({ error: 'INPUT_BOUNDARY_UNPROVEN' }); return false; }
                 if (!await store.getState().remove(rule.id)) return false;
               }
               const success = await store.getState().save(input, previous);
@@ -146,7 +151,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
           <SavedSelection selection={rule.savedSelection} />
         </details>}
         {rule.mode === 'autorun' && state.newDecisionCount[rule.id] > 0 && <button {...click('automation.history.new', 'automation')} className={automationButton} onClick={() => store.getState().showNewDecisions(rule.id)}>{state.newDecisionCount[rule.id]} {t('automation.newEntries')}</button>}
-        {rule.mode === 'autorun' ? <AutorunHistory details={decisionDetails} decisions={(decisions[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onEvidence={id => { setEvidenceId(id); void store.getState().inspectDecision(rule.id,id); }} /> : <AutomationHistory runs={(runs[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} />}
+        {rule.mode === 'autorun' ? <AutorunHistory details={decisionDetails} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} decisions={(decisions[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onEvidence={id => { setEvidenceId(id); void store.getState().inspectDecision(rule.id,id); }} /> : <AutomationHistory runs={(runs[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} />}
         {view.tab === 'history' && (rule.mode === 'autorun' ? decisions[rule.id]?.nextCursor : runs[rule.id]?.nextCursor) && <button {...click('automation.manager.more', 'automation')} className={automationButton} onClick={() => void (rule.mode === 'autorun' ? store.getState().loadDecisions(rule.id,true) : store.getState().loadRuns(rule.id,true))}>{t('automation.more')}</button>}
       </>}
     </section> : <>

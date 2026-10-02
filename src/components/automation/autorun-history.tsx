@@ -6,7 +6,7 @@ import { localDue } from './automation-form';
 import { AutomationReason } from './automation-reason';
 import { automationButton } from './ownership-actions';
 
-export function AutorunHistory({ decisions, details = {}, onEvidence }: { decisions: AutorunDecisionSummary[]; details?: Record<string, AutorunDecisionDetail>; onEvidence: (id: string) => void }) {
+export function AutorunHistory({ decisions, details = {}, onResolve, onOpenSession, onEvidence }: { decisions: AutorunDecisionSummary[]; details?: Record<string, AutorunDecisionDetail>; onResolve: (runId: string) => void; onOpenSession: (sessionId: string) => void; onEvidence: (id: string) => void }) {
   const { t } = useI18n();
   return <section className="grid gap-3" aria-label={t('automation.history')}>
     {decisions.length === 0 && <p>{t('automation.noRuns')}</p>}
@@ -21,6 +21,7 @@ export function AutorunHistory({ decisions, details = {}, onEvidence }: { decisi
       {item.retryAt && <p role="status">{t('automation.retryAt')}: {localDue(item.retryAt)}</p>}
       <AutomationReason reason={item.reason} />
       {item.runId && <p>{t(`automation.delivery_${item.delivery}`)}</p>}
+      {item.delivery === 'unknown' && item.runId && <UnknownDelivery runId={item.runId} sessionId={details[item.id]?.packet.context.boundary.sessionId} onResolve={onResolve} onOpenSession={onOpenSession} />}
       <button {...click('automation.autorun.evidence', 'automation')} type="button" className={automationButton} onClick={() => onEvidence(item.id)}>{t('automation.evidence')}</button>
     </article>)}
   </section>;
@@ -58,4 +59,13 @@ export function AutorunEvidence({ detail, onOpenSession }: { detail: AutorunDeci
     </article>)}</details>
     <button {...click('automation.history.open_session', 'automation')} className={automationButton} type="button" onClick={() => onOpenSession(context.boundary.sessionId)}>{t('automation.openSession')}</button>
   </section>;
+}
+
+function UnknownDelivery({ runId, sessionId, onResolve, onOpenSession }: { runId: string; sessionId?: string; onResolve: (id: string) => void; onOpenSession: (id: string) => void }) {
+  const { t } = useI18n();
+  return <section><p>{t('automation.recovery')}</p>
+    {sessionId && <button {...click('automation.history.open_session', 'automation')} className={automationButton} type="button" onClick={() => onOpenSession(sessionId)}>{t('automation.openSession')}</button>}
+    <details><summary {...click('automation.history.recover', 'automation')}>{t('automation.recover')}</summary><p>{t('automation.recovery')}</p>
+      <button {...click('automation.history.recover_confirm', 'automation')} className={automationButton} type="button" onClick={() => onResolve(runId)}>{t('automation.recover')}</button>
+    </details></section>;
 }

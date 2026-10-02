@@ -19,9 +19,10 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const counts = rule.dispatchCount < rule.limits.maxDispatches && rule.limits.expiresAt > now;
-  const ready = Boolean(preview && ['completed','running'].includes(preview.readiness.kind) && counts && ownership.mode === 'human'
-    && (rule.mode !== 'autorun' || (rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor, '', rule.limits.expiresAt, now)
-      && (!preview.objective || preview.objective.text === rule.autorun.objective.text))));
+  const ready = !loading && counts && ownership.mode === 'human' && (rule.mode !== 'autorun'
+    ? preview?.readiness.kind !== 'idle'
+    : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
+      rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
   return <section className="grid gap-3">
     {loading && <p role="status">{t('automation.checking')}</p>}
     {preview && <AutorunPreviewView preview={preview} objectiveOverride="" onObjective={onEdit} onOpenSession={onOpenSession} />}

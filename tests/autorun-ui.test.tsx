@@ -37,3 +37,33 @@ test('new setup prefers the exact available worker selection, while an unavailab
   assert.deepEqual(chooseAutorunSupervisor(base, unavailable), unavailable);
   assert.deepEqual(chooseAutorunSupervisor(base), base.recommendedSupervisor);
 });
+
+test('Heartbeat Resume is available when only Autorun supervisor/context is unavailable, but consumed idle remains blocked', async () => {
+  const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { applySessionInputOwnership } = await import('../src/lib/automation/client-state');
+  const { automationFixture, ownershipFixture, automationNow } = await import('./fixtures/automation');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const rule = decodeAutomation({ ...automationFixture(), state: 'paused' });
+  assert.ok(rule.success);
+  applySessionInputOwnership({ ...ownershipFixture(), mode: 'human', automationId: null });
+  const store = createAutomationStore({ sessionId: 'session-1' });
+  // Preserve lifetime validity without changing a live clock.
+  rule.data.limits.expiresAt = Date.now() + 3600000;
+  for (const readiness of [{kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'unsupported-version'}, {kind:'idle',reason:'consumed-boundary'}] as const) {
+    const preview = autorunPreviewSchema.parse({ ...autorunPreviewFixture(), readiness, defaults: { ...autorunPreviewFixture().defaults, expiresAt: automationNow + 28800000 } });
+    const html = renderToStaticMarkup(createElement(ContinuationResume, { preview, loading: false, rule: rule.data, store, onDone:()=>{}, onOpenSession:()=>{}, onEdit:()=>{} }));
+    const button = html.match(/<button[^>]*>Resume<\/button>/)?.[0];
+    assert.ok(button);
+    assert.equal( /\sdisabled(?:=|>)/.test(button), readiness.kind === 'idle');
+  }
+});
+
+test('schedule title is a bounded deterministic first-line suggestion and retained form fields restore on reopening', async () => {
+  const { AutomationForm, suggestSessionTitle } = await import('../src/components/automation/automation-form');
+  assert.equal(suggestSessionTitle('  Review   login changes\nThen verify tests.'), 'Review login changes');
+  const html = renderToStaticMarkup(createElement(AutomationForm, {scope:{worktreeId:'wt-1'}, onSave:async()=>true, onCancel:()=>{}, draft:{prompt:'Review login changes',title:'Saved title',at:'2030-01-01T18:00',trigger:'interval',every:'45',provider:'codex',model:'saved-model',effort:'high',tier:'fast',max:'7',expiry:'2030-01-02T18:00',name:'Saved schedule'}}));
+  assert.match(html,/value="2030-01-01T18:00"/); assert.match(html,/value="45"/); assert.match(html,/value="7"/); assert.match(html,/Saved title/);
+  assert.ok(html.indexOf('name="prompt"') < html.indexOf('name="name"'));
+  assert.match(html,/codex.*saved-model.*high.*fast/);
+});

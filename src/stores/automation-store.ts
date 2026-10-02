@@ -43,6 +43,7 @@ interface AutomationStore {
 export function createAutomationStore(scope: AutomationScope, http: AutomationHttp = fetch) {
   let listRequest = 0;
   let previewRequest = 0;
+  const detailRequests = new Map<string, number>();
   const pendingDecisions = new Map<string, AutorunDecisionSummary[]>();
   const runPages = new Map<string, number>();
   const runRequests = new Map<string, number>();
@@ -60,6 +61,7 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
   return createStore<AutomationStore>((set, get) => {
     async function mutate(url: string, method: string, body?: unknown, key?: string) {
       set({ busy: get().busy + 1, error: null });
+      for (const [id, serial] of detailRequests) detailRequests.set(id, serial + 1);
       ++listRequest; // Invalidate pre-mutation reads.
       try {
         const response = await http(url, { method, headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -77,15 +79,18 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
     return {
       items: [], details: {}, decisions: {}, newDecisionCount: {}, decisionDetails: {}, preview: null, previewLoading: false, view: { selectedId: null, tab: 'overview', setup: false }, drafts: {}, runs: {}, lastControl: null, loading: true, error: null, busy: 0,
       inspect: async (id) => {
+        const serial = (detailRequests.get(id) ?? 0) + 1;
+        detailRequests.set(id, serial);
         try {
           const data = await request<ControlResultV2>(path(id));
           const parsed = decodeAutomation(data.automation);
           if (!parsed.success || parsed.data.id !== id) throw new Error('INVALID_RESPONSE');
+          if (serial !== detailRequests.get(id)) return null;
           const result = { ...data, automation: parsed.data };
           set({ details: { ...get().details, [id]: result } });
           return result;
         }
-        catch (error) { set({ error: errorCode(error) }); return null; }
+        catch (error) { if (serial === detailRequests.get(id)) set({ error: errorCode(error) }); return null; }
       },
       previewAutorun: async (overrides = {}) => {
         if (!('sessionId' in scope)) return null;
@@ -125,7 +130,7 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
             items.push(...page.items); cursor = page.nextCursor; pagesRead++;
           } while (cursor && pagesRead < pagesToRead);
           runPages.set(key, more ? (runPages.get(key) ?? 1) + 1 : pagesRead);
-          const incoming = [...new Map(items.map(item => [item.id, item])).values()];
+          const incoming = [...new Map([...items, ...(previous?.items.filter(old => !items.some(item => item.id === old.id)) ?? [])].map(item => [item.id, item])).values()];
           const newItems = previous && !more ? incoming.filter(item => !previous.items.some(old => old.id === item.id)) : [];
           if (newItems.length && previous) pendingDecisions.set(id, incoming);
           const shown = previous && !more ? previous.items.map(old => incoming.find(item => item.id === old.id) ?? old) : incoming;
@@ -246,6 +251,8 @@ useAuthStore.subscribe((state, previous) => {
   if (state.user?.id === previous.user?.id) return;
   for (const entry of scopedStores.values()) entry.stop?.();
   scopedStores.clear();
+  useNotificationStore.setState(state => ({ notifications: state.notifications.filter(n => !('attention' in n)) }));
+  automationAttentionNavigation.setState({ target: null });
 });
 
 const attentionRequests = new Set<string>();
