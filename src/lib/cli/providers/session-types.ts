@@ -178,5 +178,7 @@ export type AutorunEvidenceRequest = {
   userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string; providerConversationId: string;
   inputEpoch: string; workerSelection: import('@/lib/automation/contracts').SessionSelectionSnapshot;
   turnEvidence: import('@/lib/automation/autorun-contracts').AutorunTurnEvidence;
-  goalRevision: number; previousHumanSourceIds: readonly string[]; signal: AbortSignal;
+  goalRevision: number;
+  /** Persisted humanInstructionSource.recordId values (native Claude UUID / Codex located-record ID). */
+  previousHumanSourceIds: readonly string[]; signal: AbortSignal;
 };

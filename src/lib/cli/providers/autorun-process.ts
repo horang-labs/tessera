@@ -3,6 +3,9 @@ import type { ChildProcess } from 'node:child_process';
 import { spawnCli } from '../spawn-cli';
 import { AUTORUN_BOUNDS } from '@/lib/automation/autorun-contracts';
 
+/** A capability probe is an owned process too; its uncertainty must reach the engine. */
+export class SupervisorProcessUncertain extends Error { constructor() { super('owned supervisor process uncertainty'); } }
+
 /** Executed in the agent filesystem. A random, exclusive workspace owns this entire group. */
 export const AUTORUN_GROUP_WRAPPER = String.raw`
 const fs = require('node:fs'), cp = require('node:child_process');
@@ -26,7 +29,7 @@ function stop() {
  try{process.kill(-child.pid,'SIGTERM')}catch{}
  force=setTimeout(()=>{if(members().some(p=>p.state!=='Z'))try{process.kill(-child.pid,'SIGKILL')}catch{}},5000);
 }
-const timer=setInterval(()=>{if(fs.existsSync(root+'/abort'))stop()},50);
+const timer=setInterval(()=>{if(fs.existsSync(root+'/abort')||Date.now()>=launch.deadlineAt)stop()},50);
 child.on('error',()=>{clearInterval(timer);fs.writeFileSync(root+'/settled.json',JSON.stringify({exitCode:null,quiescent:true}));process.exitCode=1;});
 child.on('exit',()=>{try{process.kill(-child.pid,'SIGTERM')}catch{}});
 child.on('close',code=>{

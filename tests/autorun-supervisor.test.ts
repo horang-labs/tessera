@@ -17,6 +17,14 @@ for (const provider of ['codex', 'claude-code'] as const) test(`${provider} acce
   assert.ok(uncertain.kind !== 'ok');
   if (uncertain.kind !== 'ok') assert.equal(uncertain.code, 'SUPERVISOR_PROCESS_UNCERTAIN');
   assert.notEqual(parseSupervisorResult({ ...args, stdout: output.subarray(0, -1) }).kind, 'ok');
+  if (provider === 'claude-code') {
+    const init = JSON.parse(output.toString().split('\n')[0]);
+    for (const envelope of [[], [init, init], [{ ...init, mcp_servers: '', skills: '', plugins: undefined }],
+      [{ ...init, plugins: [null] }]]) {
+      assert.notEqual(parseSupervisorResult({ ...args, stdout: Buffer.concat([
+        Buffer.from(envelope.map(e => JSON.stringify(e) + '\n').join('')), recorded]) }).kind, 'ok');
+    }
+  }
 });
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';

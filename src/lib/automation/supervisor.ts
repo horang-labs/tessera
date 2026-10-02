@@ -48,6 +48,9 @@ export function parseSupervisorResult(args: SupervisorProcessOutput): Supervisor
     if (init.length !== 1) return fail('invalid-output');
     if (init.length) {
       const value = init[0];
+      if (!Array.isArray(value.tools) || !Array.isArray(value.mcp_servers) || !Array.isArray(value.skills) ||
+          !Array.isArray(value.plugins) || value.plugins.some(p => !p || typeof p !== 'object' ||
+            typeof p.name !== 'string' || typeof p.source !== 'string' || typeof p.path !== 'string')) return fail('invalid-output');
       if (value.model !== args.selection.model || JSON.stringify(value.tools) !== '["StructuredOutput"]' ||
           value.mcp_servers?.length !== 0 || value.skills?.length !== 0 || value.plugins?.some(p => p.path !== 'builtin' || !['agents-md@builtin', 'telemetry@builtin'].includes(p.source))) return fail('unsupported');
       // Init attests model only; effort/tier remain requested.

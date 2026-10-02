@@ -10,7 +10,7 @@ import { AUTORUN_BOUNDS, PROVEN_SUPERVISOR_COMBINATIONS, SUPERVISOR_PROOF_POLICY
   type SupervisorCapabilityResult, type SupervisorResult } from '@/lib/automation/autorun-contracts';
 import type { SupervisorCapabilityRequest, SupervisorDecisionRequest } from './session-types';
 import { parseSupervisorResult, supervisorFailure } from '@/lib/automation/supervisor';
-import { AUTORUN_GROUP_WRAPPER, runOwnedSupervisor } from './autorun-process';
+import { AUTORUN_GROUP_WRAPPER, runOwnedSupervisor, SupervisorProcessUncertain } from './autorun-process';
 import controls from './codex/autorun-controls.json';
 import catalog from './codex/autorun-catalog.json';
 
@@ -24,6 +24,16 @@ child.stdout.on('data',b=>{buffer+=b;let end;while((end=buffer.indexOf('\n'))>=0
 child.on('close',code=>{if(code!==0||!found)process.exitCode=1});
 child.stdin.write(JSON.stringify({id:0,method:'initialize',params:{clientInfo:{name:'tessera-supervisor-capability',version:'1'}}})+'\n');
 `;
+const MODEL_READER = String.raw`
+const cp=require('node:child_process');const child=cp.spawn(process.argv[2],['debug','models'],{stdio:['ignore','pipe','pipe']});
+let bytes=0,output=[];child.stderr.pipe(process.stderr);
+child.stdout.on('data',b=>{bytes+=b.length;if(bytes>2097152){child.kill('SIGTERM');process.exitCode=1}else output.push(b)});
+child.on('error',()=>{process.exitCode=1});child.on('close',code=>{try{
+ if(code!==0||process.exitCode)throw Error('native catalog unavailable');
+ const models=JSON.parse(Buffer.concat(output).toString('utf8')).models.filter(m=>m.slug===process.argv[3]);
+ if(models.length!==1)throw Error('model unavailable');process.stdout.write(JSON.stringify({models})+'\n');
+}catch{process.exitCode=1}});
+`;
 export type SupervisorWorkspace = { root: string; guestRoot: string; command: string; environment: Record<string, string>; cleanup(): Promise<void> };
 export type SupervisorDependencies = {
   prepare(request: SupervisorCapabilityRequest): Promise<SupervisorWorkspace>;
@@ -36,6 +46,39 @@ function nestedField(value: unknown, key: string): unknown {
 }
 const clean = (r: { ok: boolean; stdout: string; stderr: string }) => r.ok && !r.stderr.trim();
 const unsupported = (reason: Extract<SupervisorCapabilityResult, { kind: 'unavailable' }>['reason']): SupervisorCapabilityResult => ({ kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason });
+// A capability endpoint has no uncertainty DTO. Keep its owned receipt and refuse further analysis
+// for this owner/environment until that exact group proves settlement. R2 persists decision holds.
+const uncertainWorkspaces = new Map<string, Set<string>>();
+const ownerKey = (request: SupervisorCapabilityRequest) => JSON.stringify([request.userId, request.agentEnvironment]);
+async function requireSettled(request: SupervisorCapabilityRequest) {
+  const roots = uncertainWorkspaces.get(ownerKey(request));
+  if (!roots) return;
+  for (const root of roots) {
+    try { if (JSON.parse(await fs.readFile(root + '/settled.json', 'utf8')).quiescent === true) { roots.delete(root); await fs.rm(root, { recursive: true, force: true }); } }
+    catch { /* Retain the uncertainty hold and its ownership evidence. */ }
+  }
+  if (roots.size) throw new SupervisorProcessUncertain();
+  uncertainWorkspaces.delete(ownerKey(request));
+}
+async function retainUncertain(request: SupervisorCapabilityRequest, workspace: SupervisorWorkspace) {
+  const key = ownerKey(request), roots = uncertainWorkspaces.get(key) ?? new Set<string>();
+  roots.add(workspace.root); uncertainWorkspaces.set(key, roots); workspace.cleanup = async () => {};
+  // Recover capability-only uncertainty after a backend restart, without stopping any other process.
+  await fs.writeFile(workspace.root + '/uncertain.json', JSON.stringify({ ownerKey: key }), { mode: 0o600 }).catch(() => {});
+}
+async function recoverUncertain(request: SupervisorCapabilityRequest, home: string) {
+  for (const name of (await fs.readdir(home)).filter(n => n.startsWith('.tessera-supervisor-'))) {
+    const root = path.join(home, name);
+    try {
+      const receipt = JSON.parse(await fs.readFile(root + '/uncertain.json', 'utf8'));
+      if (receipt.ownerKey === ownerKey(request)) {
+        const roots = uncertainWorkspaces.get(receipt.ownerKey) ?? new Set<string>();
+        roots.add(root); uncertainWorkspaces.set(receipt.ownerKey, roots);
+      }
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
+  await requireSettled(request);
+}
 export function codexSupervisorControls(guestRoot: string): string[] {
   return controls.map(s => s.replace('<scratch>', guestRoot));
 }
@@ -49,6 +92,7 @@ export function supervisorArgs(request: SupervisorDecisionRequest, workspace: Su
 }
 export const defaultSupervisorDependencies: SupervisorDependencies = {
   async prepare(request) {
+    await requireSettled(request);
     const settings = await SettingsManager.load(request.userId, { silent: true });
     if (!request.userId || settings.agentEnvironment !== request.agentEnvironment) throw new Error('environment mismatch');
     // #530's process-group proof requires Linux on the CLI side; unsupported native topologies fail closed.
@@ -56,6 +100,7 @@ export const defaultSupervisorDependencies: SupervisorDependencies = {
     const policy = await execCli('node', ['-e', "const fs=require('fs');process.stdout.write(JSON.stringify(['/etc/claude-code/managed-settings.json','/etc/claude-code/managed-mcp.json','/etc/claude-code/managed-settings.d','/etc/codex/config.toml','/etc/codex/requirements.toml'].some(p=>fs.existsSync(p))))"], request.agentEnvironment, 5000);
     if (!policy.ok || policy.stdout.trim() !== 'false') throw new Error('unreviewed managed policy');
     const home = await resolveAgentHomeFilesystemPath(request.agentEnvironment);
+    await recoverUncertain(request, home);
     const root = await fs.mkdtemp(path.join(home, '.tessera-supervisor-'));
     const guestRoot = formatPathForAgentDisplay(root, request.agentEnvironment);
     const command = await resolveProviderCliCommand(request.selection.provider, request.selection.provider === 'codex' ? 'codex' : 'claude', request.agentEnvironment, request.userId);
@@ -75,15 +120,19 @@ export const defaultSupervisorDependencies: SupervisorDependencies = {
   },
   async probe(request, workspace, args) {
     let command = workspace.command;
-    if (args[0] === '--tessera-config-attestation') {
+    if (args.length === 2 && args[0] === 'debug' && args[1] === 'models') {
+      await fs.writeFile(workspace.root + '/models.cjs', MODEL_READER, { mode: 0o600 });
+      args = [workspace.guestRoot + '/models.cjs', workspace.command, request.selection.model]; command = 'node';
+    } else if (args[0] === '--tessera-config-attestation') {
       await fs.writeFile(workspace.root + '/config.cjs', CONFIG_READER, { mode: 0o600 });
       args = [workspace.guestRoot + '/config.cjs', workspace.command, ...args.slice(1)];
       command = 'node';
     }
     await fs.rm(workspace.root + '/settled.json', { force: true });
-    await fs.writeFile(workspace.root + '/launch.json', JSON.stringify({ command, args, environment: workspace.environment }), { mode: 0o600 });
-    const result = await runOwnedSupervisor({ ...request, root: workspace.root, guestRoot: workspace.guestRoot, signal: (request as Partial<SupervisorDecisionRequest>).signal ?? new AbortController().signal, deadlineAt: Math.min((request as Partial<SupervisorDecisionRequest>).deadlineAt ?? Infinity, Date.now() + 10_000), stdin: '' });
-    if (!result.quiescent) { workspace.cleanup = async () => {}; throw new Error('process uncertainty'); }
+    const deadlineAt = Math.min((request as Partial<SupervisorDecisionRequest>).deadlineAt ?? Infinity, Date.now() + 10_000);
+    await fs.writeFile(workspace.root + '/launch.json', JSON.stringify({ command, args, environment: workspace.environment, deadlineAt }), { mode: 0o600 });
+    const result = await runOwnedSupervisor({ ...request, root: workspace.root, guestRoot: workspace.guestRoot, signal: (request as Partial<SupervisorDecisionRequest>).signal ?? new AbortController().signal, deadlineAt, stdin: '' });
+    if (!result.quiescent) { await retainUncertain(request, workspace); throw new SupervisorProcessUncertain(); }
     return { ok: result.exitCode === 0 && result.quiescent && !result.timedOut && !result.overflow, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
   },
   async claudeModelAvailable(request) {
@@ -167,7 +216,8 @@ export async function generateSupervisorDecision(request: SupervisorDecisionRequ
   const base = { invocationId: request.invocationId, quiescent: true, exitCode: null };
   if (request.signal.aborted) return supervisorFailure(base, 'cancelled');
   if (request.deadlineAt <= Date.now()) return supervisorFailure(base, 'timeout');
-  if (!supervisorPacketSchema.safeParse(request.packet).success || Buffer.byteLength(request.trustedInstructions) + Buffer.byteLength(JSON.stringify(request.packet)) > AUTORUN_BOUNDS.packetBytes) return supervisorFailure(base, 'invalid-output');
+  const stdin = request.trustedInstructions + '\n\n<worker-evidence-json>\n' + JSON.stringify(request.packet) + '\n</worker-evidence-json>';
+  if (!supervisorPacketSchema.safeParse(request.packet).success || Buffer.byteLength(stdin) > AUTORUN_BOUNDS.packetBytes) return supervisorFailure(base, 'invalid-output');
   let workspace: SupervisorWorkspace | undefined, quiescent = true;
   try {
     workspace = await deps.prepare(request);
@@ -177,10 +227,17 @@ export async function generateSupervisorDecision(request: SupervisorDecisionRequ
     if (capability.kind !== 'available') return supervisorFailure(base, 'unsupported');
     await fs.rm(workspace.root + '/settled.json', { force: true });
     await fs.writeFile(workspace.root + '/schema.json', JSON.stringify(request.outputSchema), { mode: 0o600 });
-    await fs.writeFile(workspace.root + '/launch.json', JSON.stringify({ command: workspace.command, args: supervisorArgs(request, workspace), environment: workspace.environment }), { mode: 0o600 });
-    const result = await runOwnedSupervisor({ ...request, ...workspace, stdin: request.trustedInstructions + '\n\n<worker-evidence-json>\n' + JSON.stringify(request.packet) + '\n</worker-evidence-json>' });
+    await fs.writeFile(workspace.root + '/launch.json', JSON.stringify({ command: workspace.command, args: supervisorArgs(request, workspace), environment: workspace.environment, deadlineAt: request.deadlineAt }), { mode: 0o600 });
+    const result = await runOwnedSupervisor({ ...request, ...workspace, stdin });
     quiescent = result.quiescent;
+    if (!quiescent) await retainUncertain(request, workspace);
     return parseSupervisorResult({ ...result, selection: request.selection, cliVersion: capability.capability.cliVersion, invocationId: request.invocationId, packet: request.packet });
-  } catch { return supervisorFailure({ ...base, quiescent }, 'provider-error'); }
+  } catch (error) {
+    if (error instanceof SupervisorProcessUncertain) {
+      quiescent = false;
+      if (workspace) await retainUncertain(request, workspace);
+    }
+    return supervisorFailure({ ...base, quiescent }, 'provider-error');
+  }
   finally { if (quiescent) await workspace?.cleanup(); }
 }

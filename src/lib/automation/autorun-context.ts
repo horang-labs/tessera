@@ -59,6 +59,7 @@ function claudeCutoff(records: LocatedRecord[], request: AnalysisSnapshotRequest
   if (users.length > 1) refuse('ambiguous-cutoff');
   if (!users.length) refuse('flush-pending');
   const user = users[0];
+  if (user.start < correlation.startByte) refuse('binding-mismatch');
   if (!user.value.uuid || user.value.sessionId !== request.providerConversationId) refuse('binding-mismatch');
   const lineage = new Set([user.value.uuid]);
   const ids = new Set([user.value.uuid]);
@@ -196,7 +197,9 @@ export async function readAnalysisContext(request: AnalysisSnapshotRequest, deps
         if (budget <= AUTORUN_BOUNDS.recordBytes) refuse('scan-limit');
         const windows = stat.size <= budget ? [{ start: 0, length: stat.size }] : [
           { start: 0, length: AUTORUN_BOUNDS.recordBytes },
-          { start: Math.max(AUTORUN_BOUNDS.recordBytes, stat.size - (budget - AUTORUN_BOUNDS.recordBytes)), length: budget - AUTORUN_BOUNDS.recordBytes },
+          // The frozen cursor anchors older context. Appended bookkeeping cannot move captured ranges.
+          // Keep backward coverage: Codex task_started/turn_context may precede Submit.
+          { start: Math.max(AUTORUN_BOUNDS.recordBytes, c.startByte - 8 * 1024 * 1024), length: budget - AUTORUN_BOUNDS.recordBytes },
         ];
         records = []; ranges = [];
         for (const window of windows) {
@@ -215,6 +218,7 @@ export async function readAnalysisContext(request: AnalysisSnapshotRequest, deps
         if (after.ino !== stat.ino || after.size < stat.size || (after.size === stat.size && after.mtimeMs !== stat.mtimeMs)) refuse('stale');
       } finally { await handle.close(); }
       const { cutoff, latestStart } = c.provider === 'codex' ? codexCutoff(records, request) : claudeCutoff(records, request);
+      ranges = ranges.map(r => ({ ...r, endByte: Math.min(r.endByte, cutoff.endByte) })).filter(r => r.endByte > r.startByte);
       const selected = records.filter(r => r.end <= cutoff.endByte);
       const items = contextItems(selected, c.provider);
       const omittedRanges = ranges.slice(1).flatMap((range, i) => range.startByte > ranges[i].endByte ? [{ startByte: ranges[i].endByte, endByte: range.startByte }] : []);
@@ -244,7 +248,7 @@ export async function readAnalysisContext(request: AnalysisSnapshotRequest, deps
 export type EvidenceReaderDependencies = {
   resolveSource(request: import('@/lib/cli/providers/session-types').AutorunEvidenceRequest): Promise<NativeContextSource | null>;
   verifyBinding(request: import('@/lib/cli/providers/session-types').AutorunEvidenceRequest): Promise<boolean>;
-  readHumanSubmissions(userId: string, sessionId: string): Promise<import('./autorun-human-evidence').HumanSubmission[]>;
+  readHumanSubmissions(userId: string, sessionId: string): Promise<import('./autorun-human-evidence').HumanSubmission[] | null>;
 };
 /** Preview provenance is independent of completion. Unknown origin stays missing; R2 applies explicit overrides. */
 export async function readAutorunEvidence(request: import('@/lib/cli/providers/session-types').AutorunEvidenceRequest,
@@ -278,6 +282,8 @@ export async function readAutorunEvidence(request: import('@/lib/cli/providers/s
       }
     } finally { await handle.close(); }
     const submissions = await deps.readHumanSubmissions(request.userId, request.sessionId);
+    if (submissions === null) return { kind: 'ok', goal: { kind: 'missing', reason: 'unverified-human-origin' }, newHumanInstructions: [], turnEvidence: turn };
+    let missingHumanEvidence = false;
     const verified: { text: string; source: Extract<import('./autorun-contracts').AutorunObjective, { kind: 'verified-human' }>['sources'][number]; offset: number }[] = [];
     for (const submission of submissions) {
       if (submission.origin !== 'human' || submission.sourceIdentityHash !== source.identityHash || submission.fileGeneration !== source.fileGeneration ||
@@ -288,7 +294,7 @@ export async function readAutorunEvidence(request: import('@/lib/cli/providers/s
         : r.value.type === 'response_item' && r.value.payload?.type === 'message' && r.value.payload.role === 'user' && nativeText(r.value.payload.content) === submission.text &&
           records.some(start => start.start < r.start && start.value.payload?.type === 'task_started' && start.value.payload.turn_id === submission.nativeId &&
             !records.some(next => next.start > start.start && next.start < r.start && next.value.payload?.type === 'task_started')));
-      if (matches.length !== 1) continue;
+      if (matches.length !== 1) { missingHumanEvidence = true; continue; }
       const record = matches[0], recordId = record.value.uuid ?? `codex:${record.start}`;
       verified.push({ text: submission.text, offset: record.start, source: { messageId: submission.observerSubmissionId, recordId,
         textHash: submission.textHash, excerpt: excerpt(submission.text, 2048), origin: 'tessera-human-correlated' } });
@@ -297,7 +303,8 @@ export async function readAutorunEvidence(request: import('@/lib/cli/providers/s
     if (request.signal.aborted || !await deps.verifyBinding(request)) return unavailable('stale');
     const text = verified.map(v => v.text).join('\n\n');
     const sources = verified.map(v => v.source);
-    const newHumanInstructions = sources.filter(s => !request.previousHumanSourceIds.includes(s.messageId));
+    const newHumanInstructions = sources.filter(s => !request.previousHumanSourceIds.includes(s.recordId));
+    if (missingHumanEvidence) return { kind: 'ok', goal: { kind: 'missing', reason: 'unverified-human-origin' }, newHumanInstructions, turnEvidence: turn };
     if (Buffer.byteLength(text) > AUTORUN_BOUNDS.objectiveConstraintBytes) return { kind: 'ok', goal: { kind: 'missing', reason: 'objective-limit' }, newHumanInstructions, turnEvidence: turn };
     if (!sources.length) return { kind: 'ok', goal: { kind: 'missing', reason: 'unverified-human-origin' }, newHumanInstructions, turnEvidence: turn };
     // Once a saved objective exists, corrections require an explicit reviewed override. Never silently discard a possible conflict.
