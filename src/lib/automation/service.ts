@@ -50,7 +50,8 @@ export class AutomationService {
     const values = this.repo.all().map(v => v.automation).filter(a => a.ownerUserId === userId &&
       (options.includeDeleted || a.state !== 'deleted') &&
       (!options.sessionId || (a.target.kind === 'wake-session' && a.target.sessionId === options.sessionId)) &&
-      (!options.worktreeId || (a.target.kind === 'create-session' && a.target.worktreeId === options.worktreeId)));
+      (!options.worktreeId || (a.target.kind === 'create-session' && a.target.worktreeId === options.worktreeId)))
+      .sort((a,b)=>b.updatedAt-a.updatedAt||a.id.localeCompare(b.id));
     return page(values.map(a => ({ version: 2 as const, id: a.id, name: a.name, revision: a.revision,
       mode: isAutorun(a) ? 'autorun' as const : a.target.kind === 'wake-session' ? 'heartbeat' as const : 'schedule' as const,
       state: a.state, pauseReason: a.pauseReason, sessionId: a.target.kind === 'wake-session' ? a.target.sessionId : null,

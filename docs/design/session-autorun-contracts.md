@@ -59,14 +59,6 @@ Claude completion correlation additionally carries `stopTextHash` (SHA-256 of th
 
 `firstRunningEvidenceFixture` and `hookSubmissionFixture` show this exact producer/hook handoff and no completed snapshot; `tests/autorun-evidence-contracts.test.ts` compiles R1/R2 consumers against the same methods and rejects forged empty human provenance/wrong generation/fabricated completion. These are synthetic fixtures, not actual hook/provider implementation proof.
 
-## R1/R2 handoff clarification — #532 latest issue comments
-
-`AutorunEvidenceRequest.previousHumanSourceIds` contains persisted native `humanInstructionSource.recordId` values (Claude UUID / Codex located-record ID), never observer `messageId` values. Unchanged Resume yields no new instructions; a genuinely new verified correction remains conflicting until explicitly reviewed.
-
-`AnalysisContextSnapshot.contentHash` attests the actual captured native bytes in `source.scannedRanges` through the frozen completion cutoff, including user and unabridged scanned tool records. It is distinct from normalized worker-progress evidence. Captured ranges are clipped at the cutoff; large-history range selection is anchored to the frozen submission cursor with backward coverage for Codex lifecycle records. `bytesScanned` and `maxRecordBytes` remain truthful read accounting, including discovery/rereads and complete records after the cutoff.
-
-**R2/#533 follow-up ownership:** post-analysis capture comparison must compare identityHash/fileGeneration/startByte/endByte/latestTurnStartByte/scannedRanges, cutoff and contentHash, while excluding `bytesScanned`, `maxRecordBytes` and `capturedAt` from capture identity. Keep every runtime, input epoch, boundary, selection, revision and lease check. Harmless append-only bookkeeping after the cutoff changes accounting only; an equal-length edit inside captured bytes changes contentHash and must stale the result. R1 fixture regressions exercise both outcomes; integrated consumer acceptance remains R2/#528 proof. This is a semantic clarification, not a DTO/export change.
-
 ## Owned analysis recovery — authorized #532 amendment
 
 `session-types.ts` adds `SupervisorSettlementObservationRequest = { version:1; userId:string; agentEnvironment:'native'|'wsl'; invocationId:string }` and optional `AutorunProviderPort.observeSupervisorSettlement(request): Promise<SupervisorSettlementObservation>`. Port version remains 1; older providers remain compatible, and absence is unknown/quarantined. `autorun-contracts.ts` exports `supervisorSettlementObservationSchema` and `SupervisorSettlementObservation`.
