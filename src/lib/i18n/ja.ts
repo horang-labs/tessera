@@ -1,6 +1,8 @@
+import { automationJa } from './automation';
 import { I18nMessages } from './types';
 
 export const ja: I18nMessages = {
+  automation: automationJa,
   settings: {
     title: '設定',
     sections: {

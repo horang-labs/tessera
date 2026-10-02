@@ -1,6 +1,8 @@
+import { automationKo } from './automation';
 import { I18nMessages } from './types';
 
 export const ko: I18nMessages = {
+  automation: automationKo,
   settings: {
     title: '설정',
     sections: {

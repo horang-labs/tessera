@@ -1,5 +1,6 @@
 'use client';
 
+import { AutomationSessionControls } from '@/components/automation/automation-entry';
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
 import {
   Archive,
@@ -256,6 +257,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
   const runtimePresentation = resolveSessionRuntimePresentation(session);
   const isCompact = session.kind === 'terminal';
   return (
+    <>
     <div
       className={cn(
         isCompact && styles.compact,
@@ -618,5 +620,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
         />
       )}
     </div>
+    {session.kind === 'terminal' && <AutomationSessionControls key={sessionId} sessionId={sessionId} provider={session.provider} />}
+    </>
   );
 }

@@ -1,4 +1,6 @@
+import type { automationEn } from './automation';
 export interface I18nMessages {
+  automation: typeof automationEn;
   settings: {
     title: string;
     sections: {

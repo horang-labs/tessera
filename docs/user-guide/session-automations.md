@@ -1,0 +1,15 @@
+# Session automations
+
+Use **Session wake-up** below a Claude Code or Codex PTY Session header, in either the normal panel or Kanban Session Peek. Use **Schedule Sessions** in an existing Worktree preview or Worktree panel to create future Sessions. Automations start disabled and require explicit **Enable / arm**.
+
+A wake-up keeps the same Session and sends your saved text after a confirmed lead turn ends and the chosen delay passes. The default is two minutes, at most ten attempts, expiring after eight hours. Arming gives automation exclusive input control; you can still watch, scroll and copy. Already typed PTY input or an unproven boundary can prevent arming. Pause before typing or changing native CLI settings. Your existing Session's saved launch choices, including inherited CLI settings, remain unchanged.
+
+For new Sessions, choose a title, saved prompt and explicit supported Claude Code or Codex model and reasoning effort. Codex service tier is explicit; Fast is offered only when the catalog supports it. Native CLI permissions remain effective; preparation failures block launch. Save a future local date/time for a one-time run (exactly one attempt), or a first due time and fixed interval. Creation defaults to a thirty-day expiry and recurring rules allow at most one hundred attempts. Fixed intervals use elapsed time, not calendar days or cron. The stored instant is UTC; displayed dates include your local time and timezone.
+
+Open the manager to see the trigger, next due time or waiting condition, attempt counter, expiry, reason, saved launch selection and history. **Pause to type** stops future dispatches. If an earlier paste is draining, input remains locked until the authoritative ownership state becomes human. Pause and Delete stay available during approval waits and recovery. Delete retains history and does not terminate the agent or delete its Session. Include deleted rules to inspect their records.
+
+History labels accepted prompt delivery as **Prompt delivered**. Delivery and a turn ending are not proof of task success. Created Session links use ordinary Session navigation; removed Sessions cannot be reopened. For an unknown delivery, inspect the Session and choose **Take manual control — delivery unknown**. This acknowledges uncertainty without retrying, keeps the rule disabled or deleted, and does not send or discard partial input. The server must fence any outstanding writer before granting input.
+
+Tessera must be running for local scheduling. On restart, overdue intervals coalesce to the latest eligible slot rather than a burst; one-time runs have a bounded overdue window. Active automation-created turns in the same Worktree block overlapping creation. These rules do not isolate the Worktree from independent human work. Native TUI setting changes are not verified by the saved launch selection. Refresh and inspect the latest rule after a revision conflict; enabling and editing are never retried automatically.
+
+OpenCode, cloud/OS alarms, calendar recurrence, Run Now, automatic approvals and adaptive supervisor instructions are outside this version.
