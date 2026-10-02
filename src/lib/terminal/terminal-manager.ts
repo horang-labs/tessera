@@ -1,3 +1,4 @@
+import { prepareAutomationOrigin } from '@/lib/automation/autorun-origin';
 import type { TerminalAutomationCompletion } from '@/lib/cli/providers/terminal-automation-evidence';
 import type { AutomationAuthority, Boundary, DispatchPermit, DispatchResult } from '@/lib/automation/runtime-port';
 import { AutomationInputGate } from '@/lib/automation/input-gate';
@@ -1630,13 +1631,14 @@ export class TerminalManager {
   /** Internal port: the caller must hold the armed gate and a durable permit. */
   async submitAutomationPrompt(args: {
     sessionId: string; userId: string; prompt: string; boundary: Boundary;
-    authority: AutomationAuthority; permit: DispatchPermit; verifySelection: () => void;
+    authority: AutomationAuthority; permit: DispatchPermit; verifySelection: () => void; agentEnvironment: 'native' | 'wsl';
   }): Promise<DispatchResult> {
     const { sessionId, userId, authority, permit, boundary } = args;
     let possibleWrite = false;
     try {
       const runtime = this.requireLiveSessionRuntime(sessionId, userId);
       if (runtime.prefillPending || runtime.semanticPromptPending) throw new Error('Input is pending.');
+      const origin = await prepareAutomationOrigin({ userId, sessionId, agentEnvironment: args.agentEnvironment, runId: permit.runId, runtime: boundary });
       const write = (phase: 'begin' | 'complete', data: string) => {
         this.automation.verify(userId, sessionId, boundary);
         args.verifySelection();
@@ -1647,8 +1649,10 @@ export class TerminalManager {
           args.verifySelection();
           if (runtime.ended || runtime.closing || runtime.sessionId !== sessionId
             || this.getOwnedTerminal(runtime.terminalId, userId) !== runtime) throw new Error('Runtime changed.');
+          if (phase === 'begin') origin.begin();
           possibleWrite = true;
           runtime.process.write(data);
+          if (phase === 'complete') origin.submitted();
         });
       };
       write('begin', bracketSemanticPrompt(normalizeSemanticPrompt(args.prompt)));

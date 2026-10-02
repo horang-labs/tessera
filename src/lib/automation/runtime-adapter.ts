@@ -1,3 +1,4 @@
+import { prepareAutomationOrigin } from './autorun-origin';
 import { createAutorunRuntime } from './autorun-runtime';
 import type { AutorunProviderPort } from '../cli/providers/session-types';
 import { getSession, extractSessionKind } from '@/lib/db/sessions';
@@ -58,10 +59,11 @@ export function createAutomationRuntime(options: {
             const selection = await options.readSelection(spec.ownerUserId, sessionId);
             if (!sameSessionSelection(selection, spec.run.effectiveSelection)) throw new Error('Selection changed.');
             const permit = port.beginAttempt(args.runId, args.leaseEpoch, args.expectedRevision);
+            const origin = await prepareAutomationOrigin({ userId: spec.ownerUserId, sessionId, agentEnvironment: spec.run.agentEnvironment, runId: args.runId, fresh: true });
             const launched = await options.launch({ mode: 'detached', sessionId, userId: spec.ownerUserId,
               initialPrompt: spec.prompt, allowPreparationFailure: false,
               expectedAgentEnvironment: spec.run.agentEnvironment, expectedSelection: spec.run.effectiveSelection,
-              spawnFence: spawn => { fenceRequested = true; port.withWriteFence(permit, 'begin', () => { started = true; spawn(); }); },
+              spawnFence: spawn => { fenceRequested = true; port.withWriteFence(permit, 'begin', () => { origin.begin(); started = true; spawn(); origin.submitted(); }); },
             });
             if (!started || launched.attachedToExistingRuntime) throw new Error('Launch did not own a new process.');
             result = { kind: 'delivered', sessionId, terminalId: launched.terminalId, at: Date.now() };
@@ -95,7 +97,7 @@ export function createAutomationRuntime(options: {
         try {
           const permit = port.beginAttempt(args.runId, args.leaseEpoch, args.expectedRevision);
           result = await manager.submitAutomationPrompt({ sessionId, userId: ownerUserId, prompt: spec.prompt,
-            boundary: args.expectedBoundary!, authority: port, permit,
+            boundary: args.expectedBoundary!, authority: port, permit, agentEnvironment: spec.run.agentEnvironment,
             verifySelection: () => options.verifySelection?.(ownerUserId, sessionId, spec.run.effectiveSelection) });
         } catch { result = { kind: 'cancelled', reason: 'ATTEMPT_REJECTED' }; }
         try { port.recordOutcome(args.runId, result); }
