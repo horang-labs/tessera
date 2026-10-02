@@ -1,7 +1,6 @@
 import { buildAutorunHookEvidence } from './providers/autorun-hook-evidence';
 import { getAutomationRuntime } from '@/lib/automation/runtime-bridge';
-import { recordHumanSubmission } from '@/lib/automation/autorun-human-evidence';
-import { evidenceHash } from '@/lib/automation/autorun-context';
+import { recordNativeSubmission } from '@/lib/automation/autorun-submission-producer';
 import { classifyClaudeAutomationCompletion } from './providers/claude-code/terminal-hook-lifecycle';
 import { classifyCodexAutomationCompletion } from './providers/codex/terminal-hook-lifecycle';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -418,10 +417,9 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
             if (evidence) {
               getAutomationRuntime()?.autorun?.recordHookEvidence(evidence);
               const prompt = readString(payload.prompt);
-              if (evidence.kind === 'submission' && prompt) await recordHumanSubmission(entry.userId, sessionId, {
-                nativeId: evidence.evidence.provider === 'codex' ? evidence.evidence.nativeTurnId : evidence.evidence.nativePromptId,
-                sourceIdentityHash: evidence.evidence.sourceIdentityHash, fileGeneration: evidence.evidence.fileGeneration,
-                text: prompt, textHash: evidenceHash(prompt), origin: humanOrigin ? 'human' : 'automation', observerSubmissionId: evidence.evidence.observerSubmissionId,
+              const observed = payload.tessera_autorun as Record<string, unknown> | undefined;
+              if (evidence.kind === 'submission' && prompt) await recordNativeSubmission({
+                event: evidence, prompt, humanOrigin, canonicalPath: readString(observed?.canonicalPath),
               });
             }
           }

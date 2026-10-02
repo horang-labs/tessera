@@ -317,6 +317,8 @@ export async function readAutorunEvidence(request: import('@/lib/cli/providers/s
     let missingHumanEvidence = false;
     const verified: { text: string; source: Extract<import('./autorun-contracts').AutorunObjective, { kind: 'verified-human' }>['sources'][number]; offset: number }[] = [];
     for (const submission of submissions) {
+      if (submission.sourceIdentityHash === source.identityHash && submission.fileGeneration === source.fileGeneration &&
+          (submission.origin === 'unknown' || submission.provenance && submission.provenance.agentEnvironment !== request.agentEnvironment)) { missingHumanEvidence = true; continue; }
       if (submission.origin !== 'human' || submission.sourceIdentityHash !== source.identityHash || submission.fileGeneration !== source.fileGeneration ||
           evidenceHash(submission.text) !== submission.textHash || /<\/?(?:environment_context|instructions|INSTRUCTIONS|command-name|local-command-stdout)\b|^# (?:AGENTS\.md|Instructions)/.test(submission.text)) continue;
       const matches = records.filter(r => native.provider === 'claude-code'

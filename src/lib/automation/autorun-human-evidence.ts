@@ -3,7 +3,8 @@ import path from 'node:path';
 import { getTesseraDataPath } from '@/lib/tessera-data-dir';
 import { evidenceHash } from './autorun-context';
 export type HumanSubmission = { nativeId: string; sourceIdentityHash: string; fileGeneration: string; text: string;
-  textHash: string; origin: 'human' | 'automation'; observerSubmissionId: string };
+  textHash: string; origin: 'human' | 'automation' | 'unknown'; observerSubmissionId: string;
+  provenance?: { version: 1; agentEnvironment: 'native' | 'wsl' } };
 function directory(userId: string, sessionId: string) { return getTesseraDataPath('autorun-human', evidenceHash(JSON.stringify([userId, sessionId]))); }
 /** Authenticated lead hooks only. Retransmission cannot relabel an automation prompt as human. */
 export async function recordHumanSubmission(userId: string, sessionId: string, value: HumanSubmission) {
@@ -29,7 +30,9 @@ export async function readHumanSubmissions(userId: string, sessionId: string): P
     return await Promise.all(names.map(async name => {
       const file = path.join(dir, name);
       if ((await fs.stat(file)).size > 20_000) throw new Error('evidence bound');
-      return JSON.parse(await fs.readFile(file, 'utf8')) as HumanSubmission;
+      const receipt = JSON.parse(await fs.readFile(file, 'utf8')) as HumanSubmission;
+      // Arrival-time legacy labels cannot prove who wrote the native message.
+      return receipt.origin === 'human' && receipt.provenance?.version !== 1 ? { ...receipt, origin: 'unknown' as const } : receipt;
     }));
   } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null; }
 }
