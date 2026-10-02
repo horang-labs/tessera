@@ -1,0 +1,78 @@
+{
+  "claude": [
+    {
+      "session_id": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+      "hook_event_name": "SessionStart",
+      "proof_cursor": 0
+    },
+    {
+      "session_id": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+      "prompt_id": "7ab43974-3790-40ac-bf63-6fb3b2eed4fa",
+      "hook_event_name": "UserPromptSubmit",
+      "proof_cursor": 0
+    },
+    {
+      "session_id": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+      "prompt_id": "7ab43974-3790-40ac-bf63-6fb3b2eed4fa",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "PROOF_OK",
+      "proof_cursor": 10104
+    },
+    {
+      "session_id": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+      "hook_event_name": "SessionStart",
+      "proof_cursor": 17525
+    },
+    {
+      "session_id": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+      "prompt_id": "b5eadbbd-547d-4bce-b447-0b8bfa67ab48",
+      "hook_event_name": "UserPromptSubmit",
+      "proof_cursor": 17525
+    },
+    {
+      "session_id": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+      "prompt_id": "b5eadbbd-547d-4bce-b447-0b8bfa67ab48",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "PROOF_OK",
+      "proof_cursor": 19038
+    }
+  ],
+  "codex": [
+    {
+      "session_id": "01a0fd47-096d-7641-94f0-0013775e02e4",
+      "hook_event_name": "SessionStart",
+      "proof_cursor": 38164
+    },
+    {
+      "session_id": "01a0fd47-096d-7641-94f0-0013775e02e4",
+      "turn_id": "01a0fd47-098b-74c2-ab46-5a4d33836280",
+      "hook_event_name": "UserPromptSubmit",
+      "proof_cursor": 38164
+    },
+    {
+      "session_id": "01a0fd47-096d-7641-94f0-0013775e02e4",
+      "turn_id": "01a0fd47-098b-74c2-ab46-5a4d33836280",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "PROOF_OK",
+      "proof_cursor": 42148
+    },
+    {
+      "session_id": "01a0fd47-096d-7641-94f0-0013775e02e4",
+      "hook_event_name": "SessionStart",
+      "proof_cursor": 45195
+    },
+    {
+      "session_id": "01a0fd47-096d-7641-94f0-0013775e02e4",
+      "turn_id": "01a0fd47-371c-75a3-a5ba-13003db0b03a",
+      "hook_event_name": "UserPromptSubmit",
+      "proof_cursor": 45195
+    },
+    {
+      "session_id": "01a0fd47-096d-7641-94f0-0013775e02e4",
+      "turn_id": "01a0fd47-371c-75a3-a5ba-13003db0b03a",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "PROOF_OK",
+      "proof_cursor": 49195
+    }
+  ]
+}

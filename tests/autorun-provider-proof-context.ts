@@ -61,3 +61,26 @@ export function correlateCompletedTurn(bytes: Buffer, proof: TurnProof): { recor
   if (candidates.length !== 1) throw new Error('completion unavailable or ambiguous');
   return { recordId: candidates[0].value.uuid!, end: candidates[0].end };
 }
+
+export interface WorkerReceipt {
+  hook_event_name: string; session_id: string; prompt_id?: string; turn_id?: string;
+  last_assistant_message?: string;
+}
+export function verifyWorkerTurns(provider: TurnProof['provider'], receipts: WorkerReceipt[]): TurnProof[] {
+  const submits = receipts.filter(e => e.hook_event_name === 'UserPromptSubmit');
+  const stops = receipts.filter(e => e.hook_event_name === 'Stop');
+  if (submits.length !== 2 || stops.length !== 2) throw new Error('two submitted and completed turns required');
+  const id = (e: WorkerReceipt) => provider === 'claude' ? e.prompt_id : e.turn_id;
+  const identities = submits.map(id);
+  if (identities.some(i => !i) || new Set(identities).size !== 2
+    || new Set(receipts.map(e => e.session_id)).size !== 1) throw new Error('worker binding unavailable');
+  const proofs = submits.map(submit => {
+    const matches = stops.filter(stop => id(stop) === id(submit) && stop.session_id === submit.session_id);
+    if (matches.length !== 1 || !matches[0].last_assistant_message
+      || receipts.indexOf(matches[0]) < receipts.indexOf(submit)) throw new Error('unpaired completion');
+    return { provider, sessionId: submit.session_id, submitId: id(submit)!, stopId: id(matches[0])!,
+      finalText: matches[0].last_assistant_message!, blocked: false };
+  });
+  if (proofs[0].finalText !== proofs[1].finalText) throw new Error('identical finals required for this proof');
+  return proofs;
+}

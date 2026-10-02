@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { acceptSupervisorResult } from './autorun-provider-proof-finality';
-import { correlateCompletedTurn } from './autorun-provider-proof-context';
+import { correlateCompletedTurn, verifyWorkerTurns } from './autorun-provider-proof-context';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { spawnCliProcess } from '../src/lib/cli/spawn-cli-runtime';
@@ -46,6 +46,7 @@ async function main(){
    acceptSupervisorResult(command as 'claude'|'codex',Buffer.from(out),{exitCode:code as number|null,cancelled:closure.cancelled,timedOut:false,quiescent:closure.quiescent},packet);
    assert.equal(fs.existsSync(root+'/empty/PROBE_SENTINEL'),false);
   }
+  if(!mode.endsWith('cancel') || label!==mode) assert.equal(code,0);
   if(mode.endsWith('cancel') && label===mode) assert.equal(code,124);
   console.log(label,code,'bytes',out.length,'hook-events',events.length);
   return out;
@@ -54,11 +55,30 @@ async function main(){
  const version=await run(providerName+'-version',providerName,['--version'],'');
  assert.equal(version.trim(),providerName==='claude'?'2.1.284 (Claude Code)':'codex-cli 0.159.2');
  if(mode.endsWith('supervisor')){
+  if(mode==='codex-supervisor'){
+   const controls=JSON.parse(fs.readFileSync(root+'/codex-controls-adapted.json','utf8'));
+   const features=await run('codex-features','codex',[...controls,'features','list'],'');
+   for(let i=1;i<controls.length;i+=2){
+    const match=controls[i].match(/^features\.([a-z_]+)=(false|true)$/);
+    if(match) assert.ok(features.split('\n').some(line=>line.split(/\s+/)[0]===match[1] && line.trim().endsWith(match[2])),`effective feature unavailable: ${match[1]}`);
+   }
+   const catalog=JSON.parse(await run('codex-catalog','codex',[...controls,'debug','models'],''));
+   assert.deepEqual(JSON.parse(await run('codex-mcp','codex',[...controls,'mcp','list','--json'],'')),[]);
+   const selected=catalog.models.find((m:any)=>m.slug==='gpt-6.1-sol');
+   const expected=JSON.parse(fs.readFileSync(root+'/supervisor-catalog.json','utf8')).models[0];
+   for(const key of ['slug','shell_type','apply_patch_tool_type','tool_mode','experimental_supported_tools','supports_search_tool','node_repl_disabled','context_window','max_context_window','supported_reasoning_levels','service_tiers']) assert.deepEqual(expected[key]===null?(selected?.[key]??null):selected?.[key],expected[key],key);
+   for(const label of ['codex-features','codex-catalog','codex-mcp']) assert.equal(fs.readFileSync(root+'/'+label+(process.argv[4]==='probe'?'-probe':'')+'-stderr.txt','utf8').trim(),'');
+  }
   const schema=fs.readFileSync(root+'/decision-schema.json','utf8');
   const packet=fs.readFileSync(root+(process.argv[4]==='probe'?'/probe-packet.json':'/packet.json'),'utf8');
   const prompt='Use only the supplied evidence packet to judge the goal. Return the required JSON decision. '+packet;
   const clean={TESSERA_HOOK_PORT:undefined,TESSERA_SESSION_ID:undefined,TESSERA_PANE_TOKEN:undefined,TESSERA_CLI_COMMAND:undefined,TESSERA_CODEX_HOME:undefined,CODEX_CI:undefined,CODEX_SESSION_ID:undefined,CODEX_THREAD_ID:undefined,CODEX_VERSION:undefined};
-  if(mode==='claude-supervisor')await run(mode,'claude',['-p','--output-format','json','--no-session-persistence','--model','claude-sonnet-5-5','--effort','high','--safe-mode','--restricted','--tools','','--disable-slash-commands','--permission-prompts','none','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--settings','{"disableAllHooks":true,"enabledPlugins":{}}','--json-schema',schema],prompt,clean);
+  if(mode==='claude-supervisor'){
+   const output=await run(mode,'claude',['-p','--output-format','stream-json','--verbose','--no-session-persistence','--model','claude-sonnet-5-5','--effort','high','--safe-mode','--restricted','--tools','','--disable-slash-commands','--permission-prompts','none','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--settings','{"disableAllHooks":true,"enabledPlugins":{}}','--json-schema',schema],prompt,clean);
+   const init=output.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(e=>e.type==='system' && e.subtype==='init');
+   assert.deepEqual(init?.tools,['StructuredOutput']); assert.deepEqual(init?.mcp_servers,[]); assert.deepEqual(init?.skills,[]);
+   assert.equal(init?.model,'claude-sonnet-5-5');
+  }
   if(mode==='codex-supervisor')await run(mode,'codex',['exec','--json','--strict-config','--skip-git-repo-check','--ignore-user-config','--ignore-rules','--ephemeral','--sandbox','read-only','-m','gpt-6.1-sol','--output-schema',guest+'/decision-schema.json',...JSON.parse(fs.readFileSync(root+'/codex-controls-adapted.json','utf8')),'-'],prompt,clean);
  }
  if(mode.endsWith('cancel')){
@@ -77,15 +97,25 @@ async function main(){
   const common=['--json','--skip-git-repo-check','--ignore-rules','-m','gpt-6.1-sol','-c','model_reasoning_effort="high"','-c','service_tier="default"'];
   const out=await run('codex-turn1','codex',['exec',...common,'-'],'Reply exactly PROOF_OK. Do not use tools.');
   const id=out.split('\n').filter(Boolean).map(s=>JSON.parse(s)).find(e=>e.type==='thread.started')?.thread_id;
-  if(id)await run('codex-turn2','codex',['exec','resume',...common,id,'-'],'Again reply exactly PROOF_OK. Do not use tools.');
+  assert.ok(id,'native worker thread.started required');
+  await run('codex-turn2','codex',['exec','resume',...common,id,'-'],'Again reply exactly PROOF_OK. Do not use tools.');
  }
  fs.writeFileSync(root+'/'+mode+'-hooks.json',JSON.stringify(events));
- for(const e of events){if(!e.transcript_path)continue;const p=await resolveAgentReportedPath(e.transcript_path,'wsl');try{fs.readFileSync(p);if(e.hook_event_name==='Stop'){
-    const proof={provider:mode.startsWith('claude')?'claude':'codex',sessionId:e.session_id,submitId:e.prompt_id??e.turn_id,stopId:e.prompt_id??e.turn_id,finalText:e.last_assistant_message,blocked:false} as const;
-    const cut=correlateCompletedTurn(fs.readFileSync(p),proof);
-    fs.writeFileSync(root+'/'+mode+'-'+proof.submitId+'-cutoff.json',JSON.stringify(cut));
-   }
-   console.log('Windows native read',e.hook_event_name,true);}catch(error){throw new Error('Native transcript proof failed: '+String(error));}}
+ if(mode.endsWith('worker')){
+  const provider=mode.startsWith('claude')?'claude':'codex';
+  const proofs=verifyWorkerTurns(provider,events);
+  const cutoffs=[];
+  for(const proof of proofs){
+   const stop=events.find(e=>e.hook_event_name==='Stop' && (e.prompt_id??e.turn_id)===proof.stopId);
+   const nativePath=await resolveAgentReportedPath(stop.transcript_path,'wsl');
+   const cut=correlateCompletedTurn(fs.readFileSync(nativePath),proof);
+   cutoffs.push(cut);
+   fs.writeFileSync(root+'/'+mode+'-'+proof.submitId+'-cutoff.json',JSON.stringify(cut));
+  }
+  assert.notEqual(cutoffs[0].recordId,cutoffs[1].recordId);
+  assert.ok(cutoffs[1].end>cutoffs[0].end);
+  console.log('Windows native read: two paired completed turns with distinct cutoffs');
+ }
  server.close();
 }
 main().catch(e=>{console.error(e.message);server.close();process.exitCode=1;});

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { correlateCompletedTurn } from './autorun-provider-proof-context';
+import { correlateCompletedTurn, verifyWorkerTurns } from './autorun-provider-proof-context';
 
 const root = 'tests/fixtures/autorun-proof/';
 const fixture = JSON.parse(readFileSync(root + 'observations.json', 'utf8'));
@@ -58,3 +58,17 @@ test('Claude refuses a lineage containing an unresolved executable tool call', (
   final.message.content.push({ type: 'tool_use', id: 'pending', name: 'Bash', input: {} });
   assert.throws(() => correlateCompletedTurn(Buffer.from(lines.map(r => JSON.stringify(r)).join('\n') + '\n'), fixture.claude.turns[1]));
 });
+
+const events = JSON.parse(readFileSync(root + 'worker-events.json', 'utf8'));
+for (const provider of ['claude', 'codex'] as const) {
+  test(`${provider} requires two actual paired submit/complete receipts with identical final text`, () => {
+    const receipts = events[provider];
+    assert.equal(verifyWorkerTurns(provider, receipts).length, 2);
+    assert.throws(() => verifyWorkerTurns(provider, []));
+    assert.throws(() => verifyWorkerTurns(provider, receipts.filter((e: { hook_event_name: string }) => e.hook_event_name !== 'UserPromptSubmit')));
+    const wrong = structuredClone(receipts);
+    const stop = wrong.find((e: { hook_event_name: string }) => e.hook_event_name === 'Stop');
+    stop[provider === 'claude' ? 'prompt_id' : 'turn_id'] = 'different';
+    assert.throws(() => verifyWorkerTurns(provider, wrong));
+  });
+}
