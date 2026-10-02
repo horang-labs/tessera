@@ -10,7 +10,9 @@ import { autorunFixture } from './autorun-fixture';
 const structuredOutput = [{ type: 'input_text', text: 'Script completed\nOutput:' },
   { type: 'input_text', text: 'FIRST_CONTEXT_528\n' }];
 const prompt = 'Read phase-one.txt and report FIRST_CONTEXT_528.';
-async function nativeTurn(output: unknown, type = 'custom_tool_call') {
+const customInput = 'const result = await tools.exec_command({cmd: "cat phase-one.txt"});\ntext(result);';
+const functionArguments = '{"cmd":"cat phase-one.txt"}';
+async function nativeTurn(output: unknown, type = 'custom_tool_call', body = type === 'custom_tool_call' ? customInput : functionArguments) {
   const f = await fixture('codex');
   assert.equal(f.request.correlation.provider, 'codex');
   const turnId = f.request.correlation.provider === 'codex' ? f.request.correlation.nativeTurnId : '';
@@ -19,7 +21,8 @@ async function nativeTurn(output: unknown, type = 'custom_tool_call') {
     { type: 'event_msg', payload: { type: 'task_started', turn_id: turnId } },
     { type: 'turn_context', payload: { turn_id: turnId } },
     { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }] } },
-    { type: 'response_item', payload: { type, call_id: 'owned-call', name: 'exec_command', arguments: '{}' } },
+    { type: 'response_item', payload: { type, call_id: 'owned-call', name: 'exec_command',
+      ...(type === 'custom_tool_call' ? { input: body } : { arguments: body }) } },
     { type: 'response_item', payload: { type: type + '_output', call_id: 'owned-call', output } },
     { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'FIRST_CONTEXT_528' }] } },
     { type: 'event_msg', payload: { type: 'task_complete', turn_id: turnId, last_agent_message: 'FIRST_CONTEXT_528' } },
@@ -54,14 +57,19 @@ for (const type of ['function_call', 'custom_tool_call']) test(`${type} accepts 
     try {
       const result = await readAnalysisContext(f.request, f.deps);
       assert.equal(result.kind, 'ok');
-      if (result.kind === 'ok') assert.equal(result.snapshot.items.find(i => i.role === 'tool-result')?.text,
-        typeof output === 'string' ? 'FIRST_CONTEXT_528' : 'Script completed\nOutput:\nFIRST_CONTEXT_528\n');
+      if (result.kind === 'ok') {
+        assert.deepEqual(JSON.parse(result.snapshot.items.find(i => i.role === 'tool-call')!.text), type === 'custom_tool_call'
+          ? { name: 'exec_command', input: 'const result = await tools.exec_command({cmd: "cat phase-one.txt"});\ntext(result);' }
+          : { name: 'exec_command', arguments: '{"cmd":"cat phase-one.txt"}' });
+        assert.equal(result.snapshot.items.find(i => i.role === 'tool-result')?.text,
+          typeof output === 'string' ? 'FIRST_CONTEXT_528' : 'Script completed\nOutput:\nFIRST_CONTEXT_528\n');
+      }
     } finally { await fs.rm(f.dir, { recursive: true }); }
   }
 });
 test('structured output retains bounded text and marks omitted nontext without leaking media payloads', async () => {
   const f = await nativeTurn([{ type: 'input_text', text: 'HEAD' + 'x'.repeat(10_000) + 'TAIL' },
-    { type: 'input_image', image_url: 'data:image/png;base64,PRIVATE_MEDIA' }]);
+    { type: 'input_image', image_url: 'data:image/png;base64,PRIVATE_MEDIA' }], 'custom_tool_call', 'CALL_HEAD' + 'y'.repeat(10_000) + 'CALL_TAIL');
   try {
     const result = await readAnalysisContext(f.request, f.deps);
     assert.equal(result.kind, 'ok');
@@ -71,12 +79,30 @@ test('structured output retains bounded text and marks omitted nontext without l
     assert.ok(Buffer.byteLength(tool.text) <= 4096);
     assert.equal(tool.omission, 'head-tail');
     assert.equal(result.snapshot.coverage.toolTruncation, true);
+    const call = result.snapshot.items.find(i => i.role === 'tool-call')!;
+    assert.ok(call.text.includes('CALL_HEAD') && call.text.includes('CALL_TAIL'));
+    assert.ok(Buffer.byteLength(call.text) <= 4096);
+    assert.equal(call.omission, 'head-tail');
     assert.ok(result.snapshot.items.some(i => i.role === 'omitted' && i.omission === 'non-text'));
     assert.ok(!JSON.stringify(result.snapshot.items).includes('PRIVATE_MEDIA'));
     await fs.writeFile(f.file, f.bytes.toString().replace('PRIVATE_MEDIA', 'CHANGED_MEDIA'));
     const changed = await readAnalysisContext(f.request, f.deps);
     assert.ok(changed.kind === 'ok' && changed.snapshot.contentHash !== result.snapshot.contentHash);
   } finally { await fs.rm(f.dir, { recursive: true }); }
+});
+test('native tool calls reject absent or nonstring family-specific input and missing names', async () => {
+  for (const type of ['custom_tool_call', 'function_call']) for (const value of [undefined, 42, null, 'valid-input']) {
+    const f = await nativeTurn(structuredOutput, type);
+    try {
+      const records = f.bytes.toString().trimEnd().split('\n').map(line => JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+      const call = records.find(r => r.payload.type === type)!.payload;
+      call[type === 'custom_tool_call' ? 'input' : 'arguments'] = value;
+      if (value === 'valid-input') delete call.name;
+      await fs.writeFile(f.file, records.map(r => JSON.stringify(r) + '\n').join(''));
+      assert.deepEqual(await readAnalysisContext(f.request, f.deps),
+        { kind: 'unavailable', code: 'CONTEXT_INCOMPLETE', reason: 'malformed' });
+    } finally { await fs.rm(f.dir, { recursive: true }); }
+  }
 });
 test('nontext-only output is explicit and malformed or unknown wire shapes fail closed', async () => {
   for (const output of [[{ type: 'input_audio', audio_url: 'private-audio' }], [{ type: 'input_text', text: 1 }],

@@ -22,7 +22,7 @@ export interface NativeRecord {
   isSidechain?: boolean; isMeta?: boolean; isSynthetic?: boolean; isCompactSummary?: boolean;
   subtype?: string; message?: { id?: string; content?: string | NativeBlock[] };
   payload?: { id?: string; type?: string; turn_id?: string; thread_source?: string; error?: unknown;
-    role?: string; content?: NativeBlock[]; call_id?: string; name?: string; arguments?: string; output?: string | NativeBlock[]; last_agent_message?: string };
+    role?: string; content?: NativeBlock[]; call_id?: string; name?: string; arguments?: string; input?: string; output?: string | NativeBlock[]; last_agent_message?: string };
 }
 interface NativeBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: string | NativeBlock[];
   image_url?: string; file_id?: string; detail?: string | null; audio_url?: string; encrypted_content?: string }
@@ -174,7 +174,11 @@ function contextItems(records: LocatedRecord[], provider: 'claude-code' | 'codex
         if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
           add(p.role, nativeText(p.content));
           if (p.content?.some(b => !['input_text', 'output_text', 'text'].includes(b.type))) add('omitted', '[Nontext content omitted]', ':nontext', 'non-text');
-        } else if (['function_call', 'custom_tool_call'].includes(p.type ?? '')) add('tool-call', JSON.stringify({ name: p.name, arguments: p.arguments }), ':call');
+        } else if (['function_call', 'custom_tool_call'].includes(p.type ?? '')) {
+          const field = p.type === 'custom_tool_call' ? 'input' : 'arguments';
+          if (typeof p.name !== 'string' || typeof p.call_id !== 'string' || typeof p[field] !== 'string') refuse('malformed');
+          add('tool-call', JSON.stringify({ name: p.name, [field]: p[field] }), ':call');
+        }
         else if (['function_call_output', 'custom_tool_call_output'].includes(p.type ?? '')) {
           const output = codexToolOutput(p.output);
           add('tool-result', output.text || '[Nontext tool output]', ':result', !output.text ? 'non-text' : undefined);
