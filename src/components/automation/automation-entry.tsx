@@ -1,5 +1,6 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useState } from 'react';
 import { useStore } from 'zustand';
 import { useI18n } from '@/lib/i18n';
@@ -17,7 +18,7 @@ function Entry({ scope, store, supported = true }: { scope: AutomationScope; sto
   const { materializeSession } = useSessionNavigation();
   const { handleSessionClick } = useSessionClickHandlers();
   return <>
-    <button className={automationButton} type="button" onClick={() => setOpen(true)}>{t('sessionId' in scope ? 'automation.wake' : 'automation.schedule')}</button>
+    <button {...telemetryClickAttributes('sessionId' in scope ? 'automation.open.wake' : 'automation.open.schedule', 'sessionId' in scope ? 'chat_header' : 'worktree')} className={automationButton} type="button" onClick={() => setOpen(true)}>{t('sessionId' in scope ? 'automation.wake' : 'automation.schedule')}</button>
     {open && <AutomationManager scope={scope} store={store} supported={supported} onClose={() => setOpen(false)} onOpenSession={async id => {
       const session = await materializeSession(id);
       if (!session) { store.setState({ error: 'SESSION_UNAVAILABLE' }); return; }

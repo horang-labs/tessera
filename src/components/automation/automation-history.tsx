@@ -1,5 +1,6 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import type { AutomationRun, SessionSelectionSnapshot } from '@/lib/automation/contracts';
 import { useI18n } from '@/lib/i18n';
 import { localDue } from './automation-form';
@@ -25,10 +26,10 @@ export function AutomationHistory({ runs, onResolve, onOpenSession }: {
       {run.coalescedCount > 0 && <p>{t('automation.coalesced')}: {run.coalescedCount}</p>}
       {run.reason && <p>{t('automation.reason')}: {run.reason}</p>}
       <SavedSelection selection={run.effectiveSelection} />
-      {run.sessionId && <button type="button" className={`${automationButton} justify-self-start underline`} onClick={() => onOpenSession(run.sessionId!)}>{t('automation.openSession')} · {run.sessionId}</button>}
+      {run.sessionId && <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} type="button" className={`${automationButton} justify-self-start underline`} onClick={() => onOpenSession(run.sessionId!)}>{t('automation.openSession')} · {run.sessionId}</button>}
       {run.state === 'unknown' && <>
         <p className="text-xs">{t('automation.recovery')}</p>
-        <button className={`${automationButton} justify-self-start`} type="button" onClick={() => onResolve(run.id)}>{t('automation.recover')}</button>
+        <button {...telemetryClickAttributes('automation.history.recover', 'automation')} className={`${automationButton} justify-self-start`} type="button" onClick={() => onResolve(run.id)}>{t('automation.recover')}</button>
       </>}
     </article>)}
   </section>;

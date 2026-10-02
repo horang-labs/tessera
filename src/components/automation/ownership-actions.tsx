@@ -1,5 +1,6 @@
 'use client';
 
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import type { InputOwnership } from '@/lib/automation/contracts';
 import { useI18n } from '@/lib/i18n';
 
@@ -17,8 +18,8 @@ export function OwnershipActions({ ownership, automationId, onPause, onDelete }:
       {t(`automation.${ownership.mode}`)}{ownership.reason && ` · ${ownership.reason}`}
     </span>
     {automationId && <>
-      <button type="button" className={automationButton} onClick={onPause}>{t('automation.pause')}</button>
-      <button type="button" className={automationButton} onClick={onDelete}>{t('automation.delete')}</button>
+      <button {...telemetryClickAttributes('automation.pause', 'chat_header')} type="button" className={automationButton} onClick={onPause}>{t('automation.pause')}</button>
+      <button {...telemetryClickAttributes('automation.delete', 'chat_header')} type="button" className={automationButton} onClick={onDelete}>{t('automation.delete')}</button>
     </>}
   </>;
 }
