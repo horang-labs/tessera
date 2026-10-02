@@ -43,7 +43,12 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     dialog.current?.showModal();
     if (initialId) {
       store.setState({ view: { ...store.getState().view, selectedId: initialId, setup: false } });
-      if (initialResume) void store.getState().inspect(initialId).then(current => { if (current) void setup('resume',current.automation); });
+      if (initialResume) void store.getState().inspect(initialId).then(current => {
+        if (!current) return;
+        setIntent('resume'); setMethod(current.automation.mode === 'heartbeat' ? 'heartbeat' : 'autorun');
+        store.setState({ view: { ...store.getState().view, selectedId: initialId, setup: true } });
+        void store.getState().previewAutorun();
+      });
     }
     return () => { const target = returnFocus.current; if (target?.isConnected && target.getClientRects().length) target.focus({ preventScroll: true }); };
   }, [store, initialId, initialResume]);
@@ -95,7 +100,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     </header>
     {(view.selectedId || view.setup || evidenceId) && <button {...click('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else { updateView({ setup: false, selectedId: null }); } }}>{t('automation.back')}</button>}
     <AutomationError code={error} />
-    {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...click('automation.delete.confirm','automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...click('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>
+    {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...click('automation.delete.confirm','automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...click('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
     {sessionId && <p role="status" className="my-2 text-xs">{t(`automation.${ownership.mode}`)}</p>}
     {showSetup ? <section className="grid gap-3">
       <p className="text-xs">{t('automation.local')}</p>{sessionId && <p className="text-xs">{t('automation.safety')}</p>}

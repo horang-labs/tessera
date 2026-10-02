@@ -25,7 +25,8 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
   return <section className="grid gap-3">
     {loading && <p role="status">{t('automation.checking')}</p>}
-    {preview && <AutorunPreviewView preview={preview} objectiveOverride="" onObjective={onEdit} onOpenSession={onOpenSession} />}
+    {preview && rule.mode === 'autorun' && <AutorunPreviewView preview={preview} objectiveOverride={rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : ''} onObjective={onEdit} onOpenSession={onOpenSession} />}
+    {rule.mode !== 'autorun' && <><p>{t('automation.fixedHelp')}</p>{preview?.readiness.kind === 'idle' && <><p>{t('automation.idleFresh')}</p><button {...click('automation.history.open_session','automation')} className={automationButton} onClick={onOpenSession}>{t('automation.writeInstruction')}</button></>}</>}
     {rule.mode === 'autorun' ? <>
       <p className="whitespace-pre-wrap">{rule.autorun.objective.text}</p>
       <p>{t('automation.supervisor')}: {rule.autorun.supervisor.provider} · {rule.autorun.supervisor.model} · {rule.autorun.supervisor.reasoningEffort} · {rule.autorun.supervisor.serviceTier}</p>

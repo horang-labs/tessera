@@ -285,3 +285,24 @@ function publishAutorunAttention(attention: AutomationAttention, summary: string
 }
 export const automationAttentionNavigation = createStore<{ target: AutomationAttention | null }>(() => ({ target: null }));
 export function openAutomationAttention(attention: AutomationAttention) { automationAttentionNavigation.setState({ target: attention }); }
+
+/** Reconcile only each rule's latest persisted attention, including workers with no mounted view. */
+export async function reconcileAutorunAttention(http: AutomationHttp = fetch) {
+  const ownerId = useAuthStore.getState().user?.id;
+  if (!ownerId) return;
+  let cursor: string | null = null;
+  try {
+    do {
+      const query: URLSearchParams = new URLSearchParams({ includeDeleted: 'true', limit: '100', ...(cursor ? { cursor } : {}) });
+      const response = await http(`/api/automations?${query}`, { cache: 'no-store' });
+      if (!response.ok) return;
+      const page: Page<unknown> = await response.json();
+      if (useAuthStore.getState().user?.id !== ownerId) return;
+      for (const value of page.items) {
+        const item = toAutomationSummary(value);
+        if (item.attention) await receiveAutorunAttention(item.attention,http);
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+  } catch { /* Reconnect and normal scoped reconciliation may retry this read. */ }
+}

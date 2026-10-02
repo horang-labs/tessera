@@ -1,4 +1,4 @@
-import { invalidateAutomationStores, receiveAutorunAttention } from '@/stores/automation-store';
+import { invalidateAutomationStores, receiveAutorunAttention, reconcileAutorunAttention } from '@/stores/automation-store';
 import { getSessionInputOwnership } from '@/lib/automation/client-state';
 import { applySessionInputOwnership } from '@/lib/automation/client-state';
 import { v4 as uuidv4 } from 'uuid';
@@ -286,6 +286,7 @@ export function handleIncomingServerMessage({
 
     case 'terminal_session_runtime_snapshot': {
       invalidateAutomationStores();
+      void reconcileAutorunAttention();
       for (const value of msg.inputOwnerships ?? []) applySessionInputOwnership(value);
       const authoritativeReboundTerminalIds = new Set(
         (msg.reboundSessions ?? []).map((rebound) => rebound.terminalId),
