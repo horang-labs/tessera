@@ -1689,3 +1689,25 @@ for (const provider of ['claude-code', 'codex']) {
     assert.ok(captured[0].args.join(' ').includes(selection.model));
   });
 }
+
+for (const tier of ['default', 'fast'] as const) {
+  test(`Codex native ${tier} schedule crosses ordinary preparation and spawn fence`, async () => {
+    const sessionId = `native-automation-${tier}`;
+    createTerminalSession(sessionId, 'codex', { kind: 'terminal' }, {
+      model: 'gpt-6-test', reasoningEffort: 'high', ...(tier === 'fast' ? { serviceTier: 'priority' } : {}),
+    });
+    const captured: CapturedSpawn[] = [], manager = createManager(captured);
+    const launcher = modules.createProviderLaunchModule({ terminalManager: manager,
+      resolveAgentEnvironment: async userId => { assert.equal(userId, 'automation-owner'); return 'native'; } });
+    let fenced = false;
+    await launcher.launch({ mode: 'detached', sessionId, userId: 'automation-owner', initialPrompt: 'Harmless fixture',
+      expectedAgentEnvironment: 'native', expectedSelection: { provider: 'codex', model: 'gpt-6-test', reasoningEffort: 'high', serviceTier: tier,
+        settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } },
+      spawnFence: spawn => { assert.equal(captured.length, 0); fenced = true; spawn(); },
+    });
+    assert.equal(fenced, true);assert.equal(captured.length, 1);
+    const shell = captured[0].args.join('\n');
+    if (tier === 'fast') assert.match(shell, /service_tier="priority"/);
+    else assert.doesNotMatch(shell, /service_tier=/);
+  });
+}

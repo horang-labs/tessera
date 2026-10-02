@@ -7,6 +7,7 @@ import { sameSessionSelection, type InputOwnership } from './contracts';
 import type { StoredAutomation, StoredRun } from './repository';
 import { AutomationService, fail, type Inspection } from './service';
 import { dueOccurrence, MAX_LATENESS_MS } from './schedule';
+import { automationServiceTier } from './service-tier';
 
 const pending = (r: StoredRun) => ['pending', 'deferred', 'dispatching'].includes(r.run.state);
 export class AutomationEngine implements AutomationAuthority {
@@ -69,7 +70,7 @@ export class AutomationEngine implements AutomationAuthority {
     if (!row) fail('NOT_FOUND');
     const saved = r.run.effectiveSelection;
     if (row.provider !== saved.provider || row.model !== saved.model || row.reasoning_effort !== saved.reasoningEffort ||
-      row.service_tier !== saved.serviceTier || row.worktree_id !== r.snapshot.target.worktreeId) fail('UNSUPPORTED_SELECTION');
+      automationServiceTier(row.provider,row.service_tier) !== saved.serviceTier || row.worktree_id !== r.snapshot.target.worktreeId) fail('UNSUPPORTED_SELECTION');
   }
   reserveSession(runId: string, create: (sessionId: string) => void): string {
     return this.repo.transaction(() => {

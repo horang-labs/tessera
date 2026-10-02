@@ -1,4 +1,5 @@
 import { createAutorunRuntime } from './autorun-runtime';
+import { automationServiceTier } from './service-tier';
 import type { AutorunProviderPort } from '../cli/providers/session-types';
 import { getSession, extractSessionKind } from '@/lib/db/sessions';
 import type { ProviderLaunchRequest, ProviderLaunchResult } from '@/lib/terminal/provider-launch-module';
@@ -162,10 +163,11 @@ export function readSavedSessionSelection(sessionId: string): SessionSelectionSn
     || (session.provider !== 'codex' && session.provider !== 'claude-code')) {
     throw new AutomationInputError('UNSUPPORTED_SELECTION', 'The Session is unavailable for automation.');
   }
-  if (session.service_tier !== null && session.service_tier !== 'fast' && session.service_tier !== 'default') {
+  const serviceTier = automationServiceTier(session.provider, session.service_tier);
+  if (serviceTier === undefined) {
     throw new AutomationInputError('UNSUPPORTED_SELECTION', 'Saved launch selection is unsupported.');
   }
   return { provider: session.provider, model: session.model, reasoningEffort: session.reasoning_effort,
-    serviceTier: session.service_tier === 'fast' || session.service_tier === 'default' ? session.service_tier : null,
+    serviceTier,
     settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } };
 }

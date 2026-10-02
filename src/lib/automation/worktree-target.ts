@@ -3,7 +3,7 @@ import { getWorktree } from '../db/worktrees';
 import { isGitCheckoutPath } from '../db/worktree-identity';
 import { fail } from './service';
 import { createSession } from '../db/sessions';
-import { createReservedControlSession } from '../control/reserved-session';
+import { nativeAutomationServiceTier } from './service-tier';
 import type { Target } from './contracts';
 
 /** Resolve registered ownership without treating every canonical checkout as a Task. */
@@ -26,12 +26,9 @@ export function resolveAutomationWorktree(worktreeId:string) {
 /** Runs in the authority's reservation transaction; never creates a Worktree or Task. */
 export function createReservedAutomationSession(sessionId:string,target:Extract<Target,{kind:'create-session'}>):void {
   const context=resolveAutomationWorktree(target.worktreeId);
-  if(context.taskId){
-    createReservedControlSession(sessionId,{worktreeId:context.worktreeId,title:target.title,...target.selection});
-    return;
-  }
   createSession(sessionId,context.projectId,target.title.trim()||'New Session',target.selection.provider,{
-    worktreeId:context.worktreeId,workDir:context.workDir,worktreeManaged:false,providerState:JSON.stringify({kind:'terminal'}),
-    model:target.selection.model,reasoningEffort:target.selection.reasoningEffort,serviceTier:target.selection.serviceTier,
+    ...(context.taskId ? {taskId:context.taskId} : {worktreeId:context.worktreeId,workDir:context.workDir,worktreeManaged:false}),
+    providerState:JSON.stringify({kind:'terminal'}),model:target.selection.model,reasoningEffort:target.selection.reasoningEffort,
+    serviceTier:nativeAutomationServiceTier(target.selection.provider,target.selection.serviceTier),
   });
 }

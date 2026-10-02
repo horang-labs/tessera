@@ -3,6 +3,7 @@ import { getDb } from '../db/database';
 import { getSession, extractSessionKind } from '../db/sessions';
 import { getProviderSessionOptions, type ProviderSessionOptions } from '../cli/provider-session-options';
 import { resolveAutomationWorktree } from './worktree-target';
+import { automationServiceTier, automationTierOptions } from './service-tier';
 import { SettingsManager } from '../settings/manager';
 import { normalizeUserSettings } from '../settings/provider-defaults';
 import { DEFAULT_SETTINGS } from '../settings/defaults';
@@ -42,8 +43,10 @@ function inspectTarget(target: Target): { selection: SessionSelectionSnapshot; c
     if (!row || row.deleted || row.archived || row.worktree_deleted_at || extractSessionKind(row.provider_state) !== 'terminal') fail('NOT_FOUND');
     if (row.task_id && !getDb().prepare('SELECT 1 FROM tasks WHERE id=? AND archived=0 AND worktree_deleted_at IS NULL').get(row.task_id)) fail('NOT_FOUND');
     if (!['claude-code', 'codex'].includes(row.provider)) fail('UNSUPPORTED_SELECTION');
+    const serviceTier=automationServiceTier(row.provider,row.service_tier);
+    if(serviceTier===undefined)fail('UNSUPPORTED_SELECTION');
     return { selection: { provider: row.provider as SessionSelectionSnapshot['provider'], model: row.model, reasoningEffort: row.reasoning_effort,
-      serviceTier: row.service_tier as SessionSelectionSnapshot['serviceTier'], settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } }, canonicalWorktreeId: null };
+      serviceTier, settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } }, canonicalWorktreeId: null };
   }
   const context=resolveAutomationWorktree(target.worktreeId);
   return { selection: target.selection, canonicalWorktreeId: context.worktreeId, context: JSON.stringify(context) };
@@ -55,7 +58,7 @@ export async function inspectAutomationTarget(userId: string, target: Target, en
     const options = await readOptions(target.selection.provider, userId, environment);
     const model = options.modelOptions.find(m => m.value === target.selection.model);
     if (!model || !model.supportedReasoningEfforts.some(e => e.value === target.selection.reasoningEffort) ||
-      (target.selection.provider === 'codex' && !model.serviceTiers?.some(t => t.value === target.selection.serviceTier))) fail('UNSUPPORTED_SELECTION');
+      (target.selection.provider === 'codex' && !automationTierOptions(model).some(t => t.value === target.selection.serviceTier))) fail('UNSUPPORTED_SELECTION');
   }
   return { ...inspected, assertCurrent: () => {
     if (currentOwner() !== userId || currentEnvironment(userId) !== environment) fail('OWNER_UNAVAILABLE');
