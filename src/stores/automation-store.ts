@@ -24,6 +24,7 @@ interface AutomationStore {
 /** Target-scoped HTTP state. Only B updates the independent runtime ownership projection. */
 export function createAutomationStore(scope: AutomationScope, http: AutomationHttp = fetch) {
   let listRequest = 0;
+  const runPages = new Map<string, number>();
   const runRequests = new Map<string, number>();
   const keys = new Map<string, string>();
   const path = (id: string) => `/api/automations/${encodeURIComponent(id)}`;
@@ -73,15 +74,25 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
         }
       },
       loadRuns: async (id, more = false) => {
+        const previous = get().runs[id];
+        if (more && !previous?.nextCursor) return;
         const requestId = (runRequests.get(id) ?? 0) + 1;
         runRequests.set(id, requestId);
-        const previous = get().runs[id];
-        const cursor = more ? previous?.nextCursor : null;
+        const pagesToRead = more ? 1 : runPages.get(id) ?? 1;
+        let cursor = more ? previous.nextCursor : null;
+        const items = more ? [...previous.items] : [];
+        let pagesRead = 0;
         try {
-          const page = await request<Page<AutomationRun>>(`${path(id)}/runs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
-          if (requestId !== runRequests.get(id)) return;
-          set({ runs: { ...get().runs, [id]: { ...page, items: more ? [...(previous?.items ?? []), ...page.items] : page.items } } });
-        } catch (error) { set({ error: errorCode(error) }); }
+          do {
+            const page: Page<AutomationRun> = await request<Page<AutomationRun>>(`${path(id)}/runs${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
+            if (requestId !== runRequests.get(id)) return;
+            items.push(...page.items);
+            cursor = page.nextCursor;
+            pagesRead++;
+          } while (cursor && pagesRead < pagesToRead);
+          runPages.set(id, more ? (runPages.get(id) ?? 1) + 1 : pagesRead);
+          set({ runs: { ...get().runs, [id]: { items: [...new Map(items.map(run => [run.id, run])).values()], nextCursor: cursor } } });
+        } catch (error) { if (requestId === runRequests.get(id)) set({ error: errorCode(error) }); }
       },
       save: async (input, previous) => {
         if (previous) return mutate(path(previous.id), 'PUT', { expectedRevision: previous.revision, input: { ...input, enabled: false } });

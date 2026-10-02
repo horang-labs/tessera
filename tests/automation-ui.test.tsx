@@ -32,7 +32,7 @@ test('history distinguishes delivered prompts from task success and offers no-re
   const { AutomationHistory } = await import('../src/components/automation/automation-history');
   const { runFixture } = await import('./fixtures/automation');
   const html = renderToStaticMarkup(createElement(AutomationHistory, {
-    runs: [{ ...runFixture(), state: 'delivered' }, { ...runFixture(), id: 'uncertain', state: 'unknown', reason: 'WRITER_UNCERTAIN' }],
+    runs: [{ ...runFixture(), state: 'delivered', coalescedCount: 7 }, { ...runFixture(), id: 'uncertain', state: 'unknown', reason: 'WRITER_UNCERTAIN' }],
     onResolve: () => {}, onOpenSession: () => {},
   }));
   assert.match(html, /Prompt delivered/);
@@ -41,4 +41,16 @@ test('history distinguishes delivered prompts from task success and offers no-re
   assert.match(html, /WRITER_UNCERTAIN/);
   assert.match(html, /Open Session/);
   assert.match(html, /Inherited from CLI/);
+  assert.match(html, /Omitted overdue slots: 7/);
+});
+
+test('editing a retained interval anchor previews the next future slot locally and in UTC', async context => {
+  context.mock.method(Date, 'now', () => Date.UTC(2030, 0, 1));
+  const { AutomationForm } = await import('../src/components/automation/automation-form');
+  const { automationFixture, onceInput } = await import('./fixtures/automation');
+  const previous = { ...automationFixture(), ...onceInput(), trigger: { kind: 'interval' as const, anchorAt: Date.UTC(2029, 11, 31, 23, 50), everyMs: 300000 } };
+  const html = renderToStaticMarkup(createElement(AutomationForm, { scope: { worktreeId: 'wt-1' }, previous, onSave: async () => true, onCancel: () => {} }));
+  assert.match(html, /Next due/);
+  assert.match(html, /2030-01-01T00:05:00.000Z/);
+  assert.match(html, /UTC/);
 });

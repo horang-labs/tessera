@@ -117,6 +117,8 @@ test('history supports the next page without losing previous runs', async () => 
   await store.getState().loadRuns('rule-1');
   await store.getState().loadRuns('rule-1', true);
   assert.deepEqual(store.getState().runs['rule-1'].items.map(run => run.id), ['run-1', 'older']);
+  await store.getState().loadRuns('rule-1');
+  assert.deepEqual(store.getState().runs['rule-1'].items.map(run => run.id), ['run-1', 'older']);
 });
 
 test('edit inspection exposes an unresolved attempt before opening the form', async () => {

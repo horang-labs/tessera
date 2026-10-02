@@ -40,6 +40,12 @@ export function AutomationForm({ scope, previous, onSave, onCancel }: {
   const [error, setError] = useState(false);
   const [saving, setSaving] = useState(false);
   const oldAt = previous?.trigger.kind === 'once' ? previous.trigger.at : previous?.trigger.kind === 'interval' ? previous.trigger.anchorAt : null;
+  const [atValue, setAtValue] = useState(oldAt === null ? '' : localDateInput(oldAt));
+  const [everyValue, setEveryValue] = useState(previous?.trigger.kind === 'interval' ? String(previous.trigger.everyMs / 60_000) : '');
+  const everyMs = Number(everyValue) * 60_000;
+  const selectedAt = oldAt !== null && atValue === localDateInput(oldAt) ? oldAt : new Date(atValue).getTime();
+  const retainedInterval = previous?.trigger.kind === 'interval' && kind === 'interval' && selectedAt === previous.trigger.anchorAt;
+  const previewAt = retainedInterval && selectedAt <= now ? everyMs > 0 ? selectedAt + (Math.floor((now - selectedAt) / everyMs) + 1) * everyMs : NaN : selectedAt;
   const expiry = previous?.limits.expiresAt ?? defaults.limits.expiresAt;
   function supported(selection: Selection) {
     return Boolean(chosen && chosen.supportedReasoningEfforts.some(e => e.value === selection.reasoningEffort && e.value !== 'auto')
@@ -77,8 +83,9 @@ export function AutomationForm({ scope, previous, onSave, onCancel }: {
       {options.isLoading && <p role="status">{t('automation.loading')}</p>}
       {options.error && <p role="alert">{t('automation.adapter')}</p>}
       <Field label={t('automation.trigger')}><select className={fieldClass} value={kind} onChange={e => setKind(e.target.value as 'once' | 'interval')}><option value="once">{t('automation.once')}</option><option value="interval">{t('automation.interval')}</option></select></Field>
-      <Field label={t('automation.at')}><input className={fieldClass} type="datetime-local" name="at" required defaultValue={oldAt === null ? '' : localDateInput(oldAt)} /></Field>
-      {kind === 'interval' && <Field label={t('automation.every')}><input className={fieldClass} name="every" type="number" min={1} max={43200} required defaultValue={previous?.trigger.kind === 'interval' ? previous.trigger.everyMs / 60_000 : ''} /></Field>}
+      <Field label={t('automation.at')}><input className={fieldClass} type="datetime-local" name="at" required value={atValue} onChange={e => setAtValue(e.target.value)} /></Field>
+      {Number.isFinite(previewAt) && <p className="break-words text-xs" role="status">{t('automation.next')}: {localDue(previewAt)} · UTC: <time dateTime={new Date(previewAt).toISOString()}>{new Date(previewAt).toISOString()}</time></p>}
+      {kind === 'interval' && <Field label={t('automation.every')}><input className={fieldClass} name="every" type="number" min={1} max={43200} required value={everyValue} onChange={e => setEveryValue(e.target.value)} /></Field>}
     </>}
     {wake && <Field label={t('automation.delay')}><input className={fieldClass} name="delay" type="number" min={30} max={86400} required defaultValue={previous?.trigger.kind === 'turn-complete' ? previous.trigger.delayMs / 1000 : 120} /></Field>}
     <div className="grid grid-cols-2 gap-3">

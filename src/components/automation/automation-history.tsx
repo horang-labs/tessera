@@ -22,6 +22,7 @@ export function AutomationHistory({ runs, onResolve, onOpenSession }: {
     {runs.map(run => <article key={run.id} className="grid gap-2 border-l-2 border-(--divider) pl-3 text-sm">
       <p><strong>{run.state === 'delivered' ? t('automation.sent') : run.state}</strong> · <time dateTime={new Date(run.dueAt).toISOString()}>{localDue(run.dueAt)}</time></p>
       <p>{t('automation.runtime')}: {run.observedRuntime}</p>
+      {run.coalescedCount > 0 && <p>{t('automation.coalesced')}: {run.coalescedCount}</p>}
       {run.reason && <p>{t('automation.reason')}: {run.reason}</p>}
       <SavedSelection selection={run.effectiveSelection} />
       {run.sessionId && <button type="button" className={`${automationButton} justify-self-start underline`} onClick={() => onOpenSession(run.sessionId!)}>{t('automation.openSession')} · {run.sessionId}</button>}
