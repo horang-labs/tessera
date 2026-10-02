@@ -93,3 +93,17 @@ test('legacy persisted rules decode into v2 DTOs while Autorun detail carries pe
   assert.equal(automationV2Schema.safeParse({ ...dto, prompt: 'fixed' }).success, false);
   assert.equal(automationV2Schema.safeParse({ ...dto, attention: { ...dto.attention, identity: { ...dto.attention.identity, automationId: 'foreign' } } }).success, false);
 });
+
+test('shared v2 summaries and detail preserve legacy Heartbeat/Schedule pause reasons', async () => {
+  const { automationSummaryV2Schema, decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const { automationFixture } = await import('./fixtures/automation');
+  for (const pauseReason of ['explicit-stop', 'acknowledged-no-retry']) {
+    const legacy = { ...automationFixture(), state: 'paused' as const, pauseReason };
+    const decoded = decodeAutomation(legacy);
+    assert.equal(decoded.success, true);
+    if (decoded.success) assert.equal(decoded.data.pauseReason, pauseReason);
+    assert.equal(automationSummaryV2Schema.safeParse({ version: 2, id: legacy.id, name: legacy.name, revision: legacy.revision,
+      mode: 'heartbeat', state: legacy.state, pauseReason, sessionId: 'session-1', worktreeId: null, nextDueAt: null,
+      dispatchCount: 0, analysisCount: 0, latestDecisionId: null, attention: null }).success, true);
+  }
+});

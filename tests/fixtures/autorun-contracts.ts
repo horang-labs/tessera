@@ -28,7 +28,8 @@ export function contextSnapshot() {
     userId: 'owner-1', agentEnvironment: 'wsl' as const, boundary, inputEpoch: 'epoch-1',
     workerSelection: { provider: 'codex' as const, model: null, reasoningEffort: null, serviceTier: null,
       settings: { permissionPolicy: 'inherit-cli' as const, allowPreparationFailure: false as const } },
-    source: { identityHash: 'a'.repeat(64), fileGeneration: 'file-1', startByte: 0, endByte: 500 },
+    source: { identityHash: 'a'.repeat(64), fileGeneration: 'file-1', startByte: 0, endByte: 500, latestTurnStartByte: 0,
+      scannedRanges: [{ startByte: 0, endByte: 500 }], bytesScanned: 500, maxRecordBytes: 500 },
     cutoff: { provider: 'codex' as const, turnId: 'turn-2', taskStartedRecordId: 'started-2',
       turnContextRecordId: 'context-2', terminalRecordId: 'complete-2', endByte: 500 },
     correlation: { provider: 'codex' as const, providerConversationId: 'conversation-1', nativeTurnId: 'turn-2',
@@ -68,4 +69,20 @@ export function supervisorFinalFixture() {
     decision: { outcome: 'complete', proposedPrompt: null, explanation: 'Test passes.', progress: 'Fix verified.',
       evidenceIds: ['record-2'], criterionResults: [{ criterionId: 'goal', status: 'met', evidenceIds: ['record-2'] }], madeProgress: true, blocker: null },
   };
+}
+
+export function hookSubmissionFixture() {
+  const { completionHookId: _hook, ...evidence } = contextSnapshot().correlation;
+  void _hook;
+  return { kind: 'submission' as const, userId: 'owner-1', agentEnvironment: 'wsl' as const,
+    sessionId: 'session-1', terminalId: 'terminal-1', observedAt: autorunNow, evidence };
+}
+export function firstRunningEvidenceFixture() {
+  const acceptedTurn = { serverInstanceId: boundary.serverInstanceId, terminalId: boundary.terminalId,
+    generation: boundary.generation, sessionId: boundary.sessionId, userId: boundary.userId,
+    turnSequence: boundary.turnSequence, inputRevision: boundary.inputRevision };
+  return { kind: 'ok' as const, goal: { kind: 'verified' as const,
+    objective: { kind: 'verified-human' as const, text: 'Fix login.', revision: 1,
+      sources: [{ messageId: 'message-1', recordId: 'record-1', textHash: 'd'.repeat(64), excerpt: 'Fix login.', origin: 'tessera-human-correlated' as const }] } },
+    newHumanInstructions: [], turnEvidence: { kind: 'running' as const, acceptedTurn, submission: hookSubmissionFixture().evidence } };
 }

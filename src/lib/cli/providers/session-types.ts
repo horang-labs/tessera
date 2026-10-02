@@ -161,6 +161,8 @@ export type SupervisorDecisionRequest = SupervisorCapabilityRequest & {
 };
 export interface AutorunProviderPort {
   readonly version: 1;
+  /** R1-owned verified human objective/corrections and current submit evidence; no completed snapshot required. */
+  readAutorunEvidence(args: AutorunEvidenceRequest): Promise<import('@/lib/automation/autorun-contracts').AutorunEvidenceResult>;
   /** Provider-owned bounded native read; owner/environment always explicit. */
   readAnalysisContext(args: AnalysisSnapshotRequest): Promise<import('@/lib/automation/autorun-contracts').AnalysisContextResult>;
   /** Fresh installed metadata/policy attestation, no model call. */
@@ -168,3 +170,13 @@ export interface AutorunProviderPort {
   /** Fresh auth-only, tool-free process; signal stops only its owned tree, then proves quiescence. */
   generateSupervisorDecision(args: SupervisorDecisionRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorResult>;
 }
+
+/** R2 captures current native association under its gate, then asks R1 for provenance without a model call.
+ * Completed context is deliberately unnecessary for an accepted first running turn.
+ */
+export type AutorunEvidenceRequest = {
+  userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string; providerConversationId: string;
+  inputEpoch: string; workerSelection: import('@/lib/automation/contracts').SessionSelectionSnapshot;
+  turnEvidence: import('@/lib/automation/autorun-contracts').AutorunTurnEvidence;
+  goalRevision: number; previousHumanSourceIds: readonly string[]; signal: AbortSignal;
+};

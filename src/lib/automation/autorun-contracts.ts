@@ -164,7 +164,7 @@ const correlationBase = {
 };
 /** #530 observed prompt_id/promptId and turn_id; never substitute a timestamp or last prose. */
 export const providerTurnCorrelationSchema = z.discriminatedUnion('provider', [
-  z.object({ ...correlationBase, provider: z.literal('claude-code'), nativePromptId: id }).strict(),
+  z.object({ ...correlationBase, provider: z.literal('claude-code'), nativePromptId: id, stopTextHash: hash }).strict(),
   z.object({ ...correlationBase, provider: z.literal('codex'), nativeTurnId: id }).strict(),
 ]);
 export type ProviderTurnCorrelation = z.infer<typeof providerTurnCorrelationSchema>;
@@ -177,6 +177,24 @@ export const providerCompletionCutoffSchema = z.discriminatedUnion('provider', [
 export type ProviderCompletionCutoff = z.infer<typeof providerCompletionCutoffSchema>;
 const byteRange = z.object({ startByte: count, endByte: count }).strict()
   .refine(value => value.endByte > value.startByte);
+/** Absolute offsets are independent of actual bytes read, including header/tail and rereads. */
+export const contextSourceSchema = z.object({
+  identityHash: hash, fileGeneration: id, startByte: count, endByte: count, latestTurnStartByte: count,
+  scannedRanges: z.array(byteRange).min(1).max(1000), bytesScanned: count.max(AUTORUN_BOUNDS.scanBytes),
+  maxRecordBytes: z.number().int().positive().max(AUTORUN_BOUNDS.recordBytes),
+}).strict().refine(value => value.startByte <= value.latestTurnStartByte && value.latestTurnStartByte < value.endByte &&
+  value.scannedRanges.reduce((sum, range) => sum + range.endByte - range.startByte, 0) <= value.bytesScanned &&
+  value.scannedRanges.every((range, index) => index === 0 || range.startByte >= value.scannedRanges[index - 1].endByte));
+function rangeWasScanned(start: number, end: number, ranges: { startByte: number; endByte: number }[]) {
+  let cursor = start;
+  for (const range of ranges) {
+    if (range.endByte <= cursor) continue;
+    if (range.startByte > cursor) return false;
+    cursor = range.endByte;
+    if (cursor >= end) return true;
+  }
+  return false;
+}
 export const contextCoverageSchema = z.object({
   kind: z.enum(['full', 'bounded', 'compacted', 'incomplete']), latestTurnComplete: z.literal(true),
   omittedRanges: z.array(byteRange).max(1000), omittedBytes: count, toolTruncation: z.boolean(),
@@ -194,8 +212,7 @@ export const analysisContextSnapshotSchema = z.object({
   version: z.literal(1), provider: z.enum(['claude-code', 'codex']), cliVersion: id,
   providerConversationId: id, userId: id, agentEnvironment: z.enum(['native', 'wsl']),
   boundary: analysisBoundarySchema, inputEpoch: id, workerSelection: sessionSelectionSnapshotSchema,
-  source: z.object({ identityHash: hash, fileGeneration: id, startByte: count,
-    endByte: count.max(AUTORUN_BOUNDS.scanBytes) }).strict(),
+  source: contextSourceSchema,
   cutoff: providerCompletionCutoffSchema, correlation: providerTurnCorrelationSchema,
   coverage: contextCoverageSchema, items: z.array(contextItemSchema).min(1).max(2000),
   parserVersion: id, contentHash: hash, capturedAt: time,
@@ -209,7 +226,9 @@ export const analysisContextSnapshotSchema = z.object({
       cutoff.provider === 'claude-code' && correlation.provider === 'claude-code' && cutoff.promptId === correlation.nativePromptId) &&
     value.userId === boundary.userId && source.startByte < source.endByte && cutoff.endByte === source.endByte &&
     new Set(value.items.map(item => item.id)).size === value.items.length &&
-    value.items.every(item => item.startByte >= source.startByte && item.endByte <= cutoff.endByte) &&
+    rangeWasScanned(source.latestTurnStartByte, source.endByte, source.scannedRanges) &&
+    value.items.every(item => item.startByte >= source.startByte && item.endByte <= cutoff.endByte &&
+      rangeWasScanned(item.startByte, item.endByte, source.scannedRanges)) &&
     bytes(JSON.stringify(value)) <= AUTORUN_BOUNDS.packetBytes;
 });
 export type AnalysisContextSnapshot = z.infer<typeof analysisContextSnapshotSchema>;
@@ -431,3 +450,37 @@ export type ControlResultV2 = { automation: AutomationV2; inputOwnership: InputO
 export type ControlResponseV2 = { status: 200 | 202; body: ControlResultV2 };
 /** A run still records host delivery only; null links legacy Heartbeat/Schedule runs. */
 export type AutomationRunV2 = AutomationRun & { decisionId: string | null };
+
+/** R1 authenticated hook bridge publishes this internally; it is never a renderer WS payload. */
+const hookIdentity = { userId: id, agentEnvironment: z.enum(['native', 'wsl']), sessionId: id, terminalId: id, observedAt: time };
+export const autorunHookEvidenceSchema = z.discriminatedUnion('kind', [
+  z.object({ ...hookIdentity, kind: z.literal('submission'), evidence: providerTurnSubmissionSchema }).strict(),
+  z.object({ ...hookIdentity, kind: z.literal('completion'), evidence: providerTurnCorrelationSchema }).strict(),
+]);
+export type AutorunHookEvidence = z.infer<typeof autorunHookEvidenceSchema>;
+/** Runtime-owned accepted identity plus R1-observed native association, without claiming eligibility. */
+export const autorunTurnEvidenceSchema = z.discriminatedUnion('kind', [
+  autorunReadinessSchema.options[1],
+  z.object({ kind: z.literal('completed'), boundary: analysisBoundarySchema, correlation: providerTurnCorrelationSchema }).strict(),
+  z.object({ kind: z.literal('idle'), reason: z.literal('no-accepted-turn') }).strict(),
+  z.object({ kind: z.literal('unavailable'), reason: z.enum(['instrumentation-required', 'unsafe-runtime', 'binding-mismatch']) }).strict(),
+]).refine(value => {
+  if (value.kind === 'idle' || value.kind === 'unavailable') return true;
+  const runtime = value.kind === 'running' ? value.acceptedTurn : value.boundary;
+  const native = value.kind === 'running' ? value.submission : value.correlation;
+  return runtime.serverInstanceId === native.serverInstanceId && runtime.generation === native.terminalGeneration;
+});
+export type AutorunTurnEvidence = z.infer<typeof autorunTurnEvidenceSchema>;
+export const autorunGoalEvidenceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('verified'), objective: objectiveSchema.options[1] }).strict(),
+  z.object({ kind: z.literal('missing'), reason: z.enum(['no-human-instructions', 'unverified-human-origin', 'objective-limit']) }).strict(),
+  z.object({ kind: z.literal('conflicting'), sources: z.array(humanInstructionSourceSchema).min(1).max(100) }).strict(),
+]);
+export type AutorunGoalEvidence = z.infer<typeof autorunGoalEvidenceSchema>;
+export const autorunEvidenceResultSchema = z.union([
+  z.object({ kind: z.literal('ok'), goal: autorunGoalEvidenceSchema, newHumanInstructions: z.array(humanInstructionSourceSchema).max(100),
+    turnEvidence: autorunTurnEvidenceSchema }).strict(),
+  z.object({ kind: z.literal('unavailable'), code: z.enum(['CONTEXT_UNAVAILABLE', 'CONTEXT_INCOMPLETE', 'ANALYSIS_STALE', 'SUPERVISOR_UNSUPPORTED']),
+    reason: autorunReadinessSchema.options[3].shape.reason }).strict(),
+]);
+export type AutorunEvidenceResult = z.infer<typeof autorunEvidenceResultSchema>;

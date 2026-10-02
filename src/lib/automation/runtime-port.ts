@@ -71,6 +71,14 @@ export type AnalysisCommitResult =
   | { kind: 'rejected'; code: 'ANALYSIS_STALE' | 'RUNTIME_ADAPTER_UNAVAILABLE' };
 export interface AutorunRuntimePort {
   readonly version: 1;
+  /** Authenticated R1 hook handoff; synchronously reject wrong owner/runtime/generation/provider binding.
+   * Observing a hook does not manufacture a Boundary or confer input ownership.
+   */
+  recordHookEvidence(event: import('./autorun-contracts').AutorunHookEvidence): { kind: 'accepted' | 'rejected' };
+  /** Read the current associated submit/completion under the runtime gate; R2 still checks ledger/admission.
+   * R2 must recheck identity/epoch after R1's asynchronous evidence read, including before arm commit.
+   */
+  readTurnEvidence(args: { userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string }): import('./autorun-contracts').AutorunTurnEvidence;
   /** Recheck exact runtime/input/selection before and after the async provider read; never hold a DB transaction. */
   captureAnalysisContext(args: {
     userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string;

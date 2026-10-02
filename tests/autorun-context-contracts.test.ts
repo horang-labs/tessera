@@ -16,7 +16,7 @@ test('context carries correlated native finality, bounded evidence and exact inh
     { ...snapshot, items: [{ ...snapshot.items[0], endByte: 501 }] },
     { ...snapshot, coverage: { ...snapshot.coverage, latestTurnComplete: false } },
     { ...snapshot, items: [{ ...snapshot.items[0], text: '한'.repeat(32768) }] },
-    { ...snapshot, source: { ...snapshot.source, endByte: 33554433 } },
+    { ...snapshot, source: { ...snapshot.source, bytesScanned: 33554433 } },
   ]) assert.equal(analysisContextSnapshotSchema.safeParse(invalid).success, false);
 });
 
@@ -41,11 +41,32 @@ test('Claude correlation needs prompt identity plus durable lineage, even with i
   const snapshot = contextSnapshot();
   const claude = { ...snapshot, provider: 'claude-code', cliVersion: '2.1.284',
     workerSelection: { ...snapshot.workerSelection, provider: 'claude-code' },
-    correlation: { ...snapshot.correlation, provider: 'claude-code', nativePromptId: 'prompt-2', nativeTurnId: undefined },
+    correlation: { ...snapshot.correlation, provider: 'claude-code', nativePromptId: 'prompt-2', stopTextHash: 'e'.repeat(64), nativeTurnId: undefined },
     cutoff: { provider: 'claude-code', promptId: 'prompt-2', humanRecordId: 'human-2', terminalRecordId: 'assistant-2',
       parentUuid: 'human-2', apiMessageId: 'api-2', endByte: 500 } };
   delete claude.correlation.nativeTurnId;
   assert.equal(analysisContextSnapshotSchema.safeParse(claude).success, true);
   assert.equal(analysisContextSnapshotSchema.safeParse({ ...claude, cutoff: { ...claude.cutoff, promptId: 'prompt-1' } }).success, false);
   assert.equal(analysisContextSnapshotSchema.safeParse({ ...claude, cutoff: { ...claude.cutoff, parentUuid: null } }).success, false);
+});
+
+
+test('large absolute offsets permit bounded latest-turn and identity-header reads within actual scan budget', () => {
+  const snapshot = contextSnapshot();
+  const offset = 41943040;
+  const tail = { startByte: offset, endByte: offset + 500 };
+  const source = { ...snapshot.source, ...tail, latestTurnStartByte: offset,
+    scannedRanges: [{ startByte: 0, endByte: 128 }, tail], bytesScanned: 628 };
+  const large = { ...snapshot, source, cutoff: { ...snapshot.cutoff, endByte: tail.endByte },
+    correlation: { ...snapshot.correlation, startByte: offset },
+    coverage: { ...snapshot.coverage, kind: 'bounded', omittedRanges: [{ startByte: 128, endByte: offset }], omittedBytes: offset - 128 },
+    items: snapshot.items.map(item => ({ ...item, startByte: item.startByte + offset, endByte: item.endByte + offset })) };
+  assert.equal(analysisContextSnapshotSchema.safeParse(large).success, true);
+  for (const invalid of [
+    { ...large, source: { ...source, bytesScanned: 33554433 } },
+    { ...large, source: { ...source, bytesScanned: 500 } },
+    { ...large, source: { ...source, maxRecordBytes: 2097153 } },
+    { ...large, source: { ...source, scannedRanges: [{ startByte: offset + 100, endByte: tail.endByte }] } },
+    { ...large, source: { ...source, scannedRanges: [{ startByte: 0, endByte: offset + 500 }] } },
+  ]) assert.equal(analysisContextSnapshotSchema.safeParse(invalid).success, false);
 });
