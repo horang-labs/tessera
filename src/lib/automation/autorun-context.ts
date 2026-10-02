@@ -22,7 +22,7 @@ export interface NativeRecord {
   isSidechain?: boolean; isMeta?: boolean; isSynthetic?: boolean; isCompactSummary?: boolean;
   subtype?: string; message?: { id?: string; content?: string | NativeBlock[] };
   payload?: { id?: string; type?: string; turn_id?: string; thread_source?: string; error?: unknown;
-    role?: string; content?: NativeBlock[]; call_id?: string; name?: string; arguments?: string; output?: string; last_agent_message?: string };
+    role?: string; content?: NativeBlock[]; call_id?: string; name?: string; arguments?: string; output?: string | NativeBlock[]; last_agent_message?: string };
 }
 interface NativeBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: string | NativeBlock[] }
 export type LocatedRecord = { value: NativeRecord; start: number; end: number };
@@ -135,6 +135,21 @@ function itemText(text: string, tool: boolean): { text: string; omission: Contex
   while ((bytes[start] & 0xc0) === 0x80) start++;
   return { text: excerpt(text, half) + marker + bytes.subarray(start).toString('utf8'), omission: 'head-tail' };
 }
+/** Codex 0.159.2 FunctionCallOutputBody: text or content items, for both tool families. */
+function codexToolOutput(output: NonNullable<NativeRecord['payload']>['output']): { text: string; nonText: boolean } {
+  if (typeof output === 'string') return { text: output, nonText: false };
+  if (!Array.isArray(output)) return refuse('malformed');
+  const texts: string[] = []; let nonText = false;
+  for (const block of output) {
+    if (!block || typeof block !== 'object') refuse('malformed');
+    if (block.type === 'input_text') {
+      if (typeof block.text !== 'string') refuse('malformed');
+      if (block.text.trim()) texts.push(block.text);
+    } else if (['input_image', 'input_audio', 'encrypted_content'].includes(block.type)) nonText = true;
+    else refuse('malformed');
+  }
+  return { text: texts.join('\n'), nonText };
+}
 function contextItems(records: LocatedRecord[], provider: 'claude-code' | 'codex'): ContextItem[] {
   const items: ContextItem[] = [];
   for (const record of records) {
@@ -153,7 +168,11 @@ function contextItems(records: LocatedRecord[], provider: 'claude-code' | 'codex
           add(p.role, nativeText(p.content));
           if (p.content?.some(b => !['input_text', 'output_text', 'text'].includes(b.type))) add('omitted', '[Nontext content omitted]', ':nontext', 'non-text');
         } else if (['function_call', 'custom_tool_call'].includes(p.type ?? '')) add('tool-call', JSON.stringify({ name: p.name, arguments: p.arguments }), ':call');
-        else if (['function_call_output', 'custom_tool_call_output'].includes(p.type ?? '')) add('tool-result', p.output ?? '[Nontext tool output]', ':result');
+        else if (['function_call_output', 'custom_tool_call_output'].includes(p.type ?? '')) {
+          const output = codexToolOutput(p.output);
+          add('tool-result', output.text || '[Nontext tool output]', ':result', !output.text ? 'non-text' : undefined);
+          if (output.nonText && output.text) add('omitted', '[Nontext tool output omitted]', ':result:nontext', 'non-text');
+        }
       }
       // Sanitized #530 lifecycle fixtures retain final text even without response items.
       if (v.type === 'event_msg' && ['task_complete', 'turn_complete'].includes(p?.type ?? '') && p?.last_agent_message &&
