@@ -12,10 +12,12 @@ import { AutomationError } from './automation-error';
 import { AutomationReason } from './automation-reason';
 import { useAutomationOwnership } from './use-automation';
 import { automationButton } from './ownership-actions';
-import { ContinuationResume, heartbeatCanResume } from './continuation-resume';
+import { ContinuationResume, heartbeatCanResume, AutomationPauseAction, AutomationResumeAction, automationNeedsLimitReview } from './continuation-resume';
 import { AutorunSetup } from './autorun-setup';
 import { AutorunHistory, AutorunEvidence } from './autorun-history';
 import { useAutomationContext } from './automation-context';
+
+const selectedAutomationButton = `${automationButton} border-(--accent) bg-(--accent)/10 text-(--accent) font-semibold`;
 
 type SetupIntent = 'start' | 'resume' | 'edit' | 'replace';
 export function AutomationManager({ scope, store, onClose, onOpenSession, supported = true, initialId, initialResume = false }: {
@@ -27,6 +29,8 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
   const sessionId = 'sessionId' in scope ? scope.sessionId : '';
   const context = useAutomationContext(scope);
   const ownership = useAutomationOwnership(sessionId);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const [intent, setIntent] = useState<SetupIntent>(initialResume ? 'resume' : 'start');
   const [method, setMethod] = useState<'autorun' | 'heartbeat'>('autorun');
   const [includeDeleted, setIncludeDeleted] = useState(false);
@@ -58,6 +62,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     };
     refresh(); const timer = setInterval(refresh, 5000); return () => clearInterval(timer);
   }, [store, view.selectedId]);
+  const reviewLimits = rule ? automationNeedsLimitReview(rule, now) : false;
   const previewPrevious = rule?.mode === 'autorun' ? rule : undefined;
   async function setup(nextIntent: SetupIntent, current?: AutomationV2) {
     setIntent(nextIntent); setEvidenceId(null);
@@ -86,7 +91,6 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
   const retryAt = rule?.mode === 'autorun' ? decisions[rule.id]?.items[0]?.retryAt : null;
   const timing = rule?.nextDueAt ? `${t('automation.next')}: ${localDue(rule.nextDueAt)}`
     : retryAt ? `${t('automation.retryAt')}: ${localDue(retryAt)}` : rule?.mode === 'autorun' ? null : t('automation.notScheduled');
-  const heldId = ownership.automationId ?? (rule && rule.state !== 'deleted' ? rule.id : null);
   return createPortal(<dialog {...telemetryIgnoreAttributes('event_boundary')} data-automation-dialog ref={dialog} aria-label={t('automation.title')}
     className="m-auto max-h-[94dvh] w-[min(96vw,42rem)] overflow-auto rounded-xl border border-(--divider) bg-(--chat-bg) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-(--text-primary) shadow-xl backdrop:bg-black/50"
     onCancel={event => { event.preventDefault(); event.stopPropagation(); if (evidenceId) setEvidenceId(null); else onClose(); }}
@@ -95,7 +99,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
       <div><h2 className="font-semibold">{context.title}</h2><p className="text-xs">{context.subtitle} · {t('automation.title')}</p></div>
       <button {...telemetryClickAttributes('automation.manager.close', 'automation')} className={automationButton} type="button" onClick={onClose}>{t('automation.close')}</button>
       {rule && rule.state !== 'deleted' && (showSetup || evidenceId) && <button {...telemetryClickAttributes('automation.delete','automation')} className={automationButton} type="button" onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>}
-      {heldId && <button {...telemetryClickAttributes('automation.pause', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().pause(heldId)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>}
+      <AutomationPauseAction rule={rule} ownership={ownership} surface="automation" schedule={!sessionId} onPause={id => void store.getState().pause(id)} />
     </header>
     {(view.selectedId || view.setup || evidenceId) && <button {...telemetryClickAttributes('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else { updateView({ setup: false, selectedId: null }); } }}>{t('automation.back')}</button>}
     <AutomationError code={error} />
@@ -105,8 +109,8 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
       <p className="text-xs">{t('automation.local')}</p>{sessionId && <p className="text-xs">{t('automation.safety')}</p>}
       {!supported ? <p>{t('automation.unsupported')}</p> : <>
         {sessionId && intent === 'start' && <div className="flex flex-wrap gap-2">
-          <button {...telemetryClickAttributes('automation.setup.autorun', 'automation')} className={automationButton} type="button" aria-pressed={method === 'autorun'} onClick={() => { setMethod('autorun'); if (!preview) void store.getState().previewAutorun(); }}>{t('automation.continueWork')}</button>
-          <button {...telemetryClickAttributes('automation.setup.heartbeat', 'automation')} className={automationButton} type="button" aria-pressed={method === 'heartbeat'} onClick={() => setMethod('heartbeat')}>{t('automation.heartbeat')}</button>
+          <button {...telemetryClickAttributes('automation.setup.autorun', 'automation')} className={method === 'autorun' ? selectedAutomationButton : automationButton} type="button" aria-pressed={method === 'autorun'} onClick={() => { setMethod('autorun'); if (!preview) void store.getState().previewAutorun(); }}>{t('automation.continueWork')}</button>
+          <button {...telemetryClickAttributes('automation.setup.heartbeat', 'automation')} className={method === 'heartbeat' ? selectedAutomationButton : automationButton} type="button" aria-pressed={method === 'heartbeat'} onClick={() => setMethod('heartbeat')}>{t('automation.heartbeat')}</button>
         </div>}
         {intent === 'resume' && rule ? <ContinuationResume preview={preview} loading={previewLoading} rule={rule} store={store} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onEdit={() => void setup('edit', rule)} /> : sessionId && method === 'autorun' ? <>
           {previewLoading && <p role="status">{t('automation.checking')}</p>}
@@ -139,7 +143,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
         {timing && <p>{timing}</p>}
         <div className="flex flex-wrap gap-2">
           {rule.state !== 'deleted' && <>
-            {rule.state !== 'enabled' && <button {...telemetryClickAttributes('automation.manager.enable', 'automation')} className={automationButton} disabled={busy > 0 || Boolean(sessionId && ownership.mode !== 'human')} onClick={() => { if (rule.mode === 'autorun') void setup('resume', rule); else if (sessionId) void setup('resume', rule); else void store.getState().enable(rule); }}>{t('automation.resume')}</button>}
+            {rule.state !== 'enabled' && <AutomationResumeAction reviewLimits={reviewLimits} disabled={busy > 0 || Boolean(sessionId && ownership.mode !== 'human')} onReviewLimits={() => void pauseAndEdit(rule, 'edit')} onResume={() => { if (sessionId) void setup('resume', rule); else void store.getState().enable(rule); }} />}
             <button {...telemetryClickAttributes('automation.delete', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>
             {deleteConfirm && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm', 'automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
             <details><summary {...telemetryClickAttributes('automation.manager.options', 'automation')}>{t('automation.manage')}</summary>
@@ -148,7 +152,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
             </details>
           </>}
         </div>
-        <div className="flex gap-2" role="tablist"><button {...telemetryClickAttributes('automation.manager.overview', 'automation')} role="tab" aria-selected={view.tab === 'overview'} className={automationButton} onClick={() => updateView({ tab: 'overview' })}>{t('automation.overview')}</button><button {...telemetryClickAttributes('automation.manager.history', 'automation')} role="tab" aria-selected={view.tab === 'history'} className={automationButton} onClick={() => updateView({ tab: 'history' })}>{t('automation.history')}</button></div>
+        <div className="flex gap-2" role="tablist"><button {...telemetryClickAttributes('automation.manager.overview', 'automation')} role="tab" aria-selected={view.tab === 'overview'} className={view.tab === 'overview' ? selectedAutomationButton : automationButton} onClick={() => updateView({ tab: 'overview' })}>{t('automation.overview')}</button><button {...telemetryClickAttributes('automation.manager.history', 'automation')} role="tab" aria-selected={view.tab === 'history'} className={view.tab === 'history' ? selectedAutomationButton : automationButton} onClick={() => updateView({ tab: 'history' })}>{t('automation.history')}</button></div>
         {view.tab === 'overview' && <details><summary {...telemetryClickAttributes('automation.manager.configuration', 'automation')}>{t('automation.configuration')}</summary>
           {rule.mode === 'autorun' ? <><p className="whitespace-pre-wrap">{rule.autorun.objective.text}</p><p>{t(rule.autorun.objective.kind === 'verified-human' ? 'automation.verifiedGoal' : 'automation.explicitGoal')}</p><p>{rule.autorun.supervisor.provider} · {rule.autorun.supervisor.model}</p></> : <p className="whitespace-pre-wrap">{rule.prompt}</p>}
           <SavedSelection selection={rule.savedSelection} />

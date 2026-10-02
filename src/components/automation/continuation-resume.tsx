@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { AutorunPreview, AutomationV2 } from '@/lib/automation/autorun-contracts';
 import { sameSupervisorSelection } from '@/lib/automation/autorun-contracts';
+import type { InputOwnership } from '@/lib/automation/contracts';
 import type { AutomationStoreApi } from '@/stores/automation-store';
 import { useI18n } from '@/lib/i18n';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
@@ -19,6 +20,7 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const counts = rule.dispatchCount < rule.limits.maxDispatches && rule.limits.expiresAt > now;
+  const reviewLimits = automationNeedsLimitReview(rule, now);
   const ready = !loading && counts && ownership.mode === 'human' && (rule.mode !== 'autorun'
     ? heartbeatCanResume(preview, loading)
     : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
@@ -35,8 +37,8 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
     </> : <p className="whitespace-pre-wrap">{rule.prompt}</p>}
     <SavedSelection selection={rule.savedSelection} />
     <p>{t('automation.instructionAttempts')}: {rule.dispatchCount}/{rule.limits.maxDispatches} · {localDue(rule.limits.expiresAt)}</p>
-    <button {...telemetryClickAttributes('automation.manager.enable', 'automation')} className={automationPrimaryButton} type="button" disabled={!ready || store.getState().busy > 0} onClick={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }}>{t('automation.resume')}</button>
-    <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>
+    <AutomationResumeAction reviewLimits={reviewLimits} disabled={store.getState().busy > 0 || (reviewLimits ? ownership.mode !== 'human' : !ready)} onReviewLimits={onEdit} onResume={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }} />
+    {!reviewLimits && <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>}
     <button {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().previewAutorun()}>{t('automation.checkAgain')}</button>
   </section>;
 }
@@ -45,4 +47,29 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
 export function heartbeatCanResume(preview: AutorunPreview | null, loading: boolean) {
   if (loading || !preview || preview.readiness.kind === 'idle') return false;
   return preview.readiness.kind !== 'unavailable' || !['unsafe-runtime', 'binding-mismatch'].includes(preview.readiness.reason);
+}
+
+/** Shared outside-input action for manager, Session panel and Session Peek. */
+export function AutomationPauseAction({ rule, ownership, onPause, surface, schedule = false }: {
+  rule?: { id: string; state: AutomationV2['state'] }; ownership: Readonly<InputOwnership>;
+  onPause: (id: string) => void; surface: 'automation' | 'chat_header'; schedule?: boolean;
+}) {
+  const { t } = useI18n();
+  const id = ownership.mode !== 'human' && ownership.automationId ? ownership.automationId
+    : rule?.state === 'enabled' ? rule.id : null;
+  if (!id) return null;
+  return <button {...telemetryClickAttributes('automation.pause', surface)} className={automationButton} type="button" onClick={() => onPause(id)}>{t(schedule ? 'automation.schedulePause' : 'automation.pause')}</button>;
+}
+
+export function automationNeedsLimitReview(rule: AutomationV2, now: number) {
+  return rule.state === 'exhausted' || rule.state === 'expired' || rule.dispatchCount >= rule.limits.maxDispatches
+    || rule.limits.expiresAt <= now || (rule.mode === 'autorun' && rule.analysisCount >= rule.autorun.maxAnalyses);
+}
+
+/** Reviewing a spent budget opens edit; saving never replaces explicit Resume. */
+export function AutomationResumeAction({ reviewLimits, disabled, onReviewLimits, onResume }: {
+  reviewLimits: boolean; disabled: boolean; onReviewLimits: () => void; onResume: () => void;
+}) {
+  const { t } = useI18n();
+  return <button {...(reviewLimits ? telemetryClickAttributes('automation.manager.edit', 'automation') : telemetryClickAttributes('automation.manager.enable', 'automation'))} className={automationPrimaryButton} type="button" disabled={disabled} onClick={reviewLimits ? onReviewLimits : onResume}>{t(reviewLimits ? 'automation.reviewLimits' : 'automation.resume')}</button>;
 }

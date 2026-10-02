@@ -136,3 +136,26 @@ test('pause retains the 202 control receipt for drain presentation without unloc
   assert.equal(store.getState().lastControl?.status, 202);
   assert.equal(store.getState().lastControl?.body.inFlightRunId, 'run-1');
 });
+
+
+test('reviewing spent limits keeps lifetime counters and saves disabled before a separate explicit enable', async () => {
+  const { wakeInput, onceInput, automationNow }=await import('./fixtures/automation');
+  for(const schedule of [false,true]) {
+    const input=schedule ? {...onceInput(),trigger:{kind:'interval' as const,anchorAt:automationNow+60000,everyMs:60000}} : wakeInput();
+    const {enabled: _enabled,...config}=input;void _enabled;
+    const previous={...automationFixture(),...config,limits:{...input.limits,maxDispatches:6},dispatchCount:6,state:'exhausted' as const};
+    const saved={...previous,state:'disabled' as const,revision:2,limits:{...previous.limits,maxDispatches:9}};
+    const writes:{method:string;body:Record<string,unknown>}[]=[];
+    const store=createAutomationStore(schedule ? {worktreeId:'wt-1'} : {sessionId:'session-1'},async(_url,init)=>{
+      if(init?.method) {writes.push({method:init.method,body:JSON.parse(String(init.body))});return Response.json({automation:saved,inputOwnership:null,inFlightRunId:null});}
+      return Response.json({items:[saved],nextCursor:null});
+    });
+    assert.equal(await store.getState().save({...input,enabled:true,limits:saved.limits},previous),true);
+    assert.equal(writes.length,1);assert.equal(writes[0].method,'PUT');
+    const body=writes[0].body.input as Record<string,unknown>;
+    assert.equal(body.enabled,false);assert.equal('dispatchCount' in body,false);assert.equal('analysisCount' in body,false);
+    assert.equal(store.getState().items[0].dispatchCount,6);assert.equal(store.getState().items[0].state,'disabled');
+    assert.equal(await store.getState().enable(saved),true);
+    assert.deepEqual(writes[1],{method:'POST',body:{action:'enable',expectedRevision:2}});
+  }
+});
