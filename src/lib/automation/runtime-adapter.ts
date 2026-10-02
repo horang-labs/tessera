@@ -52,6 +52,7 @@ export function createAutomationRuntime(options: {
           let fenceRequested = false;
           let sessionId: string | null = null;
           let result: DispatchResult;
+          let origin: Awaited<ReturnType<typeof prepareAutomationOrigin>> | undefined;
           try {
             const target = spec.target;
             sessionId = port.reserveSession(args.runId, id => options.createSession!(id, target));
@@ -59,15 +60,17 @@ export function createAutomationRuntime(options: {
             const selection = await options.readSelection(spec.ownerUserId, sessionId);
             if (!sameSessionSelection(selection, spec.run.effectiveSelection)) throw new Error('Selection changed.');
             const permit = port.beginAttempt(args.runId, args.leaseEpoch, args.expectedRevision);
-            const origin = await prepareAutomationOrigin({ userId: spec.ownerUserId, sessionId, agentEnvironment: spec.run.agentEnvironment, runId: args.runId, fresh: true });
+            origin = await prepareAutomationOrigin({ userId: spec.ownerUserId, sessionId, agentEnvironment: spec.run.agentEnvironment, runId: args.runId, fresh: true });
             const launched = await options.launch({ mode: 'detached', sessionId, userId: spec.ownerUserId,
               initialPrompt: spec.prompt, allowPreparationFailure: false,
               expectedAgentEnvironment: spec.run.agentEnvironment, expectedSelection: spec.run.effectiveSelection,
-              spawnFence: spawn => { fenceRequested = true; port.withWriteFence(permit, 'begin', () => { origin.begin(); started = true; spawn(); origin.submitted(); }); },
+              spawnFence: spawn => { fenceRequested = true; port.withWriteFence(permit, 'begin', () => { started = true; spawn(); origin!.submitted(); }); void origin!.flush().catch(() => {}); },
             });
+            await origin.flush();
             if (!started || launched.attachedToExistingRuntime) throw new Error('Launch did not own a new process.');
             result = { kind: 'delivered', sessionId, terminalId: launched.terminalId, at: Date.now() };
           } catch {
+            if (origin && !started) { try { await origin.cancelled(); } catch { /* Uncertain provenance is retained. */ } }
             result = started || fenceRequested ? { kind: 'unknown', reason: 'LAUNCH_UNKNOWN', sessionId }
               : { kind: 'failed', reason: 'LAUNCH_REJECTED' };
           }

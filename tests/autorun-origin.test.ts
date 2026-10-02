@@ -20,6 +20,14 @@ for (const provider of ['codex', 'claude-code'] as const) {
       if (result.kind === 'ok' && result.goal.kind === 'verified') {
         assert.equal(result.goal.objective.sources.length, 2);
         assert.ok(result.goal.objective.sources.every(s => !s.recordId.includes('automatic')));
+        if (afterAuto.kind === 'ok' && afterAuto.goal.kind === 'verified') {
+          const corrected = await f.evidence(afterAuto.goal.objective.sources.map(s => s.recordId));
+          assert.ok(corrected.kind === 'ok' && corrected.goal.kind === 'conflicting');
+          if (corrected.kind === 'ok') assert.equal(corrected.newHumanInstructions.length, 1);
+        }
+        const context = await f.context();
+        assert.equal(context.kind, 'ok', JSON.stringify(context));
+        if (context.kind === 'ok') assert.equal(context.snapshot.items.filter(i => i.role === 'user').length, 3);
       }
     } finally { await f.close(); }
   });
@@ -93,6 +101,59 @@ test('legacy arrival-time human labels fail closed instead of replaying the prov
     await f.native('human', 'Original goal');
     const [receipt] = (await readHumanSubmissions('owner', 'session'))!;
     await recordHumanSubmission('owner', 'session', { ...receipt, nativeId: 'legacy', provenance: undefined });
+    const result = await f.evidence();
+    assert.ok(result.kind === 'ok' && result.goal.kind === 'missing');
+  } finally { await f.close(); }
+});
+
+test('an uncertain host Enter remains unknown after input ownership is safely returned to human', async () => {
+  const f = await originFixture();
+  try {
+    await f.native('human', 'Original goal'); f.complete(); f.failNextEnter();
+    assert.equal((await f.wake()).kind, 'unknown');
+    assert.equal(f.runtime.releaseRecovery({ userId: 'owner', sessionId: 'session', runId: 'run' }, () => {}).mode, 'human');
+    await f.native('uncertain', 'Identical instructions');
+    const result = await f.evidence();
+    assert.ok(result.kind === 'ok' && result.goal.kind === 'missing');
+    const receipts = (await readHumanSubmissions('owner', 'session'))!;
+    assert.equal(receipts.find(r => r.nativeId === 'human')!.origin, 'human');
+    assert.equal(receipts.find(r => r.nativeId === 'uncertain')!.origin, 'unknown');
+  } finally { await f.close(); }
+});
+
+test('in-place native truncation cannot masquerade as an older human receipt before the host cursor', async () => {
+  const f = await originFixture();
+  try {
+    await f.native('human', 'Original goal'); f.complete(); await f.wake();
+    await fs.writeFile(f.file, ''); // Same inode/generation; a lower byte offset is not historical evidence.
+    await f.native('after-truncation', 'Identical instructions');
+    const receipts = (await readHumanSubmissions('owner', 'session'))!;
+    assert.equal(receipts.find(r => r.nativeId === 'after-truncation')!.origin, 'unknown');
+    const result = await f.evidence();
+    assert.ok(result.kind === 'ok' && result.goal.kind === 'missing');
+  } finally { await f.close(); }
+});
+
+test('a previous human turn that persists after the host cursor cannot claim the automated origin', async () => {
+  const f = await originFixture();
+  try {
+    const flushHuman = await f.native('human', 'Original goal', true, true); f.complete();
+    assert.equal((await f.wake()).kind, 'delivered');
+    await flushHuman(); await f.native('automatic', 'Identical instructions');
+    const result = await f.evidence();
+    assert.ok(result.kind === 'ok' && result.goal.kind === 'verified');
+    if (result.kind === 'ok' && result.goal.kind === 'verified') assert.equal(result.goal.objective.text, 'Original goal');
+  } finally { await f.close(); }
+});
+
+test('an unclaimed native span beyond the bounded origin scan stays unknown', async () => {
+  const f = await originFixture();
+  try {
+    await f.native('human', 'Original goal'); f.complete(); await f.wake();
+    const receive = await f.native('automatic', 'Identical instructions', false);
+    await fs.appendFile(f.file, (JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', pad: 'x'.repeat(1024) } }) + '\n').repeat(2048));
+    await receive();
+    assert.equal((await readHumanSubmissions('owner', 'session'))!.find(r => r.nativeId === 'automatic')!.origin, 'unknown');
     const result = await f.evidence();
     assert.ok(result.kind === 'ok' && result.goal.kind === 'missing');
   } finally { await f.close(); }

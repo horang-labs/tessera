@@ -10,6 +10,11 @@ import { createAutomationRuntime } from '../src/lib/automation/runtime-adapter';
 import type { AutomationAuthority, Boundary } from '../src/lib/automation/runtime-port';
 import type { SessionSelectionSnapshot } from '../src/lib/automation/contracts';
 
+async function waitForPaste(writes: string[]) {
+  const deadline = Date.now() + 1000;
+  while (!writes.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+  assert.equal(writes.length, 1, 'dispatch reached its actual paste boundary');
+}
 const selection: SessionSelectionSnapshot = { provider: 'codex', model: null,
   reasoningEffort: null, serviceTier: null,
   settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } };
@@ -75,7 +80,7 @@ for (const provider of ['claude-code', 'codex'] as const) {
     });
     const args = { runId: 'run', leaseEpoch: 1, expectedRevision: 1, expectedBoundary: boundary };
     const delivery = f.runtime.dispatch(args);
-    await new Promise(resolve => setTimeout(resolve, 3));
+    await waitForPaste(f.writes);
     assert.equal(f.runtime.drain({ userId: 'owner', sessionId: 'session', automationId: 'rule' }).mode, 'draining');
     assert.throws(() => f.manager.write('terminal', 'owner', 'panel', 'normal', 'human'), /automation/i);
     assert.equal((await delivery).kind, 'delivered');
@@ -97,7 +102,7 @@ test('permission during paste keeps unknown input locked until quiescent acknowl
   });
   const args = { runId: 'run', leaseEpoch: 1, expectedRevision: 1, expectedBoundary: boundary };
   const pending = f.runtime.dispatch(args);
-  await new Promise(resolve => setTimeout(resolve, 3));
+  await waitForPaste(f.writes);
   f.hook('PermissionRequest', 'input_required');
   assert.throws(() => f.runtime.releaseRecovery({ userId: 'owner', sessionId: 'session', runId: 'run' }, () => {}));
   assert.equal((await pending).kind, 'unknown');
@@ -202,7 +207,7 @@ test('explicit stop inhibits automation and waits for its active writer before c
     if (evidence.kind === 'completed') boundary = evidence.boundary;
   });
   const sending = f.runtime.dispatch({ runId: 'run', leaseEpoch: 1, expectedRevision: 1, expectedBoundary: boundary });
-  await new Promise(resolve => setTimeout(resolve, 3));
+  await waitForPaste(f.writes);
   const stopped = f.manager.stopSessionRuntime('session', 'owner');
   assert.equal(f.runtime.ownership('owner', 'session').mode, 'draining');
   assert.equal((await sending).kind, 'delivered');

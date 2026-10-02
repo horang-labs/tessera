@@ -1634,25 +1634,27 @@ export class TerminalManager {
     authority: AutomationAuthority; permit: DispatchPermit; verifySelection: () => void; agentEnvironment: 'native' | 'wsl';
   }): Promise<DispatchResult> {
     const { sessionId, userId, authority, permit, boundary } = args;
-    let possibleWrite = false;
+    let possibleWrite = false, writeAttempted = false;
+    let origin: Awaited<ReturnType<typeof prepareAutomationOrigin>> | undefined;
     try {
       const runtime = this.requireLiveSessionRuntime(sessionId, userId);
       if (runtime.prefillPending || runtime.semanticPromptPending) throw new Error('Input is pending.');
-      const origin = await prepareAutomationOrigin({ userId, sessionId, agentEnvironment: args.agentEnvironment, runId: permit.runId, runtime: boundary });
+      origin = await prepareAutomationOrigin({ userId, sessionId, agentEnvironment: args.agentEnvironment, runId: permit.runId, runtime: boundary });
       const write = (phase: 'begin' | 'complete', data: string) => {
         this.automation.verify(userId, sessionId, boundary);
+        if (phase === 'begin' && this.automation.ownership(userId, sessionId).mode !== 'armed') throw new Error('Input takeover paused before write.');
         args.verifySelection();
         // A fence can persist its external marker before throwing; retain uncertainty.
         possibleWrite = true;
         authority.withWriteFence(permit, phase, () => {
           this.automation.verify(userId, sessionId, boundary);
+          if (phase === 'begin' && this.automation.ownership(userId, sessionId).mode !== 'armed') throw new Error('Input takeover paused before write.');
           args.verifySelection();
           if (runtime.ended || runtime.closing || runtime.sessionId !== sessionId
             || this.getOwnedTerminal(runtime.terminalId, userId) !== runtime) throw new Error('Runtime changed.');
-          if (phase === 'begin') origin.begin();
-          possibleWrite = true;
+          possibleWrite = true; writeAttempted = true;
           runtime.process.write(data);
-          if (phase === 'complete') origin.submitted();
+          if (phase === 'complete') origin!.submitted();
         });
       };
       write('begin', bracketSemanticPrompt(normalizeSemanticPrompt(args.prompt)));
@@ -1662,8 +1664,10 @@ export class TerminalManager {
       this.automation.dirty(userId, sessionId);
       // Consume the boundary synchronously, before a second scheduler call can enter.
       this.observeAcceptedPrompt(userId, sessionId, 'AutomationPromptSubmit');
+      await origin.flush();
       return { kind: 'delivered', sessionId, terminalId: runtime.terminalId, at: Date.now() };
     } catch {
+      if (origin && !writeAttempted) { try { await origin.cancelled(); } catch { /* Durable uncertainty stays fail-closed. */ } }
       return possibleWrite ? { kind: 'unknown', reason: 'DELIVERY_UNKNOWN', sessionId }
         : { kind: 'cancelled', reason: 'INPUT_BOUNDARY_UNPROVEN' };
     }
