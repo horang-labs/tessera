@@ -138,3 +138,34 @@ test('read accounting or bookkeeping after the cutoff cannot stale an unchanged 
     assert.deepEqual(f.bytes,[]);
   }finally{await f.close();}
 });
+
+test('changed captured range coordinates cannot reuse an equal native digest',async()=>{
+  const f=await autorunFixture();
+  try{
+    const read=f.provider.readAnalysisContext;let changed=false;
+    f.provider.readAnalysisContext=async args=>{
+      const result=await read(args);return result.kind==='ok'&&changed?{...result,snapshot:{...result.snapshot,
+        source:{...result.snapshot.source,scannedRanges:[{startByte:0,endByte:100},{startByte:100,endByte:500}]}}}:result;
+    };
+    const generate=f.provider.generateSupervisorDecision;
+    f.provider.generateSupervisorDecision=async args=>{const result=await generate(args);changed=true;return result;};
+    const a=(await f.service.create('owner-1','ranges',f.input())).automation;
+    f.setNow(autorunNow+121_000);await f.engine.tick();
+    assert.equal(f.service.autorun.decisions('owner-1',a.id,{}).items[0].outcome,null);assert.deepEqual(f.bytes,[]);
+  }finally{await f.close();}
+});
+
+test('the final fresh capture is consumed even before the post-commit drain',async()=>{
+  const f=await autorunFixture();
+  try{
+    const commit=f.runtime.autorun!.commitAnalysisDecision;let replayed=false;
+    f.runtime.autorun!.commitAnalysisDecision=(identity,write)=>{
+      const result=commit(identity,write);
+      const replay=commit(identity,()=>{replayed=true;return {decisionId:identity.decisionId,automationRevision:identity.automationRevision};});
+      assert.equal(replay.kind,'rejected');return result;
+    };
+    const a=(await f.service.create('owner-1','single-use',f.input())).automation;
+    f.setNow(autorunNow+121_000);await f.engine.tick();
+    assert.equal(replayed,false);assert.equal(f.service.autorun.decisions('owner-1',a.id,{}).items[0].outcome,'complete');
+  }finally{await f.close();}
+});

@@ -12,6 +12,9 @@ import type { ArmEvidence, AutorunRuntimePort } from './runtime-port';
 type Owner = { userId: string; agentEnvironment: 'native' | 'wsl' };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class AutorunService {
+  reconcileAnalyses:(owner:string,session:string)=>Promise<void> = async()=>{};
+  hasQuarantine(owner:string,session:string) { return this.repo.decisions().some(d=>d.active && d.identity.userId===owner && d.identity.expectedBoundary.sessionId===session); }
+  private assertSettled(owner:string,session:string) {if(this.hasQuarantine(owner,session))fail('UNRESOLVED_RUN');}
   cancelAnalysis: (id: string) => void = () => {};
   private previews = new Map<string, { owner: string; preview: AutorunPreview; at: number; humanSourceIds: string[] }>();
   constructor(readonly service: AutomationService) {}
@@ -21,6 +24,7 @@ export class AutorunService {
   provider(provider: string) { return this.service.deps.provider?.(provider) ?? fail('SUPERVISOR_UNSUPPORTED'); }
   async preview(userId: string, sessionId: string, raw: unknown = {}, saved?: AutorunAutomation): Promise<AutorunPreview> {
     const owner = await this.service.authorize(userId);
+    await this.reconcileAnalyses(userId,sessionId);
     const parsed = autorunPreviewInputSchema.safeParse(raw);
     if (!parsed.success) fail('INVALID_AUTOMATION');
     const input = parsed.data;
@@ -80,6 +84,7 @@ export class AutorunService {
     const worker = inspection.selection;
     const preferred = previous?.autorun.supervisor ?? (worker.model && worker.reasoningEffort ? worker : null);
     const recommended = options.find(o => preferred && sameSupervisorSelection(o.selection, preferred as AutorunConfig['supervisor'])) ?? options.find(o => o.selection.serviceTier !== 'fast');
+    if(this.hasQuarantine(userId,sessionId))readiness={kind:'unavailable',code:'ANALYSIS_STALE',reason:'unsafe-runtime'};
     if (!options.length) readiness = { kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason: 'unsupported-version' };
     const preview = autorunPreviewSchema.parse({ version: 1, previewId: randomUUID(), sessionId, goalRevision, objective,
       newHumanInstructions, constraints: input.constraints ?? previous?.autorun.constraints ?? [],
@@ -98,6 +103,7 @@ export class AutorunService {
     const reference = input.autorun.objective.kind === 'preview' ? this.previews.get(input.autorun.objective.previewId) : null;
     if (input.autorun.objective.kind === 'preview' && (!reference || reference.owner !== userId || reference.preview.sessionId !== input.target.sessionId ||
       reference.at < this.now-300_000 || reference.preview.goalRevision !== input.autorun.objective.goalRevision)) fail('ANALYSIS_STALE');
+    if(input.enabled){await this.reconcileAnalyses(userId,input.target.sessionId);this.assertSettled(userId,input.target.sessionId);}
     const preview = await this.preview(userId, input.target.sessionId, {
       ...(input.autorun.objective.kind === 'explicit' ? { objectiveOverride: input.autorun.objective.text } : reference?.preview.objective?.kind === 'explicit' ? { objectiveOverride: reference.preview.objective.text } : {}),
       constraints: input.autorun.constraints, criteria: input.autorun.criteria,
@@ -141,6 +147,7 @@ export class AutorunService {
     this.service.notify(a); return this.service.detail(userId, a.id);
   }
   private assertAdmission(a: AutorunAutomation, preview: AutorunPreview, evidence: ArmEvidence | null) {
+    if(a.state==='enabled')this.assertSettled(a.ownerUserId,a.target.sessionId);
     if (a.limits.expiresAt <= this.now || !sameSessionSelection(a.savedSelection, preview.workerSelection)) fail('ANALYSIS_STALE');
     const turn = this.runtime().readTurnEvidence({ userId: a.ownerUserId, agentEnvironment: a.agentEnvironment, sessionId: a.target.sessionId });
     if (evidence?.kind === 'completed') {
@@ -171,7 +178,7 @@ export class AutorunService {
     if (owner.agentEnvironment !== a.agentEnvironment) fail('OWNER_UNAVAILABLE');
     if (a.analysisCount>=a.autorun.maxAnalyses) fail('ANALYSIS_LIMIT');
     if (a.dispatchCount>=a.limits.maxDispatches) fail('INVALID_AUTOMATION');
-    if (this.repo.decisions(id).some(d => d.active)) fail('UNRESOLVED_RUN');
+    await this.reconcileAnalyses(userId,a.target.sessionId);this.assertSettled(userId,a.target.sessionId);
     // Build current human provenance again; retain explicit authored override, require conflicts to be resolved in Edit.
     const preview = await this.preview(userId,a.target.sessionId, {}, a);
     if (!preview.objective) fail('OBJECTIVE_REQUIRED');

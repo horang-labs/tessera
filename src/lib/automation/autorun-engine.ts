@@ -1,8 +1,9 @@
+import { AutorunReconciliation } from './autorun-reconciliation';
 import { createHash, randomUUID } from 'node:crypto';
 import { sameSessionSelection } from './contracts';
 import { AutomationService, fail } from './service';
-import { isAutorun, sameCapturedPrefix, type StoredDecision } from './autorun-storage';
-import { supervisorPacketSchema, validateSupervisorFinalResult, supervisorResultSchema, supervisorCapabilitySchema,
+import { isAutorun, sameCapturedContext, type StoredDecision } from './autorun-storage';
+import { AUTORUN_BOUNDS, supervisorPacketSchema, validateSupervisorFinalResult, supervisorResultSchema, supervisorCapabilitySchema,
   sameSupervisorSelection, SUPERVISOR_DECISION_JSON_SCHEMA, type AutorunAutomation, type SupervisorPacket,
   type SupervisorDecision, type SupervisorResult } from './autorun-contracts';
 import type { AnalysisIdentity } from './runtime-port';
@@ -15,8 +16,11 @@ Use complete only when every criterion is met with referenced evidence. Escalate
 Your completion is a judgment, not a host-verified fact. Use the provided schema. Do not invoke tools.`;
 
 export class AutorunEngine {
+  private reconciliation:AutorunReconciliation;
   private flights = new Map<string, { controller: AbortController; task: Promise<void> }>();
   constructor(readonly service: AutomationService, readonly instanceId: string, readonly epoch: () => number | null, readonly createRun: (a: AutorunAutomation,d: StoredDecision,prompt: string) => string, readonly deliver: (id:string)=>Promise<void>) {
+    this.reconciliation=new AutorunReconciliation(service);
+    service.autorun.reconcileAnalyses=(owner,session)=>this.reconciliation.reconcile(owner,session);
     service.autorun.cancelAnalysis = id => this.flights.get(id)?.controller.abort();
   }
   private get repo() { return this.service.repo; }
@@ -32,6 +36,7 @@ export class AutorunEngine {
   }
   async tick(): Promise<void> {
     const epoch=this.epoch();if (epoch===null) return;
+    await this.reconciliation.reconcile();
     for (const value of this.repo.all()) {
       const a=value.automation;
       if (!isAutorun(a) || a.state!=='enabled') continue;
@@ -74,7 +79,7 @@ export class AutorunEngine {
       criteria:a.autorun.criteria,criterionOrigin:a.autorun.criterionOrigin,context:context.snapshot,
       priorDecisions:this.repo.decisions(a.id).filter(d=>d.detail.decision).slice(0,10).reverse().map(d=>({decisionId:d.detail.id,
         outcome:d.detail.decision!.outcome,explanation:d.detail.decision!.explanation,progress:d.detail.decision!.progress,madeProgress:d.detail.decision!.madeProgress})) });
-    if (existing && (!sameCapturedPrefix(existing.identity.source,context.snapshot.source) || existing.identity.contentHash!==context.snapshot.contentHash)) fail('ANALYSIS_STALE');
+    if (existing && !sameCapturedContext(existing.detail.packet.context,context.snapshot)) fail('ANALYSIS_STALE');
     const deadlineAt=Math.min(this.now+a.autorun.analysisTimeoutMs,a.limits.expiresAt);
     let decision=existing;
     if (!decision) this.repo.transaction(()=> {
@@ -123,8 +128,11 @@ export class AutorunEngine {
     }
     const final=validateSupervisorFinalResult(result,{selection:d.packetSelection,criterionIds:packet.criteria.map(c=>c.id),evidenceIds:packet.context.items.map(i=>i.id)});
     if (!final.success) { this.failure(a,retained,result);return; }
-    const refreshed=await runtime.captureAnalysisContext({userId:a.ownerUserId,agentEnvironment:a.agentEnvironment,sessionId:a.target.sessionId,expectedBoundary:b,signal:controller.signal});
-    if (refreshed.kind!=='ok' || refreshed.snapshot.contentHash!==d.identity.contentHash || !sameCapturedPrefix(refreshed.snapshot.source,d.identity.source)) {
+    const captureTimer=setTimeout(()=>controller.abort(),Math.max(1,Math.min(AUTORUN_BOUNDS.flushWaitMs,deadlineAt-this.now,a.limits.expiresAt-this.now)));captureTimer.unref?.();
+    let refreshed:Awaited<ReturnType<typeof runtime.captureAnalysisContext>>;
+    try{refreshed=await runtime.captureAnalysisContext({userId:a.ownerUserId,agentEnvironment:a.agentEnvironment,sessionId:a.target.sessionId,expectedBoundary:b,signal:controller.signal});}
+    finally{clearTimeout(captureTimer);}
+    if (refreshed.kind!=='ok' || !sameCapturedContext(packet.context,refreshed.snapshot)) {
       this.failure(a,retained,{kind:'cancelled',code:'SUPERVISOR_CANCELLED',invocationId,settlement:{exitCode:0,quiescent:true}});return;
     }
     const committed=runtime.commitAnalysisDecision(retained.identity,()=>this.repo.transaction(()=> {
