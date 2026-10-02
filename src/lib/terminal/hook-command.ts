@@ -1,3 +1,4 @@
+import { AUTORUN_HOOK_OBSERVER } from './autorun-observer';
 /**
  * PTY 상태 훅이 서버(/__tessera/hook)로 POST할 때 쓰는 커맨드 문자열.
  *
@@ -46,7 +47,7 @@ const POSIX_IS_WSL =
   '{ [ -n "$WSL_DISTRO_NAME" ] || grep -qiE "microsoft|wsl" /proc/version 2>/dev/null; }';
 
 const POSIX_HOOK_COMMAND =
-  'payload=$(cat); '
+  "payload=$(cat); enriched=$(printf '%s' \"$payload\" | node -e '" + AUTORUN_HOOK_OBSERVER.replace(/'/g, "'\\''") + "' 2>/dev/null); [ -n \"$enriched\" ] && payload=$enriched; "
   + POSIX_HOOK_POST_FN
   + '; tessera_hook_post curl 0.5 2'
   + ' || { '

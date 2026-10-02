@@ -1,3 +1,7 @@
+import { buildAutorunHookEvidence } from './providers/autorun-hook-evidence';
+import { getAutomationRuntime } from '@/lib/automation/runtime-bridge';
+import { recordHumanSubmission } from '@/lib/automation/autorun-human-evidence';
+import { evidenceHash } from '@/lib/automation/autorun-context';
 import { classifyClaudeAutomationCompletion } from './providers/claude-code/terminal-hook-lifecycle';
 import { classifyCodexAutomationCompletion } from './providers/codex/terminal-hook-lifecycle';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -333,6 +337,7 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       if (observation.ignored) return send(204);
       sessionId = observation.sessionId;
     }
+    const humanOrigin = sessionId ? terminalManager.automation.ownership(entry.userId, sessionId).mode === 'human' : false;
     const mapped = isCodex
       ? mapCodexEventToStatus(entry.terminalId, event, payload, codexOrigin)
       : isOpenCode
@@ -402,6 +407,25 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       if (terminalManager.recordSessionState(message, entry.userId, isCodex
         ? classifyCodexAutomationCompletion(event, mapped.status)
         : isOpenCode ? null : classifyClaudeAutomationCompletion(event, mapped.status))) {
+        if ((event === 'UserPromptSubmit' || event === 'Stop') && !isOpenCode && (!isCodex || codexOrigin === 'lead')) {
+          const before = terminalManager.automation.observe(entry.userId, sessionId);
+          const environment = await getAgentEnvironment(entry.userId);
+          const after = terminalManager.automation.observe(entry.userId, sessionId);
+          if (before && after && before.generation === after.generation && before.serverInstanceId === after.serverInstanceId &&
+              terminalManager.getSessionIdForTerminal(entry.terminalId, entry.userId) === sessionId) {
+            const evidence = buildAutorunHookEvidence({ userId: entry.userId, sessionId, agentEnvironment: environment,
+              provider: isCodex ? 'codex' : 'claude-code', observation: after, payload });
+            if (evidence) {
+              getAutomationRuntime()?.autorun?.recordHookEvidence(evidence);
+              const prompt = readString(payload.prompt);
+              if (evidence.kind === 'submission' && prompt) await recordHumanSubmission(entry.userId, sessionId, {
+                nativeId: evidence.evidence.provider === 'codex' ? evidence.evidence.nativeTurnId : evidence.evidence.nativePromptId,
+                sourceIdentityHash: evidence.evidence.sourceIdentityHash, fileGeneration: evidence.evidence.fileGeneration,
+                text: prompt, textHash: evidenceHash(prompt), origin: humanOrigin ? 'human' : 'automation', observerSubmissionId: evidence.evidence.observerSubmissionId,
+              });
+            }
+          }
+        }
         wsServer.sendToUser(entry.userId, message);
       }
     }
