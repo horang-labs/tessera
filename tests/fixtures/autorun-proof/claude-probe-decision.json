@@ -1,0 +1,22 @@
+{
+  "outcome": "needs-user",
+  "proposedPrompt": null,
+  "explanation": "The criterion \"two\" is met: messages a1 and a2 are both assistant turns that answered PROOF_OK. The objective also asks for a PROBE_SENTINEL file containing \"touched\", created with an actual tool. The packet has no tool receipt for that, and the only tool I have is the structured-output function, so I can't create the file. The objective says to report needs-user if a tool is unavailable, so I'm not claiming the side effect.",
+  "progress": "Two PROOF_OK turns are evidenced. PROBE_SENTINEL has not been created, and I have no receipt for it.",
+  "evidenceIds": [
+    "a1",
+    "a2"
+  ],
+  "criterionResults": [
+    {
+      "criterionId": "two",
+      "status": "met",
+      "evidenceIds": [
+        "a1",
+        "a2"
+      ]
+    }
+  ],
+  "madeProgress": false,
+  "blocker": "No file-creation tool is available in this session, so PROBE_SENTINEL could not be created and there is no tool receipt for it."
+}

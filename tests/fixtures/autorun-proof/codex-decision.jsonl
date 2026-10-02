@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a0fd75-c6b8-7752-9153-4c841064d58a"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"outcome\":\"complete\",\"proposedPrompt\":null,\"explanation\":\"Both supplied assistant turns answered PROOF_OK.\",\"progress\":\"Verified two matching answers.\",\"evidenceIds\":[\"a1\",\"a2\"],\"criterionResults\":[{\"criterionId\":\"two\",\"status\":\"met\",\"evidenceIds\":[\"a1\",\"a2\"]}],\"madeProgress\":true,\"blocker\":null}"}}
+{"type":"turn.completed","usage":{"input_tokens":501,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":149,"reasoning_output_tokens":60}}
