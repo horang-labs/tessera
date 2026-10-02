@@ -23,7 +23,7 @@ test('wake form starts opt-in with bounded defaults and leaves the saved prompt 
   const html = renderToStaticMarkup(createElement(AutomationForm, { scope: { sessionId: 'session-1' }, onSave: async () => true, onCancel: () => {} }));
   assert.match(html, /value="120"/);
   assert.match(html, /value="10"/);
-  assert.match(html, /Save disabled/);
+  assert.match(html, /Save for later/);
   assert.match(html, /<textarea[^>]*><\/textarea>/);
   assert.doesNotMatch(html, /type="checkbox" checked/);
 });

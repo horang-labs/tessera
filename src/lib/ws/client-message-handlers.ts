@@ -1,3 +1,5 @@
+import { invalidateAutomationStores, receiveAutorunAttention, reconcileAutorunAttention } from '@/stores/automation-store';
+import { getSessionInputOwnership } from '@/lib/automation/client-state';
 import { applySessionInputOwnership } from '@/lib/automation/client-state';
 import { v4 as uuidv4 } from 'uuid';
 import type { ProviderMeta } from '@/lib/cli/providers/types';
@@ -247,6 +249,18 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
     }
 
+    case 'automation_mutated':
+      invalidateAutomationStores(msg.automationId);
+      return { wasReconnect };
+
+    case 'automation_attention': {
+      const { type: _type, ...attention } = msg;
+      void _type;
+      void receiveAutorunAttention(attention);
+      invalidateAutomationStores(msg.automationId);
+      return { wasReconnect };
+    }
+
     case 'session_input_ownership':
       applySessionInputOwnership(msg);
       return { wasReconnect };
@@ -271,6 +285,8 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'terminal_session_runtime_snapshot': {
+      invalidateAutomationStores();
+      void reconcileAutorunAttention();
       for (const value of msg.inputOwnerships ?? []) applySessionInputOwnership(value);
       const authoritativeReboundTerminalIds = new Set(
         (msg.reboundSessions ?? []).map((rebound) => rebound.terminalId),
@@ -733,6 +749,7 @@ function handleNotificationMessage(
 ): void {
   const notificationStore = useNotificationStore.getState();
   const sessionStore = useSessionStore.getState();
+  if (msg.event === 'completed' && getSessionInputOwnership(msg.sessionId).mode !== 'human' && getSessionInputOwnership(msg.sessionId).automationId) return;
 
   if (msg.sessionId !== activeSessionId) {
     notificationStore.addNotification({
@@ -753,6 +770,7 @@ function handleTerminalSessionStateMessage(
   activeSessionId: string | null,
 ): void {
   const notificationStore = useNotificationStore.getState();
+  if (msg.status === 'completed' && getSessionInputOwnership(msg.sessionId).automationId) return;
   if (msg.sessionId === activeSessionId) {
     notificationStore.playSound();
     return;

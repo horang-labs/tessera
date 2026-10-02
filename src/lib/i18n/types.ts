@@ -757,6 +757,8 @@ export interface I18nMessages {
     };
   };
   notifications: {
+    autorunComplete: string;
+    autorunAttention: string;
     title: string;
     completed: string;
     inputRequired: string;

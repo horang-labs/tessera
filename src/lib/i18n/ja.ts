@@ -780,6 +780,8 @@ export const ja: I18nMessages = {
     },
   },
   notifications: {
+    autorunComplete: 'Autorun: 目標達成の判断',
+    autorunAttention: 'Autorun: 確認が必要',
     title: '通知',
     noNotifications: '通知はありません',
     markAllAsRead: 'すべて既読にする',

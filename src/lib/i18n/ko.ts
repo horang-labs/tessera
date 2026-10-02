@@ -782,6 +782,8 @@ export const ko: I18nMessages = {
     },
   },
   notifications: {
+    autorunComplete: 'Autorun: 목표 달성 판단',
+    autorunAttention: 'Autorun: 사용자 확인 필요',
     title: '알림',
     noNotifications: '알림이 없습니다',
     markAllAsRead: '모두 읽음',

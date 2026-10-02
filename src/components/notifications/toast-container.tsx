@@ -11,6 +11,8 @@ import { useBoardStore } from '@/stores/board-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { ToastNotification, TOAST_DISMISS_TOUCH_TARGET } from './toast-notification';
+import { AutomationAttentionDialog } from '@/components/automation/automation-attention-dialog';
+import { openAutomationAttention } from '@/stores/automation-store';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { cn } from '@/lib/utils';
@@ -114,6 +116,8 @@ export function ToastContainer() {
   const handleClick = async (notificationId: string, sessionId: string) => {
     markAsRead(notificationId);
     dismissToast(notificationId);
+    const notification = useNotificationStore.getState().notifications.find(n => n.id === notificationId);
+    if (notification && 'attention' in notification) { openAutomationAttention(notification.attention); return; }
 
     const session = await materializeSession(sessionId);
     if (!session) {
@@ -161,6 +165,7 @@ export function ToastContainer() {
   return (
     <>
       <NotificationSound />
+      <AutomationAttentionDialog />
       <div
         data-testid="toast-container"
         className={cn(

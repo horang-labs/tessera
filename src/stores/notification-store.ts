@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import type { Notification } from '@/types/notification';
+import type { AppNotificationV2 } from '@/types/notification';
+
+type NotificationInput = AppNotificationV2 extends infer N ? N extends AppNotificationV2 ? Omit<N, 'id' | 'timestamp' | 'read' | 'dismissed'> : never : never;
+function notificationFamily(n: { type: string }) {
+  return n.type.startsWith('autorun_') ? 'autorun' : 'native';
+}
 
 const MAX_NOTIFICATIONS = 50;
 type ActionToastType = 'success' | 'error' | 'warning' | 'info';
@@ -60,7 +65,7 @@ export interface ActionToast {
 
 interface NotificationState {
   // Session-level notifications (WebSocket: completed, input_required)
-  notifications: Notification[];
+  notifications: AppNotificationV2[];
   soundTrigger: number;
 
   // Simple action toasts
@@ -68,7 +73,7 @@ interface NotificationState {
 
   // Notification actions
   /** Returns false when a notification with the same dedupKey already exists (nothing added). */
-  addNotification: (notification: Omit<Notification, 'id' | 'timestamp' | 'read' | 'dismissed'>) => boolean;
+  addNotification: (notification: NotificationInput) => boolean;
   dismissNotification: (id: string) => void;
   dismissToast: (id: string) => void;
   dismissAll: () => void;
@@ -104,12 +109,12 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
     set((state) => {
       const updatedExisting = state.notifications.map((n) =>
-        n.sessionId === notification.sessionId && !n.dismissed
+        n.sessionId === notification.sessionId && notificationFamily(n) === notificationFamily(notification) && !n.dismissed
           ? { ...n, dismissed: true }
           : n
       );
 
-      const newNotification: Notification = {
+      const newNotification: AppNotificationV2 = {
         ...notification,
         id: uuidv4(),
         timestamp: new Date().toISOString(),

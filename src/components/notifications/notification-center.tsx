@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle, AlertTriangle, Inbox } from 'lucide-react';
+import { openAutomationAttention } from '@/stores/automation-store';
 import { toast, useNotificationStore } from '@/stores/notification-store';
 import { useTabStore } from '@/stores/tab-store';
 import { useBoardStore } from '@/stores/board-store';
@@ -96,6 +97,8 @@ function NotificationCenterContent({
   const handleNotificationClick = async (notificationId: string, sessionId: string) => {
     projectViewWorkspaceState.markSessionRead(sessionId);
     markAsRead(notificationId);
+    const notification = useNotificationStore.getState().notifications.find(n => n.id === notificationId);
+    if (notification && 'attention' in notification) { openAutomationAttention(notification.attention); onClose(); return; }
 
     const session = await materializeSession(sessionId);
     if (!session) {
@@ -224,7 +227,7 @@ function NotificationCenterContent({
           <div>
             {notifications.map((notification) => {
               const session = sessionsById.get(notification.sessionId);
-              const isCompleted = notification.type === 'completed';
+              const isCompleted = notification.type === 'completed' || notification.type === 'autorun_complete';
               const relativeTime = formatRelativeTimeFromNow(notification.timestamp, now, t);
 
               return (
@@ -267,7 +270,7 @@ function NotificationCenterContent({
 
                       <div className="flex items-center justify-between text-xs">
                         <span className={isCompleted ? 'text-(--accent)' : 'text-(--warning)'}>
-                          {isCompleted ? t('notifications.completed') : t('notifications.inputRequired')}
+                          {'attention' in notification ? t(notification.type === 'autorun_complete' ? 'notifications.autorunComplete' : 'notifications.autorunAttention') : isCompleted ? t('notifications.completed') : t('notifications.inputRequired')}
                         </span>
                         <span className="text-(--text-muted)">{relativeTime}</span>
                       </div>
