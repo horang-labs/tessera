@@ -105,6 +105,31 @@ test('structured output does not weaken source identity, call pairing or binding
       { kind: 'unavailable', code: 'CONTEXT_INCOMPLETE', reason: 'unresolved-tools' });
   } finally { await fs.rm(f.dir, { recursive: true }); }
 });
+test('recognized nontext variants require the pinned native payload shape before omission', async () => {
+  for (const output of [[{ type: 'input_audio', audio_url: 42 }], [{ type: 'input_image' }],
+    [{ type: 'input_image', image_url: 'private-image', detail: 'unknown' }], [{ type: 'encrypted_content', encrypted_content: null }]]) {
+    const f = await nativeTurn(output);
+    try {
+      assert.deepEqual(await readAnalysisContext(f.request, f.deps),
+        { kind: 'unavailable', code: 'CONTEXT_INCOMPLETE', reason: 'malformed' });
+    } finally { await fs.rm(f.dir, { recursive: true }); }
+  }
+});
+test('valid native file-image and encrypted tool content stay explicit but unexposed', async () => {
+  for (const block of [{ type: 'input_image', file_id: 'PRIVATE_FILE', detail: 'original' },
+    { type: 'encrypted_content', encrypted_content: 'PRIVATE_ENCRYPTED' }]) {
+    const f = await nativeTurn([block]);
+    try {
+      const result = await readAnalysisContext(f.request, f.deps);
+      assert.equal(result.kind, 'ok');
+      if (result.kind === 'ok') {
+        assert.equal(result.snapshot.items.find(i => i.role === 'tool-result')?.omission, 'non-text');
+        assert.ok(!JSON.stringify(result.snapshot.items).includes('PRIVATE_'));
+        assert.equal(result.snapshot.contentHash, evidenceHash(f.bytes));
+      }
+    } finally { await fs.rm(f.dir, { recursive: true }); }
+  }
+});
 test('completed Codex native output reaches Autorun preview through the runtime capture seam without a model call', async () => {
   const f = await autorunFixture(), native = await nativeTurn(structuredOutput);
   try {

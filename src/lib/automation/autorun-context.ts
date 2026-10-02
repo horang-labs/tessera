@@ -24,7 +24,8 @@ export interface NativeRecord {
   payload?: { id?: string; type?: string; turn_id?: string; thread_source?: string; error?: unknown;
     role?: string; content?: NativeBlock[]; call_id?: string; name?: string; arguments?: string; output?: string | NativeBlock[]; last_agent_message?: string };
 }
-interface NativeBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: string | NativeBlock[] }
+interface NativeBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: string | NativeBlock[];
+  image_url?: string; file_id?: string; detail?: string | null; audio_url?: string; encrypted_content?: string }
 export type LocatedRecord = { value: NativeRecord; start: number; end: number };
 class ContextError extends Error { constructor(readonly reason: ContextUnavailableReason) { super(reason); } }
 function refuse(reason: ContextUnavailableReason): never { throw new ContextError(reason); }
@@ -145,8 +146,14 @@ function codexToolOutput(output: NonNullable<NativeRecord['payload']>['output'])
     if (block.type === 'input_text') {
       if (typeof block.text !== 'string') refuse('malformed');
       if (block.text.trim()) texts.push(block.text);
-    } else if (['input_image', 'input_audio', 'encrypted_content'].includes(block.type)) nonText = true;
-    else refuse('malformed');
+    } else if (block.type === 'input_image') {
+      if (typeof block.image_url !== 'string' && typeof block.file_id !== 'string') refuse('malformed');
+      if (block.detail != null && !['auto', 'low', 'high', 'original'].includes(block.detail)) refuse('malformed');
+      nonText = true;
+    } else if (block.type === 'input_audio' || block.type === 'encrypted_content') {
+      if (typeof (block.type === 'input_audio' ? block.audio_url : block.encrypted_content) !== 'string') refuse('malformed');
+      nonText = true;
+    } else refuse('malformed');
   }
   return { text: texts.join('\n'), nonText };
 }
