@@ -6,6 +6,7 @@ import type { ContentBlock } from '@/lib/ws/message-types';
 import type { CliEnvironment } from '../cli-exec';
 import type { ParsedMessage } from './message-types';
 import type {
+  AutorunProviderPort,
   GeneratedText,
   GeneratedTitle,
   SpawnOptions,
@@ -135,6 +136,8 @@ export interface ProviderRateLimitOptions {
  * implementation details directly.
  */
 export interface CliProvider {
+  /** Absent until R1 installs proven context/supervisor adapters; never fall back to generateText. */
+  readonly autorun?: AutorunProviderPort;
   /**
    * Returns the unique machine-readable identifier for this CLI provider.
    * Must match the ID used when registering the provider in the registry.
@@ -408,4 +411,11 @@ export interface CliProvider {
    * write to any other subsystem.
    */
   checkStatus(options: CheckStatusOptions): Promise<CliStatusResult>;
+}
+
+/** Consumers must handle absence explicitly; existing providers remain unchanged. */
+export function getAutorunProviderPort(provider: Pick<CliProvider, 'autorun'>) {
+  return provider.autorun
+    ? { kind: 'available' as const, port: provider.autorun }
+    : { kind: 'unavailable' as const, code: 'SUPERVISOR_UNSUPPORTED' as const };
 }

@@ -134,3 +134,49 @@ export interface GeneratedText {
   /** The model's reply, exactly as it arrived. */
   text: string;
 }
+
+/** Additive v1 Autorun capability; no worker/title/translation method changes. */
+export type AnalysisSnapshotRequest = {
+  userId: string;
+  agentEnvironment: 'native' | 'wsl';
+  sessionId: string;
+  providerConversationId: string;
+  expectedBoundary: import('@/lib/automation/runtime-port').Boundary;
+  inputEpoch: string;
+  workerSelection: import('@/lib/automation/contracts').SessionSelectionSnapshot;
+  correlation: import('@/lib/automation/autorun-contracts').ProviderTurnCorrelation;
+  signal: AbortSignal;
+};
+export type SupervisorCapabilityRequest = {
+  userId: string; agentEnvironment: 'native' | 'wsl';
+  selection: import('@/lib/automation/autorun-contracts').SupervisorSelection;
+};
+export type SupervisorDecisionRequest = SupervisorCapabilityRequest & {
+  invocationId: string;
+  trustedInstructions: string;
+  packet: import('@/lib/automation/autorun-contracts').SupervisorPacket;
+  outputSchema: typeof import('@/lib/automation/autorun-contracts').SUPERVISOR_DECISION_JSON_SCHEMA;
+  deadlineAt: number;
+  signal: AbortSignal;
+};
+export interface AutorunProviderPort {
+  readonly version: 1;
+  /** R1-owned verified human objective/corrections and current submit evidence; no completed snapshot required. */
+  readAutorunEvidence(args: AutorunEvidenceRequest): Promise<import('@/lib/automation/autorun-contracts').AutorunEvidenceResult>;
+  /** Provider-owned bounded native read; owner/environment always explicit. */
+  readAnalysisContext(args: AnalysisSnapshotRequest): Promise<import('@/lib/automation/autorun-contracts').AnalysisContextResult>;
+  /** Fresh installed metadata/policy attestation, no model call. */
+  checkSupervisorCapability(args: SupervisorCapabilityRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorCapabilityResult>;
+  /** Fresh auth-only, tool-free process; signal stops only its owned tree, then proves quiescence. */
+  generateSupervisorDecision(args: SupervisorDecisionRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorResult>;
+}
+
+/** R2 captures current native association under its gate, then asks R1 for provenance without a model call.
+ * Completed context is deliberately unnecessary for an accepted first running turn.
+ */
+export type AutorunEvidenceRequest = {
+  userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string; providerConversationId: string;
+  inputEpoch: string; workerSelection: import('@/lib/automation/contracts').SessionSelectionSnapshot;
+  turnEvidence: import('@/lib/automation/autorun-contracts').AutorunTurnEvidence;
+  goalRevision: number; previousHumanSourceIds: readonly string[]; signal: AbortSignal;
+};

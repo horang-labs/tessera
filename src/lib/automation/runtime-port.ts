@@ -31,6 +31,8 @@ export type RecoveryResult =
 export type DispatchPermit = {runId:string; leaseEpoch:number; token:string};
 export type RunSpec = {run:AutomationRun; target:Target; prompt:string; ownerUserId:string};
 export interface AutomationRuntime { // implemented by B; A supplies persistence callbacks
+  /** Optional until R2 installs the real gate; legacy delivery/input/drain remain unchanged. */
+  readonly autorun?: AutorunRuntimePort;
   reconcileRun(args:{runId:string; leaseEpoch:number}): Promise<RecoveryResult>;
   ownership(userId:string, sessionId:string): InputOwnership;
   arm(args:{userId:string; sessionId:string; automationId:string; selection:SessionSelectionSnapshot},
@@ -53,4 +55,43 @@ export interface AutomationAuthority { // implemented by A; called by B
   recordOutcome(runId:string, outcome:DispatchResult): void;
   recordInputOwnership(userId:string, ownership:InputOwnership): void;
   pauseWake(userId:string, sessionId:string, reason:string): void;
+}
+
+/** Immutable pre/post-read identity. All checks plus DB CAS execute within the same synchronous gate. */
+export type AnalysisIdentity = {
+  automationId: string; automationRevision: number; goalRevision: number; decisionId: string;
+  userId: string; agentEnvironment: 'native' | 'wsl'; leaseEpoch: number; deadlineAt: number;
+  expectedBoundary: Boundary; inputEpoch: string; providerConversationId: string;
+  workerSelection: SessionSelectionSnapshot; supervisorSelection: import('./autorun-contracts').SupervisorSelection;
+  source: import('./autorun-contracts').AnalysisContextSnapshot['source']; contentHash: string;
+};
+export type AnalysisDecisionCommit = { decisionId: string; automationRevision: number };
+export type AnalysisCommitResult =
+  | { kind: 'committed'; receipt: AnalysisDecisionCommit }
+  | { kind: 'rejected'; code: 'ANALYSIS_STALE' | 'RUNTIME_ADAPTER_UNAVAILABLE' };
+export interface AutorunRuntimePort {
+  readonly version: 1;
+  /** Authenticated R1 hook handoff; synchronously reject wrong owner/runtime/generation/provider binding.
+   * Observing a hook does not manufacture a Boundary or confer input ownership.
+   */
+  recordHookEvidence(event: import('./autorun-contracts').AutorunHookEvidence): { kind: 'accepted' | 'rejected' };
+  /** Read the current associated submit/completion under the runtime gate; R2 still checks ledger/admission.
+   * R2 must recheck identity/epoch after R1's asynchronous evidence read, including before arm commit.
+   */
+  readTurnEvidence(args: { userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string }): import('./autorun-contracts').AutorunTurnEvidence;
+  /** Recheck exact runtime/input/selection before and after the async provider read; never hold a DB transaction. */
+  captureAnalysisContext(args: {
+    userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string;
+    expectedBoundary: Boundary; signal: AbortSignal;
+  }): Promise<import('./autorun-contracts').AnalysisContextResult>;
+  /** Check runtime identity and snapshotted prefix; callback performs owner/revision/lease/expiry DB CAS.
+   * No await/Promise callback is permitted. Throwing rolls back persistence; no current outcome is published.
+   */
+  commitAnalysisDecision(expectedIdentity: AnalysisIdentity,
+    commit: () => AnalysisDecisionCommit): AnalysisCommitResult;
+}
+export function getAutorunRuntimePort(runtime: Pick<AutomationRuntime, 'autorun'>) {
+  return runtime.autorun
+    ? { kind: 'available' as const, port: runtime.autorun }
+    : { kind: 'unavailable' as const, code: 'RUNTIME_ADAPTER_UNAVAILABLE' as const };
 }
