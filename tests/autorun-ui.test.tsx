@@ -86,3 +86,51 @@ test('Heartbeat cannot resume without a checked runtime preview', async () => {
   const html = renderToStaticMarkup(createElement(ContinuationResume, {preview:null,loading:false,rule:rule.data,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
   assert.match(html.match(/<button[^>]*>Resume<\/button>/)?.[0] ?? '', /disabled/);
 });
+
+
+test('objective heading attributes only verified sources or a nonblank explicit objective', async () => {
+  const { AutorunPreviewView } = await import('../src/components/automation/autorun-setup');
+  const base = autorunPreviewFixture();
+  const verified = { kind: 'verified-human', text: 'Fix login.', revision: 1, sources: [{ messageId: 'message-1', recordId: 'record-1', excerpt: 'Fix login.', textHash: 'd'.repeat(64), origin: 'tessera-human-correlated' }] };
+  const cases = [
+    { objective: null, override: '', attribution: 'Not verified' },
+    { objective: null, override: '   ', attribution: 'Not verified' },
+    { objective: verified, override: '', attribution: 'From verified conversation' },
+    { objective: base.objective, override: '', attribution: 'Set by you' },
+    { objective: null, override: 'My explicit goal', attribution: 'Set by you' },
+    { objective: verified, override: 'My changed goal', attribution: 'Set by you' },
+  ];
+  for (const { objective, override, attribution } of cases) {
+    const preview = autorunPreviewSchema.parse({ ...base, objective });
+    const html = renderToStaticMarkup(createElement(AutorunPreviewView, { preview, objectiveOverride: override, onObjective: () => {}, onOpenSession: () => {} }));
+    // Inspect the objective heading, not the edit field's explicit-input label.
+    assert.equal(html.match(/<p class="text-sm">([^<]+)<\/p>/)?.[1], `Objective · ${attribution}`);
+  }
+});
+
+
+test('setup labels actual remaining instruction and analysis budgets and expiry in every locale', async context => {
+  const { AutorunSetup, AutorunPreviewView } = await import('../src/components/automation/autorun-setup');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { i18n } = await import('../src/lib/i18n');
+  const { boundary } = await import('./fixtures/autorun-contracts');
+  context.mock.method(Date, 'now', () => boundary.completedAt);
+  const preview = autorunPreviewSchema.parse({ ...autorunPreviewFixture(), objective: null, remaining: { dispatches: 3, analyses: 7 } });
+  const locales = [
+    { language: 'en', missing: 'Objective · Not verified', instructions: 'Instructions left', analyses: 'Analyses left', expiry: 'Expires' },
+    { language: 'ko', missing: '목표 · 확인되지 않음', instructions: '남은 지시', analyses: '남은 분석', expiry: '만료' },
+    { language: 'ja', missing: '目標 · 未確認', instructions: '残りの指示', analyses: '残りの分析', expiry: '有効期限' },
+    { language: 'zh', missing: '目标 · 未验证', instructions: '剩余指令', analyses: '剩余分析', expiry: '到期' },
+  ];
+  try {
+    for (const { language, missing, instructions, analyses, expiry } of locales) {
+      await i18n.changeLanguage(language);
+      const html = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: createAutomationStore({ sessionId: 'session-1' }), onDone: () => {}, onOpenSession: () => {} }));
+      assert.ok(html.includes(missing), `Missing objective attribution in ${language}`);
+      assert.ok(html.includes(`${instructions}: 3 · ${analyses}: 7 · ${expiry}: `), `Unlabeled or swapped remaining budgets in ${language}`);
+      assert.doesNotMatch(html, /automation\.(remainingDispatches|remainingAnalyses|budgetExpiry|unverifiedGoal)/);
+      const explicit = renderToStaticMarkup(createElement(AutorunPreviewView, { preview, objectiveOverride: 'User goal', onObjective: () => {}, onOpenSession: () => {} }));
+      assert.ok(!explicit.includes(missing), `Explicit override retains missing attribution in ${language}`);
+    }
+  } finally { await i18n.changeLanguage('en'); }
+});
