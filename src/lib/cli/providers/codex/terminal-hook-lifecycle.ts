@@ -1,3 +1,4 @@
+import type { TerminalAutomationCompletion } from '../terminal-automation-evidence';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { resolveCodexAccountTranscriptPath } from '@/lib/codex-home';
@@ -161,4 +162,10 @@ export function mapCodexHookLifecycle(
   origin: CodexHookOrigin,
 ): { status: CodexHookLifecycleStatus } | null {
   return terminalHookLifecycle.apply(terminalId, event, origin);
+}
+
+/** Called only after this provider's foreground hook admission and lifecycle mapping. */
+export function classifyCodexAutomationCompletion(event: string, status: string): TerminalAutomationCompletion {
+  if (event === 'Stop' && status === 'completed') return 'successful-lead-stop';
+  return null;
 }

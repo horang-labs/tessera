@@ -1,3 +1,4 @@
+import type { TerminalAutomationCompletion } from '@/lib/cli/providers/terminal-automation-evidence';
 import { AutomationInputError } from './input-error';
 import { randomUUID } from 'node:crypto';
 import { type InputOwnership } from './contracts';
@@ -6,7 +7,7 @@ import type { ArmEvidence, AutomationAuthority, Boundary, RuntimeObservation } f
 type State = {
   ownership: InputOwnership; userId: string; generation: number; provider: string; environment: 'native' | 'wsl' | undefined;
   revision: number; turn: number; submittedRevision: number | null; confirmedRevision: number | null;
-  children: Set<string>; backgroundUnknown: boolean; leadCompletionAt: number | null;
+  children: Set<string>; lifecycleChildren: boolean; backgroundUnknown: boolean; leadCompletionAt: number | null;
   boundary: Boundary | null; status: RuntimeObservation['state']; sequence: number;
   lastHookAt: number; candidateRevision: number | null; writer: boolean; waiters: Set<() => void>; automated: boolean; live: boolean;
 };
@@ -23,7 +24,7 @@ export class AutomationInputGate {
   started(userId: string, sessionId: string, terminalId: string, generation: number, provider: string, environment?: 'native' | 'wsl') {
     const old = this.state(userId, sessionId);
     const held = old && old.ownership.mode !== 'human' && old.ownership.mode !== 'unavailable';
-    const state: State = { userId, generation, provider, environment, revision: 0, turn: 0, submittedRevision: null, confirmedRevision: null, children: new Set(), backgroundUnknown: false, leadCompletionAt: null,
+    const state: State = { userId, generation, provider, environment, revision: 0, turn: 0, submittedRevision: null, confirmedRevision: null, children: new Set(), lifecycleChildren: false, backgroundUnknown: false, leadCompletionAt: null,
       boundary: null, status: 'starting', sequence: 0, lastHookAt: 0, candidateRevision: null, writer: old?.writer ?? false, waiters: old?.waiters ?? new Set(),
       automated: old?.automated ?? false, live: true,
       ownership: { sessionId, terminalId, epoch: randomUUID(), mode: held ? 'recovery-required' : 'human',
@@ -63,6 +64,10 @@ export class AutomationInputGate {
     state.boundary = null; state.leadCompletionAt = null;
   }
 
+  isBusy(userId: string, sessionId: string): boolean {
+    return this.state(userId, sessionId)?.writer ?? false;
+  }
+
   writer(userId: string, sessionId: string, active: boolean) {
     const state = this.state(userId, sessionId);
     if (state) { state.writer = active; if (!active) this.settleWriters(state); }
@@ -72,10 +77,11 @@ export class AutomationInputGate {
     const state = this.state(userId, sessionId);
     if (state) this.hook(userId, sessionId, event, 'running', Math.max(Date.now(), state.lastHookAt + 1), false);
   }
-  hook(userId: string, sessionId: string, event: string, status: 'running' | 'completed' | 'input_required' | 'idle', at: number, children: boolean) {
+  hook(userId: string, sessionId: string, event: string, status: 'running' | 'completed' | 'input_required' | 'idle', at: number, children: boolean, completion: TerminalAutomationCompletion = null) {
     const state = this.state(userId, sessionId);
     if (!state || !state.live || at <= state.lastHookAt) return;
     state.lastHookAt = at;
+    state.lifecycleChildren = children;
     if (event === 'UserPromptSubmit') {
       const confirmsHostSubmit = state.status === 'running' && state.submittedRevision === state.revision
         && state.confirmedRevision === null;
@@ -85,12 +91,14 @@ export class AutomationInputGate {
       state.submittedRevision = state.revision;
       state.confirmedRevision = state.revision;
       state.candidateRevision = null;
+      state.leadCompletionAt = null;
       state.boundary = null;
     } else if (event === 'ControlPromptSubmit' || event === 'AutomationPromptSubmit') {
       state.turn++;
       state.submittedRevision = state.revision;
       state.confirmedRevision = null;
       state.candidateRevision = null;
+      state.leadCompletionAt = null;
       state.boundary = null;
     } else if (status === 'running' && state.status === 'turn-complete') {
       state.submittedRevision = null;
@@ -98,11 +106,15 @@ export class AutomationInputGate {
     }
     state.status = status === 'input_required' ? 'input-required' : status === 'completed' ? 'turn-complete' : status === 'running' ? 'running' : 'unknown';
     const clean = state.submittedRevision !== null && state.submittedRevision === state.revision;
-    // Stop is the lead completion normalized by both supported hook adapters.
-    const confirmedLead = status === 'completed' && event === 'Stop' && clean && state.confirmedRevision === state.revision;
-    if (confirmedLead) state.leadCompletionAt = at;
-    const completed = status === 'completed' && (event === 'Stop' || (state.provider === 'claude-code' && event === 'SubagentStop'))
-      && !children && state.children.size === 0 && !state.backgroundUnknown && clean && state.confirmedRevision === state.revision;
+    if (completion === 'failed-lead-stop') {
+      state.leadCompletionAt = null;
+      state.submittedRevision = null;
+      this.inhibit(state, 'TURN_FAILED');
+    }
+    if (completion === 'successful-lead-stop' && clean && state.confirmedRevision === state.revision) state.leadCompletionAt = at;
+    const completed = status === 'completed' && (completion === 'successful-lead-stop' || completion === 'children-settled')
+      && state.leadCompletionAt !== null && !children && state.children.size === 0 && !state.backgroundUnknown
+      && clean && state.submittedRevision !== null && state.confirmedRevision === state.revision;
     if (completed && !state.boundary) {
       this.complete(state, at);
     } else if (!completed) state.boundary = null;
@@ -120,7 +132,20 @@ export class AutomationInputGate {
         serverInstanceId: this.serverInstanceId, generation: state.generation,
         terminalId: state.ownership.terminalId!, sessionId, userId, turnSequence: state.turn,
         inputRevision: state.revision, completedAt: at, source: 'confirmed-lead-turn' };
-    if (state.ownership.mode === 'armed') this.authority()?.recordBoundary({ userId, boundary: state.boundary });
+    if (state.ownership.mode === 'armed') {
+      try {
+        const authority = this.authority();
+        if (!authority) throw new Error('Automation authority is unavailable.');
+        authority.recordBoundary({ userId, boundary: state.boundary });
+      } catch {
+        state.boundary = null;
+        state.leadCompletionAt = null;
+        state.submittedRevision = null;
+        // Persistence cannot leave an occurrence alive only in this process.
+        // inhibit installs the local lock before any further persistence call.
+        try { this.inhibit(state, 'BOUNDARY_UNRECORDED'); } catch { /* Retain the local draining hold. */ }
+      }
+    }
   }
 
   background(userId: string, sessionId: string, childId: string, work: RuntimeObservation['backgroundWork']) {
@@ -130,7 +155,7 @@ export class AutomationInputGate {
     if (work === 'clear') state.children.delete(childId);
     if (work === 'unknown') { state.backgroundUnknown = true; this.inhibit(state, 'BACKGROUND_UNPROVEN'); }
     if (work !== 'clear') state.boundary = null;
-    if (work === 'clear' && state.children.size === 0 && !state.backgroundUnknown && state.leadCompletionAt !== null
+    if (work === 'clear' && state.children.size === 0 && !state.lifecycleChildren && !state.backgroundUnknown && state.leadCompletionAt !== null
       && state.submittedRevision === state.revision && state.confirmedRevision === state.revision && !state.boundary) this.complete(state, Date.now());
     this.authority()?.recordRuntimeObservation(this.observation(state, state.backgroundUnknown ? 'unknown' : state.children.size ? 'active' : 'clear'));
   }
@@ -171,7 +196,7 @@ export class AutomationInputGate {
   arm(userId: string, sessionId: string, automationId: string, provider: string, commit: (evidence: ArmEvidence, value: InputOwnership) => void): InputOwnership {
     const state = this.state(userId, sessionId);
     if (!state || !state.live || !['claude-code', 'codex'].includes(state.provider) || state.provider !== provider || state.writer
-      || state.children.size > 0 || state.backgroundUnknown || state.ownership.mode !== 'human' || state.submittedRevision === null
+      || state.children.size > 0 || state.lifecycleChildren || state.backgroundUnknown || state.ownership.mode !== 'human' || state.submittedRevision === null
       || state.submittedRevision !== state.revision
       || (!state.boundary && state.status !== 'running')) {
       throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'A clean submitted turn boundary is required.');
@@ -232,7 +257,7 @@ export class AutomationInputGate {
   recover(userId: string, sessionId: string, automationId: string, runId: string) {
     let state = this.state(userId, sessionId);
     if (!state) {
-      state = { userId, generation: 0, provider: '', environment: undefined, revision: 0, turn: 0, submittedRevision: null, confirmedRevision: null, children: new Set(), backgroundUnknown: false, leadCompletionAt: null,
+      state = { userId, generation: 0, provider: '', environment: undefined, revision: 0, turn: 0, submittedRevision: null, confirmedRevision: null, children: new Set(), lifecycleChildren: false, backgroundUnknown: false, leadCompletionAt: null,
         boundary: null, status: 'unknown', sequence: 0, lastHookAt: 0, candidateRevision: null, writer: false, waiters: new Set(), automated: true, live: false,
         ownership: { sessionId, terminalId: null, epoch: randomUUID(), mode: 'recovery-required', automationId, runId, reason: 'DELIVERY_UNKNOWN' } };
       this.states.set(this.key(userId, sessionId), state);
@@ -256,7 +281,7 @@ export class AutomationInputGate {
     this.changed(state);
   }
   private changed(state: State) {
-    this.authority()?.recordInputOwnership(state.userId, { ...state.ownership });
-    this.publish(state.userId, { ...state.ownership });
+    try { this.authority()?.recordInputOwnership(state.userId, { ...state.ownership }); }
+    finally { this.publish(state.userId, { ...state.ownership }); }
   }
 }

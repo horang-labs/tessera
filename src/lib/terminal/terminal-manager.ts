@@ -1,3 +1,4 @@
+import type { TerminalAutomationCompletion } from '@/lib/cli/providers/terminal-automation-evidence';
 import type { AutomationAuthority, Boundary, DispatchPermit, DispatchResult } from '@/lib/automation/runtime-port';
 import { AutomationInputGate } from '@/lib/automation/input-gate';
 import fs from 'fs';
@@ -1608,6 +1609,11 @@ export class TerminalManager {
     });
   }
 
+  isAutomationInputBusy(userId: string, sessionId: string): boolean {
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    return !runtime.closing && (runtime.prefillPending || runtime.semanticPromptPending || this.automation.isBusy(userId, sessionId));
+  }
+
   assertAutomationArmable(userId: string, sessionId: string): void {
     const runtime = this.requireLiveSessionRuntime(sessionId, userId);
     if (runtime.prefillPending || runtime.semanticPromptPending || runtime.closing) {
@@ -1707,7 +1713,7 @@ export class TerminalManager {
 
   /** 살아있는 소유 runtime의 상태만 수락한다. false = 죽었거나 미소유인 pane의
    *  늦은 hook curl — 캐시도 브로드캐스트도 하면 안 되는 유령 상태다. */
-  recordSessionState(message: TerminalSessionStateMessage, userId: string): boolean {
+  recordSessionState(message: TerminalSessionStateMessage, userId: string, completion: TerminalAutomationCompletion = message.hookEvent === 'Stop' && message.status === 'completed' ? 'successful-lead-stop' : null): boolean {
     const runtime = this.getOwnedTerminal(message.terminalId, userId);
     if (!runtime || runtime.sessionId !== message.sessionId || runtime.ended) return false;
     message.interruptInputPolicy = runtime.interruptInputPolicy;
@@ -1731,7 +1737,7 @@ export class TerminalManager {
     runtime.interruptInferredAt = undefined;
     runtime.lastSessionState = message;
     runtime.runtimeStateAt = message.stateAt ?? Date.now();
-    this.automation.hook(userId, message.sessionId, message.hookEvent, message.status, message.stateAt ?? Date.now(), !!message.hasWorkingSubagents);
+    this.automation.hook(userId, message.sessionId, message.hookEvent, message.status, message.stateAt ?? Date.now(), !!message.hasWorkingSubagents, completion);
     this.notifySessionWaiters(runtime, message);
     return true;
   }

@@ -1,3 +1,5 @@
+import { ClaudeHookLifecycleTracker, classifyClaudeAutomationCompletion } from '../src/lib/cli/providers/claude-code/terminal-hook-lifecycle';
+import { classifyCodexAutomationCompletion } from '../src/lib/cli/providers/codex/terminal-hook-lifecycle';
 import assert from 'node:assert/strict';
 import test, { afterEach } from 'node:test';
 import { runFixture } from './fixtures/automation';
@@ -34,9 +36,10 @@ async function fixture(provider: 'codex' | 'claude-code' = 'codex') {
     connectionId: 'panel', surfaceId: 'normal', providerId: provider, agentEnvironment: 'wsl',
     resolvedShell: { command: 'fixture', args: [], cwd: process.cwd() } });
   let time = Date.now();
-  const hook = (hookEvent: string, status: 'running' | 'completed' | 'input_required' | 'idle') =>
+  const hook = (hookEvent: string, status: 'running' | 'completed' | 'input_required' | 'idle', children = false) =>
     manager.recordSessionState({ type: 'session_state', sessionId: 'session', terminalId: 'terminal',
-      hookEvent, status, stateAt: ++time }, 'owner');
+      hookEvent, status, stateAt: ++time, hasWorkingSubagents: children }, 'owner', provider === 'claude-code'
+      ? classifyClaudeAutomationCompletion(hookEvent, status) : classifyCodexAutomationCompletion(hookEvent, status));
   const arm = () => runtime.arm({ userId: 'owner', sessionId: 'session', automationId: 'rule',
     selection: { ...selection, provider } }, () => {});
   return { manager, runtime, writes, events, authority, boundaries, hook, arm };
@@ -205,4 +208,82 @@ test('explicit stop inhibits automation and waits for its active writer before c
   assert.equal((await sending).kind, 'delivered');
   assert.equal((await stopped).runtimeState, 'exited');
   assert.deepEqual(f.writes, ['\x1b[200~Continue safely\x1b[201~', '\r']);
+});
+
+
+test('a failed lead turn stays ineligible after Claude children finish', async () => {
+  const f = await fixture('claude-code');
+  f.hook('UserPromptSubmit', 'running');
+  await f.arm();
+  const lifecycle = new ClaudeHookLifecycleTracker();
+  lifecycle.apply('terminal', 'UserPromptSubmit', {});
+  const child = { agent_id: 'child' };
+  for (const event of ['SubagentStart', 'StopFailure', 'SubagentStop']) {
+    const mapped = lifecycle.apply('terminal', event, child)!;
+    f.hook(event, mapped.status, lifecycle.hasWorkingSubagents('terminal'));
+  }
+  assert.deepEqual(f.boundaries, []);
+  assert.notEqual(f.runtime.ownership('owner', 'session').mode, 'armed');
+});
+
+
+test('an unpersisted completion disarms and cannot become a remembered wake occurrence', async () => {
+  const f = await fixture();
+  f.hook('UserPromptSubmit', 'running');
+  await f.arm();
+  f.authority.recordBoundary = () => { throw Error('storage unavailable'); };
+  assert.doesNotThrow(() => f.hook('Stop', 'completed'));
+  assert.notEqual(f.runtime.ownership('owner', 'session').mode, 'armed');
+  await assert.rejects(f.arm());
+  f.hook('Stop', 'completed');
+  assert.deepEqual(f.boundaries, []);
+});
+
+test('completion without the durable authority fails closed', async () => {
+  const f = await fixture();
+  f.hook('UserPromptSubmit', 'running');
+  await f.arm();
+  f.manager.automation.authority = () => null;
+  f.hook('Stop', 'completed');
+  assert.notEqual(f.runtime.ownership('owner', 'session').mode, 'armed');
+  assert.throws(() => f.manager.write('terminal', 'owner', 'panel', 'normal', 'race'), /automation/i);
+  assert.deepEqual(f.boundaries, []);
+});
+
+
+test('a busy admission defers without an attempt, then retries the same run exactly once', async () => {
+  const f = await fixture();
+  f.hook('UserPromptSubmit', 'running'); f.hook('Stop', 'completed');
+  let boundary: Boundary | null = null;
+  await f.runtime.arm({ userId: 'owner', sessionId: 'session', automationId: 'rule', selection }, evidence => {
+    if (evidence.kind === 'completed') boundary = evidence.boundary;
+  });
+  let attempts = 0;
+  const beginAttempt = f.authority.beginAttempt;
+  f.authority.beginAttempt = (...args) => { attempts++; return beginAttempt(...args); };
+  const args = { runId: 'run', leaseEpoch: 1, expectedRevision: 1, expectedBoundary: boundary };
+  // Another admitted writer holds the shared Session mutex, without external bytes yet.
+  f.manager.automation.writer('owner', 'session', true);
+  const deferred = await f.runtime.dispatch(args);
+  assert.equal(deferred.kind, 'deferred');
+  if (deferred.kind === 'deferred') assert.ok(deferred.retryAt > Date.now());
+  assert.equal(attempts, 0);
+  assert.deepEqual(f.writes, []);
+  f.manager.automation.writer('owner', 'session', false);
+  assert.equal((await f.runtime.dispatch(args)).kind, 'delivered');
+  assert.equal((await f.runtime.dispatch(args)).kind, 'delivered');
+  assert.equal(attempts, 1);
+  assert.deepEqual(f.writes, ['\x1b[200~Continue safely\x1b[201~', '\r']);
+});
+
+
+test('Claude child work blocks arming until a successful lead and child drain settle', async () => {
+  const f = await fixture('claude-code');
+  f.hook('UserPromptSubmit', 'running');
+  f.hook('SubagentStart', 'running', true);
+  await assert.rejects(f.arm());
+  f.hook('Stop', 'running', true);
+  await assert.rejects(f.arm());
+  f.hook('SubagentStop', 'completed');
+  assert.equal((await f.arm()).mode, 'armed');
 });

@@ -79,6 +79,9 @@ export function createAutomationRuntime(options: {
           return { kind: 'failed', reason: 'UNSUPPORTED_SELECTION' };
         }
         try {
+          if (manager.isAutomationInputBusy(ownerUserId, sessionId)) {
+            return { kind: 'deferred', reason: 'RUNTIME_BUSY', retryAt: Date.now() + 30_000 };
+          }
           manager.assertAutomationArmable(ownerUserId, sessionId);
           manager.automation.begin(ownerUserId, sessionId, spec.run.automationId, args.runId, args.expectedBoundary);
         } catch {
@@ -97,6 +100,9 @@ export function createAutomationRuntime(options: {
         return result;
       })();
       attempts.set(args.runId, pending);
+      void pending.then(result => {
+        if (result.kind === 'deferred' && attempts.get(args.runId) === pending) attempts.delete(args.runId);
+      }).catch(() => {});
       return pending;
     },
     reconcileRun(args) {
