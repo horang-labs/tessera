@@ -1,6 +1,8 @@
+import { automationZh } from './automation';
 import { I18nMessages } from './types';
 
 export const zh: I18nMessages = {
+  automation: automationZh,
   settings: {
     title: '设置',
     sections: {

@@ -1,6 +1,8 @@
+import { automationEn } from './automation';
 import { I18nMessages } from './types';
 
 export const en: I18nMessages = {
+  automation: automationEn,
   settings: {
     title: 'Settings',
     sections: {

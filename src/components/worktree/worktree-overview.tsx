@@ -1,7 +1,11 @@
+'use client';
+
+import { AutomationWorktreeEntry } from '@/components/automation/automation-entry';
 import { GitBranch } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-export function WorktreeOverview({ branch, branchControl, displayPath, label }: {
+export function WorktreeOverview({ branch, branchControl, displayPath, label, worktreeId }: {
+  worktreeId?: string;
   branch: string | null;
   branchControl?: ReactNode;
   displayPath: string;
@@ -30,6 +34,7 @@ export function WorktreeOverview({ branch, branchControl, displayPath, label }: 
             <dd className="mt-1 break-all font-mono text-(--text-primary)">{displayPath}</dd>
           </div>
         </dl>
+        {worktreeId && <div className="mt-5"><AutomationWorktreeEntry key={worktreeId} worktreeId={worktreeId} /></div>}
       </div>
     </div>
   );

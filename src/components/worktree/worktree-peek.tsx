@@ -93,6 +93,7 @@ export function WorktreePeek() {
         </header>
         <div className="min-h-0 flex-1">
           <WorktreeOverview
+            worktreeId={target.worktreeId}
             branch={branch}
             branchControl={isProjectWorktree && project?.projectWorktree ? (
               <ProjectCheckoutBranch

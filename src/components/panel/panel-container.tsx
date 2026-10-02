@@ -102,6 +102,7 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
     if (worktreeId && worktree) {
       return (
         <WorktreeOverview
+          worktreeId={worktreeId}
           branch={worktree.currentBranch}
           displayPath={worktree.displayPath}
         />
@@ -110,6 +111,7 @@ const PanelLeaf = memo(function PanelLeaf({ panelId }: { panelId: string }) {
     if (worktreeId && linkedWorktree?.workDir) {
       return (
         <WorktreeOverview
+          worktreeId={worktreeId}
           branch={linkedWorktree.worktreeBranch ?? null}
           displayPath={linkedWorktree.workDir}
           label="Linked Worktree"
