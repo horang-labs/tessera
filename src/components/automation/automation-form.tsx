@@ -5,7 +5,7 @@ import { getAutomationDefaults, validateAutomationInput, type Automation, type A
 import type { AutomationScope } from '@/stores/automation-store';
 import { useProviderSessionOptions } from '@/hooks/use-provider-session-options';
 import { useI18n } from '@/lib/i18n';
-import { automationButton } from './ownership-actions';
+import { automationButton, automationPrimaryButton } from './ownership-actions';
 
 export function localDateInput(at: number) {
   const date = new Date(at);
@@ -92,7 +92,7 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
     <p className="text-xs">{t('automation.permissions')}</p>{error && <p role="alert">{t('automation.invalid')}</p>}
     {replacing && <p>{t('automation.replaceHelp')}</p>}
     <div className="sticky bottom-0 flex flex-wrap gap-2 bg-(--chat-bg) py-2">
-      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationButton} type="submit" disabled={saving || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.save' : wake ? 'automation.start' : 'automation.startSchedule')}</button>
+      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationPrimaryButton} type="submit" disabled={saving || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.saveChanges' : wake ? 'automation.start' : 'automation.startSchedule')}</button>
       {!previous && !replacing && <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationButton} type="submit" value="later" disabled={saving || (!wake && !selectionSupported)}>{t('automation.save')}</button>}
       <button {...telemetryClickAttributes('automation.form.cancel','automation')} className={automationButton} type="button" onClick={onCancel}>{t('automation.cancel')}</button>
     </div>

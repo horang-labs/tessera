@@ -50,7 +50,7 @@ export function AutomationSessionControls({ sessionId, provider }: { sessionId: 
     {rule && <span role="status" className="text-xs">{rule.name} · {t(`automation.state_${rule.state}`)}{current?.mode === 'autorun' && ` · ${t(`automation.phase_${current.autorunStatus}`)}`}</span>}
     <Entry scope={scope} store={store} currentId={automationId ?? undefined} attention={Boolean(rule?.attention)} paused={rule?.state === 'paused'} supported={provider === 'claude-code' || provider === 'codex'} />
     {current?.nextDueAt && <span className="text-xs">{t('automation.next')}: {localDue(current.nextDueAt)}</span>}
-    {rule?.attention && <AutomationReason reason={rule.attention.reason} />}
+    {rule?.attention && <AutomationReason reason={rule.attention.reason} summary={current?.mode === 'autorun' ? current.attention?.summary : null} />}
     {automationId && <><span className="text-xs" role="status">{t(`automation.${ownership.mode}`)}</span><button {...telemetryClickAttributes('automation.pause', 'chat_header')} className={automationButton} onClick={() => void store.getState().pause(automationId)}>{t('automation.pause')}</button></>}
     <AutomationError code={error} />
   </div>;

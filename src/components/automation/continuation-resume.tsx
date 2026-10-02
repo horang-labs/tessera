@@ -6,7 +6,7 @@ import type { AutomationStoreApi } from '@/stores/automation-store';
 import { useI18n } from '@/lib/i18n';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { AutorunPreviewView, autorunCanStart } from './autorun-setup';
-import { automationButton } from './ownership-actions';
+import { automationButton, automationPrimaryButton } from './ownership-actions';
 import { localDue } from './automation-form';
 import { useAutomationOwnership } from './use-automation';
 import { SavedSelection } from './automation-history';
@@ -20,7 +20,7 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const counts = rule.dispatchCount < rule.limits.maxDispatches && rule.limits.expiresAt > now;
   const ready = !loading && counts && ownership.mode === 'human' && (rule.mode !== 'autorun'
-    ? preview?.readiness.kind !== 'idle'
+    ? heartbeatCanResume(preview, loading)
     : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
   return <section className="grid gap-3">
@@ -35,8 +35,14 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
     </> : <p className="whitespace-pre-wrap">{rule.prompt}</p>}
     <SavedSelection selection={rule.savedSelection} />
     <p>{t('automation.instructionAttempts')}: {rule.dispatchCount}/{rule.limits.maxDispatches} · {localDue(rule.limits.expiresAt)}</p>
-    <button {...telemetryClickAttributes('automation.manager.enable', 'automation')} className={automationButton} type="button" disabled={!ready || store.getState().busy > 0} onClick={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }}>{t('automation.resume')}</button>
+    <button {...telemetryClickAttributes('automation.manager.enable', 'automation')} className={automationPrimaryButton} type="button" disabled={!ready || store.getState().busy > 0} onClick={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }}>{t('automation.resume')}</button>
     <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>
     <button {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().previewAutorun()}>{t('automation.checkAgain')}</button>
   </section>;
+}
+
+/** Autorun-only context/capability failures defer to base Heartbeat server admission. */
+export function heartbeatCanResume(preview: AutorunPreview | null, loading: boolean) {
+  if (loading || !preview || preview.readiness.kind === 'idle') return false;
+  return preview.readiness.kind !== 'unavailable' || !['unsafe-runtime', 'binding-mismatch'].includes(preview.readiness.reason);
 }

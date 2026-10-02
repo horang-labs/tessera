@@ -5,7 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import { sameSupervisorSelection, validateAutomationInputV2, type AutorunPreview, type AutorunInput, type SupervisorSelection, type AutomationV2 } from '@/lib/automation/autorun-contracts';
 import type { AutomationStoreApi } from '@/stores/automation-store';
 import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
-import { automationButton } from './ownership-actions';
+import { automationButton, automationPrimaryButton } from './ownership-actions';
 import { localDateInput, localDue } from './automation-form';
 import { SavedSelection } from './automation-history';
 
@@ -39,9 +39,9 @@ export function autorunCanStart(preview: AutorunPreview, selection: SupervisorSe
     && preview.remaining.dispatches > 0 && preview.remaining.analyses > 0 && expiresAt > now;
 }
 
-export function AutorunSetup({ preview, store, previous, intent = 'start', onDone, onOpenSession }: {
+export function AutorunSetup({ preview, store, previous, intent = 'start', onDone, onOpenSession, defaultName }: {
   preview: AutorunPreview; store: AutomationStoreApi; previous?: AutomationV2;
-  intent?: 'start' | 'resume' | 'edit' | 'replace'; onDone: (id: string) => void; onOpenSession: () => void;
+  defaultName?: string; intent?: 'start' | 'resume' | 'edit' | 'replace'; onDone: (id: string) => void; onOpenSession: () => void;
 }) {
   const { t } = useI18n();
   const [now, setNow] = useState(() => Date.now());
@@ -74,7 +74,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
     const lines = (name: string) => String(fields.get(name) ?? '').split('\n').map(s => s.trim()).filter(Boolean);
     const constraints = lines('constraints');
     const criterionLines = lines('criteria');
-    const input: AutorunInput = { version: 2, mode: 'autorun', name: String(fields.get('name') ?? old?.name ?? t('automation.continueWork')), enabled: intent !== 'edit' && (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') !== 'yes',
+    const input: AutorunInput = { version: 2, mode: 'autorun', name: String(fields.get('name') ?? old?.name ?? defaultName ?? t('automation.continueWork')), enabled: intent !== 'edit' && (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') !== 'yes',
       target: { kind: 'wake-session', sessionId: preview.sessionId }, trigger: { kind: 'turn-complete', delayMs: Number(fields.get('delay')) * 1000 },
       limits: { maxDispatches: Number(fields.get('max')), expiresAt: new Date(String(fields.get('expiry'))).getTime() },
       autorun: { objective: override.trim() ? { kind: 'explicit', text: override } : { kind: 'preview', previewId: preview.previewId, goalRevision: preview.goalRevision },
@@ -99,11 +99,11 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
     </details>
     <p className="break-words">{t('automation.supervisor')}: {supervisor ? `${supervisor.provider} · ${supervisor.model} · ${supervisor.reasoningEffort} · ${supervisor.serviceTier ?? ''}` : t('automation.unsupported')}</p>
     <p className="text-xs">{t('automation.supervisorHelp')}</p>
-    <SavedSelection selection={preview.workerSelection} />
     <p>{t('automation.remaining')}: {preview.remaining.dispatches} · {preview.remaining.analyses} · {Number.isFinite(expiresAt) ? localDue(expiresAt) : t('automation.invalid')}</p>
     <details><summary {...telemetryClickAttributes('automation.form.advanced', 'automation')}>{t('automation.advanced')}</summary><div className="grid gap-3">
+      <SavedSelection selection={preview.workerSelection} />
       <label>{t('automation.supervisor')}<select {...telemetryClickAttributes('automation.autorun.supervisor', 'automation')} className="w-full" value={selectedIndex} onChange={e => setSupervisor(options[Number(e.target.value)]?.selection ?? null)}><option value={-1}>{t('automation.choose')}</option>{options.map((option, i) => <option key={i} value={i}>{option.selection.provider} · {option.selection.model} · {option.selection.reasoningEffort} · {option.selection.serviceTier}</option>)}</select></label>
-      <label>{t('automation.name')}<input {...telemetryIgnoreAttributes('non_action')} name="name" defaultValue={draftFields.name ?? draft?.name ?? old?.name ?? t('automation.continueWork')} required maxLength={120} /></label>
+      <label>{t('automation.name')}<input {...telemetryIgnoreAttributes('non_action')} name="name" defaultValue={draftFields.name ?? draft?.name ?? old?.name ?? defaultName ?? t('automation.continueWork')} required maxLength={120} /></label>
       <label>{t('automation.delay')}<input {...telemetryClickAttributes('automation.form.delay', 'automation')} name="delay" type="number" min={30} max={86400} defaultValue={draftFields.delay ?? (old?.trigger.delayMs ?? preview.defaults.delayMs)/1000} /></label>
       <label>{t('automation.max')}<input {...telemetryClickAttributes('automation.form.max', 'automation')} name="max" type="number" min={1} max={100} defaultValue={draftFields.max ?? old?.limits.maxDispatches ?? preview.defaults.maxDispatches} /></label>
       <label>{t('automation.analysisMax')}<input {...telemetryClickAttributes('automation.autorun.analyses', 'automation')} name="analyses" type="number" min={1} max={100} defaultValue={draftFields.analyses ?? old?.autorun.maxAnalyses ?? preview.defaults.maxAnalyses} /></label>
@@ -112,8 +112,8 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
     </div></details>
     {intent === 'replace' && <p>{t('automation.replaceHelp')}</p>}
     {invalid && <p role="alert">{t('automation.invalid')}</p>}
-    <div className="sticky bottom-0 bg-(--chat-bg) py-2">
-      <button {...telemetryClickAttributes('automation.autorun.start', 'automation')} className={automationButton} type="submit" disabled={saving || (intent !== 'edit' && !ready)}>{t(intent === 'resume' ? 'automation.resume' : intent === 'edit' ? 'automation.save' : intent === 'replace' ? 'automation.replace' : 'automation.start')}</button>
+    <div className="sticky bottom-0 flex flex-wrap gap-2 bg-(--chat-bg) py-2">
+      <button {...telemetryClickAttributes('automation.autorun.start', 'automation')} className={automationPrimaryButton} type="submit" disabled={saving || (intent !== 'edit' && !ready)}>{t(intent === 'resume' ? 'automation.resume' : intent === 'edit' ? 'automation.saveChanges' : intent === 'replace' ? 'automation.replace' : 'automation.start')}</button>
       {intent === 'start' && <button {...telemetryClickAttributes('automation.form.save', 'automation')} className={automationButton} type="submit" name="saveLater" value="yes" disabled={saving || !confirmedSelection}>{t('automation.save')}</button>}
     </div>
   </form>;

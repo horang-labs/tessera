@@ -50,12 +50,12 @@ test('Heartbeat Resume is available when only Autorun supervisor/context is unav
   const store = createAutomationStore({ sessionId: 'session-1' });
   // Preserve lifetime validity without changing a live clock.
   rule.data.limits.expiresAt = Date.now() + 3600000;
-  for (const readiness of [{kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'unsupported-version'}, {kind:'idle',reason:'consumed-boundary'}] as const) {
+  for (const readiness of [{kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'unsupported-version'}, {kind:'unavailable',code:'CONTEXT_UNAVAILABLE',reason:'malformed'}, {kind:'unavailable',code:'CONTEXT_UNAVAILABLE',reason:'unsafe-runtime'}, {kind:'idle',reason:'consumed-boundary'}] as const) {
     const preview = autorunPreviewSchema.parse({ ...autorunPreviewFixture(), readiness, defaults: { ...autorunPreviewFixture().defaults, expiresAt: automationNow + 28800000 } });
     const html = renderToStaticMarkup(createElement(ContinuationResume, { preview, loading: false, rule: rule.data, store, onDone:()=>{}, onOpenSession:()=>{}, onEdit:()=>{} }));
     const button = html.match(/<button[^>]*>Resume<\/button>/)?.[0];
     assert.ok(button);
-    assert.equal( /\sdisabled(?:=|>)/.test(button), readiness.kind === 'idle');
+    assert.equal( /\sdisabled(?:=|>)/.test(button), readiness.kind === 'idle' || readiness.reason === 'unsafe-runtime');
   }
 });
 
@@ -66,4 +66,23 @@ test('schedule title is a bounded deterministic first-line suggestion and retain
   assert.match(html,/value="2030-01-01T18:00"/); assert.match(html,/value="45"/); assert.match(html,/value="7"/); assert.match(html,/Saved title/);
   assert.ok(html.indexOf('name="prompt"') < html.indexOf('name="name"'));
   assert.match(html,/codex.*saved-model.*high.*fast/);
+});
+
+
+test('attention without a protocol reason still shows the owner decision blocker', async () => {
+  const { AutomationReason } = await import('../src/components/automation/automation-reason');
+  const html = renderToStaticMarkup(createElement(AutomationReason, { reason: null, summary: 'Choose whether to preserve the legacy login flow.' }));
+  assert.match(html, /Choose whether to preserve the legacy login flow/);
+});
+
+
+test('Heartbeat cannot resume without a checked runtime preview', async () => {
+  const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { automationFixture } = await import('./fixtures/automation');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const rule = decodeAutomation({ ...automationFixture(), state: 'paused' });
+  assert.ok(rule.success); rule.data.limits.expiresAt = Date.now()+3600000;
+  const html = renderToStaticMarkup(createElement(ContinuationResume, {preview:null,loading:false,rule:rule.data,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
+  assert.match(html.match(/<button[^>]*>Resume<\/button>/)?.[0] ?? '', /disabled/);
 });
