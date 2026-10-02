@@ -1,4 +1,5 @@
 import './runtime/register-runtime-aliases';
+import { startAutomationHost, stopAutomationHost } from './src/lib/automation/startup';
 import { restoreSessionRuntimes } from './src/lib/session/session-runtime-recovery';
 import { providerLaunchModule } from './src/lib/terminal/shared-provider-launch-module';
 import next from 'next';
@@ -133,6 +134,7 @@ async function startServer() {
 
       // Start WebSocket server on the same HTTP server
       wsServer.start(server);
+      await startAutomationHost();
       // Resume every previously live provider independently of the selected
       // project or mounted panels (including the all-project Running board).
       void restoreSessionRuntimes((request) => providerLaunchModule.launch(request));
@@ -204,6 +206,8 @@ async function startServer() {
     forceExitTimer.unref();
 
     try {
+      await stopAutomationHost();
+
       logger.info('Closing WebSocket connections...');
       await wsServer.shutdown();
 

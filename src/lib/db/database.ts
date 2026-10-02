@@ -34,6 +34,7 @@ interface NativeDatabase {
 const BetterSqlite3 = require('better-sqlite3') as new (filename: string) => NativeDatabase;
 import fs from 'fs';
 import {
+  AUTOMATION_SCHEMA,
   CANONICAL_WORKTREE_BOOTSTRAP_META_KEY,
   CREATE_INDEXES,
   CREATE_TABLES,
@@ -68,7 +69,7 @@ class PreparedStatement {
   }
 }
 
-class DatabaseWrapper {
+export class DatabaseWrapper {
   constructor(private db: NativeDatabase) {}
 
   prepare(sql: string): PreparedStatement {
@@ -185,6 +186,7 @@ function openInitializedDatabase(dbPath: string): DatabaseWrapper {
 
       // Create tables
       wrapper.exec(CREATE_TABLES);
+      wrapper.exec(AUTOMATION_SCHEMA);
 
       // Check/set schema version and run migrations
       const versionRow = wrapper.prepare('SELECT value FROM _meta WHERE key = ?').get('schema_version') as { value: string } | undefined;
@@ -203,7 +205,7 @@ function openInitializedDatabase(dbPath: string): DatabaseWrapper {
     });
 
     wrapper.pragma('journal_mode = WAL');
-    wrapper.pragma('synchronous = NORMAL');
+    wrapper.pragma('synchronous = FULL');
   } catch (error) {
     wrapper.close();
     throw error;

@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 39;
+export const SCHEMA_VERSION = 40;
 
 /**
  * v38 needs the authenticated agent environment before legacy path evidence
@@ -221,4 +221,42 @@ CREATE INDEX IF NOT EXISTS idx_tasks_creation_scope
 
 CREATE INDEX IF NOT EXISTS idx_conv_messages_session
   ON conversation_messages(session_id, id ASC);
+`;
+
+/** v40: local automation journal. Audit rows intentionally have no Session FK. */
+export const AUTOMATION_SCHEMA = `
+CREATE TABLE IF NOT EXISTS session_automations (
+ id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, revision INTEGER NOT NULL,
+ state TEXT NOT NULL, target_session_id TEXT, next_due_at INTEGER,
+ input_hold TEXT NOT NULL DEFAULT 'none', held_session_id TEXT, input_epoch TEXT,
+ config_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_automation_due ON session_automations(owner_user_id,state,next_due_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_wake ON session_automations(owner_user_id,target_session_id)
+ WHERE state IN ('enabled','paused');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_hold ON session_automations(owner_user_id,held_session_id)
+ WHERE input_hold != 'none';
+CREATE TABLE IF NOT EXISTS session_automation_runs (
+ id TEXT PRIMARY KEY, automation_id TEXT NOT NULL REFERENCES session_automations(id) ON DELETE RESTRICT,
+ automation_revision INTEGER NOT NULL, owner_user_id TEXT NOT NULL, occurrence_key TEXT NOT NULL,
+ state TEXT NOT NULL, due_at INTEGER NOT NULL, retry_at INTEGER, session_id TEXT,
+ canonical_worktree_id TEXT, overlap_held INTEGER NOT NULL DEFAULT 0,
+ snapshot_json TEXT NOT NULL,
+ UNIQUE(automation_id,automation_revision,occurrence_key)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_inflight ON session_automation_runs(automation_id)
+ WHERE state IN ('pending','deferred','dispatching');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_overlap ON session_automation_runs(canonical_worktree_id)
+ WHERE overlap_held=1;
+CREATE INDEX IF NOT EXISTS idx_automation_retry ON session_automation_runs(state,retry_at,due_at);
+CREATE INDEX IF NOT EXISTS idx_automation_history ON session_automation_runs(owner_user_id,automation_id,due_at);
+CREATE INDEX IF NOT EXISTS idx_automation_run_session ON session_automation_runs(owner_user_id,session_id);
+CREATE TABLE IF NOT EXISTS session_automation_scheduler (
+ id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL, lease_epoch INTEGER NOT NULL,
+ lease_until INTEGER NOT NULL, heartbeat_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_automation_idempotency (
+ owner_user_id TEXT NOT NULL, key TEXT NOT NULL, request_hash TEXT NOT NULL,
+ response_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(owner_user_id,key)
+);
 `;
