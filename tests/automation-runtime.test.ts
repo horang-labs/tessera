@@ -287,3 +287,33 @@ test('Claude child work blocks arming until a successful lead and child drain se
   f.hook('SubagentStop', 'completed');
   assert.equal((await f.arm()).mode, 'armed');
 });
+
+
+test('post-Enter observation failure preserves the accepted Chat receipt and same-ID retry cannot resend', async () => {
+  const f = await fixture();
+  f.hook('UserPromptSubmit', 'running'); f.hook('Stop', 'completed');
+  f.authority.recordRuntimeObservation = () => { throw Error('observation storage unavailable'); };
+  try {
+    const accepted = await f.manager.submitSessionChatPrompt('session', 'owner', 'Human follow-up', 'same-id');
+    const retried = await f.manager.submitSessionChatPrompt('session', 'owner', 'Human follow-up', 'same-id');
+    assert.deepEqual(retried, accepted);
+    assert.deepEqual(f.writes, ['\x1b[200~Human follow-up\x1b[201~', '\r']);
+  } finally { f.authority.recordRuntimeObservation = () => {}; }
+});
+
+
+test('post-Enter observation failure cannot turn a delivered automated wake into unknown', async () => {
+  const f = await fixture();
+  f.hook('UserPromptSubmit', 'running'); f.hook('Stop', 'completed');
+  let boundary: Boundary | null = null;
+  await f.runtime.arm({ userId: 'owner', sessionId: 'session', automationId: 'rule', selection }, evidence => {
+    if (evidence.kind === 'completed') boundary = evidence.boundary;
+  });
+  f.authority.recordRuntimeObservation = () => { throw Error('observation storage unavailable'); };
+  try {
+    const args = { runId: 'run', leaseEpoch: 1, expectedRevision: 1, expectedBoundary: boundary };
+    assert.equal((await f.runtime.dispatch(args)).kind, 'delivered');
+    assert.equal((await f.runtime.dispatch(args)).kind, 'delivered');
+    assert.deepEqual(f.writes, ['\x1b[200~Continue safely\x1b[201~', '\r']);
+  } finally { f.authority.recordRuntimeObservation = () => {}; }
+});

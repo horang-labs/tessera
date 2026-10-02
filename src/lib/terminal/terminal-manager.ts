@@ -1580,7 +1580,7 @@ export class TerminalManager {
       interruptInputPolicy: runtime.interruptInputPolicy,
     };
     runtime.lastSessionState = message;
-    this.automation.submitted(runtime.userId, runtime.sessionId!, message.hookEvent);
+    this.observeAcceptedPrompt(userId, sessionId, message.hookEvent);
     runtime.runtimeStateAt = stateAt;
     this.notifySessionWaiters(runtime, message);
     try {
@@ -1607,6 +1607,12 @@ export class TerminalManager {
       stateAt,
       lifecyclePreview: message.preview,
     });
+  }
+
+  private observeAcceptedPrompt(userId: string, sessionId: string, event: string): void {
+    // Host-accepted Enter stays accepted even when observation persistence fails.
+    try { this.automation.submitted(userId, sessionId, event); }
+    catch (error) { logger.warn({ error, sessionId }, 'Prompt observation failed after acceptance'); }
   }
 
   isAutomationInputBusy(userId: string, sessionId: string): boolean {
@@ -1651,7 +1657,7 @@ export class TerminalManager {
       write('complete', '\r');
       this.automation.dirty(userId, sessionId);
       // Consume the boundary synchronously, before a second scheduler call can enter.
-      this.automation.submitted(userId, sessionId, 'AutomationPromptSubmit');
+      this.observeAcceptedPrompt(userId, sessionId, 'AutomationPromptSubmit');
       return { kind: 'delivered', sessionId, terminalId: runtime.terminalId, at: Date.now() };
     } catch {
       return possibleWrite ? { kind: 'unknown', reason: 'DELIVERY_UNKNOWN', sessionId }
