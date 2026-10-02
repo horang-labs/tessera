@@ -10,8 +10,6 @@ import { nextScheduledAt } from './schedule';
 
 export type Inspection = { selection: SessionSelectionSnapshot; canonicalWorktreeId: string | null; assertCurrent(): void };
 export type AutomationDependencies = {
-  settleAnalysisHold?: (owner: string,sessionId:string,automationId:string)=>void;
-  retainAnalysisHold?: (owner: string,sessionId:string,automationId:string)=>void;
   provider?: (provider: string) => AutorunProviderPort | null;
   publishAttention?: (owner: string, attention: import('./autorun-contracts').AutomationAttention) => void;
   now(): number;
@@ -228,6 +226,7 @@ export class AutomationService {
     return this.inhibit(userId, id, deleted ? 'deleted' : 'paused', deleted ? 'deleted' : 'user-pause');
   }
   inhibit(userId: string, id: string, state: DurableAutomation['state'], reason: string): DurableControlResponse {
+    const previousRevision=this.owned(userId,id).automation.revision;
     this.repo.transaction(() => {
       const value = this.owned(userId, id), a = value.automation;
       if (a.state !== 'deleted' && (a.state !== state || a.pauseReason !== reason)) {
@@ -249,6 +248,9 @@ export class AutomationService {
       });
     }
     this.notify(a);
+    const current=this.owned(userId,id).automation;
+    if (isAutorun(current) && current.revision!==previousRevision && current.attention?.identity.revision===current.revision)
+      this.autorun.publishAttention(userId,current.attention.identity);
     const body = this.detail(userId, id);
     return { status: body.inputOwnership?.mode === 'draining' ? 202 : 200, body };
   }

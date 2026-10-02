@@ -4,7 +4,7 @@ import { AutomationService, fail, type ListOptions } from './service';
 import { sameSessionSelection } from './contracts';
 import { AUTORUN_BOUNDS, PROVEN_SUPERVISOR_COMBINATIONS, autorunConfigSchema, autorunPreviewSchema,
   autorunPreviewInputSchema, autorunEvidenceResultSchema, decodeAutomationInput, sameSupervisorSelection,
-  supervisorCapabilitySchema, validateAutomationInputV2, type AutorunInput, type AutorunPreview, type AutorunAutomation,
+  supervisorCapabilitySchema, validateAutomationInputV2, autorunPauseReasonSchema, type AutorunInput, type AutorunPreview, type AutorunAutomation,
   type AutorunConfig, type AutomationAttention, type AutorunDecisionSummary } from './autorun-contracts';
 import { isAutorun, type DurableControlResult, type DurableControlResponse } from './autorun-storage';
 import type { ArmEvidence, AutorunRuntimePort } from './runtime-port';
@@ -13,7 +13,7 @@ type Owner = { userId: string; agentEnvironment: 'native' | 'wsl' };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class AutorunService {
   cancelAnalysis: (id: string) => void = () => {};
-  private previews = new Map<string, { owner: string; preview: AutorunPreview; at: number }>();
+  private previews = new Map<string, { owner: string; preview: AutorunPreview; at: number; humanSourceIds: string[] }>();
   constructor(readonly service: AutomationService) {}
   private get repo() { return this.service.repo; }
   private get now() { return this.service.deps.now(); }
@@ -30,6 +30,7 @@ export class AutorunService {
     const previous = saved ?? this.repo.all().map(v => v.automation).filter(isAutorun)
       .filter(a => a.ownerUserId === userId && a.target.sessionId === sessionId).sort((a,b) => b.updatedAt-a.updatedAt)[0];
     const goalRevision = (previous?.autorun.objective.revision ?? 0) + 1;
+    let humanSourceIds=this.repo.get(previous?.id??'')?.humanSourceIds ?? (previous?.autorun.objective.kind==='verified-human'?previous.autorun.objective.sources.map(s=>s.recordId):[]);
     let objective: AutorunConfig['objective'] | null = null;
     let newHumanInstructions: AutorunPreview['newHumanInstructions'] = [];
     let readiness: AutorunPreview['readiness'] = turn.kind === 'idle' ? turn :
@@ -39,16 +40,19 @@ export class AutorunService {
       const evidence = autorunEvidenceResultSchema.safeParse(await this.provider(inspection.selection.provider).readAutorunEvidence({
         userId, agentEnvironment: owner.agentEnvironment, sessionId, providerConversationId: native.providerConversationId,
         inputEpoch: ownership.epoch, workerSelection: inspection.selection, turnEvidence: turn, goalRevision,
-        previousHumanSourceIds: previous?.autorun.objective.kind === 'verified-human' ? previous.autorun.objective.sources.map(s => s.recordId) : [],
+        previousHumanSourceIds: humanSourceIds,
         signal: AbortSignal.timeout(AUTORUN_BOUNDS.flushWaitMs),
       }));
       if (!evidence.success) fail('CONTEXT_UNAVAILABLE');
       if (evidence.data.kind === 'ok') {
         if (!isDeepStrictEqual(evidence.data.turnEvidence, turn)) fail('ANALYSIS_STALE');
-        if (evidence.data.goal.kind === 'verified') objective = { ...evidence.data.goal.objective, revision: goalRevision };
+        if (evidence.data.goal.kind === 'verified') objective = previous?.autorun.objective.kind === 'explicit'
+          ? { ...previous.autorun.objective,revision:goalRevision } : { ...evidence.data.goal.objective, revision: goalRevision };
         else if (evidence.data.goal.kind === 'missing' && previous?.autorun.objective.kind === 'explicit')
           objective = { ...previous.autorun.objective, revision: goalRevision };
         newHumanInstructions = evidence.data.newHumanInstructions;
+        humanSourceIds=[...new Set([...humanSourceIds,...newHumanInstructions.map(s=>s.recordId),
+          ...(evidence.data.goal.kind==='verified'?evidence.data.goal.objective.sources.map(s=>s.recordId):evidence.data.goal.kind==='conflicting'?evidence.data.goal.sources.map(s=>s.recordId):[])])];
         if (turn.kind === 'running') readiness = turn;
         else if (this.repo.boundaryConsumed(userId, sessionId, turn.boundary.id)) readiness = { kind: 'idle', reason: 'consumed-boundary' };
         else {
@@ -87,7 +91,7 @@ export class AutorunService {
         analyses: previous ? Math.max(0,previous.autorun.maxAnalyses-previous.analysisCount) : 20 } });
     for (const [id, cached] of this.previews) if (cached.at < this.now-300_000) this.previews.delete(id);
     if (this.previews.size >= 100) this.previews.delete(this.previews.keys().next().value!);
-    this.previews.set(preview.previewId, { owner: userId, preview, at: this.now });
+    this.previews.set(preview.previewId, { owner: userId, preview, at: this.now, humanSourceIds });
     return preview;
   }
   private async prepare(userId: string, input: AutorunInput, saved?: AutorunAutomation) {
@@ -104,7 +108,7 @@ export class AutorunService {
     if (input.enabled && preview.readiness.kind === 'idle') fail('INPUT_BOUNDARY_UNPROVEN');
     if (!preview.supervisorOptions.some(o => sameSupervisorSelection(o.selection, input.autorun.supervisor))) fail('SUPERVISOR_UNSUPPORTED');
     const config = autorunConfigSchema.parse({ ...input.autorun, objective: preview.objective, criterionOrigin: reference?.preview.criterionOrigin ?? preview.criterionOrigin });
-    return { preview, config };
+    return { preview, config, humanSourceIds: this.previews.get(preview.previewId)!.humanSourceIds };
   }
   async create(userId: string, key: string, input: AutorunInput, owner: Owner): Promise<DurableControlResult> {
     if (!key || key.length>128) fail('INVALID_AUTOMATION');
@@ -116,7 +120,7 @@ export class AutorunService {
       return existing?.response;
     };
     const old = replay(); if (old) return old;
-    const { preview, config } = await this.prepare(userId, input);
+    const { preview, config, humanSourceIds } = await this.prepare(userId, input);
     const { enabled, autorun: _config, ...base } = input; void _config;
     const a: AutorunAutomation = { ...base, autorun: config, id: randomUUID(), revision: 1, state: enabled ? 'enabled' : 'disabled', pauseReason: null,
       ownerUserId: userId, agentEnvironment: owner.agentEnvironment, savedSelection: preview.workerSelection,
@@ -127,7 +131,7 @@ export class AutorunService {
       if (this.repo.all().length>=100) fail('INVALID_AUTOMATION');
       this.service.checkWakeAvailable(a); this.assertAdmission(a, preview, evidence);
       if (evidence?.kind === 'completed') a.nextDueAt = this.now+a.trigger.delayMs;
-      this.repo.save({ automation: a, evidence, ownership });
+      this.repo.save({ automation: a, evidence, ownership, humanSourceIds });
       this.repo.remember(userId, key, hash, this.service.detail(userId, a.id), this.now);
     });
     try {
@@ -151,14 +155,14 @@ export class AutorunService {
     const old = value.automation, parsed = decodeAutomationInput(raw);
     if (!isAutorun(old) || !parsed.success || parsed.data.mode !== 'autorun' || parsed.data.enabled || parsed.data.target.sessionId !== old.target.sessionId) fail('INVALID_AUTOMATION');
     const checked = validateAutomationInputV2(parsed.data, { now: this.now }); if (!checked.success) fail(checked.code);
-    const { config } = await this.prepare(userId, parsed.data, old);
+    const { config, humanSourceIds } = await this.prepare(userId, parsed.data, old);
     const input = parsed.data;
     this.repo.transaction(() => {
       const current = this.service.editable(userId, id, revision); if (!isAutorun(current.automation)) fail('INVALID_AUTOMATION');
       const { enabled: _enabled, autorun: _autorun, ...base } = input; void _enabled; void _autorun;
       Object.assign(current.automation, base, { autorun: config, revision: revision+1, state: 'disabled', pauseReason: null,
         agentEnvironment: owner.agentEnvironment, updatedAt: this.now, nextDueAt: null, autorunStatus: 'paused' });
-      current.evidence = null; this.repo.save(current);
+      current.evidence = null;current.humanSourceIds=humanSourceIds; this.repo.save(current);
     });
     const result = this.service.detail(userId,id); this.service.notify(result.automation); return result;
   }
@@ -168,21 +172,19 @@ export class AutorunService {
     if (a.analysisCount>=a.autorun.maxAnalyses) fail('ANALYSIS_LIMIT');
     if (a.dispatchCount>=a.limits.maxDispatches) fail('INVALID_AUTOMATION');
     if (this.repo.decisions(id).some(d => d.active)) fail('UNRESOLVED_RUN');
-    const input: AutorunInput = { ...a, enabled: true, autorun: { ...a.autorun, objective: { kind: 'explicit', text: a.autorun.objective.text } } };
     // Build current human provenance again; retain explicit authored override, require conflicts to be resolved in Edit.
-    const preview = await this.preview(userId,a.target.sessionId, a.autorun.objective.kind === 'explicit' ? { objectiveOverride: a.autorun.objective.text } : {}, a);
+    const preview = await this.preview(userId,a.target.sessionId, {}, a);
     if (!preview.objective) fail('OBJECTIVE_REQUIRED');
     if (preview.readiness.kind === 'idle') fail('INPUT_BOUNDARY_UNPROVEN');
     if (preview.readiness.kind === 'unavailable') fail(preview.readiness.code);
     if (!preview.supervisorOptions.some(o => sameSupervisorSelection(o.selection,a.autorun.supervisor))) fail('SUPERVISOR_UNSUPPORTED');
     if (!sameSessionSelection(a.savedSelection,preview.workerSelection) || a.limits.expiresAt<=this.now) fail('ANALYSIS_STALE');
-    void input;
     await this.service.runtime().arm({ userId, sessionId: a.target.sessionId, automationId:id, selection:a.savedSelection }, (e,o) => this.repo.transaction(() => {
       const current = this.service.editable(userId,id,revision); if (!isAutorun(current.automation)) fail('INVALID_AUTOMATION');
       this.service.checkWakeAvailable({ ...current.automation,state:'enabled' }); this.assertAdmission(current.automation,preview,e);
       Object.assign(current.automation,{ revision:revision+1,state:'enabled',pauseReason:null,autorunStatus:'waiting',updatedAt:this.now,
         nextDueAt:e.kind==='completed'?this.now+a.trigger.delayMs:null,autorun:{...a.autorun,objective:preview.objective} });
-      current.evidence=e;current.ownership=o;this.repo.save(current);
+      current.evidence=e;current.ownership=o;current.humanSourceIds=this.previews.get(preview.previewId)!.humanSourceIds;this.repo.save(current);
     }));
     const body=this.service.detail(userId,id);this.service.notify(body.automation);return {status:200,body};
   }
@@ -197,7 +199,17 @@ export class AutorunService {
     const value=this.repo.get(id);if (!value || !isAutorun(value.automation)) return;
     const a=value.automation;
     if (!['complete','needs-user','error'].includes(a.autorunStatus)) a.autorunStatus='paused';
-    this.repo.save(value);void reason;
+    const translated:Record<string,string>={INPUT_REQUIRED:'NATIVE_APPROVAL',input_required:'NATIVE_APPROVAL',
+      'input-required':'NATIVE_APPROVAL',RUNTIME_REBOUND:'WORKER_IDENTITY_CHANGED',RUNTIME_REPLACED:'WORKER_IDENTITY_CHANGED',
+      RUNTIME_EXITED:'WORKER_IDENTITY_CHANGED',BOUNDARY_UNPROVEN:'INPUT_BOUNDARY_UNPROVEN',TURN_UNPROVEN:'INPUT_BOUNDARY_UNPROVEN',
+      BACKGROUND_UNPROVEN:'INPUT_BOUNDARY_UNPROVEN','restart-rearm-required':'ANALYSIS_INTERRUPTED'};
+    const parsed=autorunPauseReasonSchema.safeParse(translated[reason]??reason);
+    if (parsed.success && a.state!=='deleted' && a.attention?.identity.revision!==a.revision) {
+      const identity={kind:'rule' as const,automationId:a.id,revision:a.revision,sessionId:a.target.sessionId,decisionId:null,
+        outcome:a.autorunStatus==='error'?'error' as const:'paused' as const,reason:parsed.data};
+      a.attention={identity,summary:parsed.data,createdAt:this.now};
+    }
+    this.repo.save(value);
   }
   decisions(userId: string,id: string,options:ListOptions) {
     this.service.owned(userId,id);

@@ -100,3 +100,20 @@ test('a whitespace-equivalent recent delivered proposal escalates to needs-user 
     assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');
   }finally{await f.close();}
 });
+
+test('read accounting or bookkeeping after the cutoff cannot stale an unchanged captured native prefix',async()=>{
+  const f=await autorunFixture();
+  try{
+    const read=f.provider.readAnalysisContext;let completed=false;
+    f.provider.readAnalysisContext=async args=>{
+      const result=await read(args);return result.kind==='ok'&&completed?{...result,snapshot:{...result.snapshot,
+        source:{...result.snapshot.source,bytesScanned:628,scannedRanges:[{startByte:0,endByte:628}]}}}:result;
+    };
+    const generate=f.provider.generateSupervisorDecision;
+    f.provider.generateSupervisorDecision=async args=>{const result=await generate(args);completed=true;return result;};
+    const a=(await f.service.create('owner-1','append-bookkeeping',f.input())).automation;
+    f.setNow(autorunNow+121_000);await f.engine.tick();
+    assert.equal(f.service.autorun.decisions('owner-1',a.id,{}).items[0].outcome,'complete');
+    assert.deepEqual(f.bytes,[]);
+  }finally{await f.close();}
+});

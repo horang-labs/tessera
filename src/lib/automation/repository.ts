@@ -5,6 +5,7 @@ import { isAutorun, type DurableAutomation, type DurableControlResult, type Stor
 import type { ArmEvidence, Boundary, RuntimeObservation } from './runtime-port';
 
 export type StoredAutomation = {
+  humanSourceIds?: string[];
   automation: DurableAutomation; ownership: InputOwnership | null; evidence: ArmEvidence | null;
 };
 export type StoredRun = {

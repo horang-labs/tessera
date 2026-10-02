@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
+import { sameSessionSelection } from './contracts';
 import { AutomationService, fail } from './service';
-import { isAutorun, type StoredDecision } from './autorun-storage';
+import { isAutorun, sameCapturedPrefix, type StoredDecision } from './autorun-storage';
 import { supervisorPacketSchema, validateSupervisorFinalResult, supervisorResultSchema, supervisorCapabilitySchema,
   sameSupervisorSelection, SUPERVISOR_DECISION_JSON_SCHEMA, type AutorunAutomation, type SupervisorPacket,
   type SupervisorDecision, type SupervisorResult } from './autorun-contracts';
@@ -57,6 +57,7 @@ export class AutorunEngine {
     const owner=await this.service.authorize(a.ownerUserId);
     if (owner.agentEnvironment!==a.agentEnvironment) fail('ANALYSIS_STALE');
     const inspection=await this.service.deps.inspect(a.ownerUserId,a.target,a.agentEnvironment);
+    if (!sameSessionSelection(inspection.selection,a.savedSelection)) {this.pause(a,'WORKER_IDENTITY_CHANGED');return;}
     const capability=await this.service.autorun.provider(a.autorun.supervisor.provider).checkSupervisorCapability({
       userId:a.ownerUserId,agentEnvironment:a.agentEnvironment,selection:a.autorun.supervisor });
     if (capability.kind!=='available' || !supervisorCapabilitySchema.safeParse(capability.capability).success ||
@@ -67,12 +68,13 @@ export class AutorunEngine {
     const context=await runtime.captureAnalysisContext({ userId:a.ownerUserId,agentEnvironment:a.agentEnvironment,sessionId:a.target.sessionId,
       expectedBoundary:b,signal:controller.signal });
     if (controller.signal.aborted) return;
+    if (context.kind==='ok' && !sameSessionSelection(context.snapshot.workerSelection,a.savedSelection)) {this.pause(a,'WORKER_IDENTITY_CHANGED');return;}
     if (context.kind!=='ok') { this.pause(a,context.code);return; }
     const packet=existing?.detail.packet ?? supervisorPacketSchema.parse({version:1,objective:a.autorun.objective,constraints:a.autorun.constraints,
       criteria:a.autorun.criteria,criterionOrigin:a.autorun.criterionOrigin,context:context.snapshot,
       priorDecisions:this.repo.decisions(a.id).filter(d=>d.detail.decision).slice(0,10).reverse().map(d=>({decisionId:d.detail.id,
         outcome:d.detail.decision!.outcome,explanation:d.detail.decision!.explanation,progress:d.detail.decision!.progress,madeProgress:d.detail.decision!.madeProgress})) });
-    if (existing && (!isDeepStrictEqual(existing.identity.source,context.snapshot.source) || existing.identity.contentHash!==context.snapshot.contentHash)) fail('ANALYSIS_STALE');
+    if (existing && (!sameCapturedPrefix(existing.identity.source,context.snapshot.source) || existing.identity.contentHash!==context.snapshot.contentHash)) fail('ANALYSIS_STALE');
     const deadlineAt=Math.min(this.now+a.autorun.analysisTimeoutMs,a.limits.expiresAt);
     let decision=existing;
     if (!decision) this.repo.transaction(()=> {
@@ -116,14 +118,13 @@ export class AutorunEngine {
     if (controller.signal.aborted || retained.detail.phase!=='analysing' || this.now>=deadlineAt) {
       retained.active=!result.settlement.quiescent;
       if (retained.detail.phase==='analysing') {retained.detail.phase='cancelled';retained.detail.reason='ANALYSIS_STALE';retained.detail.finishedAt=this.now;}this.repo.saveDecision(retained);
-      if (!result.settlement.quiescent) this.service.deps.retainAnalysisHold?.(a.ownerUserId,a.target.sessionId,a.id);
-      else {this.service.deps.settleAnalysisHold?.(a.ownerUserId,a.target.sessionId,a.id);if (this.now>=deadlineAt) this.pause(a,'SUPERVISOR_TIMEOUT');}
+      if (this.now>=deadlineAt) this.pause(a,'SUPERVISOR_TIMEOUT');
       return;
     }
     const final=validateSupervisorFinalResult(result,{selection:d.packetSelection,criterionIds:packet.criteria.map(c=>c.id),evidenceIds:packet.context.items.map(i=>i.id)});
     if (!final.success) { this.failure(a,retained,result);return; }
     const refreshed=await runtime.captureAnalysisContext({userId:a.ownerUserId,agentEnvironment:a.agentEnvironment,sessionId:a.target.sessionId,expectedBoundary:b,signal:controller.signal});
-    if (refreshed.kind!=='ok' || refreshed.snapshot.contentHash!==d.identity.contentHash || !isDeepStrictEqual(refreshed.snapshot.source,d.identity.source)) {
+    if (refreshed.kind!=='ok' || refreshed.snapshot.contentHash!==d.identity.contentHash || !sameCapturedPrefix(refreshed.snapshot.source,d.identity.source)) {
       this.failure(a,retained,{kind:'cancelled',code:'SUPERVISOR_CANCELLED',invocationId,settlement:{exitCode:0,quiescent:true}});return;
     }
     const committed=runtime.commitAnalysisDecision(retained.identity,()=>this.repo.transaction(()=> {
@@ -180,7 +181,6 @@ export class AutorunEngine {
     }
     d.detail.phase='failed';d.detail.reason=code;d.detail.finishedAt=this.now;d.active=!result.settlement.quiescent;
     this.repo.saveDecision(d);
-    if (!result.settlement.quiescent) this.service.deps.retainAnalysisHold?.(a.ownerUserId,a.target.sessionId,a.id);
     this.pause(a,code);
   }
   private finish(a:AutorunAutomation,d:StoredDecision,judgment:SupervisorDecision) {
@@ -191,16 +191,12 @@ export class AutorunEngine {
     const current=this.repo.get(a.id);if (!current || !isAutorun(current.automation) || current.automation.state!=='enabled' || current.automation.revision!==a.revision) return;
     current.automation.autorunStatus='error';this.repo.save(current);
     this.service.inhibit(a.ownerUserId,a.id,'paused',reason);
-    const value=this.repo.get(a.id)!;if (!isAutorun(value.automation)) return;
-    const identity={kind:'rule' as const,automationId:a.id,revision:value.automation.revision,sessionId:a.target.sessionId,decisionId:null,outcome:'error' as const,reason};
-    value.automation.attention={identity,summary:reason,createdAt:this.now};this.repo.save(value);this.service.autorun.publishAttention(a.ownerUserId,identity);
   }
   recover() {
     for (const d of this.repo.decisions()) if (d.active) {
       d.active=d.detail.attempts.some(at=>at.quiescent!==true);d.detail.phase=d.detail.decision?'decided':'interrupted';d.detail.reason='ANALYSIS_INTERRUPTED';d.detail.finishedAt=this.now;d.detail.retryAt=null;
       for (const at of d.detail.attempts) if (at.finishedAt===null) {at.finishedAt=this.now;at.failureCode='ANALYSIS_INTERRUPTED';at.quiescent=null;}
       this.repo.saveDecision(d);
-      if (d.active) {const a=this.repo.get(d.detail.automationId)?.automation;if (a && isAutorun(a)) this.service.deps.retainAnalysisHold?.(a.ownerUserId,a.target.sessionId,a.id);}
     }
   }
   async stop() {for (const f of this.flights.values()) f.controller.abort();}

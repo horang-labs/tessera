@@ -329,19 +329,6 @@ export class AutomationInputGate {
     }
     return this.ownership(userId, sessionId);
   }
-  settleAnalysisHold(userId: string,sessionId: string,automationId: string) {
-    const state=this.state(userId,sessionId);
-    if (state && !state.writer && state.ownership.automationId===automationId && state.ownership.runId===null &&
-      state.ownership.mode==='recovery-required' && state.ownership.reason==='SUPERVISOR_PROCESS_UNCERTAIN')
-      this.transition(state,state.live?'human':'unavailable');
-  }
-  holdAnalysis(userId: string, sessionId: string, automationId: string) {
-    if (!this.state(userId,sessionId)) this.recover(userId,sessionId,automationId,null);
-    const state=this.state(userId,sessionId)!;
-    if (state.ownership.automationId && state.ownership.automationId!==automationId) return;
-    state.automated=true;state.ownership.automationId=automationId;state.ownership.runId=null;
-    this.transition(state,'recovery-required','SUPERVISOR_PROCESS_UNCERTAIN');
-  }
   recover(userId: string, sessionId: string, automationId: string, runId: string | null) {
     let state = this.state(userId, sessionId);
     if (!state) {

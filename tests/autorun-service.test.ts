@@ -38,3 +38,38 @@ test('first accepted running turn can Start without a completed snapshot; consum
     assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');
   }finally{await f.close();}
 });
+
+test('Resume refuses newly conflicting human evidence until a fresh explicit edit resolves the objective',async()=>{
+  const f=await autorunFixture();
+  try{
+    const a=(await f.service.create('owner-1','conflict',f.input())).automation;
+    const paused=await f.service.pause('owner-1',a.id);
+    const evidence=f.provider.readAutorunEvidence;
+    f.provider.readAutorunEvidence=async args=>{
+      const value=await evidence(args);if(value.kind!=='ok'||value.goal.kind!=='verified')throw new Error('verified fixture');
+      return {...value,goal:{kind:'conflicting',sources:value.goal.objective.sources},newHumanInstructions:value.goal.objective.sources};
+    };
+    await assert.rejects(f.service.enable('owner-1',a.id,paused.body.automation.revision),{code:'OBJECTIVE_REQUIRED'});
+    assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');
+    const edited=await f.service.edit('owner-1',a.id,paused.body.automation.revision,{...f.input(),enabled:false,
+      autorun:{...f.input().autorun,objective:{kind:'explicit',text:'Resolved objective: preserve the new human correction.'}}});
+    assert.equal(edited.automation.state,'disabled');
+  }finally{await f.close();}
+});
+
+test('unchanged explicit objective Resume sends native record IDs to the producer and preserves the approved objective',async()=>{
+  const f=await autorunFixture();
+  try{
+    const a=(await f.service.create('owner-1','source-identity',f.input())).automation;
+    const paused=await f.service.pause('owner-1',a.id);
+    const evidence=f.provider.readAutorunEvidence;
+    f.provider.readAutorunEvidence=async args=>{
+      assert.deepEqual(args.previousHumanSourceIds,['record-1']);
+      return evidence(args);
+    };
+    const resumed=await f.service.enable('owner-1',a.id,paused.body.automation.revision);
+    if(resumed.body.automation.mode!=='autorun')throw new Error('Autorun expected');
+    assert.deepEqual(resumed.body.automation.autorun.objective,{kind:'explicit',text:'Fix login and verify the regression.',revision:2});
+    assert.equal(f.calls(),0);
+  }finally{await f.close();}
+});

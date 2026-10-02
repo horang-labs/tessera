@@ -85,8 +85,6 @@ export async function startAutomationHost(): Promise<Host> {
     },
     inspect: inspectAutomationTarget, publish: broadcastAutomationMutation, publishAttention: broadcastAutorunAttention,
     provider: id => cliProviderRegistry.hasProvider(id) ? cliProviderRegistry.getProvider(id).autorun ?? null : null,
-    settleAnalysisHold: (userId,sessionId,automationId) => terminalManager.automation.settleAnalysisHold(userId,sessionId,automationId),
-    retainAnalysisHold: (userId,sessionId,automationId) => terminalManager.automation.holdAnalysis(userId,sessionId,automationId),
   });
   const engine = new AutomationEngine(service);
   const release = installAutomationAuthority(engine);

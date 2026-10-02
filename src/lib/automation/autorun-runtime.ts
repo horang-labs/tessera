@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { TerminalManager } from '../terminal/terminal-manager';
 import type { AutorunProviderPort } from '../cli/providers/session-types';
 import { analysisContextSnapshotSchema, type AnalysisContextSnapshot } from './autorun-contracts';
+import { sameCapturedPrefix } from './autorun-storage';
 import { sameSessionSelection, type SessionSelectionSnapshot } from './contracts';
 import type { AutorunRuntimePort } from './runtime-port';
 
@@ -49,7 +50,7 @@ export function createAutorunRuntime(options: {
     },
     commitAnalysisDecision(identity, commit) {
       const snapshot = snapshots.get(key(identity.userId, identity.expectedBoundary.sessionId));
-      if (!snapshot || snapshot.contentHash !== identity.contentHash || !isDeepStrictEqual(snapshot.source, identity.source) ||
+      if (!snapshot || snapshot.contentHash !== identity.contentHash || !sameCapturedPrefix(snapshot.source, identity.source) ||
         snapshot.providerConversationId !== identity.providerConversationId || !sameSessionSelection(snapshot.workerSelection, identity.workerSelection))
         return { kind: 'rejected', code: 'ANALYSIS_STALE' };
       try {

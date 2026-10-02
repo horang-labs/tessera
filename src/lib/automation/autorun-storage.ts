@@ -12,3 +12,9 @@ export type StoredDecision = {
   packetSelection: AutorunAutomation['autorun']['supervisor']; leaseEpoch: number;
   evidenceHash: string; proposalHash: string | null; noProgressStreak: number; unchangedStreak: number;
 };
+
+/** Read accounting is not source identity: R1's contentHash attests captured bytes to this cutoff. */
+export function sameCapturedPrefix(a: AnalysisIdentity['source'], b: AnalysisIdentity['source']): boolean {
+  return a.identityHash===b.identityHash && a.fileGeneration===b.fileGeneration && a.startByte===b.startByte &&
+    a.endByte===b.endByte && a.latestTurnStartByte===b.latestTurnStartByte;
+}

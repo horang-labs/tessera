@@ -55,7 +55,31 @@ for(const kind of ['auth','timeout','uncertain','throw'] as const)test(`${kind} 
     assert.equal(calls,1);assert.deepEqual(f.bytes,[]);
     const d=f.service.detail('owner-1',a.id).automation;
     assert.equal('analysisCount' in d&&d.analysisCount,1);assert.equal(d.state,'paused');
-    if(kind==='uncertain'||kind==='throw')assert.equal(f.runtime.ownership('owner-1','session-1').mode,'recovery-required');
+    if(kind==='uncertain'||kind==='throw'){
+      assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');
+      assert.equal(f.service.repo.decisions(a.id)[0].active,true);
+      f.manager.write('terminal-1','owner-1','panel','normal','manual input',f.runtime.ownership('owner-1','session-1').epoch);
+      assert.deepEqual(f.bytes,['manual input']);
+      await assert.rejects(f.service.enable('owner-1',a.id,d.revision),{code:'UNRESOLVED_RUN'});
+    }
+  }finally{await f.close();}
+});
+
+test('Pause during ignored supervisor cancellation restores manual input and rejects its late proposal',async()=>{
+  const f=await autorunFixture();
+  try{
+    let release!:()=>void,started!:()=>void;const entered=new Promise<void>(r=>started=r);
+    f.provider.generateSupervisorDecision=async args=>{started();await new Promise<void>(r=>release=r);return continuation(args.invocationId);};
+    const a=(await f.service.create('owner-1','pause-analysis',f.input())).automation;
+    f.setNow(autorunNow+121_000);const pending=f.engine.tick();await entered;
+    const paused=await f.service.pause('owner-1',a.id);
+    assert.equal(paused.status,200);assert.equal(paused.body.inputOwnership?.mode,'human');
+    f.manager.write('terminal-1','owner-1','panel','normal','manual input',f.runtime.ownership('owner-1','session-1').epoch);
+    release();await pending;
+    assert.deepEqual(f.bytes,['manual input']);
+    const [decision]=f.service.autorun.decisions('owner-1',a.id,{}).items;
+    assert.equal(decision.outcome,null);assert.equal(decision.phase,'cancelled');
+    assert.equal(f.service.history('owner-1',a.id,{}).items.length,0);
   }finally{await f.close();}
 });
 
@@ -79,5 +103,34 @@ test('a returned success for a different invocation cannot become a current comp
     f.setNow(autorunNow+121_000);await f.engine.tick();
     const [d]=f.service.autorun.decisions('owner-1',a.id,{}).items;
     assert.equal(d.outcome,null);assert.equal(d.reason,'SUPERVISOR_PROCESS_UNCERTAIN');assert.deepEqual(f.bytes,[]);
+  }finally{await f.close();}
+});
+
+test('native approval before analysis persists rule attention before owner publication and survives detail/list recovery',async()=>{
+  const f=await autorunFixture();
+  try{
+    const a=(await f.service.create('owner-1','approval-attention',f.input())).automation;
+    const published:unknown[]=[];
+    f.service.deps.publishAttention=(owner,item)=>{
+      assert.equal(owner,'owner-1');const current=f.service.detail(owner,a.id).automation;
+      assert.equal('attention' in current&&current.attention?.identity.reason,'NATIVE_APPROVAL');published.push(item);
+    };
+    f.manager.automation.hook('owner-1','session-1','PermissionRequest','input_required',autorunNow+200,false);
+    const current=f.service.detail('owner-1',a.id).automation;
+    assert.equal('attention' in current&&current.attention?.identity.kind,'rule');
+    assert.equal(f.service.list('owner-1',{}).items[0].attention?.reason,'NATIVE_APPROVAL');
+    assert.equal(published.length,1);assert.equal(f.calls(),0);assert.equal(f.service.autorun.decisions('owner-1',a.id,{}).items.length,0);
+  }finally{await f.close();}
+});
+
+test('saved worker selection drift pauses before any model call, including a would-be completion',async()=>{
+  const f=await autorunFixture();
+  try{
+    const a=(await f.service.create('owner-1','worker-drift',f.input())).automation;
+    const selected=(await f.service.deps.inspect('owner-1',a.target,'wsl')).selection;
+    selected.model='changed-worker-model';
+    f.setNow(autorunNow+121_000);await f.engine.tick();
+    assert.equal(f.calls(),0);assert.equal(f.service.detail('owner-1',a.id).automation.state,'paused');
+    assert.equal(f.service.autorun.decisions('owner-1',a.id,{}).items.length,0);assert.deepEqual(f.bytes,[]);
   }finally{await f.close();}
 });

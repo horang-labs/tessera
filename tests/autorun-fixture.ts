@@ -36,8 +36,6 @@ export async function autorunFixture(ownerUserId = 'owner-1') {
   const engine = new AutomationEngine(f.service, 'autorun-instance');
   const runtime = createAutomationRuntime({ manager, authority: () => engine, readSelection: async () => worker, autorunProvider: () => provider });
   f.service.deps.runtime = () => runtime;
-  f.service.deps.settleAnalysisHold=(owner,session,id)=>manager.automation.settleAnalysisHold(owner,session,id);
-  f.service.deps.retainAnalysisHold=(owner,session,id)=>manager.automation.holdAnalysis(owner,session,id);
   f.service.deps.owner = async () => ({ userId: ownerUserId, agentEnvironment: 'wsl' });
   await manager.create({ userId: ownerUserId, sessionId: 'session-1', terminalId: 'terminal-1', connectionId: 'panel', surfaceId: 'normal',
     providerId: 'codex', agentEnvironment: 'wsl', resolvedShell: { command: 'fixture', args: [], cwd: process.cwd() } });
