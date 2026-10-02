@@ -11,6 +11,7 @@ import { getTesseraDataPath, resolveConfiguredPath } from '../tessera-data-dir';
 import { resolveServerDefaultUserId } from '../server-default-user';
 import { isElectronRuntime } from '../electron-runtime';
 import logger from '../logger';
+import type { ProviderLaunchRequest } from '../terminal/provider-launch-module';
 import { AutomationEngine } from './engine';
 import { AutomationRepository } from './repository';
 import { AutomationService, fail, type Inspection } from './service';
@@ -100,3 +101,14 @@ export async function startAutomationHost(): Promise<Host> {
 }
 
 export async function stopAutomationHost(): Promise<void> { await globals[key]?.close(); }
+
+/** A-owned gate works with both the existing and B's additive restore signatures. */
+export function createAutomationRecoveryGate(
+  launch: (request: ProviderLaunchRequest) => Promise<unknown>,
+  repository = getAutomationService().repo,
+): (request: ProviderLaunchRequest) => Promise<unknown> {
+  return async request => {
+    if (repository.recoverySessionIds().has(request.sessionId)) return;
+    return launch(request);
+  };
+}

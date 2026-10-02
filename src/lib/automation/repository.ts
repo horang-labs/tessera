@@ -61,6 +61,13 @@ export class AutomationRepository {
       : this.db.prepare('SELECT snapshot_json FROM session_automation_runs ORDER BY due_at DESC,id DESC').all();
     return rows.map(row => readRun(row.snapshot_json));
   }
+  recoverySessionIds(): ReadonlySet<string> {
+    // Retained ownership is independent of current rule/run state. In particular,
+    // deleted/stopped/unknown records must never fall through to generic respawn.
+    return new Set(this.db.prepare(`SELECT DISTINCT session_id FROM session_automation_runs
+      WHERE session_id IS NOT NULL AND json_extract(snapshot_json,'$.snapshot.target.kind')='create-session'`)
+      .all().map(row => row.session_id as string));
+  }
   activeRuns(automationId?: string): StoredRun[] {
     const condition = "(state IN ('pending','deferred','dispatching') OR (state='unknown' AND json_extract(snapshot_json,'$.resolvedAt') IS NULL))";
     const rows = automationId ? this.db.prepare(`SELECT snapshot_json FROM session_automation_runs WHERE ${condition} AND automation_id=?`).all(automationId)

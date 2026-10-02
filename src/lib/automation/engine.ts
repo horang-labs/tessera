@@ -318,7 +318,7 @@ export class AutomationEngine implements AutomationAuthority {
     };
     this.repo.transaction(() => {
       const r = validate();
-      if (r.recoveryStartedAt !== null) fail('UNRESOLVED_RUN', 'A previous resume requires ownership reconciliation.');
+      if (r.recoveryStartedAt !== null && r.recoveryStatus !== 'observed') fail('UNRESOLVED_RUN', 'A previous resume requires ownership reconciliation.');
       r.recoveryStartedAt = this.now; r.recoveryEpoch = args.leaseEpoch; r.recoveryOwnerInstance = this.instanceId; r.recoveryStatus = 'started';
       this.repo.saveRun(r);
     });
