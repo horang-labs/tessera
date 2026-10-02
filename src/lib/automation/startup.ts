@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import { getDb } from '../db/database';
 import { getSession, extractSessionKind } from '../db/sessions';
-import { getWorktree } from '../db/worktrees';
-import { isGitCheckoutPath } from '../db/worktree-identity';
-import { getProviderSessionOptions } from '../cli/provider-session-options';
+import { getProviderSessionOptions, type ProviderSessionOptions } from '../cli/provider-session-options';
+import { resolveAutomationWorktree } from './worktree-target';
 import { SettingsManager } from '../settings/manager';
 import { normalizeUserSettings } from '../settings/provider-defaults';
 import { DEFAULT_SETTINGS } from '../settings/defaults';
@@ -37,7 +36,7 @@ function currentEnvironment(userId: string): 'native' | 'wsl' {
     return fail('OWNER_UNAVAILABLE', 'Owner settings are unavailable.');
   }
 }
-function inspectTarget(target: Target): { selection: SessionSelectionSnapshot; canonicalWorktreeId: string | null } {
+function inspectTarget(target: Target): { selection: SessionSelectionSnapshot; canonicalWorktreeId: string | null; context?: string } {
   if (target.kind === 'wake-session') {
     const row = getSession(target.sessionId);
     if (!row || row.deleted || row.archived || row.worktree_deleted_at || extractSessionKind(row.provider_state) !== 'terminal') fail('NOT_FOUND');
@@ -46,16 +45,14 @@ function inspectTarget(target: Target): { selection: SessionSelectionSnapshot; c
     return { selection: { provider: row.provider as SessionSelectionSnapshot['provider'], model: row.model, reasoningEffort: row.reasoning_effort,
       serviceTier: row.service_tier as SessionSelectionSnapshot['serviceTier'], settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } }, canonicalWorktreeId: null };
   }
-  const worktree = getWorktree(target.worktreeId);
-  if (!worktree?.filesystemPath || !isGitCheckoutPath(worktree.filesystemPath)) fail('NOT_FOUND', 'A live Worktree is required.');
-  if (!getDb().prepare(`SELECT 1 FROM tasks t JOIN projects p ON p.id=t.project_id
-    WHERE t.public_worktree_id=? AND t.archived=0 AND t.worktree_deleted_at IS NULL`).get(target.worktreeId)) fail('NOT_FOUND');
-  return { selection: target.selection, canonicalWorktreeId: worktree.id };
+  const context=resolveAutomationWorktree(target.worktreeId);
+  return { selection: target.selection, canonicalWorktreeId: context.worktreeId, context: JSON.stringify(context) };
 }
-export async function inspectAutomationTarget(userId: string, target: Target, environment: 'native' | 'wsl'): Promise<Inspection> {
+export async function inspectAutomationTarget(userId: string, target: Target, environment: 'native' | 'wsl',
+  readOptions:(provider:string,userId:string,environment:'native'|'wsl')=>Promise<Pick<ProviderSessionOptions,'modelOptions'>>=getProviderSessionOptions): Promise<Inspection> {
   const inspected = inspectTarget(target);
   if (target.kind === 'create-session') {
-    const options = await getProviderSessionOptions(target.selection.provider, userId, environment);
+    const options = await readOptions(target.selection.provider, userId, environment);
     const model = options.modelOptions.find(m => m.value === target.selection.model);
     if (!model || !model.supportedReasoningEfforts.some(e => e.value === target.selection.reasoningEffort) ||
       (target.selection.provider === 'codex' && !model.serviceTiers?.some(t => t.value === target.selection.serviceTier))) fail('UNSUPPORTED_SELECTION');
@@ -63,7 +60,8 @@ export async function inspectAutomationTarget(userId: string, target: Target, en
   return { ...inspected, assertCurrent: () => {
     if (currentOwner() !== userId || currentEnvironment(userId) !== environment) fail('OWNER_UNAVAILABLE');
     const current = inspectTarget(target);
-    if (!sameSessionSelection(current.selection, inspected.selection) || current.canonicalWorktreeId !== inspected.canonicalWorktreeId) fail('UNSUPPORTED_SELECTION');
+    if (!sameSessionSelection(current.selection, inspected.selection) || current.canonicalWorktreeId !== inspected.canonicalWorktreeId ||
+      current.context!==inspected.context) fail('UNSUPPORTED_SELECTION');
   } };
 }
 

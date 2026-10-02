@@ -2,7 +2,7 @@ import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { sameSessionSelection } from '@/lib/automation/contracts';
 import { AutomationInputError } from '@/lib/automation/input-error';
-import { createReservedControlSession } from '@/lib/control/reserved-session';
+import { createReservedAutomationSession } from '@/lib/automation/worktree-target';
 import { getSession } from '@/lib/db/sessions';
 import { getDb } from '@/lib/db/database';
 import { broadcastSessionMutation, broadcastTaskMutation } from '@/lib/ws/mutation-broadcast';
@@ -106,7 +106,7 @@ function createSharedState(): SharedTerminalManagerState {
     },
     createSession: (sessionId, target) => {
       // Synchronous callback runs inside the Authority's reservation transaction.
-      createReservedControlSession(sessionId, { worktreeId: target.worktreeId, title: target.title, ...target.selection });
+      createReservedAutomationSession(sessionId, target);
     },
     launch: async request => (await import('./shared-provider-launch-module')).providerLaunchModule.launch(request),
     canResume: async sessionId => Boolean(getDb().prepare('SELECT 1 FROM session_runtime_recovery WHERE session_id = ?').get(sessionId))

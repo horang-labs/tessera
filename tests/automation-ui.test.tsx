@@ -5,6 +5,23 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { OwnershipActions } from '../src/components/automation/ownership-actions';
 import { ownershipFixture } from './fixtures/automation';
 
+test('failed create and generic request errors never claim a persisted paused rule',async()=>{
+  const {AutomationError}=await import('../src/components/automation/automation-error');
+  for(const code of ['NOT_FOUND','INVALID_AUTOMATION','NETWORK_ERROR']){
+    const html=renderToStaticMarkup(createElement(AutomationError,{code}));
+    assert.doesNotMatch(html,/Automation paused|before resuming/);
+    assert.match(html,/request/i);assert.match(html,new RegExp(code));assert.match(html,/role="alert"/);
+  }
+});
+
+test('actual rule pause and typed actionable reasons retain their established presentation',async()=>{
+  const {AutomationReason}=await import('../src/components/automation/automation-reason');
+  const {AutomationError}=await import('../src/components/automation/automation-error');
+  assert.match(renderToStaticMarkup(createElement(AutomationReason,{reason:'user-paused'})),/Automation paused/);
+  assert.match(renderToStaticMarkup(createElement(AutomationError,{code:'CONTEXT_UNAVAILABLE'})),/evidence could not be verified/);
+  assert.match(renderToStaticMarkup(createElement(AutomationError,{code:'REVISION_CONFLICT'})),/changed in another window/);
+});
+
 test('Pause and Delete remain exposed in every locked ownership state', () => {
   for (const mode of ['armed', 'draining', 'recovery-required', 'unavailable'] as const) {
     const html = renderToStaticMarkup(createElement(OwnershipActions, {
