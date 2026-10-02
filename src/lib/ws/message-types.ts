@@ -1,3 +1,4 @@
+import type { InputOwnership, TerminalInputResult } from '@/lib/automation/contracts';
 import type { ToolCallKind } from '@/types/tool-call-kind';
 import type { AgentContextEvent } from '@/types/agent-context';
 import type { CanonicalToolResultValue } from '@/types/tool-result';
@@ -73,7 +74,7 @@ export type SessionSpawnConfig = {
 export type ClientMessage =
   | ({ type: 'create_session'; requestId: string; workDir?: string; permissionMode?: PermissionMode; providerId: string; model?: string; reasoningEffort?: string | null; executionMode?: AgentExecutionMode } & ProviderRuntimeControls)
   | { type: 'close_session'; requestId: string; sessionId: string }
-  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string }
+  | { type: 'send_message'; requestId: string; sessionId: string; content: string | ContentBlock[]; skillName?: string; displayContent?: string | ContentBlock[]; spawnConfig?: SessionSpawnConfig; forceTranslateInput?: boolean; messageId?: string; inputEpoch?: string }
   | { type: 'translate_message'; requestId: string; sessionId: string; messageId: string }
   | ({ type: 'resume_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
   | ({ type: 'restart_session'; requestId: string; sessionId: string; permissionMode?: PermissionMode } & ProviderRuntimeControls)
@@ -116,11 +117,12 @@ export type ClientMessage =
       sessionId?: string | null;
       previewOwnerToken: string;
     }
-  | { type: 'terminal_input'; requestId: string; terminalId: string; surfaceId: string; data: string }
+  | { type: 'terminal_input'; requestId: string; terminalId: string; surfaceId: string; data: string; inputEpoch?: string }
   | {
       type: 'terminal_prompt';
       requestId: string;
       submissionId: string;
+      inputEpoch?: string;
       sessionId: string;
       text: string;
     }
@@ -260,6 +262,9 @@ export type ModelUsageEntry = {
 };
 
 export type AppServerMessage =
+  | { type: 'automation_mutated'; automationId: string; revision: number }
+  | ({ type: 'session_input_ownership' } & InputOwnership)
+  | ({ type: 'terminal_input_result' } & TerminalInputResult)
   | ({ type: 'session_created'; sessionId: string; status: 'ready'; projectId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null; kind?: 'chat' | 'terminal' } & ProviderRuntimeControls)
   | ({ type: 'session_started'; sessionId: string; workDir: string; permissionMode?: PermissionMode; provider?: string; model?: string; reasoningEffort?: string | null } & ProviderRuntimeControls)
   | { type: 'session_closed'; sessionId: string }
@@ -345,6 +350,7 @@ export type AppServerMessage =
   | {
       type: 'terminal_session_runtime_snapshot';
       activeSessionIds: string[];
+      inputOwnerships?: InputOwnership[];
       reboundSessions?: Array<{
         previousSessionId: string;
         sessionId: string;
@@ -385,6 +391,7 @@ export type AppServerMessage =
     }
   | {
       type: 'terminal_started';
+      inputOwnership?: InputOwnership;
       terminalId: string;
       surfaceId: string;
       generation: number;
@@ -397,6 +404,7 @@ export type AppServerMessage =
     }
   | {
       type: 'terminal_snapshot';
+      inputOwnership?: InputOwnership;
       terminalId: string;
       surfaceId: string;
       generation: number;

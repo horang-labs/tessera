@@ -35,6 +35,15 @@ type Selection = {
   serviceTier: 'default' | 'fast' | null; // Codex requires value; Claude requires null
   settings: { permissionPolicy: 'inherit-cli'; allowPreparationFailure: false };
 };
+// Existing Session choices stay nullable: null means inherited CLI configuration.
+// This is saved launch selection, never a claim about unseen live TUI configuration.
+type SessionSelectionSnapshot = {
+  provider: Provider;
+  model: string | null;
+  reasoningEffort: string | null;
+  serviceTier: 'default' | 'fast' | null;
+  settings: Selection['settings'];
+};
 type Target =
   | { kind: 'create-session'; worktreeId: string; title: string; selection: Selection }
   | { kind: 'wake-session'; sessionId: string };
@@ -51,7 +60,7 @@ type Automation = Omit<AutomationInput, 'enabled'> & {
   id: string; revision: number; state: AutomationState;
   pauseReason: string | null;
   ownerUserId: string; agentEnvironment: 'native' | 'wsl';
-  savedSelection: Selection;         // target selection or inspected Session selection
+  savedSelection: SessionSelectionSnapshot; // exact saved choices; create target remains explicit
   nextDueAt: number | null;
   dispatchCount: number;             // includes unknown attempts; never reset on edit
   createdAt: number; updatedAt: number; deletedAt: number | null;
@@ -66,7 +75,7 @@ type AutomationRun = {
   sessionId: string | null; terminalId: string | null;
   boundaryId: string | null;
   attemptStartedAt: number | null; deliveredAt: number | null; finishedAt: number | null;
-  effectiveSelection: Selection;
+  effectiveSelection: SessionSelectionSnapshot; // saved launch choices, including inherited nulls
   agentEnvironment: 'native' | 'wsl';
   observedRuntime: 'unobserved' | 'starting' | 'running' | 'input-required'
     | 'turn-complete' | 'exited' | 'unknown';
@@ -83,7 +92,7 @@ Validation bounds: name/title 1–120 characters; normalized prompt 1–32 KiB U
 
 Only `wake-session + turn-complete` and `create-session + once/interval` are valid. Daily/calendar/cron/DST recurrence is deferred. SessionStart idle and InterruptFallback do not qualify. Enabling wake is an explicit input takeover, not an idle-time heuristic: acquire the server input gate and verify a clean completed lead boundary, or a known submitted running turn with no subsequent raw input/prefill/permission/unknown state. First arm at a clean completed boundary schedules now+delay; arm during a known turn waits for that turn's confirmed completion. Normal ticks never reuse a consumed boundary. Read-only watchers and subscriber counts have no effect on eligibility. A local unsent ChatView draft remains locally saved and read-only while armed; it is never part of the PTY prompt. Already-written unsent PTY text makes the boundary dirty and prevents arming.
 
-Save explicit provider/model/effort/tier using existing provider option definitions and capabilities; revalidate before dispatch, and pause on unsupported selection without substituting a default. Custom model IDs may be accepted only through the same explicitly supported custom-model path as normal Session creation; lack of catalog evidence is not proof of runtime availability. Codex fast is an explicit choice; never infer fast from a model. For wake rules, save the persisted Session selection and compare at admission; do not mutate a live Session's model. Label this “saved launch selection,” not verified live TUI configuration. Native TUI changes can escape persisted selection tracking; users must pause before manual input or settings changes; re-arm validates the saved selection again. Previously issued native TUI changes may still escape persisted selection tracking, which must be labelled rather than claimed verified.
+For new Session targets, save explicit provider/model/effort/tier using existing provider option definitions and capabilities; revalidate before dispatch, and pause on unsupported selection without substituting a default. Custom model IDs may be accepted only through the same explicitly supported custom-model path as normal Session creation; lack of catalog evidence is not proof of runtime availability. Codex fast is an explicit choice; never infer fast from a model. For wake rules, preserve the persisted `SessionSelectionSnapshot` exactly, including null model/reasoningEffort/serviceTier choices inherited from CLI configuration. Compare this exact snapshot and runtime identity at wake admission; null choices alone must not refuse a wake or be replaced with an invented effective live model. Do not mutate a live Session's provider/model. The fully explicit `Selection` remains required only for `create-session.target.selection`; `Automation.savedSelection`, `AutomationRun.effectiveSelection`, and `AutomationRuntime.arm.selection` use the snapshot. Label this “saved launch selection,” not verified live TUI configuration. Native TUI changes can escape persisted selection tracking; users must pause before manual input or settings changes; re-arm validates the saved selection again. Previously issued native TUI changes may still escape persisted selection tracking, which must be labelled rather than claimed verified.
 
 `settings.permissionPolicy=inherit-cli` means provider-native approvals/configuration remain effective at execution time, not that all CLI configuration is frozen. Arbitrary permissionMode, sandbox flags, environment variables, argv, credentials, or tool permissions are not accepted. GUI creation settings are not automatically reusable for detached PTY launch. Supporting a frozen full provider settings profile is a separate adapter contract decision; do not claim it exists.
 
@@ -161,7 +170,7 @@ type RunSpec = {run:AutomationRun; target:Target; prompt:string; ownerUserId:str
 interface AutomationRuntime { // implemented by B; A supplies persistence callbacks
   reconcileRun(args:{runId:string; leaseEpoch:number}): Promise<RecoveryResult>;
   ownership(userId:string, sessionId:string): InputOwnership;
-  arm(args:{userId:string; sessionId:string; automationId:string; selection:Selection},
+  arm(args:{userId:string; sessionId:string; automationId:string; selection:SessionSelectionSnapshot},
       commit:(evidence:ArmEvidence, ownership:InputOwnership)=>void): Promise<InputOwnership>;
   drain(args:{userId:string; sessionId:string; automationId:string}): InputOwnership;
   releaseRecovery(args:{userId:string; sessionId:string; runId:string},
@@ -300,6 +309,10 @@ These are concrete proposed tickets, not new GitHub issues. Orchestrator owns ID
 | D — integration and packaged QA | Dedicated automation tests/QA report; bug fixes assigned back to A/B/C owner | Depends A+B+C. Assert bridge registration/startup in both backends, callbacks and WS contracts before real app QA. Test Windows packaged backend + WSL CLI, normal panel and Peek visibly attached during successful wake, pause-to-type race, approval wait, draft retention, recurrence/once/delete/restart/duplicate ticks, and saved selection. Ordered screenshots of prerequisites, each action/error, and final results copied to Windows Downloads. |
 
 S0's runtime bridge is a process-global registry to survive Next/server module graphs, with typed `installAutomationAuthority`, `getAutomationAuthority`, `installAutomationRuntime`, `getAutomationRuntime` accessors; missing port is explicit unavailable, not a scheduling fallback. B registers without importing A; A waits for B before enabling execution. Engine startup invokes the existing shared manager initialization, installs Authority, enumerates pending recovery records through A's repository and calls Runtime.reconcileRun under the elected lease, reconciles persisted holds, then starts scheduling; no renderer is required. B reads Authority only at method invocation. `client-state.ts` exports `getSessionInputOwnership(sessionId)`, `subscribeSessionInputOwnership(sessionId, listener)`, and `applySessionInputOwnership(value)`; C uses a React subscription wrapper, B supplies snapshot/event updates. Missing state means unavailable until server snapshot, while unautomated Sessions receive human mode normally. Client tests inject fixtures through apply; no branch needs to import a file only another branch will create.
+
+S0 executable exports (ticket #524): `contracts.ts` exports the DTOs above, `ControlResponse = {status:200|202; body:ControlResult}`, `AUTOMATION_ERROR_STATUS`, `AutomationErrorCode`, `AutomationError`, and `TerminalInputResult`. `getAutomationDefaults(kind, now)` supplies only finite limits and the wake delay; it never selects a time or silently enables a rule. `automationInputSchema` is strict structural validation/normalization for stored JSON; `validateAutomationInput(value, {now, previousInput?, isSelectionSupported?})` additionally checks target/trigger pairing, expiry, initial times and one-shot limit, returning `{success:true,data}` or `{success:false,error:{code,message},issues:{path,message}[]}`. `previousInput` must come from trusted persistence and permits only retention of an unchanged interval anchor; A calculates the next future slot. A/B supply current provider capability validation through `isSelectionSupported`; new Session selection is unsupported when this evidence is missing/false. Provider catalogs and custom-model policies are not duplicated in S0. `sessionSelectionSnapshotSchema` preserves nullable choices and `sameSessionSelection(a,b)` compares exact saved choices; B must separately verify runtime identity and admission evidence.
+
+Bridge getters return `null` when absent; installs reject an existing registration and return idempotent, registration-owned cleanup. Callers must treat absence as unavailable (503 for an execution request), never success. Client getters return stable immutable snapshots; B applies authoritative events/snapshots and explicitly applies unavailable on disconnect/reconnect until an authoritative snapshot arrives. Epochs are opaque, so B owns transport ordering. Additive WS fields are `inputEpoch?` on raw/semantic input, `inputOwnership?` on terminal started/snapshot, and `inputOwnerships?` on runtime snapshot; optionality preserves old unautomated senders, not permission for an automated Session to accept a missing epoch. Ownership/mutation events and raw input acknowledgement have the shapes above. No gate or transport behavior is installed by S0 itself.
 
 S0 owns the central shared types once; A/B/C do not concurrently edit them. If any required contract differs, route a small S0 follow-up through the orchestrator before adapting all branches. A alone allocates schema version. B alone changes existing input files; C alone changes Header/menu/i18n. Provider hooks and ordinary launches are reused through small seams, not a registry/framework rewrite.
 
