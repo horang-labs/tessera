@@ -1,3 +1,4 @@
+import { AutomationInputError } from '@/lib/automation/input-error';
 import {
   TerminalSessionInputError,
   TerminalSessionRuntimeNotRunningError,
@@ -50,6 +51,7 @@ async function mapControlInputError<T>(operation: () => Promise<T>, sessionId: s
   try {
     return await operation();
   } catch (error) {
+    if (error instanceof AutomationInputError) throw new ControlOperationError(error.code, error.message, 409, { sessionId });
     if (error instanceof TerminalSessionRuntimeNotRunningError) {
       throw new ControlOperationError(
         'SESSION_RUNTIME_NOT_RUNNING',

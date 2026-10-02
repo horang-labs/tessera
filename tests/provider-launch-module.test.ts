@@ -1666,3 +1666,26 @@ test('a pre-spawn failure releases the reservation, pane token, and native OpenC
     'replacement-terminal',
   );
 });
+
+for (const provider of ['claude-code', 'codex']) {
+  test(`${provider} automation fence reaches the actual ordinary spawn with the saved selection`, async () => {
+    const sessionId = `automation-fence-${provider}`;
+    const selection = { model: provider === 'codex' ? 'gpt-6-test' : 'claude-test', reasoningEffort: 'high',
+      ...(provider === 'codex' ? { serviceTier: 'fast' } : {}) };
+    createTerminalSession(sessionId, provider, { kind: 'terminal' }, selection);
+    const captured: CapturedSpawn[] = [];
+    const manager = createManager(captured);
+    const launcher = modules.createProviderLaunchModule({ terminalManager: manager,
+      resolveAgentEnvironment: async userId => { assert.equal(userId, 'automation-owner'); return 'native'; } });
+    let fenced = false;
+    await launcher.launch({ mode: 'detached', sessionId, userId: 'automation-owner', initialPrompt: 'Harmless fixture',
+      expectedAgentEnvironment: 'native', expectedSelection: { provider: provider as 'codex' | 'claude-code',
+        model: selection.model, reasoningEffort: 'high', serviceTier: provider === 'codex' ? 'fast' : null,
+        settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } },
+      spawnFence: spawn => { assert.equal(captured.length, 0); fenced = true; spawn(); },
+    });
+    assert.equal(fenced, true);
+    assert.equal(captured.length, 1);
+    assert.ok(captured[0].args.join(' ').includes(selection.model));
+  });
+}

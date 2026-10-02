@@ -1,4 +1,6 @@
 'use client';
+import { useSessionInputOwnership } from '@/hooks/use-session-input-ownership';
+import { getRetainedTerminalInput, subscribeRetainedTerminalInput, retainedTerminalInputVersion, clearRetainedTerminalInput } from '@/lib/terminal/raw-input-buffer';
 
 import {
   useCallback,
@@ -205,12 +207,15 @@ export function TerminalPanel({
     surface.getSnapshot,
     surface.getSnapshot,
   );
+  const inputOwnership = useSessionInputOwnership(terminalSessionId ?? '');
+  useSyncExternalStore(subscribeRetainedTerminalInput, retainedTerminalInputVersion, retainedTerminalInputVersion);
+  const retainedInput = getRetainedTerminalInput(terminalId);
   const terminalTheme = getTerminalTheme(
     appearanceMode === 'dark',
     appearanceMode === 'dark' ? darkThemePreset : lightThemePreset,
   );
   const handleInputBarSend = useCallback(
-    (data: string) => surface.sendUserInput(data),
+    (data: string) => surface.sendUserInputConfirmed(data),
     [surface],
   );
   const handleInputBarImage = useCallback(async (file: File) => {
@@ -580,8 +585,16 @@ export function TerminalPanel({
           takes the other answer — the bar stays mounted and drops out of layout, so a
           draft survives a tab switch (#262). The surface receives the same Phone state so
           xterm keeps touch/pointer behavior but yields keyboard ownership to this bar. */}
+      {retainedInput && (
+        <div role="status" className="border-t border-(--divider) p-2 text-xs">
+          <span>Input was not confirmed. Kept for manual recovery:</span>
+          <textarea readOnly value={retainedInput} aria-label="Unconfirmed terminal input" className="block w-full" />
+          <button type="button" onClick={() => clearRetainedTerminalInput(terminalId)}>Dismiss kept input</button>
+        </div>
+      )}
       {isPhoneViewport && (
         <TerminalInputBar
+          readOnly={Boolean(terminalSessionId && inputOwnership.mode !== 'human')}
           onSend={handleInputBarSend}
           onAttachImage={handleInputBarImage}
           isTabActive={isTabActive}

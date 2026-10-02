@@ -56,6 +56,8 @@ export interface TerminalCreateOptions {
    * opening window, before the provider command is shell-quoted.
    */
   prepareLaunch?: () => Promise<void>;
+  /** Server-only synchronous fence around actual process creation, after async preparation. */
+  spawnFence?: (spawn: () => void) => void;
   /**
    * Fully resolved argv that skips cwd validation and shell wrapping. Only the
    * server may supply it, for work it started itself against a directory it

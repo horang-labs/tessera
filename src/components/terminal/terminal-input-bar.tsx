@@ -16,7 +16,8 @@ import { PHONE_TOUCH_TARGET, PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-ta
 import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 
 interface TerminalInputBarProps {
-  onSend: (data: string) => boolean;
+  onSend: (data: string) => boolean | Promise<boolean>;
+  readOnly?: boolean;
   onAttachImage: (file: File) => Promise<boolean>;
   /**
    * Whether this bar's tab is the one on screen.
@@ -53,6 +54,7 @@ export function TerminalInputBar({
   onSend,
   onAttachImage,
   isTabActive = true,
+  readOnly = false,
 }: TerminalInputBarProps) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
@@ -61,23 +63,22 @@ export function TerminalInputBar({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageAttachmentInFlightRef = useRef(false);
 
-  const send = useCallback((data: string) => {
-    const delivered = onSend(data);
+  const send = useCallback(async (data: string) => {
+    if (readOnly) return false;
+    const delivered = await onSend(data);
     setFailure(delivered ? null : 'send');
     return delivered;
-  }, [onSend]);
+  }, [onSend, readOnly]);
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     const payload = terminalInputBarTextPayload(text);
     if (payload === null) return;
-    // The text is cleared only once it is on the wire. A send that found no live
-    // terminal must not also lose what the user typed — retyping it on a phone is the
-    // expensive part.
-    if (send(payload)) setText('');
+    // Preserve the text until the server acknowledges PTY acceptance.
+    if (await send(payload)) setText(current => current === text ? '' : current);
   }, [send, text]);
 
   const handleKey = useCallback((key: TerminalNamedKey) => {
-    send(terminalInputBarKeySequence(key));
+    void send(terminalInputBarKeySequence(key));
   }, [send]);
 
   const handleImageSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
@@ -129,6 +130,7 @@ export function TerminalInputBar({
             key={key.namedKey}
             type="button"
             onClick={() => handleKey(key.namedKey)}
+            disabled={readOnly}
             aria-label={t(key.labelKey)}
             title={t(key.labelKey)}
             data-testid={`terminal-input-bar-key-${key.namedKey}`}
@@ -148,7 +150,7 @@ export function TerminalInputBar({
         accept={TERMINAL_IMAGE_FILE_ACCEPT}
         className="hidden"
         onChange={handleImageSelect}
-        disabled={isAttachingImage}
+        disabled={readOnly || isAttachingImage}
         tabIndex={-1}
         data-testid="terminal-input-bar-image-input"
       />
@@ -157,7 +159,7 @@ export function TerminalInputBar({
           {...telemetryClickAttributes('terminal.attach', 'terminal')}
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={isAttachingImage}
+          disabled={readOnly || isAttachingImage}
           aria-label={t(
             isAttachingImage
               ? 'chat.terminalInputBar.attachingImage'
@@ -182,6 +184,7 @@ export function TerminalInputBar({
         <textarea
           {...telemetryClickAttributes('terminal.input', 'terminal')}
           value={text}
+          readOnly={readOnly}
           onChange={(event) => setText(event.target.value)}
           rows={1}
           placeholder={t('chat.terminalInputBar.placeholder')}
@@ -199,7 +202,7 @@ export function TerminalInputBar({
           {...telemetryClickAttributes('terminal.send', 'terminal')}
           type="button"
           onClick={handleSubmit}
-          disabled={terminalInputBarTextPayload(text) === null}
+          disabled={readOnly || terminalInputBarTextPayload(text) === null}
           aria-label={t('chat.terminalInputBar.send')}
           title={t('chat.terminalInputBar.send')}
           data-testid="terminal-input-bar-send"

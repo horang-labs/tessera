@@ -482,6 +482,7 @@ export class WebSocketServer {
       type: 'terminal_session_runtime_snapshot',
       activeSessionIds: [...terminalManager.getActiveSessionIds(userId)],
       reboundSessions: terminalManager.getSessionReboundsForUser(userId),
+      inputOwnerships: [...terminalManager.getActiveSessionIds(userId)].map(sessionId => terminalManager.automation.ownership(userId, sessionId)),
     });
 
     // Hook state is process state, not a transient WebSocket event. Replay the

@@ -37,6 +37,7 @@ export type ControlErrorCode =
   | 'PREPARATION_TIMEOUT'
   | 'PROVIDER_NOT_SUPPORTED'
   | 'INITIAL_PROMPT_TOO_LARGE'
+  | import('@/lib/automation/contracts').AutomationErrorCode
   | 'INPUT_NOT_ACCEPTED'
   | 'SESSION_NOT_FOUND'
   | 'SESSION_NOT_FRESH'

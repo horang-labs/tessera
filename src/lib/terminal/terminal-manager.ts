@@ -1,3 +1,5 @@
+import type { AutomationAuthority, Boundary, DispatchPermit, DispatchResult } from '@/lib/automation/runtime-port';
+import { AutomationInputGate } from '@/lib/automation/input-gate';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
@@ -218,6 +220,7 @@ interface TerminalRuntime {
     text: string;
     promise: Promise<TerminalSessionSnapshot>;
   }>;
+  uncertainSemanticPrompts: Map<string, string>;
   acceptedSemanticPrompts: Map<string, {
     sessionId: string;
     text: string;
@@ -474,6 +477,7 @@ function traceTerminalStage(stage: string, metadata: Record<string, unknown> = {
 export type TerminalLaunchRuntimeState = 'unowned' | 'opening' | 'spawned';
 
 export class TerminalManager {
+  readonly automation = new AutomationInputGate();
   private readonly terminals = new Map<string, TerminalRuntime>();
   private readonly openingTerminals = new Map<string, Promise<TerminalRuntime>>();
   private readonly openingByTerminalKey = new Map<string, Promise<TerminalRuntime>>();
@@ -842,25 +846,33 @@ export class TerminalManager {
           env: terminalEnv,
           ...(getRuntimePlatform() === 'win32' ? windowsPtyOptions : {}),
         });
-      try {
-        // node-pty's bundled ConPTY (conpty.dll + OpenConsole, shipped in
-        // prebuilds and asar-unpacked) has the modern wrap-marker behavior
-        // xterm expects; the OS ConPTY on older Windows builds corrupts
-        // full-width (CJK) TUI rows in scrollback and delta-repaints against
-        // a grid the client may not have converged on yet. The previous
-        // `useConpty: false` was a no-op — node-pty 1.2 removed winpty and
-        // ignores that flag entirely, so Windows was silently running on the
-        // legacy system ConPTY.
-        terminalProcess = spawnPtyProcess({ useConptyDll: true });
-      } catch (error) {
-        if (getRuntimePlatform() !== 'win32') throw error;
-        logger.warn(
-          { error, terminalId: options.terminalId },
-          'Bundled ConPTY spawn failed; retrying with the system ConPTY',
-        );
-        terminalProcess = spawnPtyProcess({});
-      }
-      const processHandle = terminalProcess;
+      const spawn = () => {
+        try {
+          // node-pty's bundled ConPTY (conpty.dll + OpenConsole, shipped in
+          // prebuilds and asar-unpacked) has the modern wrap-marker behavior
+          // xterm expects; the OS ConPTY on older Windows builds corrupts
+          // full-width (CJK) TUI rows in scrollback and delta-repaints against
+          // a grid the client may not have converged on yet. The previous
+          // `useConpty: false` was a no-op — node-pty 1.2 removed winpty and
+          // ignores that flag entirely, so Windows was silently running on the
+          // legacy system ConPTY.
+          terminalProcess = spawnPtyProcess({ useConptyDll: true });
+        } catch (error) {
+          if (getRuntimePlatform() !== 'win32') throw error;
+          logger.warn(
+            { error, terminalId: options.terminalId },
+            'Bundled ConPTY spawn failed; retrying with the system ConPTY',
+          );
+          terminalProcess = spawnPtyProcess({});
+        }
+      };
+      if (options.spawnFence) options.spawnFence(spawn);
+      else spawn();
+      if (!terminalProcess) throw new Error('The launch fence did not start the process.');
+      const processHandle = terminalProcess as TerminalProcessHandle & {
+        onData(callback: (data: string) => void): void;
+        onExit(callback: (event: { exitCode: number; signal?: number }) => void): void;
+      };
       // node-pty 1.2's Windows input pipe can emit EPIPE before onExit arrives.
       // It has no error listener (the public PTY events cover the output pipe).
       // Handle only this pipe's EPIPE; leave output draining and exit unchanged.
@@ -912,6 +924,7 @@ export class TerminalManager {
         restoresProviderSession: options.launchSpec?.restoresProviderSession,
         semanticPromptSubmissions: new Map(),
         acceptedSemanticPrompts: new Map(),
+        uncertainSemanticPrompts: new Map(),
         disposeSessionObservers: options.launchObserverDisposer
           ? [options.launchObserverDisposer]
           : [],
@@ -931,6 +944,8 @@ export class TerminalManager {
         );
       }
       this.terminals.set(key, runtime);
+      if (runtime.sessionId) this.automation.started(runtime.userId, runtime.sessionId,
+        runtime.terminalId, runtime.generation, options.providerId ?? '', options.agentEnvironment);
       if (runtime.sessionId) {
         this.clearTerminalReservation(runtime.userId, runtime.sessionId, runtime.terminalId);
         this.sessionBindings.set(
@@ -986,6 +1001,10 @@ export class TerminalManager {
         // (자동 실행 방지 불변식). 사용자가 확인 후 직접 Enter를 눌러야 한다.
         const sanitized = prefillInput.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ');
         try {
+          if (runtime.sessionId) {
+            this.automation.assertHuman(runtime.userId, runtime.sessionId, undefined, true);
+            this.automation.dirty(runtime.userId, runtime.sessionId);
+          }
           processHandle.write(sanitized);
           runtime.cancelPrefill = undefined;
           logger.debug({ terminalId: options.terminalId }, 'Terminal prefill written');
@@ -1078,7 +1097,7 @@ export class TerminalManager {
     } catch (error) {
       const runtimeSpawned = terminalProcess !== null;
       try {
-        terminalProcess?.kill();
+        (terminalProcess as TerminalProcessHandle | null)?.kill();
       } catch {
         // Spawn may have failed after allocating a partial native handle.
       }
@@ -1173,6 +1192,7 @@ export class TerminalManager {
       if (runtime.subscribers.get(subscriberKey) !== subscriber) return;
       this.sendToConnection(subscriber.connectionId, {
         type: 'terminal_snapshot',
+        ...(runtime.sessionId ? { inputOwnership: this.automation.ownership(runtime.userId, runtime.sessionId) } : {}),
         terminalId: runtime.terminalId,
         surfaceId: subscriber.surfaceId,
         generation: runtime.generation,
@@ -1193,6 +1213,7 @@ export class TerminalManager {
       logger.warn({ error, terminalId: runtime.terminalId }, 'Terminal snapshot failed; using raw replay');
       this.sendToConnection(subscriber.connectionId, {
         type: 'terminal_snapshot',
+        ...(runtime.sessionId ? { inputOwnership: this.automation.ownership(runtime.userId, runtime.sessionId) } : {}),
         terminalId: runtime.terminalId,
         surfaceId: subscriber.surfaceId,
         generation: runtime.generation,
@@ -1229,11 +1250,16 @@ export class TerminalManager {
     connectionId: string,
     surfaceId: string,
     data: string,
-  ): void {
+    inputEpoch?: string,
+  ): boolean {
     const runtime = this.getOwnedTerminal(terminalId, userId);
-    if (!runtime || runtime.ended) return;
+    if (!runtime || runtime.ended) return false;
     const subscriberKey = this.getSubscriberKey(connectionId, surfaceId);
-    if (!runtime.subscribers.has(subscriberKey)) return;
+    if (!runtime.subscribers.has(subscriberKey)) return false;
+    if (runtime.sessionId) {
+      this.automation.assertHuman(userId, runtime.sessionId, inputEpoch);
+      this.automation.dirty(userId, runtime.sessionId, data.endsWith('\r'));
+    }
     runtime.viewportOwner = subscriberKey;
     if (runtime.prefillPending && data.length > 0) {
       const candidate = `${runtime.automatedResponseCandidate ?? ''}${data}`;
@@ -1267,6 +1293,7 @@ export class TerminalManager {
     runtime.process.write(data);
     if (SERVER_PTY_LATENCY_ENABLED) traceServerLatency('pty-input-written', terminalId, data.length, performance.now() - diagnosticStart);
     this.observeAgentInterruptInput(runtime, data);
+    return true;
   }
 
   /**
@@ -1421,6 +1448,8 @@ export class TerminalManager {
     if (!terminalId) return false;
     const runtime = this.getOwnedTerminal(terminalId, userId);
     if (!runtime || runtime.ended || data.length === 0) return false;
+    this.automation.assertHuman(userId, sessionId);
+    this.automation.dirty(userId, sessionId);
     runtime.resizeOutputTransaction?.settle();
     runtime.process.write(`${data.replace(/[\r\n\t]+/g, ' ')}\r`);
     return true;
@@ -1432,7 +1461,7 @@ export class TerminalManager {
     userId: string,
     text: string,
   ): Promise<TerminalSessionSnapshot> {
-    return this.submitSemanticSessionPrompt(sessionId, userId, text);
+    return this.submitSemanticSessionPrompt(sessionId, userId, text, undefined, true);
   }
 
   /** ChatView may be the first input after a restored TUI, before a lifecycle hook exists. */
@@ -1441,8 +1470,10 @@ export class TerminalManager {
     userId: string,
     text: string,
     submissionId: string,
+    inputEpoch?: string,
   ): Promise<TerminalSessionSnapshot> {
     const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    if (runtime.uncertainSemanticPrompts.has(submissionId)) throw new TerminalSessionInputUnknownError();
     const accepted = runtime.acceptedSemanticPrompts.get(submissionId);
     if (accepted) {
       if (accepted.sessionId !== sessionId || accepted.text !== text) {
@@ -1458,7 +1489,8 @@ export class TerminalManager {
       return pending.promise;
     }
 
-    const promise = this.submitSemanticSessionPrompt(sessionId, userId, text);
+    this.automation.assertHuman(userId, sessionId, inputEpoch);
+    const promise = this.submitSemanticSessionPrompt(sessionId, userId, text, inputEpoch);
     runtime.semanticPromptSubmissions.set(submissionId, { sessionId, text, promise });
     try {
       const snapshot = await promise;
@@ -1469,6 +1501,9 @@ export class TerminalManager {
         runtime.acceptedSemanticPrompts.delete(oldest);
       }
       return snapshot;
+    } catch (error) {
+      if (error instanceof TerminalSessionInputUnknownError) runtime.uncertainSemanticPrompts.set(submissionId, text);
+      throw error;
     } finally {
       runtime.semanticPromptSubmissions.delete(submissionId);
     }
@@ -1478,12 +1513,16 @@ export class TerminalManager {
     sessionId: string,
     userId: string,
     text: string,
+    inputEpoch?: string,
+    trusted = false,
   ): Promise<TerminalSessionSnapshot> {
     const body = normalizeSemanticPrompt(text);
     if (!body.trim()) {
       throw new TerminalSessionInputError('The Session prompt must not be empty.');
     }
     const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    if (runtime.semanticPromptPending) throw new TerminalSessionInputError('A Session prompt is already being submitted.');
+    this.automation.assertHuman(userId, sessionId, inputEpoch, trusted);
     // Restored providers may wait for their first input before emitting any
     // lifecycle hook. CLI and ChatView must allow the same restored-runtime input.
     if (
@@ -1498,7 +1537,11 @@ export class TerminalManager {
 
     runtime.resizeOutputTransaction?.settle();
     runtime.semanticPromptPending = true;
+    this.automation.dirty(userId, sessionId);
+    this.automation.writer(userId, sessionId, true);
+    let possibleWrite = false;
     try {
+      possibleWrite = true;
       runtime.process.write(bracketSemanticPrompt(body));
       // A submitted prompt retains work even if its Peek closes during delayed Enter.
       runtime.previewOwnerToken = undefined;
@@ -1515,10 +1558,12 @@ export class TerminalManager {
       }
       runtime.process.write('\r');
     } catch (error) {
+      if (possibleWrite && !trusted) throw new TerminalSessionInputUnknownError();
       if (error instanceof TerminalSessionRuntimeNotRunningError) throw error;
       throw new TerminalSessionInputError('The Session provider TUI did not accept input.');
     } finally {
       runtime.semanticPromptPending = false;
+      this.automation.writer(userId, sessionId, false);
     }
 
     // Enter is the irreversible acceptance boundary. Nothing below may turn a
@@ -1534,6 +1579,7 @@ export class TerminalManager {
       interruptInputPolicy: runtime.interruptInputPolicy,
     };
     runtime.lastSessionState = message;
+    this.automation.submitted(runtime.userId, runtime.sessionId!, message.hookEvent);
     runtime.runtimeStateAt = stateAt;
     this.notifySessionWaiters(runtime, message);
     try {
@@ -1562,6 +1608,51 @@ export class TerminalManager {
     });
   }
 
+  assertAutomationArmable(userId: string, sessionId: string): void {
+    const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    if (runtime.prefillPending || runtime.semanticPromptPending || runtime.closing) {
+      throw new TerminalSessionInputError('A clean input boundary is required.');
+    }
+  }
+
+  /** Internal port: the caller must hold the armed gate and a durable permit. */
+  async submitAutomationPrompt(args: {
+    sessionId: string; userId: string; prompt: string; boundary: Boundary;
+    authority: AutomationAuthority; permit: DispatchPermit; verifySelection: () => void;
+  }): Promise<DispatchResult> {
+    const { sessionId, userId, authority, permit, boundary } = args;
+    let possibleWrite = false;
+    try {
+      const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+      if (runtime.prefillPending || runtime.semanticPromptPending) throw new Error('Input is pending.');
+      const write = (phase: 'begin' | 'complete', data: string) => {
+        this.automation.verify(userId, sessionId, boundary);
+        args.verifySelection();
+        // A fence can persist its external marker before throwing; retain uncertainty.
+        possibleWrite = true;
+        authority.withWriteFence(permit, phase, () => {
+          this.automation.verify(userId, sessionId, boundary);
+          args.verifySelection();
+          if (runtime.ended || runtime.closing || runtime.sessionId !== sessionId
+            || this.getOwnedTerminal(runtime.terminalId, userId) !== runtime) throw new Error('Runtime changed.');
+          possibleWrite = true;
+          runtime.process.write(data);
+        });
+      };
+      write('begin', bracketSemanticPrompt(normalizeSemanticPrompt(args.prompt)));
+      runtime.previewOwnerToken = undefined;
+      await new Promise<void>(resolve => setTimeout(resolve, this.managerOptions.semanticPromptSubmitDelayMs ?? 500));
+      write('complete', '\r');
+      this.automation.dirty(userId, sessionId);
+      // Consume the boundary synchronously, before a second scheduler call can enter.
+      this.automation.submitted(userId, sessionId, 'AutomationPromptSubmit');
+      return { kind: 'delivered', sessionId, terminalId: runtime.terminalId, at: Date.now() };
+    } catch {
+      return possibleWrite ? { kind: 'unknown', reason: 'DELIVERY_UNKNOWN', sessionId }
+        : { kind: 'cancelled', reason: 'INPUT_BOUNDARY_UNPROVEN' };
+    }
+  }
+
   /** Send only the public, closed set of named control keys to one live Session runtime. */
   async sendSessionKeys(
     sessionId: string,
@@ -1573,6 +1664,8 @@ export class TerminalManager {
     }
     const runtime = this.requireLiveSessionRuntime(sessionId, userId);
     runtime.resizeOutputTransaction?.settle();
+    this.automation.assertHuman(userId, sessionId, undefined, true);
+    this.automation.dirty(userId, sessionId);
     for (const key of keys) {
       const data = terminalNamedKeySequence(key);
       runtime.process.write(data);
@@ -1587,6 +1680,7 @@ export class TerminalManager {
     userId: string,
   ): Promise<TerminalSessionSnapshot> {
     const runtime = this.requireLiveSessionRuntime(sessionId, userId);
+    await this.pauseAutomationForStop(userId, sessionId);
     const sessionKey = this.getSessionKey(userId, sessionId);
     this.blockedSessions.add(sessionKey);
     try {
@@ -1601,6 +1695,14 @@ export class TerminalManager {
     } finally {
       this.blockedSessions.delete(sessionKey);
     }
+  }
+
+  private async pauseAutomationForStop(userId: string, sessionId: string): Promise<void> {
+    const ownership = this.automation.ownership(userId, sessionId);
+    if (!ownership.automationId) return;
+    this.automation.authority()?.pauseWake(userId, sessionId, 'EXPLICIT_STOP');
+    this.automation.drain(userId, sessionId, ownership.automationId);
+    await this.automation.waitForWriter(userId, sessionId);
   }
 
   /** 살아있는 소유 runtime의 상태만 수락한다. false = 죽었거나 미소유인 pane의
@@ -1629,8 +1731,14 @@ export class TerminalManager {
     runtime.interruptInferredAt = undefined;
     runtime.lastSessionState = message;
     runtime.runtimeStateAt = message.stateAt ?? Date.now();
+    this.automation.hook(userId, message.sessionId, message.hookEvent, message.status, message.stateAt ?? Date.now(), !!message.hasWorkingSubagents);
     this.notifySessionWaiters(runtime, message);
     return true;
+  }
+
+  recordAutomationBackground(terminalId: string, userId: string, sessionId: string, childId: string, work: 'clear' | 'active' | 'unknown'): void {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (runtime?.sessionId === sessionId && !runtime.ended) this.automation.background(userId, sessionId, childId, work);
   }
 
   getSessionStatesForUser(userId: string): TerminalSessionStateMessage[] {
@@ -1784,6 +1892,7 @@ export class TerminalManager {
     const key = this.getKey(userId, terminalId);
     const existing = this.getOwnedTerminal(terminalId, userId);
     if (existing) {
+      if (existing.sessionId) await this.pauseAutomationForStop(userId, existing.sessionId);
       this.closeRuntime(existing);
       return;
     }
@@ -1939,6 +2048,8 @@ export class TerminalManager {
       'The terminal exited before the command could be entered. Your draft was kept.',
     );
     runtime.ended = true;
+    if (runtime.sessionId && isCurrent) this.automation.exited(runtime.userId, runtime.sessionId,
+      this.shuttingDown ? 'shutdown' : runtime.closing ? 'explicit-stop' : 'natural');
     runtime.exitEvent = event;
     this.disposeSessionObserver(runtime);
     runtime.resizeOutputTransaction?.dispose();
@@ -2071,6 +2182,11 @@ export class TerminalManager {
   }
 
   preventSessionOpen(sessionId: string, userId: string): void {
+    const ownership = this.automation.ownership(userId, sessionId);
+    if (ownership.automationId) {
+      this.automation.authority()?.pauseWake(userId, sessionId, 'EXPLICIT_STOP');
+      this.automation.drain(userId, sessionId, ownership.automationId);
+    }
     const sessionKey = this.getSessionKey(userId, sessionId);
     this.blockedSessions.add(sessionKey);
     this.clearTerminalReservation(userId, sessionId);
@@ -2296,6 +2412,7 @@ export class TerminalManager {
 
     this.disposeSessionObserver(runtime);
     this.clearSessionBinding(runtime);
+    this.automation.rebound(userId, sourceSessionId, destinationSessionId, terminalId, runtime.generation);
     runtime.lastSessionState = undefined;
     runtime.sessionId = destinationSessionId;
     runtime.reboundFromSessionIds.add(sourceSessionId);
@@ -2474,6 +2591,7 @@ export class TerminalManager {
   ): void {
     this.sendToConnection(subscriber.connectionId, {
       type: 'terminal_started',
+      ...(runtime.sessionId ? { inputOwnership: this.automation.ownership(runtime.userId, runtime.sessionId) } : {}),
       terminalId: runtime.terminalId,
       surfaceId: subscriber.surfaceId,
       generation: runtime.generation,
@@ -2587,6 +2705,7 @@ export class TerminalManager {
     };
     runtime.interruptInferredAt = stateAt;
     runtime.lastSessionState = message;
+    this.automation.hook(runtime.userId, runtime.sessionId!, message.hookEvent, message.status, stateAt, false);
     runtime.runtimeStateAt = stateAt;
     this.notifySessionWaiters(runtime, message);
     this.managerOptions.onSessionStateChange?.({
@@ -2876,6 +2995,13 @@ export class TerminalSessionInputError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TerminalSessionInputError';
+  }
+}
+
+export class TerminalSessionInputUnknownError extends TerminalSessionInputError {
+  constructor() {
+    super('The prompt may be partially written. Inspect the terminal before manual recovery; it was not retried.');
+    this.name = 'TerminalSessionInputUnknownError';
   }
 }
 

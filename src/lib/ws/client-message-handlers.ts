@@ -1,3 +1,4 @@
+import { applySessionInputOwnership } from '@/lib/automation/client-state';
 import { v4 as uuidv4 } from 'uuid';
 import type { ProviderMeta } from '@/lib/cli/providers/types';
 import type { CliStatusEntry } from '@/lib/cli/connection-checker';
@@ -69,6 +70,7 @@ export type TerminalPromptSubmitResult =
       accepted: false;
       reason: 'server' | 'connection' | 'timeout';
       message?: string;
+      code?: string;
     };
 
 /**
@@ -245,6 +247,10 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
     }
 
+    case 'session_input_ownership':
+      applySessionInputOwnership(msg);
+      return { wasReconnect };
+
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
       useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, msg.running);
@@ -265,6 +271,7 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
 
     case 'terminal_session_runtime_snapshot': {
+      for (const value of msg.inputOwnerships ?? []) applySessionInputOwnership(value);
       const authoritativeReboundTerminalIds = new Set(
         (msg.reboundSessions ?? []).map((rebound) => rebound.terminalId),
       );
@@ -342,6 +349,7 @@ export function handleIncomingServerMessage({
           accepted: false,
           reason: 'server',
           message: msg.message,
+          code: msg.code,
         });
         return { wasReconnect };
       }

@@ -241,6 +241,12 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     if (isCodex) {
       logger.debug({ terminalId: entry.terminalId, event, codexOrigin }, 'Classified Codex hook origin');
     }
+    if (isCodex && activeSessionId && codexOrigin !== 'lead') {
+      const childId = readString(payload.agent_id) || readString(payload.agentId)
+        || readString(payload.transcript_path) || readString(payload.transcriptPath);
+      terminalManager.recordAutomationBackground(entry.terminalId, entry.userId, activeSessionId,
+        childId || 'unidentified', codexOrigin === 'unknown' || !childId ? 'unknown' : event === 'Stop' ? 'clear' : 'active');
+    }
     // A collaboration child inherits the lead's session_id. Observing that
     // child payload as a root identity can replace the pane's resume binding.
     const providerIdentity = isCodex && codexOrigin !== 'lead'

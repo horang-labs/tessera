@@ -1,4 +1,5 @@
 'use client';
+import { getSessionInputOwnership, subscribeSessionInputOwnership } from '@/lib/automation/client-state';
 
 import { PTY_LATENCY_ENABLED, traceTerminalLatency } from './terminal-latency-diagnostics';
 
@@ -118,7 +119,7 @@ const PROMPT_BOX_ROWS_BELOW = 2;
 type XtermLike = TerminalScrollTarget & {
   cols: number;
   rows: number;
-  options: { theme?: ITheme; fontSize?: number };
+  options: { theme?: ITheme; fontSize?: number; disableStdin?: boolean };
   unicode: IUnicodeHandling;
   modes: { sendFocusMode: boolean };
   parser: TerminalOsc52Parser;
@@ -373,10 +374,14 @@ export class TerminalSurface {
   private disposed = false;
   private autoConnect = true;
   private sessionWasPresent = false;
+  private readonly unsubscribeInputOwnership: (() => void) | null;
   private readonly unsubscribeSessionStore: (() => void) | null;
   private readonly unsubscribeSessionRestart: (() => void) | null;
 
   constructor(private readonly options: TerminalSurfaceOptions) {
+    this.unsubscribeInputOwnership = options.sessionId ? subscribeSessionInputOwnership(options.sessionId, () => {
+      if (this.terminal) this.terminal.options.disableStdin = getSessionInputOwnership(options.sessionId!).mode !== 'human';
+    }) : null;
     this.theme = { ...options.theme };
     this.appearanceMode = options.appearanceMode;
     this.state = { ...this.state, appearanceMode: options.appearanceMode };
@@ -597,6 +602,13 @@ export class TerminalSurface {
     return wsClient.sendTerminalInput(this.actualTerminalId, this.surfaceId, data);
   }
 
+  async sendUserInputConfirmed(data: string): Promise<boolean> {
+    if (this.disposed || this.attachedConnectionGeneration === 0 || this.snapshotReplay?.phase === 'parsing' || this.state.status === 'exited') return false;
+    const accepted = await wsClient.sendTerminalInputConfirmed(this.actualTerminalId, this.surfaceId, data);
+    if (accepted) this.notifyTerminalInput();
+    return accepted;
+  }
+
   supportsEscapeInterrupt(): boolean {
     return !this.disposed && this.interruptInputPolicy === 'single-escape';
   }
@@ -616,6 +628,7 @@ export class TerminalSurface {
    * newline reads as a separate submit and one message goes out in fragments.
    */
   pasteInput(data: string): boolean {
+    if (this.options.sessionId && getSessionInputOwnership(this.options.sessionId).mode !== 'human') return false;
     if (
       this.disposed
       || this.snapshotReplay?.phase === 'parsing'
@@ -844,6 +857,7 @@ export class TerminalSurface {
     }
     this.unsubscribeMessages();
     this.unsubscribeSessionStore?.();
+    this.unsubscribeInputOwnership?.();
     this.unsubscribeSessionRestart?.();
     this.releaseRenderResources();
     if (surfaces.get(this.options.registryKey) === this) {
@@ -1127,6 +1141,7 @@ export class TerminalSurface {
         }
         return false;
       });
+      if (this.options.sessionId) terminal.options.disableStdin = getSessionInputOwnership(this.options.sessionId).mode !== 'human';
       this.inputDisposable = terminal.onData((data) => {
         traceTerminalLatency('xterm-input', this.surfaceId, data.length);
         if (this.terminalInputOriginArmed) {

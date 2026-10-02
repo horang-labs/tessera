@@ -1,3 +1,4 @@
+import { applySessionInputOwnership } from '@/lib/automation/client-state';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -12,6 +13,7 @@ type ClientInternals = {
 };
 
 test('terminal prompt registers correlation before sending and resolves from acceptance', async () => {
+  applySessionInputOwnership({ sessionId: 'session-a', terminalId: 'session-session-a', epoch: 'human', mode: 'human', automationId: null, runId: null, reason: null });
   const client = new WebSocketClient();
   const sent: string[] = [];
   Reflect.set(client, 'ws', {
@@ -44,6 +46,7 @@ test('terminal prompt registers correlation before sending and resolves from acc
 });
 
 test('terminal prompt pending requests fail closed on WebSocket disconnect', async () => {
+  applySessionInputOwnership({ sessionId: 'session-a', terminalId: 'session-session-a', epoch: 'human', mode: 'human', automationId: null, runId: null, reason: null });
   const client = new WebSocketClient();
   Reflect.set(client, 'ws', {
     readyState: WebSocket.OPEN,

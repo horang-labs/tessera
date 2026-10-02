@@ -1,3 +1,5 @@
+import { writeTerminalInput } from '@/lib/terminal/terminal-input-receipt';
+import { AutomationInputError } from '@/lib/automation/input-error';
 import { getCliStatusSnapshot } from '@/lib/cli/connection-checker';
 import { isHiddenSlashCommandInput } from '@/lib/chat/hidden-slash-commands';
 import { cliProviderRegistry } from '../cli/providers/registry';
@@ -26,6 +28,7 @@ import { observeTerminalProviderSession } from '../terminal/provider-session-obs
 import type { TerminalCreateOptions, TerminalLaunchSpec } from '../terminal/types';
 import {
   TerminalSessionInputError,
+  TerminalSessionInputUnknownError,
   TerminalSessionRuntimeNotRunningError,
 } from '../terminal/terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
@@ -262,8 +265,13 @@ export async function routeClientTransportMessage({
         ) === 'terminal'
       ) {
         const text = sendMessageInputText(message.content);
-        const submitted = text.length > 0
-          && bindTerminalSender(sendToConnection).submitSessionInput(message.sessionId, userId, text);
+        let submitted = false;
+        try { submitted = text.length > 0 && bindTerminalSender(sendToConnection).submitSessionInput(message.sessionId, userId, text); }
+        catch (error) {
+          if (!(error instanceof AutomationInputError)) throw error;
+          sendToConnection(connectionId, { type: 'error', requestId: message.requestId, sessionId: message.sessionId, code: error.code, message: error.message });
+          return;
+        }
         if (!submitted) {
           sendToUser(userId, {
             type: 'error',
@@ -776,15 +784,11 @@ export async function routeClientTransportMessage({
       );
       return;
 
-    case 'terminal_input':
-      bindTerminalSender(sendToConnection).write(
-        message.terminalId,
-        userId,
-        connectionId,
-        message.surfaceId,
-        message.data,
-      );
+    case 'terminal_input': {
+      const result = writeTerminalInput(bindTerminalSender(sendToConnection), userId, connectionId, message);
+      sendToConnection(connectionId, { type: 'terminal_input_result', ...result });
       return;
+    }
 
     case 'terminal_prompt':
       try {
@@ -793,6 +797,7 @@ export async function routeClientTransportMessage({
           userId,
           message.text,
           message.submissionId,
+          message.inputEpoch,
         );
         sendToConnection(connectionId, {
           type: 'terminal_prompt_accepted',
@@ -801,14 +806,15 @@ export async function routeClientTransportMessage({
         });
       } catch (error) {
         if (
-          error instanceof TerminalSessionInputError
+          error instanceof AutomationInputError
+          || error instanceof TerminalSessionInputError
           || error instanceof TerminalSessionRuntimeNotRunningError
         ) {
           sendToConnection(connectionId, {
             type: 'error',
             requestId: message.requestId,
             sessionId: message.sessionId,
-            code: error instanceof TerminalSessionRuntimeNotRunningError
+            code: error instanceof TerminalSessionInputUnknownError ? 'UNRESOLVED_RUN' : error instanceof AutomationInputError ? error.code : error instanceof TerminalSessionRuntimeNotRunningError
               ? 'terminal_runtime_not_running'
               : 'terminal_input_not_accepted',
             message: error.message,
