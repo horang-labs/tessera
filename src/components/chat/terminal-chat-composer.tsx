@@ -1,4 +1,6 @@
 'use client';
+import { useSessionInputOwnership } from '@/hooks/use-session-input-ownership';
+import { useChatStore } from '@/stores/chat-store';
 
 import {
   forwardRef,
@@ -12,7 +14,7 @@ import {
   type DragEvent,
 } from 'react';
 import { ArrowUp, ImagePlus, Loader2, Lock, Square, SquareTerminal } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
+import { getTerminalChatSubmission, clearTerminalChatSubmission } from '@/lib/terminal/terminal-chat-submissions';
 import { cn } from '@/lib/utils';
 import { isPhoneViewport } from '@/lib/viewport/phone-viewport';
 import { PHONE_TOUCH_TARGET } from '@/lib/ui/touch-target';
@@ -110,16 +112,16 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
   const canEscapeInterrupt = useTerminalSessionStore(selectCanEscapeInterruptTerminal(sessionId));
   const setMode = useTerminalViewModeStore((state) => state.setMode);
 
-  const [value, setValue] = useState('');
+  const ownership = useSessionInputOwnership(sessionId);
+  const value = useChatStore(state => state.draftInputs.get(sessionId) ?? '');
+  const setValue = useCallback((next: string | ((current: string) => string)) => {
+    const store = useChatStore.getState();
+    store.setDraftInput(sessionId, typeof next === 'function' ? next(store.getDraftInput(sessionId)) : next);
+  }, [sessionId]);
   const [dragDepth, setDragDepth] = useState(0);
   const [pendingImageUploads, setPendingImageUploads] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const retrySubmissionRef = useRef<{
-    text: string;
-    id: string;
-    submittedAt: string;
-  } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const isDragOver = dragDepth > 0;
@@ -142,7 +144,7 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
 
   // 권한/질문 프롬프트가 떠 있는 동안은 TUI 입력 칸이 그 프롬프트 것이다. 여기서
   // 보낸 텍스트는 프롬프트 응답으로 먹혀 엉뚱하게 동작하므로 막는다.
-  const isBlocked = isAwaitingInput;
+  const isBlocked = isAwaitingInput || ownership.mode !== 'human';
 
   const insertPaths = useCallback((paths: string[]) => {
     const textarea = textareaRef.current;
@@ -155,7 +157,7 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
       input?.setSelectionRange(edit.nextCursorPos, edit.nextCursorPos);
       if (!isPhoneViewport()) input?.focus();
     });
-  }, []);
+  }, [setValue]);
 
   useImperativeHandle(ref, () => ({
     insertPaths(paths) {
@@ -249,21 +251,14 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
-      const submission = retrySubmissionRef.current?.text === text
-        ? retrySubmissionRef.current
-        : {
-            text,
-            id: uuidv4(),
-            submittedAt: new Date().toISOString(),
-          };
-      retrySubmissionRef.current = submission;
+      const submission = getTerminalChatSubmission(sessionId, text);
       const result = await sendTerminalChatMessage(sessionId, text, submission.id);
       if (!result.accepted) {
-        if (result.reason === 'server') retrySubmissionRef.current = null;
+        if (result.reason === 'server' && result.code !== 'UNRESOLVED_RUN') clearTerminalChatSubmission(sessionId, submission.id);
         toast.error(result.message ?? t('chat.terminalSendFailed'));
         return;
       }
-      retrySubmissionRef.current = null;
+      clearTerminalChatSubmission(sessionId, submission.id);
 
       // 서버가 같은 PTY runtime에 본문과 Enter를 모두 쓴 뒤에만 표시한다.
       // 에이전트는 턴이 끝나야 transcript를 flush하므로(codex 실측 ~35초),
@@ -278,7 +273,7 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
         if (!isPhoneViewport()) textareaRef.current?.focus();
       });
     }
-  }, [isBlocked, isUploadingImage, sessionId, t, value]);
+  }, [isBlocked, isUploadingImage, sessionId, setValue, t, value]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -396,7 +391,8 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
                 onChange={(event) => setValue(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                disabled={isBlocked || isSubmitting}
+                readOnly={isBlocked}
+                disabled={isSubmitting}
                 aria-busy={isUploadingImage}
                 rows={1}
                 // Keep the visible hint short enough for the one-line phone box.
@@ -450,7 +446,7 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
                 <span>{status.label}</span>
               </span>
               <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                {isProcessing && canEscapeInterrupt
+                {isProcessing && canEscapeInterrupt && ownership.mode === 'human'
                   ? <TerminalChatCancelButton onCancel={onInterrupt} />
                   : null}
                 <button

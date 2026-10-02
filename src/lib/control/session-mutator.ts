@@ -1,3 +1,4 @@
+import { createReservedControlSession } from './reserved-session';
 import { randomUUID } from 'node:crypto';
 import * as dbSessions from '@/lib/db/sessions';
 import { getDb } from '@/lib/db/database';
@@ -51,19 +52,7 @@ export function createDatabaseControlSessionMutator(options: {
       }
 
       const sessionId = randomUUID();
-      dbSessions.createSession(
-        sessionId,
-        worktree.project_id,
-        request.title?.trim() || 'New Session',
-        request.provider,
-        {
-          taskId: worktree.task_id,
-          providerState: JSON.stringify({ kind: 'terminal' }),
-          model: request.model?.trim(),
-          reasoningEffort: request.reasoningEffort?.trim(),
-          serviceTier: request.serviceTier,
-        },
-      );
+      createReservedControlSession(sessionId, request);
       const created = source.get(sessionId);
       if (!created) {
         dbSessions.deleteSession(sessionId);

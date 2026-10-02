@@ -1,3 +1,5 @@
+import { classifyClaudeAutomationCompletion } from './providers/claude-code/terminal-hook-lifecycle';
+import { classifyCodexAutomationCompletion } from './providers/codex/terminal-hook-lifecycle';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { resolvePaneToken } from '@/lib/terminal/pane-token-registry';
 import { wsServer } from '@/lib/ws/server';
@@ -241,6 +243,12 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     if (isCodex) {
       logger.debug({ terminalId: entry.terminalId, event, codexOrigin }, 'Classified Codex hook origin');
     }
+    if (isCodex && activeSessionId && codexOrigin !== 'lead') {
+      const childId = readString(payload.agent_id) || readString(payload.agentId)
+        || readString(payload.transcript_path) || readString(payload.transcriptPath);
+      terminalManager.recordAutomationBackground(entry.terminalId, entry.userId, activeSessionId,
+        childId || 'unidentified', codexOrigin === 'unknown' || !childId ? 'unknown' : event === 'Stop' ? 'clear' : 'active');
+    }
     // A collaboration child inherits the lead's session_id. Observing that
     // child payload as a root identity can replace the pane's resume binding.
     const providerIdentity = isCodex && codexOrigin !== 'lead'
@@ -391,7 +399,9 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       // 죽었거나 미소유인 pane의 늦은 curl은 브로드캐스트하지 않는다 — 이미
       // runtime 종료로 idle 처리된 세션에 유령 running을 그리게 된다. 클라이언트
       // 재연결 replay에도 없는 상태라 한 번 그려지면 스스로 꺼질 길이 없다.
-      if (terminalManager.recordSessionState(message, entry.userId)) {
+      if (terminalManager.recordSessionState(message, entry.userId, isCodex
+        ? classifyCodexAutomationCompletion(event, mapped.status)
+        : isOpenCode ? null : classifyClaudeAutomationCompletion(event, mapped.status))) {
         wsServer.sendToUser(entry.userId, message);
       }
     }

@@ -1,3 +1,5 @@
+import { applySessionInputOwnership, getSessionInputOwnership } from '@/lib/automation/client-state';
+import { retainTerminalInput, settleTerminalInput, retainDisconnectedInput } from '@/lib/terminal/raw-input-buffer';
 import type {
   ClientMessage,
   PermissionMode,
@@ -67,6 +69,8 @@ export class WebSocketClient {
     string,
     (results: CliStatusEntry[] | null | undefined) => void
   > = new Map();
+  private readonly terminalSessions = new Map<string, string>();
+  private readonly rawInputCallbacks = new Map<string, (accepted: boolean) => void>();
   private terminalPromptCallbacks = new Map<
     string,
     (result: TerminalPromptSubmitResult) => void
@@ -100,8 +104,10 @@ export class WebSocketClient {
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       this.ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      const socket = this.ws;
 
       this.ws.onopen = () => {
+        if (this.ws !== socket) return;
         this.connectionGeneration += 1;
         useSessionStore.getState().beginRuntimeConnection();
         if (this.reconnectAttempt > 0) {
@@ -124,6 +130,7 @@ export class WebSocketClient {
       };
 
       this.ws.onmessage = (event) => {
+        if (this.ws !== socket) return;
         try {
           const msg: ServerTransportMessage = JSON.parse(event.data);
           if (DEBUG_DIAGNOSTICS) {
@@ -143,6 +150,7 @@ export class WebSocketClient {
       // No explicit handler needed - this comment documents the behavior.
 
       this.ws.onerror = (event) => {
+        if (this.ws !== socket) return;
         // Log error with improved context
         const errorMsg = this.formatWebSocketError(event);
         console.error('WebSocket error:', errorMsg);
@@ -150,6 +158,7 @@ export class WebSocketClient {
       };
 
       this.ws.onclose = (event) => {
+        if (this.ws !== socket || !this.userId) return;
         const closeMsg = this.formatCloseMessage(event);
         console.warn('WebSocket closed:', closeMsg);
         resetSessionRestarts();
@@ -163,6 +172,20 @@ export class WebSocketClient {
   }
 
   private handleMessage(msg: ServerTransportMessage) {
+    if (msg.type === 'session_input_ownership') {
+      if (msg.terminalId) this.terminalSessions.set(msg.terminalId, msg.sessionId);
+    }
+    if ((msg.type === 'terminal_started' || msg.type === 'terminal_snapshot' || msg.type === 'terminal_input_result') && msg.inputOwnership?.sessionId) {
+      this.terminalSessions.set(msg.terminalId, msg.inputOwnership.sessionId);
+      applySessionInputOwnership(msg.inputOwnership);
+    }
+    if (msg.type === 'terminal_session_runtime_snapshot') for (const value of msg.inputOwnerships ?? []) {
+      if (value.terminalId) this.terminalSessions.set(value.terminalId, value.sessionId);
+    }
+    if (msg.type === 'terminal_input_result') {
+      settleTerminalInput(msg);
+      this.rawInputCallbacks.get(msg.requestId)?.(msg.outcome === 'accepted');
+    }
     const result = handleIncomingServerMessage({
       msg,
       providersListCallbacks: this.providersListCallbacks,
@@ -511,16 +534,36 @@ export class WebSocketClient {
     surfaceId: string,
     data: string,
   ): boolean {
-    const diagnosticStart = PTY_LATENCY_ENABLED ? performance.now() : 0;
-    const sent = this.sendRequest('terminal_input', { terminalId, surfaceId, data });
-    if (PTY_LATENCY_ENABLED) traceTerminalLatency(sent ? 'input-sent' : 'input-send-failed', surfaceId, data.length, performance.now() - diagnosticStart);
-    // A carriage return is the terminal's submit boundary. Do not inspect or
-    // retain any buffered text that preceded it.
-    if (sent && data === '\r') {
-      void captureTelemetryPromptSubmitted(terminalId, {
-        source: 'pty_direct',
-        provider_id: this.terminalPromptProviders.get(terminalId),
-      });
+    return this.enqueueTerminalInput(terminalId, surfaceId, data);
+  }
+
+  sendTerminalInputConfirmed(terminalId: string, surfaceId: string, data: string): Promise<boolean> {
+    return new Promise(resolve => {
+      if (!this.enqueueTerminalInput(terminalId, surfaceId, data, resolve)) resolve(false);
+    });
+  }
+
+  private enqueueTerminalInput(terminalId: string, surfaceId: string, data: string, confirmed?: (accepted: boolean) => void): boolean {
+    const sessionId = this.terminalSessions.get(terminalId);
+    const ownership = sessionId ? getSessionInputOwnership(sessionId) : null;
+    const request = buildClientRequest('terminal_input', { terminalId, surfaceId, data,
+      ...(ownership ? { inputEpoch: ownership.epoch } : {}) });
+    retainTerminalInput(request.requestId, terminalId, data);
+    if (ownership && ownership.mode !== 'human') {
+      settleTerminalInput({ requestId: request.requestId, outcome: 'rejected' });
+      return false;
+    }
+    const timer = setTimeout(() => {
+      settleTerminalInput({ requestId: request.requestId, outcome: 'unknown' });
+      this.rawInputCallbacks.get(request.requestId)?.(false);
+    }, TERMINAL_PROMPT_RESPONSE_TIMEOUT_MS);
+    this.rawInputCallbacks.set(request.requestId, accepted => {
+      clearTimeout(timer); this.rawInputCallbacks.delete(request.requestId); confirmed?.(accepted);
+    });
+    const sent = this.send(request);
+    if (!sent) {
+      settleTerminalInput({ requestId: request.requestId, outcome: 'rejected' });
+      this.rawInputCallbacks.get(request.requestId)?.(false);
     }
     return sent;
   }
@@ -530,7 +573,9 @@ export class WebSocketClient {
     text: string,
     submissionId: string,
   ): Promise<TerminalPromptSubmitResult> {
-    const request = buildClientRequest('terminal_prompt', { sessionId, text, submissionId });
+    const ownership = getSessionInputOwnership(sessionId);
+    if (ownership.mode !== 'human') return Promise.resolve({ accepted: false, reason: 'server' });
+    const request = buildClientRequest('terminal_prompt', { sessionId, text, submissionId, inputEpoch: ownership.epoch });
 
     return new Promise((resolve) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
@@ -622,10 +667,10 @@ export class WebSocketClient {
     return true;
   }
 
-  private send(msg: ClientMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(msg));
-    }
+  private send(msg: ClientMessage): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
   }
 
   private reconnect() {
@@ -651,6 +696,7 @@ export class WebSocketClient {
   }
 
   disconnect() {
+    this.userId = null;
     this.failPendingRequestCallbacks();
 
     if (this.ws) {
@@ -662,6 +708,12 @@ export class WebSocketClient {
   }
 
   private failPendingRequestCallbacks() {
+    for (const sessionId of this.terminalSessions.values()) {
+      applySessionInputOwnership({ ...getSessionInputOwnership(sessionId), mode: 'unavailable', epoch: '', reason: 'DISCONNECTED' });
+    }
+    retainDisconnectedInput();
+    for (const callback of this.rawInputCallbacks.values()) callback(false);
+    this.rawInputCallbacks.clear();
     for (const callback of this.providersListCallbacks.values()) {
       callback(null);
     }

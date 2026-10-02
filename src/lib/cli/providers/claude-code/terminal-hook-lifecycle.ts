@@ -1,3 +1,4 @@
+import type { TerminalAutomationCompletion } from '../terminal-automation-evidence';
 import {
   type SubagentRoster,
   upsertWorkingSubagent,
@@ -203,4 +204,12 @@ export function mapClaudeHookLifecycle(
 
 export function claudeHookLifecycleHasWorkingSubagents(terminalId: string): boolean {
   return terminalHookLifecycle.hasWorkingSubagents(terminalId);
+}
+
+/** Called only after this provider's foreground hook admission and lifecycle mapping. */
+export function classifyClaudeAutomationCompletion(event: string, status: string): TerminalAutomationCompletion {
+  if (event === 'StopFailure') return 'failed-lead-stop';
+  if (event === 'Stop') return 'successful-lead-stop';
+  if (event === 'SubagentStop' && status === 'completed') return 'children-settled';
+  return null;
 }

@@ -28,6 +28,7 @@ export function recordSessionRuntime(event: {
 /** Background recovery has no dependency on tabs, panels, or project selection. */
 export async function restoreSessionRuntimes(
   launch: (request: ProviderLaunchRequest) => Promise<unknown>,
+  automationSessionIds: ReadonlySet<string> = new Set(),
 ): Promise<void> {
   const db = getDb();
   const sessions = db.prepare(`
@@ -45,6 +46,7 @@ export async function restoreSessionRuntimes(
   await Promise.all(Array.from({ length: Math.min(3, sessions.length) }, async () => {
     while (next < sessions.length && !isServerShuttingDown()) {
       const session = sessions[next++];
+      if (automationSessionIds.has(session.session_id)) continue;
       if (extractSessionKind(session.provider_state) !== 'terminal') continue;
       // An explicit stop may have removed the intent while another launch waited.
       if (!db.prepare('SELECT 1 FROM session_runtime_recovery WHERE session_id = ?')

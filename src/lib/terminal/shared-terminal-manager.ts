@@ -1,3 +1,12 @@
+import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
+import { sameSessionSelection } from '@/lib/automation/contracts';
+import { AutomationInputError } from '@/lib/automation/input-error';
+import { createReservedControlSession } from '@/lib/control/reserved-session';
+import { getSession } from '@/lib/db/sessions';
+import { getDb } from '@/lib/db/database';
+import { broadcastSessionMutation, broadcastTaskMutation } from '@/lib/ws/mutation-broadcast';
+import { createAutomationRuntime, readAutomationSessionSelection, readSavedSessionSelection } from '@/lib/automation/runtime-adapter';
+import { getAutomationRuntime, installAutomationRuntime } from '@/lib/automation/runtime-bridge';
 import type { ServerTransportMessage } from '@/lib/ws/message-types';
 import logger from '@/lib/logger';
 import { recordSessionRuntime } from '@/lib/session/session-runtime-recovery';
@@ -80,6 +89,33 @@ function createSharedState(): SharedTerminalManagerState {
       },
     },
   );
+  state.manager.automation.publish = (userId, inputOwnership) => {
+    state.sendToUser?.(userId, { type: 'session_input_ownership', ...inputOwnership });
+  };
+  if (!getAutomationRuntime()) installAutomationRuntime(createAutomationRuntime({
+    manager: state.manager,
+    readSelection: async (userId, sessionId) => {
+      const selection = await readAutomationSessionSelection(userId, sessionId);
+      state.manager.automation.verifyEnvironment(userId, sessionId, await getAgentEnvironment(userId));
+      return selection;
+    },
+    verifySelection: (_userId, sessionId, selection) => {
+      if (!sameSessionSelection(selection, readSavedSessionSelection(sessionId))) throw new AutomationInputError('UNSUPPORTED_SELECTION', 'Saved launch selection changed.');
+    },
+    createSession: (sessionId, target) => {
+      // Synchronous callback runs inside the Authority's reservation transaction.
+      createReservedControlSession(sessionId, { worktreeId: target.worktreeId, title: target.title, ...target.selection });
+    },
+    launch: async request => (await import('./shared-provider-launch-module')).providerLaunchModule.launch(request),
+    canResume: async sessionId => Boolean(getDb().prepare('SELECT 1 FROM session_runtime_recovery WHERE session_id = ?').get(sessionId))
+      && (await import('./shared-provider-launch-module')).providerLaunchModule.canResumeSession(sessionId),
+    publishCreated: (userId, sessionId) => {
+      const session = getSession(sessionId);
+      if (!session) return;
+      broadcastSessionMutation(userId, { kind: 'created', projectId: session.project_id, sessionId, taskId: session.task_id ?? undefined });
+      if (session.task_id) broadcastTaskMutation(userId, { kind: 'updated', projectId: session.project_id, taskId: session.task_id });
+    },
+  }));
   return state;
 }
 

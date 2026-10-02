@@ -1,3 +1,4 @@
+import { sameSessionSelection, type SessionSelectionSnapshot } from '@/lib/automation/contracts';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { CliProvider } from '@/lib/cli/providers/types';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
@@ -114,6 +115,9 @@ interface ProviderLaunchRequestBase {
   userId: string;
   initialPrompt?: string;
   allowPreparationFailure?: boolean;
+  expectedAgentEnvironment?: AgentEnvironment;
+  expectedSelection?: SessionSelectionSnapshot;
+  spawnFence?: (spawn: () => void) => void;
 }
 
 export type ProviderLaunchRequest = ProviderLaunchRequestBase & (
@@ -196,7 +200,7 @@ export function isSupportedTerminalProvider(providerId: string): boolean {
     && cliProviderRegistry.hasProvider(providerId);
 }
 
-function validateInitialPrompt(initialPrompt: string | undefined): void {
+function validateInitialPrompt(initialPrompt: string | undefined, maximum = MAX_INITIAL_PROMPT_BYTES): void {
   if (initialPrompt === undefined) return;
   if (initialPrompt.trim().length === 0) {
     throw providerLaunchError(
@@ -204,7 +208,7 @@ function validateInitialPrompt(initialPrompt: string | undefined): void {
       'The initial prompt must contain non-whitespace text.',
     );
   }
-  if (Buffer.byteLength(initialPrompt, 'utf8') > MAX_INITIAL_PROMPT_BYTES) {
+  if (Buffer.byteLength(initialPrompt, 'utf8') > maximum) {
     throw providerLaunchError(
       'INITIAL_PROMPT_TOO_LARGE',
       `The initial prompt exceeds ${MAX_INITIAL_PROMPT_BYTES.toLocaleString('en-US')} UTF-8 bytes.`,
@@ -551,6 +555,9 @@ export function createProviderLaunchModule(
           options.resolveAgentEnvironment?.(request.userId)
           ?? getAgentEnvironment(request.userId)
         );
+        if (request.expectedAgentEnvironment && request.expectedAgentEnvironment !== agentEnvironment) {
+          throw providerLaunchError('LAUNCH_FAILED', 'The saved agent environment changed.');
+        }
         const tesseraCliEnabled = options.resolveTesseraCliEnabled
           ? await options.resolveTesseraCliEnabled(request.userId)
           : false;
@@ -897,6 +904,18 @@ export function createProviderLaunchModule(
             : {}),
           launchSpec: decision.launchSpec,
           prepareLaunch,
+          spawnFence: request.spawnFence ? spawn => {
+            const current = getPersistedProvider(request);
+            if (request.expectedSelection && !sameSessionSelection(request.expectedSelection, {
+              provider: current.providerId as SessionSelectionSnapshot['provider'], model: current.model ?? null,
+              reasoningEffort: current.reasoningEffort, serviceTier: current.serviceTier as SessionSelectionSnapshot['serviceTier'],
+              settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false },
+            })) throw providerLaunchError('LAUNCH_FAILED', 'Saved launch selection changed during preparation.');
+            if (resolveSessionWorkspaceRoot(request.sessionId) !== workDir) {
+              throw providerLaunchError('SESSION_WORKSPACE_UNAVAILABLE', 'The Session workspace changed during preparation.');
+            }
+            request.spawnFence!(spawn);
+          } : undefined,
           paneToken,
           providerId: decision.providerId,
           detectConversationReset: decision.provider.detectTerminalConversationReset
@@ -987,7 +1006,7 @@ export function createProviderLaunchModule(
       return persisted.provider.canResumeTerminalAfterRestart?.(persisted.providerState) ?? false;
     },
     async launch(request): Promise<ProviderLaunchResult> {
-      validateInitialPrompt(request.initialPrompt);
+      validateInitialPrompt(request.initialPrompt, request.spawnFence ? 32_768 : MAX_INITIAL_PROMPT_BYTES);
       const persisted = getPersistedProvider(request);
       const requestedTerminalId = resolveRequestedTerminalId(request);
       const launchKey = JSON.stringify([request.userId, request.sessionId]);
