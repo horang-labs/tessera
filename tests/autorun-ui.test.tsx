@@ -134,3 +134,72 @@ test('setup labels actual remaining instruction and analysis budgets and expiry 
     }
   } finally { await i18n.changeLanguage('en'); }
 });
+
+
+test('shared manager and Session strip Pause follows enabled or held ownership, not retained history', async () => {
+  const { AutomationPauseAction } = await import('../src/components/automation/continuation-resume');
+  const { automationFixture, ownershipFixture } = await import('./fixtures/automation');
+  for (const surface of ['automation', 'chat_header'] as const) {
+    for (const state of ['exhausted', 'expired', 'paused', 'deleted', 'disabled', 'enabled'] as const) {
+      for (const mode of ['human', 'armed', 'draining', 'recovery-required', 'unavailable'] as const) {
+        const html = renderToStaticMarkup(createElement(AutomationPauseAction, {
+          rule:{...automationFixture(),state}, ownership:{...ownershipFixture(),mode,automationId:mode === 'human' ? null : 'rule-1'},surface,onPause:()=>{},
+        }));
+        assert.equal(html.includes('Pause to type'), state === 'enabled' || mode !== 'human', `${surface}/${state}/${mode}`);
+        assert.doesNotMatch(html, /disabled="/);
+      }
+    }
+  }
+  const schedule = renderToStaticMarkup(createElement(AutomationPauseAction, {rule:{...automationFixture(),state:'enabled'},ownership:{...ownershipFixture(),mode:'human',automationId:null},surface:'automation',schedule:true,onPause:()=>{}}));
+  assert.match(schedule, />Pause<\/button>/);
+});
+
+
+test('ended continuation limits offer review before editing, not unchanged Resume', async context => {
+  const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { applySessionInputOwnership } = await import('../src/lib/automation/client-state');
+  const { automationFixture, ownershipFixture, automationNow } = await import('./fixtures/automation');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  context.mock.method(Date,'now',()=>automationNow);
+  applySessionInputOwnership({...ownershipFixture(),mode:'human',automationId:null});
+  const preview=autorunPreviewSchema.parse(autorunPreviewFixture());
+  for(const state of ['exhausted','expired'] as const) {
+    const rule=decodeAutomation({...automationFixture(),state,dispatchCount:10});assert.ok(rule.success);
+    const html=renderToStaticMarkup(createElement(ContinuationResume,{rule:rule.data,preview,loading:false,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
+    assert.match(html,/>Review limits and expiry<\/button>/);
+    assert.doesNotMatch(html,/>Resume<\/button>/);
+    assert.match(html,/Instruction attempts: 10\/10/);
+  }
+});
+
+
+test('Schedule and Autorun spent budgets review limits, while ordinary paused rules explicitly Resume', async context => {
+  const { AutomationResumeAction, automationNeedsLimitReview } = await import('../src/components/automation/continuation-resume');
+  const { automationFixture, onceInput, automationNow } = await import('./fixtures/automation');
+  const { autorunInput } = await import('./fixtures/autorun-contracts');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const { i18n } = await import('../src/lib/i18n');
+  context.mock.method(Date,'now',()=>automationNow);
+  const {enabled: _scheduled, ...scheduleInput}=onceInput();void _scheduled;
+  const schedule = decodeAutomation({...automationFixture(),...scheduleInput,state:'exhausted',dispatchCount:1});assert.ok(schedule.success);
+  const expired = decodeAutomation({...automationFixture(),...scheduleInput,state:'paused',limits:{maxDispatches:1,expiresAt:automationNow}});assert.ok(expired.success);
+  const input=autorunInput(); const { enabled: _enabled, ...autorun }=input; void _enabled;
+  const {prompt: _prompt,...base}=automationFixture();void _prompt;
+  const analysed=decodeAutomation({...base,...autorun,state:'paused',analysisCount:20,latestDecisionId:null,autorunStatus:'paused',attention:null,autorun:{...input.autorun,objective:{...input.autorun.objective,revision:1},criterionOrigin:'explicit'}});
+  assert.ok(analysed.success);
+  const ordinary=decodeAutomation({...automationFixture(),state:'paused'});assert.ok(ordinary.success);
+  for(const rule of [schedule.data,expired.data,analysed.data,ordinary.data]) {
+    const review=automationNeedsLimitReview(rule,automationNow);
+    const html=renderToStaticMarkup(createElement(AutomationResumeAction,{reviewLimits:review,disabled:false,onReviewLimits:()=>{},onResume:()=>{}}));
+    assert.equal(html.includes('Review limits and expiry'),rule !== ordinary.data);
+    assert.equal(html.includes('>Resume</button>'),rule === ordinary.data);
+  }
+  try {
+    for(const [language,label] of [['en','Review limits and expiry'],['ko','한도·기간 검토'],['ja','上限・期限を確認'],['zh','查看限额和有效期']]) {
+      await i18n.changeLanguage(language);
+      const html=renderToStaticMarkup(createElement(AutomationResumeAction,{reviewLimits:true,disabled:true,onReviewLimits:()=>{},onResume:()=>{}}));
+      assert.ok(html.includes(label));assert.match(html,/disabled="/);
+    }
+  } finally { await i18n.changeLanguage('en'); }
+});
