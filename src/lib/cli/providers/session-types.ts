@@ -134,3 +134,37 @@ export interface GeneratedText {
   /** The model's reply, exactly as it arrived. */
   text: string;
 }
+
+/** Additive v1 Autorun capability; no worker/title/translation method changes. */
+export type AnalysisSnapshotRequest = {
+  userId: string;
+  agentEnvironment: 'native' | 'wsl';
+  sessionId: string;
+  providerConversationId: string;
+  expectedBoundary: import('@/lib/automation/runtime-port').Boundary;
+  inputEpoch: string;
+  workerSelection: import('@/lib/automation/contracts').SessionSelectionSnapshot;
+  correlation: import('@/lib/automation/autorun-contracts').ProviderTurnCorrelation;
+  signal: AbortSignal;
+};
+export type SupervisorCapabilityRequest = {
+  userId: string; agentEnvironment: 'native' | 'wsl';
+  selection: import('@/lib/automation/autorun-contracts').SupervisorSelection;
+};
+export type SupervisorDecisionRequest = SupervisorCapabilityRequest & {
+  invocationId: string;
+  trustedInstructions: string;
+  packet: import('@/lib/automation/autorun-contracts').SupervisorPacket;
+  outputSchema: typeof import('@/lib/automation/autorun-contracts').SUPERVISOR_DECISION_JSON_SCHEMA;
+  deadlineAt: number;
+  signal: AbortSignal;
+};
+export interface AutorunProviderPort {
+  readonly version: 1;
+  /** Provider-owned bounded native read; owner/environment always explicit. */
+  readAnalysisContext(args: AnalysisSnapshotRequest): Promise<import('@/lib/automation/autorun-contracts').AnalysisContextResult>;
+  /** Fresh installed metadata/policy attestation, no model call. */
+  checkSupervisorCapability(args: SupervisorCapabilityRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorCapabilityResult>;
+  /** Fresh auth-only, tool-free process; signal stops only its owned tree, then proves quiescence. */
+  generateSupervisorDecision(args: SupervisorDecisionRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorResult>;
+}

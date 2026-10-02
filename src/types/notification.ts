@@ -21,3 +21,10 @@ export interface NotificationAction {
   value: string | number;
   primary?: boolean;
 }
+
+/** Additive family for R3. Legacy native notifications retain their existing semantics. */
+export type AutorunNotification = Omit<Notification, 'type'> & {
+  type: 'autorun_complete' | 'autorun_attention';
+  attention: import('@/lib/automation/autorun-contracts').AutomationAttention;
+};
+export type AppNotificationV2 = Notification | AutorunNotification;

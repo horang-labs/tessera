@@ -38,3 +38,10 @@ export function applySessionInputOwnership(value: InputOwnership): void {
   ownership.set(value.sessionId, Object.freeze({ ...value }));
   for (const listener of [...(listeners.get(value.sessionId) ?? [])]) listener();
 }
+
+/** Stable persisted identity across WS replay and owner-detail reconciliation; no text in keys. */
+export function getAutorunAttentionKey(attention: import('./autorun-contracts').AutomationAttention): string {
+  return attention.kind === 'decision'
+    ? `autorun:${attention.decisionId}:${attention.outcome}`
+    : `autorun:${attention.automationId}:${attention.revision}:${attention.reason}`;
+}

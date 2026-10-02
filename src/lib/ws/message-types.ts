@@ -262,6 +262,7 @@ export type ModelUsageEntry = {
 };
 
 export type AppServerMessage =
+  | import('@/lib/automation/autorun-contracts').AutomationAttentionEvent
   | { type: 'automation_mutated'; automationId: string; revision: number }
   | ({ type: 'session_input_ownership' } & InputOwnership)
   | ({ type: 'terminal_input_result' } & TerminalInputResult)
