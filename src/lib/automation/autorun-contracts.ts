@@ -291,6 +291,19 @@ export type SupervisorFailure = z.infer<typeof supervisorFailureSchema>;
 export type SupervisorFailureKind = SupervisorFailure['kind'];
 export const supervisorResultSchema = z.union([supervisorFinalResultSchema, supervisorFailureSchema]);
 export type SupervisorResult = z.infer<typeof supervisorResultSchema>;
+const settlementObservationIdentity = {
+  version: z.literal(1), userId: id, agentEnvironment: z.enum(['native', 'wsl']), invocationId: id, observedAt: time,
+};
+/** Recovery releases only an exact invocation's capacity. It never returns/replays model output. */
+export const supervisorSettlementObservationSchema = z.discriminatedUnion('kind', [
+  z.object({ ...settlementObservationIdentity, kind: z.literal('quiescent'), code: z.literal('SUPERVISOR_QUIESCENT'),
+    proof: z.object({ kind: z.literal('owned-invocation-closed'), launchId: id, closedAt: time, settledAt: time }).strict(),
+  }).strict(),
+  z.object({ ...settlementObservationIdentity, kind: z.literal('unknown'), code: z.literal('SUPERVISOR_PROCESS_UNCERTAIN'),
+    reason: z.enum(['missing', 'identity-mismatch', 'active', 'incomplete', 'unsupported']),
+  }).strict(),
+]).refine(value => value.kind !== 'quiescent' || (value.proof.closedAt <= value.proof.settledAt && value.proof.settledAt <= value.observedAt));
+export type SupervisorSettlementObservation = z.infer<typeof supervisorSettlementObservationSchema>;
 export function validateSupervisorFinalResult(value: unknown, context: DecisionValidationContext & { selection: SupervisorSelection }) {
   const invalid = { success: false as const, code: 'SUPERVISOR_INVALID_OUTPUT' as const };
   const result = supervisorFinalResultSchema.safeParse(value);
