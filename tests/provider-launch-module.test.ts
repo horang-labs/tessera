@@ -1110,6 +1110,58 @@ test('fresh and resumed launches preserve each provider wrapper contract', async
   assert.equal(captured.length, launches.length);
 });
 
+test('Windows WSL Claude transports complete settings outside bounded fresh, resumed and Peek argv', async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const previousData = process.env.TESSERA_DATA_DIR;
+  const data = path.join(testRoot, "D001 settings space ' quote");
+  const { buildHookCommand } = await import('@/lib/terminal/hook-command');
+  const captured: CapturedSpawn[] = [];
+  const manager = createManager(captured);
+  const launcher = modules.createProviderLaunchModule({ terminalManager: manager,
+    resolveAgentEnvironment: async () => 'wsl' });
+  Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' });
+  process.env.TESSERA_DATA_DIR = data;
+  try {
+    for (const mode of ['fresh', 'resume', 'peek'] as const) {
+      const sessionId = `D001-${mode}`;
+      createTerminalSession(sessionId, 'claude-code', mode === 'resume' ? {
+        kind: 'terminal', terminalProviderSessionId: 'D001-native-resume', terminalProviderSessionActivation: 'active',
+      } : { kind: 'terminal' }, { model: 'claude-sonnet-5-5', reasoningEffort: 'high' });
+      await launcher.launch({ sessionId, userId: 'provider-launch-user', ...(mode === 'peek' ? {
+        mode: 'surface', surface: { connectionId: 'D001-peek', surfaceId: 'peek-surface', terminalId: 'D001-peek-terminal', previewOwnerToken: 'D001-preview' },
+      } : { mode: 'detached' }), ...(mode !== 'resume' ? { initialPrompt: "preserve quote ' and newline\nfixture" } : {}) });
+      const spawned = captured.at(-1)!;
+      assert.equal(spawned.command, 'wsl.exe');
+      assert.ok(spawned.args.join(' ').length < 8192, 'D001 Windows argv must have ample headroom below 32767');
+      assert.doesNotMatch(spawned.args.join(' '), /fileGeneration|enriched=/, 'native observer bytes belong in the settings file');
+      const files = fs.readdirSync(data, { recursive: true }).filter((name) => String(name).endsWith('settings-v1.json'));
+      assert.equal(files.length, 1);
+      const file = path.join(data, String(files[0]));
+      const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+      assert.equal(settings.effortLevel, 'high');
+      assert.deepEqual(Object.keys(settings.hooks).sort(), ['PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreToolUse',
+        'SessionStart', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'TeammateIdle', 'UserPromptSubmit']);
+      for (const group of Object.values(settings.hooks) as Array<Array<{ hooks: Array<{ command: string; timeout: number }> }>>) {
+        assert.equal(group[0].hooks[0].command, buildHookCommand('posix'), 'transport must retain original observer/curl bytes');
+        assert.equal(group[0].hooks[0].timeout, 10);
+      }
+      const pane = modules.resolvePaneToken(spawned.env!.TESSERA_PANE_TOKEN!);
+      assert.equal(pane?.userId, 'provider-launch-user'); assert.equal(pane?.sessionId, sessionId);
+      assert.ok(fs.statSync(file).isFile(), 'settings survive until the runtime finishes');
+      await manager.closeSession(sessionId, 'provider-launch-user');
+      assert.equal(fs.existsSync(file), false, 'only this launch removes its settings material');
+    }
+    createTerminalSession('D001-fenced', 'claude-code');
+    await assert.rejects(launcher.launch({ sessionId: 'D001-fenced', userId: 'provider-launch-user', mode: 'detached',
+      spawnFence: () => { throw new Error('fixture denied spawn'); } }), /fixture denied spawn/);
+    assert.equal(captured.length, 3, 'denied launch cannot acquire a PTY');
+    assert.deepEqual(fs.readdirSync(path.join(data, 'claude-launch-settings', 'v1')), [], 'failed launch cleans its owned settings');
+  } finally {
+    if (descriptor) Object.defineProperty(process, 'platform', descriptor);
+    process.env.TESSERA_DATA_DIR = previousData;
+  }
+});
+
 test('a WSL Claude background attach does not prepare a new plugin overlay', async () => {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   Object.defineProperty(process, 'platform', {
