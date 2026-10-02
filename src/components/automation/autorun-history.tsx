@@ -1,7 +1,7 @@
 'use client';
 import { useI18n } from '@/lib/i18n';
 import type { AutorunDecisionSummary, AutorunDecisionDetail } from '@/lib/automation/autorun-contracts';
-import { telemetryClickAttributes as click } from '@/lib/telemetry/ui-click';
+import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { localDue } from './automation-form';
 import { AutomationReason } from './automation-reason';
 import { automationButton } from './ownership-actions';
@@ -22,7 +22,7 @@ export function AutorunHistory({ decisions, details = {}, onResolve, onOpenSessi
       <AutomationReason reason={item.reason} />
       {item.runId && <p>{t(`automation.delivery_${item.delivery}`)}</p>}
       {item.delivery === 'unknown' && item.runId && <UnknownDelivery runId={item.runId} sessionId={details[item.id]?.packet.context.boundary.sessionId} onResolve={onResolve} onOpenSession={onOpenSession} />}
-      <button {...click('automation.autorun.evidence', 'automation')} type="button" className={automationButton} onClick={() => onEvidence(item.id)}>{t('automation.evidence')}</button>
+      <button {...telemetryClickAttributes('automation.autorun.evidence', 'automation')} type="button" className={automationButton} onClick={() => onEvidence(item.id)}>{t('automation.evidence')}</button>
     </article>)}
   </section>;
 }
@@ -53,19 +53,19 @@ export function AutorunEvidence({ detail, onOpenSession }: { detail: AutorunDeci
       </article>)}
       {context.items.filter(item => evidence.has(item.id)).map(item => <blockquote className="whitespace-pre-wrap border-l pl-2" key={item.id}>{item.text}</blockquote>)}
     </>}
-    <details><summary {...click('automation.autorun.attempts', 'automation')}>{t('automation.attempts')}</summary>{detail.attempts.map(attempt => <article key={attempt.ordinal}>
+    <details><summary {...telemetryClickAttributes('automation.autorun.attempts', 'automation')}>{t('automation.attempts')}</summary>{detail.attempts.map(attempt => <article key={attempt.ordinal}>
       <p>{attempt.ordinal} · {localDue(attempt.startedAt)} · {attempt.finishedAt ? localDue(attempt.finishedAt) : t('automation.phase_analysing')}</p>
       <AutomationReason reason={attempt.failureCode} />{attempt.retryAt && <p>{t('automation.retryAt')}: {localDue(attempt.retryAt)}</p>}
     </article>)}</details>
-    <button {...click('automation.history.open_session', 'automation')} className={automationButton} type="button" onClick={() => onOpenSession(context.boundary.sessionId)}>{t('automation.openSession')}</button>
+    <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} className={automationButton} type="button" onClick={() => onOpenSession(context.boundary.sessionId)}>{t('automation.openSession')}</button>
   </section>;
 }
 
 function UnknownDelivery({ runId, sessionId, onResolve, onOpenSession }: { runId: string; sessionId?: string; onResolve: (id: string) => void; onOpenSession: (id: string) => void }) {
   const { t } = useI18n();
   return <section><p>{t('automation.recovery')}</p>
-    {sessionId && <button {...click('automation.history.open_session', 'automation')} className={automationButton} type="button" onClick={() => onOpenSession(sessionId)}>{t('automation.openSession')}</button>}
-    <details><summary {...click('automation.history.recover', 'automation')}>{t('automation.recover')}</summary><p>{t('automation.recovery')}</p>
-      <button {...click('automation.history.recover_confirm', 'automation')} className={automationButton} type="button" onClick={() => onResolve(runId)}>{t('automation.recover')}</button>
+    {sessionId && <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} className={automationButton} type="button" onClick={() => onOpenSession(sessionId)}>{t('automation.openSession')}</button>}
+    <details><summary {...telemetryClickAttributes('automation.history.recover', 'automation')}>{t('automation.recover')}</summary><p>{t('automation.recovery')}</p>
+      <button {...telemetryClickAttributes('automation.history.recover_confirm', 'automation')} className={automationButton} type="button" onClick={() => onResolve(runId)}>{t('automation.recover')}</button>
     </details></section>;
 }

@@ -1,5 +1,5 @@
 'use client';
-import { telemetryClickAttributes as click, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from 'zustand';
@@ -94,24 +94,24 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     onKeyDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
     <header className="sticky top-0 z-10 mb-4 flex flex-wrap items-center justify-between gap-2 bg-(--chat-bg) py-2">
       <div><h2 className="font-semibold">{context.title}</h2><p className="text-xs">{context.subtitle} · {t('automation.title')}</p></div>
-      <button {...click('automation.manager.close', 'automation')} className={automationButton} type="button" onClick={onClose}>{t('automation.close')}</button>
-      {rule && rule.state !== 'deleted' && (showSetup || evidenceId) && <button {...click('automation.delete','automation')} className={automationButton} type="button" onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>}
-      {heldId && <button {...click('automation.pause', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().pause(heldId)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>}
+      <button {...telemetryClickAttributes('automation.manager.close', 'automation')} className={automationButton} type="button" onClick={onClose}>{t('automation.close')}</button>
+      {rule && rule.state !== 'deleted' && (showSetup || evidenceId) && <button {...telemetryClickAttributes('automation.delete','automation')} className={automationButton} type="button" onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>}
+      {heldId && <button {...telemetryClickAttributes('automation.pause', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().pause(heldId)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>}
     </header>
-    {(view.selectedId || view.setup || evidenceId) && <button {...click('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else { updateView({ setup: false, selectedId: null }); } }}>{t('automation.back')}</button>}
+    {(view.selectedId || view.setup || evidenceId) && <button {...telemetryClickAttributes('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else { updateView({ setup: false, selectedId: null }); } }}>{t('automation.back')}</button>}
     <AutomationError code={error} />
-    {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...click('automation.delete.confirm','automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...click('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
+    {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm','automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
     {sessionId && <p role="status" className="my-2 text-xs">{t(`automation.${ownership.mode}`)}</p>}
     {showSetup ? <section className="grid gap-3">
       <p className="text-xs">{t('automation.local')}</p>{sessionId && <p className="text-xs">{t('automation.safety')}</p>}
       {!supported ? <p>{t('automation.unsupported')}</p> : <>
         {sessionId && intent === 'start' && <div className="flex flex-wrap gap-2">
-          <button {...click('automation.setup.autorun', 'automation')} className={automationButton} type="button" aria-pressed={method === 'autorun'} onClick={() => { setMethod('autorun'); if (!preview) void store.getState().previewAutorun(); }}>{t('automation.continueWork')}</button>
-          <button {...click('automation.setup.heartbeat', 'automation')} className={automationButton} type="button" aria-pressed={method === 'heartbeat'} onClick={() => setMethod('heartbeat')}>{t('automation.heartbeat')}</button>
+          <button {...telemetryClickAttributes('automation.setup.autorun', 'automation')} className={automationButton} type="button" aria-pressed={method === 'autorun'} onClick={() => { setMethod('autorun'); if (!preview) void store.getState().previewAutorun(); }}>{t('automation.continueWork')}</button>
+          <button {...telemetryClickAttributes('automation.setup.heartbeat', 'automation')} className={automationButton} type="button" aria-pressed={method === 'heartbeat'} onClick={() => setMethod('heartbeat')}>{t('automation.heartbeat')}</button>
         </div>}
         {intent === 'resume' && rule ? <ContinuationResume preview={preview} loading={previewLoading} rule={rule} store={store} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onEdit={() => void setup('edit', rule)} /> : sessionId && method === 'autorun' ? <>
           {previewLoading && <p role="status">{t('automation.checking')}</p>}
-          <button {...click('automation.autorun.refresh', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().previewAutorun()}>{t('automation.checkAgain')}</button>
+          <button {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().previewAutorun()}>{t('automation.checkAgain')}</button>
           {preview && <AutorunSetup key={`${preview.previewId}:${view.selectedId}:${intent}`} preview={preview} store={store} previous={intent === 'replace' ? rule : previewPrevious} intent={intent} onDone={done} onOpenSession={() => onOpenSession(sessionId)} />}
         </> : <>
           {sessionId && <p>{t('automation.fixedHelp')}</p>}
@@ -140,37 +140,37 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
         <p>{rule.nextDueAt ? `${t('automation.next')}: ${localDue(rule.nextDueAt)}` : t('automation.notScheduled')}</p>
         <div className="flex flex-wrap gap-2">
           {rule.state !== 'deleted' && <>
-            {rule.state !== 'enabled' && <button {...click('automation.manager.enable', 'automation')} className={automationButton} disabled={busy > 0 || Boolean(sessionId && ownership.mode !== 'human')} onClick={() => { if (rule.mode === 'autorun') void setup('resume', rule); else if (sessionId) void setup('resume', rule); else void store.getState().enable(rule); }}>{t('automation.resume')}</button>}
-            <button {...click('automation.pause', 'automation')} className={automationButton} onClick={() => void store.getState().pause(rule.id)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>
-            <button {...click('automation.delete', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>
-            {deleteConfirm && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...click('automation.delete.confirm', 'automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...click('automation.delete.cancel', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
-            <details><summary {...click('automation.manager.options', 'automation')}>{t('automation.advanced')}</summary>
-              <button {...click('automation.manager.edit', 'automation')} className={automationButton} onClick={() => void pauseAndEdit(rule, 'edit')}>{t(rule.state === 'enabled' ? 'automation.pauseEdit' : 'automation.edit')}</button>
-              {sessionId && <button {...click('automation.manager.method', 'automation')} className={automationButton} onClick={() => void pauseAndEdit(rule, 'replace')}>{t('automation.changeMethod')}</button>}
+            {rule.state !== 'enabled' && <button {...telemetryClickAttributes('automation.manager.enable', 'automation')} className={automationButton} disabled={busy > 0 || Boolean(sessionId && ownership.mode !== 'human')} onClick={() => { if (rule.mode === 'autorun') void setup('resume', rule); else if (sessionId) void setup('resume', rule); else void store.getState().enable(rule); }}>{t('automation.resume')}</button>}
+            <button {...telemetryClickAttributes('automation.pause', 'automation')} className={automationButton} onClick={() => void store.getState().pause(rule.id)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>
+            <button {...telemetryClickAttributes('automation.delete', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>
+            {deleteConfirm && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm', 'automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
+            <details><summary {...telemetryClickAttributes('automation.manager.options', 'automation')}>{t('automation.advanced')}</summary>
+              <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} onClick={() => void pauseAndEdit(rule, 'edit')}>{t(rule.state === 'enabled' ? 'automation.pauseEdit' : 'automation.edit')}</button>
+              {sessionId && <button {...telemetryClickAttributes('automation.manager.method', 'automation')} className={automationButton} onClick={() => void pauseAndEdit(rule, 'replace')}>{t('automation.changeMethod')}</button>}
             </details>
           </>}
         </div>
-        <div className="flex gap-2" role="tablist"><button {...click('automation.manager.overview', 'automation')} role="tab" aria-selected={view.tab === 'overview'} className={automationButton} onClick={() => updateView({ tab: 'overview' })}>{t('automation.overview')}</button><button {...click('automation.manager.history', 'automation')} role="tab" aria-selected={view.tab === 'history'} className={automationButton} onClick={() => updateView({ tab: 'history' })}>{t('automation.history')}</button></div>
-        {view.tab === 'overview' && <details><summary {...click('automation.manager.configuration', 'automation')}>{t('automation.advanced')}</summary>
+        <div className="flex gap-2" role="tablist"><button {...telemetryClickAttributes('automation.manager.overview', 'automation')} role="tab" aria-selected={view.tab === 'overview'} className={automationButton} onClick={() => updateView({ tab: 'overview' })}>{t('automation.overview')}</button><button {...telemetryClickAttributes('automation.manager.history', 'automation')} role="tab" aria-selected={view.tab === 'history'} className={automationButton} onClick={() => updateView({ tab: 'history' })}>{t('automation.history')}</button></div>
+        {view.tab === 'overview' && <details><summary {...telemetryClickAttributes('automation.manager.configuration', 'automation')}>{t('automation.advanced')}</summary>
           {rule.mode === 'autorun' ? <><p className="whitespace-pre-wrap">{rule.autorun.objective.text}</p><p>{t(rule.autorun.objective.kind === 'verified-human' ? 'automation.verifiedGoal' : 'automation.explicitGoal')}</p><p>{rule.autorun.supervisor.provider} · {rule.autorun.supervisor.model}</p></> : <p className="whitespace-pre-wrap">{rule.prompt}</p>}
           <SavedSelection selection={rule.savedSelection} />
         </details>}
-        {rule.mode === 'autorun' && state.newDecisionCount[rule.id] > 0 && <button {...click('automation.history.new', 'automation')} className={automationButton} onClick={() => store.getState().showNewDecisions(rule.id)}>{state.newDecisionCount[rule.id]} {t('automation.newEntries')}</button>}
+        {rule.mode === 'autorun' && state.newDecisionCount[rule.id] > 0 && <button {...telemetryClickAttributes('automation.history.new', 'automation')} className={automationButton} onClick={() => store.getState().showNewDecisions(rule.id)}>{state.newDecisionCount[rule.id]} {t('automation.newEntries')}</button>}
         {rule.mode === 'autorun' ? <AutorunHistory details={decisionDetails} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} decisions={(decisions[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onEvidence={id => { setEvidenceId(id); void store.getState().inspectDecision(rule.id,id); }} /> : <AutomationHistory runs={(runs[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} />}
-        {view.tab === 'history' && (rule.mode === 'autorun' ? decisions[rule.id]?.nextCursor : runs[rule.id]?.nextCursor) && <button {...click('automation.manager.more', 'automation')} className={automationButton} onClick={() => void (rule.mode === 'autorun' ? store.getState().loadDecisions(rule.id,true) : store.getState().loadRuns(rule.id,true))}>{t('automation.more')}</button>}
+        {view.tab === 'history' && (rule.mode === 'autorun' ? decisions[rule.id]?.nextCursor : runs[rule.id]?.nextCursor) && <button {...telemetryClickAttributes('automation.manager.more', 'automation')} className={automationButton} onClick={() => void (rule.mode === 'autorun' ? store.getState().loadDecisions(rule.id,true) : store.getState().loadRuns(rule.id,true))}>{t('automation.more')}</button>}
       </>}
     </section> : <>
-      <div className="my-4 flex flex-wrap gap-3"><button {...click('automation.manager.new', 'automation')} className={automationButton} onClick={() => void setup('start')}>{t('automation.new')}</button><label><input {...click('automation.manager.include_deleted', 'automation')} type="checkbox" checked={includeDeleted} onChange={e => setIncludeDeleted(e.target.checked)} />{t('automation.deleted')}</label><button {...click('automation.manager.refresh', 'automation')} className={automationButton} onClick={() => void store.getState().refresh()}>{t('automation.retry')}</button></div>
+      <div className="my-4 flex flex-wrap gap-3"><button {...telemetryClickAttributes('automation.manager.new', 'automation')} className={automationButton} onClick={() => void setup('start')}>{t('automation.new')}</button><label><input {...telemetryClickAttributes('automation.manager.include_deleted', 'automation')} type="checkbox" checked={includeDeleted} onChange={e => setIncludeDeleted(e.target.checked)} />{t('automation.deleted')}</label><button {...telemetryClickAttributes('automation.manager.refresh', 'automation')} className={automationButton} onClick={() => void store.getState().refresh()}>{t('automation.retry')}</button></div>
       {loading && <p role="status">{t('automation.loading')}</p>}
       {visible.map((item,index) => <article className="grid gap-2 rounded border border-(--divider) p-3 my-2" key={item.id}>
         {(index === 0 || Boolean(visible[index-1].attention) !== Boolean(item.attention) || (visible[index-1].state === 'enabled') !== (item.state === 'enabled')) && <h3>{t(item.attention ? 'automation.needsAttention' : item.state === 'enabled' ? 'automation.activeGroup' : 'automation.endedGroup')}</h3>}
-        <button {...click('automation.manager.detail', 'automation')} className={`${automationButton} text-left`} onClick={() => select(item.id)}>{item.name} · {t(`automation.state_${item.state}`)}</button>
+        <button {...telemetryClickAttributes('automation.manager.detail', 'automation')} className={`${automationButton} text-left`} onClick={() => select(item.id)}>{item.name} · {t(`automation.state_${item.state}`)}</button>
         <p className="text-xs">{t(item.mode === 'autorun' ? 'automation.continueWork' : item.mode === 'heartbeat' ? 'automation.heartbeat' : 'automation.schedule')} · {t('automation.instructionAttempts')}: {item.dispatchCount}</p>
         <AutomationReason reason={item.pauseReason} />
         {item.nextDueAt && <p>{t('automation.next')}: {localDue(item.nextDueAt)}</p>}
-        {item.state === 'enabled' && <button {...click('automation.pause', 'automation')} className={automationButton} onClick={() => void store.getState().pause(item.id)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>}
+        {item.state === 'enabled' && <button {...telemetryClickAttributes('automation.pause', 'automation')} className={automationButton} onClick={() => void store.getState().pause(item.id)}>{t(sessionId ? 'automation.pause' : 'automation.schedulePause')}</button>}
       </article>)}
     </>}
-    {sessionId && <button {...click('automation.history.open_session', 'automation')} className={`${automationButton} mt-4`} onClick={() => onOpenSession(sessionId)}>{t('automation.backSession')}</button>}
+    {sessionId && <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} className={`${automationButton} mt-4`} onClick={() => onOpenSession(sessionId)}>{t('automation.backSession')}</button>}
   </dialog>, document.body);
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { sameSupervisorSelection, validateAutomationInputV2, type AutorunPreview, type AutorunInput, type SupervisorSelection, type AutomationV2 } from '@/lib/automation/autorun-contracts';
 import type { AutomationStoreApi } from '@/stores/automation-store';
-import { telemetryClickAttributes as click, telemetryIgnoreAttributes as ignore } from '@/lib/telemetry/ui-click';
+import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import { automationButton } from './ownership-actions';
 import { localDateInput, localDue } from './automation-form';
 import { SavedSelection } from './automation-history';
@@ -18,18 +18,18 @@ export function AutorunPreviewView({ preview, objectiveOverride, onObjective, on
     <p className="text-sm">{t('automation.goal')} · {t(objectiveOverride || preview.objective?.kind === 'explicit' ? 'automation.explicitGoal' : 'automation.verifiedGoal')}</p>
     {preview.objective ? <>
       <p className="whitespace-pre-wrap line-clamp-3">{objectiveOverride.trim() || preview.objective.text}</p>
-      <details><summary {...click('automation.autorun.sources', 'automation')}>{t('automation.viewSource')}</summary>
+      <details><summary {...telemetryClickAttributes('automation.autorun.sources', 'automation')}>{t('automation.viewSource')}</summary>
         <p className="whitespace-pre-wrap break-words">{objectiveOverride.trim() || preview.objective.text}</p>
         {preview.objective.kind === 'verified-human' && preview.objective.sources.map(source => <blockquote key={source.recordId} className="whitespace-pre-wrap border-l pl-2">{source.excerpt}</blockquote>)}
       </details>
     </> : <p>{t('automation.goalMissing')}</p>}
-    <button {...click('automation.autorun.objective_edit', 'automation')} type="button" className={automationButton} onClick={() => setEditing(!editing)}>{t('automation.edit')}</button>
-    {editing && <label className="grid gap-1 text-sm">{t('automation.edit')} · {t('automation.explicitGoal')}<textarea {...ignore('non_action')} name="objective" className="rounded border border-(--divider) p-2" rows={3} value={objectiveOverride} onChange={e => onObjective(e.target.value)} /></label>}
+    <button {...telemetryClickAttributes('automation.autorun.objective_edit', 'automation')} type="button" className={automationButton} onClick={() => setEditing(!editing)}>{t('automation.edit')}</button>
+    {editing && <label className="grid gap-1 text-sm">{t('automation.edit')} · {t('automation.explicitGoal')}<textarea {...telemetryIgnoreAttributes('non_action')} name="objective" className="rounded border border-(--divider) p-2" rows={3} value={objectiveOverride} onChange={e => onObjective(e.target.value)} /></label>}
     {preview.newHumanInstructions.length > 0 && <section><h4>{t('automation.newInstructions')}</h4>{preview.newHumanInstructions.map(source => <blockquote className="whitespace-pre-wrap" key={source.recordId}>{source.excerpt}</blockquote>)}</section>}
     <p>{preview.criterionOrigin === 'system-objective' ? t('automation.criterionDefault') : preview.criteria.map(c => c.text).join(' · ')}</p>
     <p role="status">{t(preview.readiness.kind === 'idle' ? 'automation.idleFresh' : preview.readiness.kind === 'unavailable' ? 'automation.contextMissing' : preview.readiness.kind === 'running' ? 'automation.runningReady' : 'automation.completedReady')}</p>
-    {preview.readiness.kind === 'unavailable' && <details><summary {...click('automation.diagnostics', 'automation')}>{t('automation.diagnostics')}</summary>{preview.readiness.code} · {preview.readiness.reason}</details>}
-    {['idle', 'unavailable'].includes(preview.readiness.kind) && <button {...click('automation.history.open_session', 'automation')} type="button" className={automationButton} onClick={onOpenSession}>{t(preview.readiness.kind === 'idle' ? 'automation.writeInstruction' : 'automation.openSession')}</button>}
+    {preview.readiness.kind === 'unavailable' && <details><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')}>{t('automation.diagnostics')}</summary>{preview.readiness.code} · {preview.readiness.reason}</details>}
+    {['idle', 'unavailable'].includes(preview.readiness.kind) && <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} type="button" className={automationButton} onClick={onOpenSession}>{t(preview.readiness.kind === 'idle' ? 'automation.writeInstruction' : 'automation.openSession')}</button>}
   </section>;
 }
 
@@ -93,28 +93,28 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
     } finally { setSaving(false); }
   }}>
     <AutorunPreviewView preview={preview} objectiveOverride={override} onObjective={saveDraft} onOpenSession={onOpenSession} />
-    <details><summary {...click('automation.autorun.criteria', 'automation')}>{t('automation.optionalCriteria')}</summary>
-      <label className="grid gap-1">{t('automation.constraints')}<textarea {...ignore('non_action')} name="constraints" rows={2} defaultValue={draftFields.constraints ?? (draft?.autorun?.constraints ?? old?.autorun.constraints ?? preview.constraints).join('\n')} /></label>
-      <label className="grid gap-1">{t('automation.criteria')}<textarea {...ignore('non_action')} name="criteria" rows={2} defaultValue={draftFields.criteria ?? (draft?.autorun?.criteria ?? old?.autorun.criteria ?? (preview.criterionOrigin === 'system-objective' ? [] : preview.criteria)).map(c => c.text).join('\n')} /></label>
+    <details><summary {...telemetryClickAttributes('automation.autorun.criteria', 'automation')}>{t('automation.optionalCriteria')}</summary>
+      <label className="grid gap-1">{t('automation.constraints')}<textarea {...telemetryIgnoreAttributes('non_action')} name="constraints" rows={2} defaultValue={draftFields.constraints ?? (draft?.autorun?.constraints ?? old?.autorun.constraints ?? preview.constraints).join('\n')} /></label>
+      <label className="grid gap-1">{t('automation.criteria')}<textarea {...telemetryIgnoreAttributes('non_action')} name="criteria" rows={2} defaultValue={draftFields.criteria ?? (draft?.autorun?.criteria ?? old?.autorun.criteria ?? (preview.criterionOrigin === 'system-objective' ? [] : preview.criteria)).map(c => c.text).join('\n')} /></label>
     </details>
     <p className="break-words">{t('automation.supervisor')}: {supervisor ? `${supervisor.provider} · ${supervisor.model} · ${supervisor.reasoningEffort} · ${supervisor.serviceTier ?? ''}` : t('automation.unsupported')}</p>
     <p className="text-xs">{t('automation.supervisorHelp')}</p>
     <SavedSelection selection={preview.workerSelection} />
     <p>{t('automation.remaining')}: {preview.remaining.dispatches} · {preview.remaining.analyses} · {Number.isFinite(expiresAt) ? localDue(expiresAt) : t('automation.invalid')}</p>
-    <details><summary {...click('automation.form.advanced', 'automation')}>{t('automation.advanced')}</summary><div className="grid gap-3">
-      <label>{t('automation.supervisor')}<select {...click('automation.autorun.supervisor', 'automation')} className="w-full" value={selectedIndex} onChange={e => setSupervisor(options[Number(e.target.value)]?.selection ?? null)}><option value={-1}>{t('automation.choose')}</option>{options.map((option, i) => <option key={i} value={i}>{option.selection.provider} · {option.selection.model} · {option.selection.reasoningEffort} · {option.selection.serviceTier}</option>)}</select></label>
-      <label>{t('automation.name')}<input {...ignore('non_action')} name="name" defaultValue={draftFields.name ?? draft?.name ?? old?.name ?? t('automation.continueWork')} required maxLength={120} /></label>
-      <label>{t('automation.delay')}<input {...click('automation.form.delay', 'automation')} name="delay" type="number" min={30} max={86400} defaultValue={draftFields.delay ?? (old?.trigger.delayMs ?? preview.defaults.delayMs)/1000} /></label>
-      <label>{t('automation.max')}<input {...click('automation.form.max', 'automation')} name="max" type="number" min={1} max={100} defaultValue={draftFields.max ?? old?.limits.maxDispatches ?? preview.defaults.maxDispatches} /></label>
-      <label>{t('automation.analysisMax')}<input {...click('automation.autorun.analyses', 'automation')} name="analyses" type="number" min={1} max={100} defaultValue={draftFields.analyses ?? old?.autorun.maxAnalyses ?? preview.defaults.maxAnalyses} /></label>
-      <label>{t('automation.analysisTimeout')}<input {...click('automation.autorun.timeout', 'automation')} name="timeout" type="number" min={30} max={300} defaultValue={draftFields.timeout ?? (old?.autorun.analysisTimeoutMs ?? preview.defaults.analysisTimeoutMs)/1000} /></label>
-      <label>{t('automation.expiry')}<input {...click('automation.form.expiry', 'automation')} name="expiry" type="datetime-local" defaultValue={draftFields.expiry ?? localDateInput(expiresAt)} onChange={e => setExpiresAt(new Date(e.target.value).getTime())} /></label>
+    <details><summary {...telemetryClickAttributes('automation.form.advanced', 'automation')}>{t('automation.advanced')}</summary><div className="grid gap-3">
+      <label>{t('automation.supervisor')}<select {...telemetryClickAttributes('automation.autorun.supervisor', 'automation')} className="w-full" value={selectedIndex} onChange={e => setSupervisor(options[Number(e.target.value)]?.selection ?? null)}><option value={-1}>{t('automation.choose')}</option>{options.map((option, i) => <option key={i} value={i}>{option.selection.provider} · {option.selection.model} · {option.selection.reasoningEffort} · {option.selection.serviceTier}</option>)}</select></label>
+      <label>{t('automation.name')}<input {...telemetryIgnoreAttributes('non_action')} name="name" defaultValue={draftFields.name ?? draft?.name ?? old?.name ?? t('automation.continueWork')} required maxLength={120} /></label>
+      <label>{t('automation.delay')}<input {...telemetryClickAttributes('automation.form.delay', 'automation')} name="delay" type="number" min={30} max={86400} defaultValue={draftFields.delay ?? (old?.trigger.delayMs ?? preview.defaults.delayMs)/1000} /></label>
+      <label>{t('automation.max')}<input {...telemetryClickAttributes('automation.form.max', 'automation')} name="max" type="number" min={1} max={100} defaultValue={draftFields.max ?? old?.limits.maxDispatches ?? preview.defaults.maxDispatches} /></label>
+      <label>{t('automation.analysisMax')}<input {...telemetryClickAttributes('automation.autorun.analyses', 'automation')} name="analyses" type="number" min={1} max={100} defaultValue={draftFields.analyses ?? old?.autorun.maxAnalyses ?? preview.defaults.maxAnalyses} /></label>
+      <label>{t('automation.analysisTimeout')}<input {...telemetryClickAttributes('automation.autorun.timeout', 'automation')} name="timeout" type="number" min={30} max={300} defaultValue={draftFields.timeout ?? (old?.autorun.analysisTimeoutMs ?? preview.defaults.analysisTimeoutMs)/1000} /></label>
+      <label>{t('automation.expiry')}<input {...telemetryClickAttributes('automation.form.expiry', 'automation')} name="expiry" type="datetime-local" defaultValue={draftFields.expiry ?? localDateInput(expiresAt)} onChange={e => setExpiresAt(new Date(e.target.value).getTime())} /></label>
     </div></details>
     {intent === 'replace' && <p>{t('automation.replaceHelp')}</p>}
     {invalid && <p role="alert">{t('automation.invalid')}</p>}
     <div className="sticky bottom-0 bg-(--chat-bg) py-2">
-      <button {...click('automation.autorun.start', 'automation')} className={automationButton} type="submit" disabled={saving || (intent !== 'edit' && !ready)}>{t(intent === 'resume' ? 'automation.resume' : intent === 'edit' ? 'automation.save' : intent === 'replace' ? 'automation.replace' : 'automation.start')}</button>
-      {intent === 'start' && <button {...click('automation.form.save', 'automation')} className={automationButton} type="submit" name="saveLater" value="yes" disabled={saving || !confirmedSelection}>{t('automation.save')}</button>}
+      <button {...telemetryClickAttributes('automation.autorun.start', 'automation')} className={automationButton} type="submit" disabled={saving || (intent !== 'edit' && !ready)}>{t(intent === 'resume' ? 'automation.resume' : intent === 'edit' ? 'automation.save' : intent === 'replace' ? 'automation.replace' : 'automation.start')}</button>
+      {intent === 'start' && <button {...telemetryClickAttributes('automation.form.save', 'automation')} className={automationButton} type="submit" name="saveLater" value="yes" disabled={saving || !confirmedSelection}>{t('automation.save')}</button>}
     </div>
   </form>;
 }
