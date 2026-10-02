@@ -11,6 +11,7 @@ import { sessionHistory } from '@/lib/session-history';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { HookCommandStyle } from './hook-command';
 import { buildClaudeHookSettingsJson } from './claude-hook-settings';
+import { createClaudeLaunchSettingsFile } from './claude-launch-settings';
 import { createClaudeSkillOverlay } from './claude-skill-overlay';
 import {
   createClaudeSkillOverlayInWsl,
@@ -583,6 +584,17 @@ export function createProviderLaunchModule(
           hookCommandStyle,
           claudePluginDir,
         );
+        // D001: the observer repeats across 11 hooks; inline JSON plus nested WSL quoting
+        // exceeds CreateProcessW's ceiling. Use Claude's supported file settings transport.
+        const settingsIndex = decision.launchSpec.args?.indexOf('--settings') ?? -1;
+        if (decision.providerId === 'claude-code' && wslTerminalRuntime && settingsIndex >= 0) {
+          const args = decision.launchSpec.args!;
+          const material = createClaudeLaunchSettingsFile(args[settingsIndex + 1], {
+            userId: request.userId, sessionId: request.sessionId, terminalId, agentEnvironment,
+          });
+          resourceDisposers.add(material.dispose);
+          args[settingsIndex + 1] = material.settingsPath;
+        }
         decision.launchSpec.cwd = workDir;
         const codexResumeTranscriptPath = decision.providerId === 'codex'
           && dbSessions.extractCodexTerminalSessionId(decision.providerState)
