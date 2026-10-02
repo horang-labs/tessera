@@ -13,6 +13,7 @@ import { parseSupervisorResult, supervisorFailure } from '@/lib/automation/super
 import { AUTORUN_GROUP_WRAPPER, runOwnedSupervisor, SupervisorProcessUncertain } from './autorun-process';
 import controls from './codex/autorun-controls.json';
 import catalog from './codex/autorun-catalog.json';
+import { registerSupervisorInvocation, closeSupervisorInvocation, defaultSettlementDependencies, type SupervisorRecovery } from './autorun-settlement';
 
 const CONFIG_READER = String.raw`
 const cp=require('node:child_process');const child=cp.spawn(process.argv[2],[...process.argv.slice(3),'app-server'],{stdio:'pipe'});
@@ -34,7 +35,7 @@ child.on('error',()=>{process.exitCode=1});child.on('close',code=>{try{
  if(models.length!==1)throw Error('model unavailable');process.stdout.write(JSON.stringify({models})+'\n');
 }catch{process.exitCode=1}});
 `;
-export type SupervisorWorkspace = { root: string; guestRoot: string; command: string; environment: Record<string, string>; cleanup(): Promise<void> };
+export type SupervisorWorkspace = { root: string; guestRoot: string; command: string; environment: Record<string, string>; recovery?: SupervisorRecovery; cleanup(): Promise<void> };
 export type SupervisorDependencies = {
   prepare(request: SupervisorCapabilityRequest): Promise<SupervisorWorkspace>;
   probe(request: SupervisorCapabilityRequest, workspace: SupervisorWorkspace, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }>;
@@ -61,6 +62,7 @@ async function requireSettled(request: SupervisorCapabilityRequest) {
   uncertainWorkspaces.delete(ownerKey(request));
 }
 async function retainUncertain(request: SupervisorCapabilityRequest, workspace: SupervisorWorkspace) {
+  if (workspace.recovery) { workspace.cleanup = async () => {}; return; }
   const key = ownerKey(request), roots = uncertainWorkspaces.get(key) ?? new Set<string>();
   roots.add(workspace.root); uncertainWorkspaces.set(key, roots); workspace.cleanup = async () => {};
   // Recover capability-only uncertainty after a backend restart, without stopping any other process.
@@ -115,7 +117,14 @@ export const defaultSupervisorDependencies: SupervisorDependencies = {
       await fs.writeFile(root + '/group.cjs', AUTORUN_GROUP_WRAPPER, { mode: 0o600 });
       await fs.writeFile(root + '/supervisor-catalog.json', JSON.stringify(catalog), { mode: 0o600 });
       const environment = { [request.selection.provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR']: guestRoot + '/home' };
-      return { root, guestRoot, command, environment, cleanup: () => fs.rm(root, { recursive: true, force: true }) };
+      const decision = request as Partial<SupervisorDecisionRequest>;
+      let recovery: SupervisorRecovery | undefined;
+      if (decision.invocationId && decision.deadlineAt) {
+        const identity = { version: 1 as const, userId: request.userId, agentEnvironment: request.agentEnvironment, invocationId: decision.invocationId };
+        recovery = await registerSupervisorInvocation({ ...identity, provider: request.selection.provider, deadlineAt: decision.deadlineAt },
+          await defaultSettlementDependencies.resolveGuestHome(identity));
+      }
+      return { root, guestRoot, command, environment, recovery, cleanup: () => fs.rm(root, { recursive: true, force: true }) };
     } catch (error) { await fs.rm(root, { recursive: true, force: true }); throw error; }
   },
   async probe(request, workspace, args) {
@@ -131,7 +140,8 @@ export const defaultSupervisorDependencies: SupervisorDependencies = {
     await fs.rm(workspace.root + '/settled.json', { force: true });
     const deadlineAt = Math.min((request as Partial<SupervisorDecisionRequest>).deadlineAt ?? Infinity, Date.now() + 10_000);
     await fs.writeFile(workspace.root + '/launch.json', JSON.stringify({ command, args, environment: workspace.environment, deadlineAt }), { mode: 0o600 });
-    const result = await runOwnedSupervisor({ ...request, root: workspace.root, guestRoot: workspace.guestRoot, signal: (request as Partial<SupervisorDecisionRequest>).signal ?? new AbortController().signal, deadlineAt, stdin: '' });
+    const result = await runOwnedSupervisor({ ...request, root: workspace.root, guestRoot: workspace.guestRoot, recovery: workspace.recovery,
+      signal: (request as Partial<SupervisorDecisionRequest>).signal ?? new AbortController().signal, deadlineAt, stdin: '' });
     if (!result.quiescent) { await retainUncertain(request, workspace); throw new SupervisorProcessUncertain(); }
     return { ok: result.exitCode === 0 && result.quiescent && !result.timedOut && !result.overflow, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
   },
@@ -219,25 +229,35 @@ export async function generateSupervisorDecision(request: SupervisorDecisionRequ
   const stdin = request.trustedInstructions + '\n\n<worker-evidence-json>\n' + JSON.stringify(request.packet) + '\n</worker-evidence-json>';
   if (!supervisorPacketSchema.safeParse(request.packet).success || Buffer.byteLength(stdin) > AUTORUN_BOUNDS.packetBytes) return supervisorFailure(base, 'invalid-output');
   let workspace: SupervisorWorkspace | undefined, quiescent = true;
+  const finish = async (result: SupervisorResult) => {
+    if (workspace?.recovery) {
+      const observation = await closeSupervisorInvocation(workspace.recovery);
+      if (observation.kind !== 'quiescent') {
+        quiescent = false; await retainUncertain(request, workspace);
+        return supervisorFailure({ ...base, quiescent: false }, 'provider-error');
+      }
+    }
+    return result;
+  };
   try {
     workspace = await deps.prepare(request);
     const capability = await attest(request, workspace, deps);
-    if (request.signal.aborted) return supervisorFailure(base, 'cancelled');
-    if (request.deadlineAt <= Date.now()) return supervisorFailure(base, 'timeout');
-    if (capability.kind !== 'available') return supervisorFailure(base, 'unsupported');
+    if (request.signal.aborted) return await finish(supervisorFailure(base, 'cancelled'));
+    if (request.deadlineAt <= Date.now()) return await finish(supervisorFailure(base, 'timeout'));
+    if (capability.kind !== 'available') return await finish(supervisorFailure(base, 'unsupported'));
     await fs.rm(workspace.root + '/settled.json', { force: true });
     await fs.writeFile(workspace.root + '/schema.json', JSON.stringify(request.outputSchema), { mode: 0o600 });
     await fs.writeFile(workspace.root + '/launch.json', JSON.stringify({ command: workspace.command, args: supervisorArgs(request, workspace), environment: workspace.environment, deadlineAt: request.deadlineAt }), { mode: 0o600 });
     const result = await runOwnedSupervisor({ ...request, ...workspace, stdin });
     quiescent = result.quiescent;
     if (!quiescent) await retainUncertain(request, workspace);
-    return parseSupervisorResult({ ...result, selection: request.selection, cliVersion: capability.capability.cliVersion, invocationId: request.invocationId, packet: request.packet });
+    return await finish(parseSupervisorResult({ ...result, selection: request.selection, cliVersion: capability.capability.cliVersion, invocationId: request.invocationId, packet: request.packet }));
   } catch (error) {
     if (error instanceof SupervisorProcessUncertain) {
       quiescent = false;
       if (workspace) await retainUncertain(request, workspace);
     }
-    return supervisorFailure({ ...base, quiescent }, 'provider-error');
+    return await finish(supervisorFailure({ ...base, quiescent }, 'provider-error'));
   }
   finally { if (quiescent) await workspace?.cleanup(); }
 }
