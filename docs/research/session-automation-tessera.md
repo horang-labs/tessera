@@ -1,6 +1,8 @@
 # Tessera Session automation: source research (#523)
 
-Research date: 2026-10-02. Scope: the current integration baseline, **14bd501e9e87579fe410fb2b70375709f464ee12**, in this ticket's isolated worktree. This is source inspection, not a runtime verification or a claim about upstream HEAD. Product source revision before/after research is unchanged. No competitor checkout was pulled: #523 assigns Tessera architecture; Orca and Paseo/T3 Code findings arrive in sibling research tickets. Their conclusions have not been assumed here.
+Research date: 2026-10-02. Scope: the current integration baseline, **14bd501e9e87579fe410fb2b70375709f464ee12**, in this ticket's isolated worktree. This is source inspection, not a runtime verification or a claim about upstream HEAD. Product source revision before/after research is unchanged. No competitor checkout was pulled by this ticket. The reviewed sibling [Orca report](session-automation-orca.md) and [Paseo/T3 report](session-automation-paseo-t3.md) are now available and were read for the product-decision amendment; their primary-source provenance is retained below. The actual Tessera input seams were re-read at this unchanged product revision.
+
+Amendment fixed point: `c472662ec81ae9daa11ce49336a8343f2a1ea0c3`. The [authorized decisions](../design/session-automation-product-decisions.md) and [acceptance matrix](../design/session-automation-acceptance.md), plus the latest user clarification, supersede the initial scope recommendations. This is still research/design only.
 
 Requested deliverable: [issue #523](https://github.com/horang-labs/tessera/issues/523), [wave brief](../design/session-automation-wave.md), and the resulting [proposed architecture](../design/session-automation-architecture.md). All proposed behavior is distinguished from observed behavior below.
 
@@ -8,9 +10,9 @@ Requested deliverable: [issue #523](https://github.com/horang-labs/tessera/issue
 
 Read the actual `implement` and `code-review` skills from the user-specified mattpocock plugin. Used graphify for orientation and `explain` for relationships, then read the source branches. The vocabulary query `lifecycle prompt queue` returned 32 nodes with a budget truncation warning; it was only a map. Focused explains covered `createTerminalControlSessionController`, `submitSessionPrompt`, `enqueueProcessInput`, `handleHookRequest`, and `ProviderLaunchModule`. Graph timestamps and inferred edges are not evidence of current behavior; the files at the pinned revision are.
 
-The exact requested `gh issue view 523 --repo horang-labs/tessera --comments` failed because this installed gh queried deprecated Projects classic fields. Recovery with `--json number,title,body,comments,url` succeeded; comments were empty. No GitHub state was changed.
+The initial exact requested `gh issue view 523 --repo horang-labs/tessera --comments` failed because this installed gh queried deprecated Projects classic fields. Recovery with `--json number,title,body,comments,url` succeeded; comments were empty. No GitHub state was changed.
 
-No app or provider was launched; no user's DB or settings were opened. No tests, typecheck, lint, or full suite were run for this documentation-only change. Future implementation seams and topology checks are specified in the design. In particular, this research does not verify Windows backend → WSL CLI behavior, hook arrival reliability, actual TUI acceptance, provider configuration fidelity, DST library behavior, or crash durability under power loss.
+No app or provider was launched; no user's DB or settings were opened. No tests, typecheck, lint, or full suite were run for this documentation-only change. Future implementation seams and topology checks are specified in the design. In particular, this research does not verify Windows backend → WSL CLI behavior, hook arrival reliability, actual TUI acceptance, provider configuration fidelity, calendar recurrence (deferred from v1), or crash durability under power loss.
 
 ## Source map (all anchors at the pinned revision)
 
@@ -53,9 +55,44 @@ Links below point to exact source revisions; symbol names also make them usable 
 
 ## Uncertainties carried to the orchestrator
 
-- Sibling competitor research is pending. No comparative claim or upstream product behavior is included.
+- Sibling source reports are now incorporated as design rationale, not runtime certifications. Their recommendations are subordinate to the authorized v1 decisions; calendar/DST suggestions are deferred.
 - Need packaged Windows/WSL evidence that accepted lead completion, permission blocking, semantic paste/Enter, and saved launch selection work for each enabled provider/version. Source alone cannot certify these.
-- Need an input-presence/admission design that covers normal panel, Peek, popout, disconnected drafts, and raw Control keys. The architecture specifies a conservative background-only v1; richer foreground behavior is a separate decision.
+- The revised architecture selects explicit server-owned armed input, compatible with visible normal panel/Peek and additional watchers. It needs no multi-client editor-presence lease. Implementation must verify every write path, raw rejection acknowledgement, retained drafts, and drain-before-unlock; these capabilities do not already exist in the source.
 - Duplicate/delayed hooks lack a universal provider event ID. A runtime epoch plus server turn sequence is a dedup aid, not proof against every delayed message; ambiguous sequences must suspend.
 - Local Control's single-user model and shared Session rows do not establish multi-user Session ACLs. Supporting multiple independent Automation owners requires a separate resource-ownership design.
 - Power-loss durability depends on SQLite sync policy and storage. Current synchronous=NORMAL is not a claim that an acknowledged automation dispatch marker survives power failure; implementation must resolve this before enabling automatic delivery.
+
+
+## Amendment: source-confirmed input seams
+
+Used `graphify explain 'sendInputToTerminal'` (12 relationships) and `graphify explain 'submitSessionPrompt'` (2 relationships), then re-read the actual code. These additional findings are **observed source facts**, not implemented automation behavior:
+
+| Source at the same Tessera baseline | Observed seam |
+|---|---|
+| [terminal-surface-registry.ts:587](https://github.com/horang-labs/tessera/blob/14bd501e9e87579fe410fb2b70375709f464ee12/src/lib/terminal/terminal-surface-registry.ts#L587), onData at 1130 | `sendInput` routes through wsClient; `sendUserInput` adds notification, `pasteUserInput` uses xterm paste, which emits onData. Keyboard/input-bar/native paste/drop callers share these paths but several direct sendInput sites exist. A guard only on sendUserInput would miss writes. Scroll has client-side handlers separate from raw TUI mouse/key bytes. |
+| [ws/client.ts:509](https://github.com/horang-labs/tessera/blob/14bd501e9e87579fe410fb2b70375709f464ee12/src/lib/ws/client.ts#L509) and [server-message-routing.ts:779](https://github.com/horang-labs/tessera/blob/14bd501e9e87579fe410fb2b70375709f464ee12/src/lib/ws/server-message-routing.ts#L779) | Raw input returns only socket-send boolean; server calls TerminalManager.write and returns, with no raw acceptance response. Semantic submission has requestId callbacks and accepted/error response. Adding an input lock requires explicit raw rejection/result handling so an upgraded client can preserve racing input rather than claim it was delivered. |
+| [terminal-chat-composer.tsx:248](https://github.com/horang-labs/tessera/blob/14bd501e9e87579fe410fb2b70375709f464ee12/src/components/chat/terminal-chat-composer.tsx#L248) | Draft is cleared only after semantic acceptance, which is a useful invariant to preserve; component-local draft state itself does not survive all surface remounts. Proposed client draft storage is new work, not an existing server draft-awareness feature. |
+| [terminal-manager.ts:948](https://github.com/horang-labs/tessera/blob/14bd501e9e87579fe410fb2b70375709f464ee12/src/lib/terminal/terminal-manager.ts#L948), [device response:1326](https://github.com/horang-labs/tessera/blob/14bd501e9e87579fe410fb2b70375709f464ee12/src/lib/terminal/terminal-manager.ts#L1326) | Delayed prefill writes directly to processHandle; arm must reject pending prefill and its callback must honor the gate. Device/appearance replies are server-generated protocol writes that must remain distinct from user input. |
+| [terminal-device-query-controller.ts:1](https://github.com/horang-labs/tessera/blob/14bd501e9e87579fe410fb2b70375709f464ee12/src/lib/terminal/terminal-device-query-controller.ts#L1) | Server consumes/replies to known device queries; keyboard capability queries can still depend on the renderer. A renderer-supplied “system” flag or generic escape-sequence exemption would be unsafe. A bounded response to a server-observed outstanding query is a possible narrow extension; not yet implemented. |
+
+### Reconciled design recommendations (proposals)
+
+- Explicit arming gives automation input ownership, with a proven clean completed boundary or known submitted running turn. A visible attached terminal and additional read-only watchers are allowed. Local unsent ChatView drafts are saved/read-only; raw already-written PTY drafts prevent arming. All raw, semantic, Control keys, prefill and user settings writes enforce ownership in the backend. No subscriber-count admission rule remains.
+- Pause to type and Delete are always reachable in normal panel/Peek, even while approval input is locked. They inhibit new dispatch immediately, then drain the current irreversible paste/Enter. Human input unlocks only after no delayed writer can still fire. Unknown delivery is acknowledged without retry before deliberate manual recovery; do not guess away a partial paste.
+- V1 is direct UTC once, elapsed fixed interval and confirmed-turn wake. Calendar/daily/cron/DST recurrence is deferred. Wake defaults: 2-minute delay, 10 attempts, 8-hour expiry. Creation recurrence: 100 attempts/30 days; one-shot max 1. All remain within the architecture's finite configurable bounds.
+- Soft-delete removes a rule from active management while retaining run audit, snapshots and occurrence dedup. Retain exact supported Claude/Codex saved selection and provider-native permissions, configured-owner scope and explicit agentEnvironment checks. No Run Now, product automation CLI or provider framework refactor.
+- A small S0 type/bridge/client-projection prerequisite freezes interfaces. A (engine/API/DB), B (runtime/input/acks/draft storage), C (Header/actions/forms/history) then compile/test independently against ports/fixtures; D integrates and verifies actual packaged behavior.
+
+### Competitor evidence now incorporated
+
+| Reviewed report / pinned revision | Source-observed result reported by sibling | Tessera interpretation |
+|---|---|---|
+| Orca `1fc24d311481a85d5b4ae596898ee072389f040c` | Renderer-local paste transaction, busy reuse fallback to fresh Session, durable intent with external-side-effect ambiguity, latest-only catch-up; definition deletion removes history | Keep server input gate and exact wake target; keep unknown outcome/no replay and coalescing; use soft-delete audit and explicit saved selection. No competitor guarantee of safe visible PTY automation is assumed. |
+| Paseo `1d0df5c0b737ea1ee9bf774a15c5ad5812eb2f05` | Shared existing-agent/new-agent schedule model, optional bounds, no absolute-date one-shot schema; busy check followed by steer/replace; permission waiting fails run | Adopt the two targets and readable bounds/history, but make bounds/defaults mandatory, once an exact instant, no steer/replace or inherited unattended approval policy. |
+| T3 `54084ae1e6c32809db040e4fa571c80fdf2d8ae4` | No timed prompt scheduler established in searched scope; opt-in restart continuation, command receipts, client queues and distinct background liveness | Preserve backend execution identity/receipts and reject uncertain lifecycle. Client presence is not scheduler authority, and a settled turn does not prove task success. |
+
+Sibling refresh provenance: Orca `33351b00858e8619c4271d15ec46c8d220521770` → `1fc24d311481a85d5b4ae596898ee072389f040c`; Paseo `5599f9e567128a1240b3b15afab28bceef9d36a5` → `1d0df5c0b737ea1ee9bf774a15c5ad5812eb2f05`; T3 `0fcd5f90611451cca842689faea53b5450c022da` → `54084ae1e6c32809db040e4fa571c80fdf2d8ae4`. These pulls and independent source reviews were performed by sibling tickets, not repeated here. Their documents contain the primary file/line anchors and limitations; this amendment adds no new competitor branch-level claim.
+
+### Required visible-PTY QA evidence
+
+Future D must leave a real isolated Windows-backend + WSL-CLI Session **visible and attached**, arm the default wake, observe a confirmed settled turn and one actual continuation prompt/response after the 2-minute delay, without closing the panel or Peek. Repeat with Peek open and another read-only watcher. Exercise Pause/Delete during delayed paste: no human byte may enter until the writer is finished/fenced; unknown is never auto-retried. Verify approval-wait Pause remains accessible, raw dirty input blocks arming, and local drafts survive arm/pause/surface switches. Capture ordered screenshots and provider/PTY delivery evidence, not just history state. None of these runtime checks was executed in this documentation phase.
