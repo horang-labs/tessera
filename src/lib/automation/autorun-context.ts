@@ -195,11 +195,12 @@ export async function readAnalysisContext(request: AnalysisSnapshotRequest, deps
         const stat = await handle.stat();
         const budget = AUTORUN_BOUNDS.scanBytes - bytesScanned;
         if (budget <= AUTORUN_BOUNDS.recordBytes) refuse('scan-limit');
-        const windows = stat.size <= budget ? [{ start: 0, length: stat.size }] : [
-          { start: 0, length: AUTORUN_BOUNDS.recordBytes },
-          // The frozen cursor anchors older context. Appended bookkeeping cannot move captured ranges.
-          // Keep backward coverage: Codex task_started/turn_context may precede Submit.
-          { start: Math.max(AUTORUN_BOUNDS.recordBytes, c.startByte - 8 * 1024 * 1024), length: budget - AUTORUN_BOUNDS.recordBytes },
+        // Select the same captured windows on either side of the scan-size threshold.
+        // The frozen cursor anchors older context, with backward coverage for Codex lifecycle records.
+        const tailStart = Math.max(AUTORUN_BOUNDS.recordBytes, c.startByte - 8 * 1024 * 1024);
+        const windows = tailStart === AUTORUN_BOUNDS.recordBytes ? [{ start: 0, length: Math.min(stat.size, budget) }] : [
+          { start: 0, length: Math.min(stat.size, AUTORUN_BOUNDS.recordBytes) },
+          { start: tailStart, length: Math.max(0, Math.min(stat.size - tailStart, budget - AUTORUN_BOUNDS.recordBytes)) },
         ];
         records = []; ranges = [];
         for (const window of windows) {
@@ -213,7 +214,7 @@ export async function readAnalysisContext(request: AnalysisSnapshotRequest, deps
           recordBytes.push({ start: window.start + skip, bytes: available.subarray(skip) });
           if (read.bytesRead) ranges.push({ startByte: window.start + skip, endByte: window.start + read.bytesRead });
         }
-        maxRecordBytes = Math.max(1, ...records.map(r => r.end - r.start));
+        maxRecordBytes = records.reduce((max, r) => Math.max(max, r.end - r.start), 1);
         const after = await handle.stat();
         if (after.ino !== stat.ino || after.size < stat.size || (after.size === stat.size && after.mtimeMs !== stat.mtimeMs)) refuse('stale');
       } finally { await handle.close(); }

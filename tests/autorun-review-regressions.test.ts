@@ -43,13 +43,43 @@ test('capture identity survives append bookkeeping while detecting equal-length 
         assert.deepEqual(before.snapshot.cutoff, after.snapshot.cutoff);
         assert.equal(before.snapshot.contentHash, after.snapshot.contentHash);
         assert.deepEqual(before.snapshot.items, after.snapshot.items);
-        await fs.writeFile(f.file, captured.toString().replace('Reply exactly', 'Reply safely'));
+        const rewritten = Buffer.from(captured.toString().replace('Reply exactly', 'Reply EXACTLY'));
+        assert.equal(rewritten.length, captured.length);
+        await fs.writeFile(f.file, rewritten);
         const changed = await readAnalysisContext(f.request, f.deps);
         assert.equal(changed.kind, 'ok');
         if (changed.kind === 'ok') assert.notEqual(changed.snapshot.contentHash, before.snapshot.contentHash);
       }
     } finally { await fs.rm(f.dir, { recursive: true }); }
   }
+});
+
+test('captured identity remains stable when post-cutoff bookkeeping crosses the 32MiB scan threshold', async () => {
+  const f = await fixture('codex');
+  try {
+    const lines = f.bytes.toString().trimEnd().split('\n');
+    const base = JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', pad: '' } }) + '\n';
+    const padding = JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', pad: 'x'.repeat(1024 - Buffer.byteLength(base)) } }) + '\n';
+    const block = padding.repeat(1024);
+    const handle = await fs.open(f.file, 'w');
+    await handle.write(lines[0] + '\n');
+    for (let n = 0; n < 31; n++) await handle.write(block);
+    const cursor = (await handle.stat()).size;
+    await handle.write(lines.slice(1).join('\n') + '\n'); await handle.close();
+    assert.ok((await fs.stat(f.file)).size < 32 * 1024 * 1024);
+    const request = { ...f.request, correlation: { ...f.request.correlation, startByte: cursor } };
+    const before = await readAnalysisContext(request, f.deps);
+    await fs.appendFile(f.file, block.repeat(2));
+    assert.ok((await fs.stat(f.file)).size > 32 * 1024 * 1024);
+    const after = await readAnalysisContext(request, f.deps);
+    assert.ok(before.kind === 'ok' && after.kind === 'ok');
+    if (before.kind === 'ok' && after.kind === 'ok') {
+      assert.equal(before.snapshot.contentHash, after.snapshot.contentHash);
+      assert.deepEqual(before.snapshot.source.scannedRanges, after.snapshot.source.scannedRanges);
+      assert.deepEqual(before.snapshot.items, after.snapshot.items);
+      assert.ok(after.snapshot.source.bytesScanned <= 32 * 1024 * 1024);
+    }
+  } finally { await fs.rm(f.dir, { recursive: true }); }
 });
 
 test('Claude rejects a submission cursor inside an older matching turn', async () => {
