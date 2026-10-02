@@ -11,13 +11,15 @@ import {
 
 // 훅 커맨드(hook-command.ts)나 timeout이 바뀌면 함께 바뀐다 — codex의
 // command_hook_hash 계약(정규화·직렬화)이 유지되는지 고정하는 값.
+// Observer-enriched POSIX command; independently verified with Python hashlib against
+// Codex ff6aec96 hook_hash/version_for_toml. Keep literal goldens, never call the production hasher.
 const EXPECTED_TRUSTED_HASHES = {
-  session_start: 'sha256:54118a230f5a83c3bd07b62077af4c27a38bd3d2e7087c3771b2effb1318e2f9',
-  user_prompt_submit: 'sha256:0f11b1e78a95d841d47f37b1bd79b598ce91ba11f0962e4fb4b30c264fb4d9f1',
-  pre_tool_use: 'sha256:c6164b8a833972d6597fb603f95193db1a327b1c6bebd379fad3d06e42509285',
-  permission_request: 'sha256:dbfc8a48b3def5b466ef460fdc822ba1521ec4ed587227d237c8cccc19f3c2e3',
-  post_tool_use: 'sha256:9417b820045acf8a0ada4b56ab7d0295b36fe475949ce9bf77b3db36b3bd6ba1',
-  stop: 'sha256:5af8ee0181c8ee533e4a53fc56e393ee95096c6c7699613d56438d98a198e5a1',
+  session_start: 'sha256:161197e323c5727946d52958ed240724481238617c66a5caa965f311f8cce0d8',
+  user_prompt_submit: 'sha256:0fc8cc99f77dcd9cb1cfc3e42fb6a8fa920423ed9d94a181bbe66c67c7987c6d',
+  pre_tool_use: 'sha256:1e39f2e45da784609e8de951a6ed8fe586b378e2d6984bbfbfee2935276e7578',
+  permission_request: 'sha256:cd862667ce33f61b154579fa91825d7f5a2fc51e52688cf146f99ed9d7cfa895',
+  post_tool_use: 'sha256:de5db1aee7c1969fad6a6b85ca3b932b023277af4347d18df26f8a19c3308d69',
+  stop: 'sha256:3eab19fa62fc1ff30a84d507ab6d5495557b5af0cc3161ae3d482e6d3a1e388c',
 } as const;
 
 test('Codex overlay pre-trusts exactly the lifecycle hooks it installs', () => {
