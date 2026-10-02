@@ -48,3 +48,55 @@ test('raw transport awaits ACK, includes the epoch, preserves unknown text, and 
     Object.assign(globalThis, { WebSocket: previousSocket, window: previousWindow });
   }
 });
+
+test('raw prompt telemetry follows accepted Enter once and never exposes input or records rejected/unknown receipts', async () => {
+  const previousSocket = globalThis.WebSocket;
+  const previousWindow = globalThis.window;
+  const previousFetch = globalThis.fetch;
+  const beacons: Array<{ url: string; options?: RequestInit }> = [];
+  Object.assign(globalThis, {
+    WebSocket: Socket,
+    window: { location: { protocol: 'http:', host: 'fixture:3100' } },
+    fetch: async (url: string, options?: RequestInit) => { beacons.push({ url, options }); return new Response(); },
+  });
+  const client = new WebSocketClient();
+  const terminalId = 'telemetry-terminal';
+  try {
+    client.connect('owner');
+    const socket = Socket.last;
+    client.createTerminal({ terminalId, surfaceId: 'normal', launch: { providerId: 'codex', sessionId: 'telemetry-session' } });
+    const send = (data: string) => {
+      const result = client.sendTerminalInputConfirmed(terminalId, 'normal', data);
+      const requestId = socket.sent.at(-1)!.requestId;
+      return { result, receipt: (outcome: string) => socket.receive({
+        type: 'terminal_input_result', terminalId, surfaceId: 'normal', requestId, outcome,
+      }) };
+    };
+    const text = send('private draft');
+    text.receipt('accepted');
+    assert.equal(await text.result, true);
+    assert.deepEqual(beacons, [], 'ordinary accepted bytes are not a prompt submission');
+    const enter = send('\r');
+    assert.deepEqual(beacons, [], 'enqueue is not acceptance');
+    enter.receipt('accepted');
+    assert.equal(await enter.result, true);
+    assert.deepEqual(beacons, [{ url: '/api/telemetry/prompt-beacon', options: {
+      method: 'POST', headers: { 'X-Tessera-Provider': 'codex', 'X-Tessera-Source': 'pty_direct', 'X-Tessera-Form-Factor': 'desktop' }, keepalive: true,
+    } }]);
+    enter.receipt('accepted');
+    for (const outcome of ['rejected', 'unknown']) {
+      const next = send('\r');
+      next.receipt(outcome);
+      assert.equal(await next.result, false);
+      next.receipt('accepted'); // A late receipt cannot change an already settled result.
+    }
+    assert.equal(beacons.length, 1);
+    const disconnected = send('\r');
+    client.disconnect();
+    assert.equal(await disconnected.result, false);
+    assert.equal(beacons.length, 1);
+  } finally {
+    client.disconnect(); clearRetainedTerminalInput(terminalId);
+    Object.assign(globalThis, { WebSocket: previousSocket, window: previousWindow, fetch: previousFetch });
+  }
+});

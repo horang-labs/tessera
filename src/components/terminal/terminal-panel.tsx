@@ -588,8 +588,9 @@ export function TerminalPanel({
       {retainedInput && (
         <div role="status" className="border-t border-(--divider) p-2 text-xs">
           <span>Input was not confirmed. Kept for manual recovery:</span>
-          <textarea readOnly value={retainedInput} aria-label="Unconfirmed terminal input" className="block w-full" />
-          <button type="button" onClick={() => clearRetainedTerminalInput(terminalId)}>Dismiss kept input</button>
+          {/* Read-only recovery text is private content, not an instrumented action. */}
+          <textarea {...telemetryIgnoreAttributes('non_action')} readOnly value={retainedInput} aria-label="Unconfirmed terminal input" className="block w-full" />
+          <button {...telemetryClickAttributes('terminal.action', 'terminal')} type="button" onClick={() => clearRetainedTerminalInput(terminalId)}>Dismiss kept input</button>
         </div>
       )}
       {isPhoneViewport && (

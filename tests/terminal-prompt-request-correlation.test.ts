@@ -65,6 +65,7 @@ test('terminal prompt surfaces its matching server rejection without waiting for
     accepted: false,
     reason: 'server',
     message: 'The terminal did not accept Enter.',
+    code: 'terminal_input_not_accepted',
   });
   assert.equal(terminalPromptCallbacks.size, 0);
 });
