@@ -40,8 +40,16 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
   const returnFocus = useRef<HTMLElement | null>(null);
   const rule = view.selectedId ? details[view.selectedId]?.automation : undefined;
   const updateView = (patch: Partial<typeof view>) => store.setState({ view: { ...store.getState().view, ...patch } });
-  const select = (id: string) => { updateView({ selectedId: id, setup: false }); void store.getState().inspect(id); };
-  const done = (id: string) => { select(id); setIntent('start'); };
+  const returnToList = () => { setIntent('start'); setEvidenceId(null); setDeleteConfirm(false); updateView({ setup: false, selectedId: null }); };
+  const select = (id: string) => { setIntent('start'); setEvidenceId(null); setDeleteConfirm(false); updateView({ selectedId: id, setup: false }); void store.getState().inspect(id); };
+  const done = select;
+  async function deleteRule(current: AutomationV2) {
+    if (!await store.getState().remove(current.id)) return;
+    await store.getState().inspect(current.id);
+    if (store.getState().view.selectedId !== current.id) return;
+    setIntent('start'); setEvidenceId(null); setDeleteConfirm(false);
+    updateView({ selectedId: current.id, setup: false });
+  }
   useEffect(() => {
     returnFocus.current = document.activeElement as HTMLElement;
     dialog.current?.showModal();
@@ -78,8 +86,8 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     }
     await setup(nextIntent, receipt.automation);
   }
-  const emptySetup = !loading && items.filter(item => item.state !== 'deleted').length === 0 && !view.selectedId;
-  const showSetup = view.setup || emptySetup;
+  const emptySetup = !loading && items.filter(item => item.state !== 'deleted').length === 0 && !view.selectedId && !includeDeleted;
+  const showSetup = rule?.state !== 'deleted' && (view.setup || emptySetup);
   useEffect(() => {
     if (emptySetup && sessionId && !preview && !previewLoading && !error) void store.getState().previewAutorun();
   }, [emptySetup, sessionId, preview, previewLoading, error, store]);
@@ -101,11 +109,12 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
       {rule && rule.state !== 'deleted' && (showSetup || evidenceId) && <button {...telemetryClickAttributes('automation.delete','automation')} className={automationButton} type="button" onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>}
       <AutomationPauseAction rule={rule} ownership={ownership} surface="automation" schedule={!sessionId} onPause={id => void store.getState().pause(id)} />
     </header>
-    {(view.selectedId || view.setup || evidenceId) && <button {...telemetryClickAttributes('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else { updateView({ setup: false, selectedId: null }); } }}>{t('automation.back')}</button>}
+    {(view.selectedId || view.setup || evidenceId) && <button {...telemetryClickAttributes('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else returnToList(); }}>{t('automation.back')}</button>}
     <AutomationError code={error} />
-    {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm','automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
+    {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm','automation')} className={automationButton} onClick={() => void deleteRule(rule)}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
     {sessionId && <p role="status" className="my-2 text-xs">{t(`automation.${ownership.mode}`)}</p>}
     {showSetup ? <section className="grid gap-3">
+      {items.some(item => item.state === 'deleted') && <button {...telemetryClickAttributes('automation.manager.include_deleted', 'automation')} className={automationButton} type="button" onClick={() => { setIncludeDeleted(true); returnToList(); }}>{t('automation.deleted')}</button>}
       <p className="text-xs">{t('automation.local')}</p>{sessionId && <p className="text-xs">{t('automation.safety')}</p>}
       {!supported ? <p>{t('automation.unsupported')}</p> : <>
         {sessionId && intent === 'start' && <div className="flex flex-wrap gap-2">
@@ -145,7 +154,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
           {rule.state !== 'deleted' && <>
             {rule.state !== 'enabled' && <AutomationResumeAction reviewLimits={reviewLimits} disabled={busy > 0 || Boolean(sessionId && ownership.mode !== 'human')} onReviewLimits={() => void pauseAndEdit(rule, 'edit')} onResume={() => { if (sessionId) void setup('resume', rule); else void store.getState().enable(rule); }} />}
             <button {...telemetryClickAttributes('automation.delete', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>
-            {deleteConfirm && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm', 'automation')} className={automationButton} onClick={async () => { await store.getState().remove(rule.id); await store.getState().inspect(rule.id); setDeleteConfirm(false); }}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
+            {deleteConfirm && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm', 'automation')} className={automationButton} onClick={() => void deleteRule(rule)}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
             <details><summary {...telemetryClickAttributes('automation.manager.options', 'automation')}>{t('automation.manage')}</summary>
               <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} onClick={() => void pauseAndEdit(rule, 'edit')}>{t(rule.state === 'enabled' ? 'automation.pauseEdit' : 'automation.edit')}</button>
               {sessionId && <button {...telemetryClickAttributes('automation.manager.method', 'automation')} className={automationButton} onClick={() => void pauseAndEdit(rule, 'replace')}>{t('automation.changeMethod')}</button>}
