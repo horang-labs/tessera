@@ -907,7 +907,7 @@ export function createProviderLaunchModule(
           prepareLaunch,
           spawnFence: request.spawnFence ? spawn => {
             const current = getPersistedProvider(request);
-            const serviceTier = automationServiceTier(current.providerId, current.serviceTier);
+            const serviceTier = automationServiceTier(current.providerId, current.serviceTier, request.expectedSelection?.serviceTier === 'default');
             if (request.expectedSelection && (serviceTier === undefined || !sameSessionSelection(request.expectedSelection, {
               provider: current.providerId as SessionSelectionSnapshot['provider'], model: current.model ?? null,
               reasoningEffort: current.reasoningEffort, serviceTier: serviceTier ?? null,

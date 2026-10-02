@@ -1,10 +1,11 @@
 import type { ProviderModelOption } from '../cli/provider-session-option-types';
 
 /** Frozen automation names differ from Codex's native nullable/priority names. */
-export function automationServiceTier(provider: string, nativeTier: unknown): 'default' | 'fast' | null | undefined {
+export function automationServiceTier(provider: string, nativeTier: unknown, explicitDefault = false): 'default' | 'fast' | null | undefined {
   if (provider === 'claude-code') return nativeTier === null ? null : undefined;
   if (provider !== 'codex') return undefined;
-  if (nativeTier === null || nativeTier === 'default') return 'default';
+  if (nativeTier === null) return explicitDefault ? 'default' : null;
+  if (nativeTier === 'default') return 'default';
   if (nativeTier === 'priority' || nativeTier === 'fast') return 'fast';
   return undefined;
 }

@@ -56,8 +56,10 @@ function buildCodexSelectionArgs(input: ProviderTerminalLaunchInput): string[] {
   if (input.reasoningEffort && input.reasoningEffort !== 'auto') {
     args.push('--config', `model_reasoning_effort=${JSON.stringify(input.reasoningEffort)}`);
   }
-  if (input.serviceTier) {
-    args.push('--config', `service_tier=${JSON.stringify(input.serviceTier)}`);
+  // Older automation reservations stored frozen names; resume them with native Codex semantics.
+  const serviceTier = input.serviceTier === 'fast' ? 'priority' : input.serviceTier === 'default' ? null : input.serviceTier;
+  if (serviceTier) {
+    args.push('--config', `service_tier=${JSON.stringify(serviceTier)}`);
   }
   return args;
 }

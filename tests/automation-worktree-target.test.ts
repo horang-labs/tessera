@@ -159,6 +159,8 @@ test('restart recovery keeps root/managed reserved Session identity and never re
       ids.push((await f.service.create(owner,id,input)).automation.id);}
   f.setNow(now+60_000);await original.tick();
   const before=ids.map(id=>f.service.history(owner,id,{}).items[0]);assert.ok(before.every(run=>run.state==='unknown'));
+  // Older reserved rows used the frozen names; recovery must launch native semantics.
+  for(const run of before)f.db.prepare('UPDATE sessions SET service_tier=? WHERE id=?').run(run.effectiveSelection.serviceTier,run.sessionId!);
   const resumed:string[]=[];
   const manager=new TerminalManager(()=>{},async()=>({spawn:()=>({write(){throw new Error('must not resend');},resize(){},kill(){},onData(){},onExit(){}})}));
   const replacement=new AutomationEngine(f.service,'replacement');
@@ -169,6 +171,9 @@ test('restart recovery keeps root/managed reserved Session identity and never re
     launch:async request=>{
       assert.equal(request.initialPrompt,undefined);assert.equal(request.userId,owner);assert.equal(request.expectedAgentEnvironment,'native');
       const workDir=resolveSessionWorkspaceRoot(request.sessionId)!;assert.ok([f.workDir,f.managedDir].includes(workDir));
+      const {buildProviderTerminalLaunch}=await import('../src/lib/terminal/provider-launch');
+      const row=f.db.prepare('SELECT service_tier FROM sessions WHERE id=?').get(request.sessionId);
+      assert.deepEqual(buildProviderTerminalLaunch({providerId:'codex',sessionId:request.sessionId,resume:false,serviceTier:row.service_tier}).args,workDir===f.workDir?[]:['--config','service_tier="priority"']);
       await manager.startDetached({sessionId:request.sessionId,terminalId:`session-${request.sessionId}`,userId:owner,providerId:'codex',agentEnvironment:'native',
         resolvedShell:{command:'fixture-only',args:[],cwd:workDir},spawnFence:request.spawnFence});
       resumed.push(request.sessionId);return {terminalId:`session-${request.sessionId}`,attachedToExistingRuntime:false};
@@ -179,6 +184,34 @@ test('restart recovery keeps root/managed reserved Session identity and never re
     for(const id of ids){const runs=f.service.history(owner,id,{}).items;assert.equal(runs.length,1);assert.equal(runs[0].state,'unknown');
       assert.equal(f.service.detail(owner,id).automation.dispatchCount,1);}
   }finally{await replacement.stop();await original.stop();await manager.shutdownAll();await oldManager.shutdownAll();}
+});
+
+test('legacy nullable wake selection can Resume and dispatch unchanged through the public service',async()=>{
+  const f=await setup();const {createReservedAutomationSession}=await import('../src/lib/automation/worktree-target');
+  const {createAutomationRuntime,readSavedSessionSelection}=await import('../src/lib/automation/runtime-adapter');
+  const {sameSessionSelection}=await import('../src/lib/automation/contracts');
+  const {TerminalManager}=await import('../src/lib/terminal/terminal-manager');const {AutomationEngine}=await import('../src/lib/automation/engine');
+  const {classifyCodexAutomationCompletion}=await import('../src/lib/cli/providers/codex/terminal-hook-lifecycle');
+  const target=f.input(f.rootId).target;if(target.kind==='create-session')createReservedAutomationSession('legacy-wake',target);
+  f.db.prepare('UPDATE sessions SET model=NULL,reasoning_effort=NULL,service_tier=NULL WHERE id=?').run('legacy-wake');
+  assert.equal(readSavedSessionSelection('legacy-wake').serviceTier,null);
+  const writes:string[]=[];const manager=new TerminalManager(()=>{},async()=>({spawn:()=>({write:(text:string)=>writes.push(text),resize(){},kill(){},onData(){},onExit(){}})}),undefined,{semanticPromptSubmitDelayMs:1});
+  const engine=new AutomationEngine(f.service,'legacy-null');
+  const runtime=createAutomationRuntime({manager,authority:()=>engine,readSelection:async(_user,id)=>readSavedSessionSelection(id),
+    verifySelection:(_user,id,saved)=>assert.equal(sameSessionSelection(saved,readSavedSessionSelection(id)),true)});
+  f.service.deps.runtime=()=>runtime;
+  try{
+    const rule=(await f.service.create(owner,'legacy-wake',{name:'Legacy',enabled:false,target:{kind:'wake-session',sessionId:'legacy-wake'},
+      trigger:{kind:'turn-complete',delayMs:30000},prompt:'Legacy continue',limits:{maxDispatches:2,expiresAt:now+120000}})).automation;
+    const stored=f.repo.get(rule.id)!;stored.automation.savedSelection.serviceTier=null;f.repo.save(stored);
+    await engine.tick();await manager.create({userId:owner,sessionId:'legacy-wake',terminalId:'legacy-terminal',connectionId:'fixture',surfaceId:'normal',providerId:'codex',agentEnvironment:'native',resolvedShell:{command:'fixture-only',args:[],cwd:f.workDir}});
+    let at=Date.now();for(const [hookEvent,status] of [['UserPromptSubmit','running'],['Stop','completed']] as const)
+      manager.recordSessionState({type:'session_state',sessionId:'legacy-wake',terminalId:'legacy-terminal',hookEvent,status,stateAt:++at,hasWorkingSubagents:false},owner,classifyCodexAutomationCompletion(hookEvent,status));
+    const resumed=await f.service.enable(owner,rule.id,rule.revision);assert.equal(resumed.body.automation.savedSelection.serviceTier,null);
+    f.setNow(now+30000);await engine.tick();const run=f.service.history(owner,rule.id,{}).items[0];
+    assert.equal(run.state,'delivered');assert.equal(run.effectiveSelection.serviceTier,null);
+    assert.deepEqual(writes,['\x1b[200~Legacy continue\x1b[201~','\r']);
+  }finally{await engine.stop();await manager.shutdownAll();}
 });
 
 test.after(async()=>{const {getDb}=await import('../src/lib/db/database');getDb().close();fs.rmSync(root,{recursive:true,force:true});});

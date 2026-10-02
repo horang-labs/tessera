@@ -356,7 +356,7 @@ test('persisted Claude and Codex selections reach the provider PTY argv', async 
   const codexShell = captured[0]?.args.join('\n') ?? '';
   assert.match(codexShell, /exec 'codex' '--model' 'gpt-5\.6-sol'/);
   assert.match(codexShell, /'--config' 'model_reasoning_effort="high"'/);
-  assert.match(codexShell, /'--config' 'service_tier="fast"'/);
+  assert.match(codexShell, /'--config' 'service_tier="priority"'/);
 
   const claudeShell = captured[1]?.args.join('\n') ?? '';
   assert.match(claudeShell, /exec 'claude' '--session-id' 'selected-claude'/);
@@ -1687,6 +1687,7 @@ for (const provider of ['claude-code', 'codex']) {
     assert.equal(fenced, true);
     assert.equal(captured.length, 1);
     assert.ok(captured[0].args.join(' ').includes(selection.model));
+    if (provider === 'codex') assert.match(captured[0].args.join('\n'), /service_tier="priority"/);
   });
 }
 

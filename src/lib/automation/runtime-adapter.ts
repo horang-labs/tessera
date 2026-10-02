@@ -9,6 +9,12 @@ import { getAutomationAuthority } from './runtime-bridge';
 import type { AutomationAuthority, AutomationRuntime, DispatchResult } from './runtime-port';
 import type { TerminalManager } from '@/lib/terminal/terminal-manager';
 
+function selectionForTarget(target: Target, saved: SessionSelectionSnapshot): SessionSelectionSnapshot {
+  // Wake snapshots preserve inherited null choices; only Schedule requires explicit Default.
+  return target.kind === 'create-session' && saved.provider === 'codex' && saved.serviceTier === null
+    ? { ...saved, serviceTier: 'default' } : saved;
+}
+
 export function createAutomationRuntime(options: {
   manager: TerminalManager;
   autorunProvider?: (provider: string) => AutorunProviderPort | null;
@@ -56,7 +62,7 @@ export function createAutomationRuntime(options: {
             const target = spec.target;
             sessionId = port.reserveSession(args.runId, id => options.createSession!(id, target));
             options.publishCreated?.(spec.ownerUserId, sessionId);
-            const selection = await options.readSelection(spec.ownerUserId, sessionId);
+            const selection = selectionForTarget(spec.target, await options.readSelection(spec.ownerUserId, sessionId));
             if (!sameSessionSelection(selection, spec.run.effectiveSelection)) throw new Error('Selection changed.');
             const permit = port.beginAttempt(args.runId, args.leaseEpoch, args.expectedRevision);
             const launched = await options.launch({ mode: 'detached', sessionId, userId: spec.ownerUserId,
@@ -123,7 +129,7 @@ export function createAutomationRuntime(options: {
         const uncertain = spec.run.state === 'unknown' || spec.run.state === 'dispatching';
         if (uncertain) manager.automation.recover(ownerUserId, sessionId, spec.run.automationId, args.runId);
         manager.automation.verifyEnvironment(ownerUserId, sessionId, spec.run.agentEnvironment);
-        const saved = await options.readSelection(ownerUserId, sessionId);
+        const saved = selectionForTarget(spec.target, await options.readSelection(ownerUserId, sessionId));
         if (!sameSessionSelection(saved, spec.run.effectiveSelection)) return { kind: 'unknown', reason: 'UNSUPPORTED_SELECTION', inputOwnership: manager.automation.ownership(ownerUserId, sessionId) };
         const observation = manager.automation.observe(ownerUserId, sessionId);
         if (observation) return { kind: 'observed', observation, inputOwnership: manager.automation.ownership(ownerUserId, sessionId) };

@@ -70,7 +70,7 @@ export class AutomationEngine implements AutomationAuthority {
     if (!row) fail('NOT_FOUND');
     const saved = r.run.effectiveSelection;
     if (row.provider !== saved.provider || row.model !== saved.model || row.reasoning_effort !== saved.reasoningEffort ||
-      automationServiceTier(row.provider,row.service_tier) !== saved.serviceTier || row.worktree_id !== r.snapshot.target.worktreeId) fail('UNSUPPORTED_SELECTION');
+      automationServiceTier(row.provider,row.service_tier,true) !== saved.serviceTier || row.worktree_id !== r.snapshot.target.worktreeId) fail('UNSUPPORTED_SELECTION');
   }
   reserveSession(runId: string, create: (sessionId: string) => void): string {
     return this.repo.transaction(() => {
