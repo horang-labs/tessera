@@ -15,7 +15,7 @@ export function AutorunPreviewView({ preview, objectiveOverride, onObjective, on
   const { t } = useI18n();
   const [editing, setEditing] = useState(!preview.objective || Boolean(objectiveOverride));
   return <section className="grid gap-3">
-    <p className="text-sm">{t('automation.goal')} · {t(objectiveOverride || preview.objective?.kind === 'explicit' ? 'automation.explicitGoal' : 'automation.verifiedGoal')}</p>
+    <p className="text-sm">{t('automation.goal')} · {t(objectiveOverride.trim() || preview.objective?.kind === 'explicit' ? 'automation.explicitGoal' : preview.objective?.kind === 'verified-human' ? 'automation.verifiedGoal' : 'automation.unverifiedGoal')}</p>
     {preview.objective ? <>
       <p className="whitespace-pre-wrap line-clamp-3">{objectiveOverride.trim() || preview.objective.text}</p>
       <details><summary {...telemetryClickAttributes('automation.autorun.sources', 'automation')}>{t('automation.viewSource')}</summary>
@@ -99,7 +99,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
     </details>
     <p className="break-words">{t('automation.supervisor')}: {supervisor ? `${supervisor.provider} · ${supervisor.model} · ${supervisor.reasoningEffort} · ${supervisor.serviceTier ?? ''}` : t('automation.unsupported')}</p>
     <p className="text-xs">{t('automation.supervisorHelp')}</p>
-    <p>{t('automation.remaining')}: {preview.remaining.dispatches} · {preview.remaining.analyses} · {Number.isFinite(expiresAt) ? localDue(expiresAt) : t('automation.invalid')}</p>
+    <p>{t('automation.remaining')}: {t('automation.remainingDispatches')}: {preview.remaining.dispatches} · {t('automation.remainingAnalyses')}: {preview.remaining.analyses} · {t('automation.budgetExpiry')}: {Number.isFinite(expiresAt) ? localDue(expiresAt) : t('automation.invalid')}</p>
     <details><summary {...telemetryClickAttributes('automation.form.advanced', 'automation')}>{t('automation.advanced')}</summary><div className="grid gap-3">
       <SavedSelection selection={preview.workerSelection} />
       <label>{t('automation.supervisor')}<select {...telemetryClickAttributes('automation.autorun.supervisor', 'automation')} className="w-full" value={selectedIndex} onChange={e => setSupervisor(options[Number(e.target.value)]?.selection ?? null)}><option value={-1}>{t('automation.choose')}</option>{options.map((option, i) => <option key={i} value={i}>{option.selection.provider} · {option.selection.model} · {option.selection.reasoningEffort} · {option.selection.serviceTier}</option>)}</select></label>
