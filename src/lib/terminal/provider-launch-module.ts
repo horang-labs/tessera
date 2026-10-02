@@ -1,3 +1,4 @@
+import { automationServiceTier } from '@/lib/automation/service-tier';
 import { sameSessionSelection, type SessionSelectionSnapshot } from '@/lib/automation/contracts';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import type { CliProvider } from '@/lib/cli/providers/types';
@@ -406,7 +407,9 @@ async function buildLaunchDecision(
       initialPrompt: request.initialPrompt,
       model,
       reasoningEffort,
-      serviceTier,
+      // Explicit automation Default must override copied account priority, including
+      // legacy reserved rows that stored null. Wake null still inherits unchanged.
+      serviceTier: request.expectedSelection?.serviceTier === 'default' ? 'default' : serviceTier,
     });
     return {
       provider: persisted.provider,
@@ -918,11 +921,12 @@ export function createProviderLaunchModule(
           prepareLaunch,
           spawnFence: request.spawnFence ? spawn => {
             const current = getPersistedProvider(request);
-            if (request.expectedSelection && !sameSessionSelection(request.expectedSelection, {
+            const serviceTier = automationServiceTier(current.providerId, current.serviceTier, request.expectedSelection?.serviceTier === 'default');
+            if (request.expectedSelection && (serviceTier === undefined || !sameSessionSelection(request.expectedSelection, {
               provider: current.providerId as SessionSelectionSnapshot['provider'], model: current.model ?? null,
-              reasoningEffort: current.reasoningEffort, serviceTier: current.serviceTier as SessionSelectionSnapshot['serviceTier'],
+              reasoningEffort: current.reasoningEffort, serviceTier: serviceTier ?? null,
               settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false },
-            })) throw providerLaunchError('LAUNCH_FAILED', 'Saved launch selection changed during preparation.');
+            }))) throw providerLaunchError('LAUNCH_FAILED', 'Saved launch selection changed during preparation.');
             if (resolveSessionWorkspaceRoot(request.sessionId) !== workDir) {
               throw providerLaunchError('SESSION_WORKSPACE_UNAVAILABLE', 'The Session workspace changed during preparation.');
             }

@@ -49,7 +49,7 @@ test('Codex PTY starts with the requested fast service tier', () => {
     }),
     {
       command: 'codex',
-      args: ['--config', 'service_tier="fast"'],
+      args: ['--config', 'service_tier="priority"'],
     },
   );
 });
@@ -146,7 +146,7 @@ test('Codex PTY reapplies the persisted model and reasoning effort when it resum
   );
 });
 
-test('Codex PTY explicitly disables fast mode when it resumes', () => {
+test('Codex PTY maps the legacy frozen Default to native explicit standard routing when resuming', () => {
   assert.deepEqual(
     buildProviderTerminalLaunch({
       providerId: 'codex',

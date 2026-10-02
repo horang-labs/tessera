@@ -356,7 +356,7 @@ test('persisted Claude and Codex selections reach the provider PTY argv', async 
   const codexShell = captured[0]?.args.join('\n') ?? '';
   assert.match(codexShell, /exec 'codex' '--model' 'gpt-5\.6-sol'/);
   assert.match(codexShell, /'--config' 'model_reasoning_effort="high"'/);
-  assert.match(codexShell, /'--config' 'service_tier="fast"'/);
+  assert.match(codexShell, /'--config' 'service_tier="priority"'/);
 
   const claudeShell = captured[1]?.args.join('\n') ?? '';
   assert.match(claudeShell, /exec 'claude' '--session-id' 'selected-claude'/);
@@ -1739,5 +1739,35 @@ for (const provider of ['claude-code', 'codex']) {
     assert.equal(fenced, true);
     assert.equal(captured.length, 1);
     assert.ok(captured[0].args.join(' ').includes(selection.model));
+    if (provider === 'codex') assert.match(captured[0].args.join('\n'), /service_tier="priority"/);
+  });
+}
+
+for (const tier of ['default', 'fast'] as const) {
+  test(`Codex native ${tier} schedule crosses ordinary preparation and spawn fence`, async () => {
+    const configPath=path.join(testRoot,'codex-home','config.toml');
+    const previousConfig=fs.existsSync(configPath)?fs.readFileSync(configPath):null;
+    const hostileConfig='service_tier = "priority"\n';fs.writeFileSync(configPath,hostileConfig);
+    try {
+    const sessionId = `native-automation-${tier}`;
+    createTerminalSession(sessionId, 'codex', { kind: 'terminal' }, {
+      model: 'gpt-6-test', reasoningEffort: 'high', ...(tier === 'fast' ? { serviceTier: 'priority' } : {}),
+    });
+    const captured: CapturedSpawn[] = [], manager = createManager(captured);
+    const launcher = modules.createProviderLaunchModule({ terminalManager: manager,
+      resolveAgentEnvironment: async userId => { assert.equal(userId, 'automation-owner'); return 'native'; } });
+    let fenced = false;
+    await launcher.launch({ mode: 'detached', sessionId, userId: 'automation-owner', initialPrompt: 'Harmless fixture',
+      expectedAgentEnvironment: 'native', expectedSelection: { provider: 'codex', model: 'gpt-6-test', reasoningEffort: 'high', serviceTier: tier,
+        settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } },
+      spawnFence: spawn => { assert.equal(captured.length, 0); fenced = true; spawn(); },
+    });
+    assert.equal(fenced, true);assert.equal(captured.length, 1);
+    const shell = captured[0].args.join('\n');
+    if (tier === 'fast') assert.match(shell, /service_tier="priority"/);
+    else assert.match(shell, /service_tier="default"/);
+    assert.match(fs.readFileSync(path.join(captured[0].env!.CODEX_HOME!,'config.toml'),'utf8'), /service_tier = "priority"/);
+    assert.equal(fs.readFileSync(configPath,'utf8'),hostileConfig);
+    } finally {if(previousConfig)fs.writeFileSync(configPath,previousConfig);else fs.rmSync(configPath,{force:true});}
   });
 }
