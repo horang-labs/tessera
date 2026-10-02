@@ -29,12 +29,14 @@ export function createAutorunRuntime(options: {
         gate.assertAnalysis({ ...args, inputEpoch });
         const port = options.provider?.(workerSelection.provider);
         if (!port) return { kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason: 'unsupported-version' };
+        const selection = await options.readSelection(args.userId, args.sessionId);
+        gate.assertAnalysis({ ...args, inputEpoch });
+        if (!sameSessionSelection(workerSelection, selection)) throw new Error('stale');
         const result = await port.readAnalysisContext({ ...args, inputEpoch, workerSelection,
           providerConversationId: turn.correlation.providerConversationId, correlation: turn.correlation });
         options.manager.assertAutomationArmable(args.userId, args.sessionId);
         const current = gate.assertAnalysis({ ...args, inputEpoch });
-        const selection = await options.readSelection(args.userId, args.sessionId);
-        gate.assertAnalysis({ ...args, inputEpoch });
+        options.verifySelection?.(args.userId,args.sessionId,workerSelection);
         if (args.signal.aborted || !sameSessionSelection(workerSelection, selection) ||
           !isDeepStrictEqual(current.correlation, turn.correlation)) throw new Error('stale');
         if (result.kind !== 'ok') return result;

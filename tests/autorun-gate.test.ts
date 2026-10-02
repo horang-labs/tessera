@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AutomationInputGate } from '../src/lib/automation/input-gate';
 import { hookSubmissionFixture } from './fixtures/autorun-contracts';
+import { autorunFixture } from './autorun-fixture';
+import { createAutorunRuntime } from '../src/lib/automation/autorun-runtime';
+import { contextSnapshot } from './fixtures/autorun-contracts';
 
 test('native hook association needs exact owner, environment, binding and current accepted turn', () => {
   const gate = new AutomationInputGate();
@@ -18,6 +21,23 @@ test('native hook association needs exact owner, environment, binding and curren
   gate.dirty('owner-1', 'session-1');
   assert.notEqual(gate.readTurnEvidence({ userId: 'owner-1', sessionId: 'session-1', agentEnvironment: 'wsl' }).kind, 'running');
   assert.equal(gate.recordHookEvidence(event).kind, 'rejected');
+});
+
+test('fresh native capture completes after async selection work and before synchronous identity validation',async()=>{
+  const f=await autorunFixture();
+  try{
+    const events:string[]=[];
+    const read=f.provider.readAnalysisContext;
+    f.provider.readAnalysisContext=async args=>{events.push('native');return read(args);};
+    const runtime=createAutorunRuntime({manager:f.manager,provider:()=>f.provider,
+      readSelection:async()=>{events.push('selection');return contextSnapshot().workerSelection;},
+      verifySelection:()=>events.push('verify')});
+    const turn=runtime.readTurnEvidence({userId:'owner-1',agentEnvironment:'wsl',sessionId:'session-1'});
+    if(turn.kind!=='completed')throw new Error('completed required');
+    const result=await runtime.captureAnalysisContext({userId:'owner-1',agentEnvironment:'wsl',sessionId:'session-1',
+      expectedBoundary:turn.boundary,signal:new AbortController().signal});
+    assert.equal(result.kind,'ok');assert.deepEqual(events,['selection','selection','native','verify']);
+  }finally{await f.close();}
 });
 
 test('a real gate rejects a current-looking completion after native approval or a binding change', () => {

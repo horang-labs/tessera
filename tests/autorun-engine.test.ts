@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { autorunFixture } from './autorun-fixture';
-import { autorunNow } from './fixtures/autorun-contracts';
+import { autorunNow, supervisorFinalFixture } from './fixtures/autorun-contracts';
 
 test('qualified completion reserves one persisted supervisor judgment; complete sends no bytes and releases input', async () => {
   const f = await autorunFixture();
@@ -22,6 +22,27 @@ test('qualified completion reserves one persisted supervisor judgment; complete 
     assert.equal(detail.attempts[0].quiescent,true);
     assert.equal(detail.attention?.identity.outcome,'complete');
   } finally { await f.close(); }
+});
+
+for(const outcome of ['continue','complete','needs-user'] as const)test(`changed native captured-content hash rejects a late ${outcome} outcome`,async()=>{
+  const f=await autorunFixture();
+  try{
+    const read=f.provider.readAnalysisContext;let changed=false;
+    f.provider.readAnalysisContext=async args=>{
+      const result=await read(args);return result.kind==='ok'&&changed?{...result,snapshot:{...result.snapshot,contentHash:'f'.repeat(64)}}:result;
+    };
+    f.provider.generateSupervisorDecision=async args=>{changed=true;const result=supervisorFinalFixture();
+      return {...result,invocationId:args.invocationId,decision:{...result.decision,outcome,
+        proposedPrompt:outcome==='continue'?'Verify the remaining login case.':null,blocker:outcome==='needs-user'?'Human clarification needed.':null}};
+    };
+    const a=(await f.service.create('owner-1',`changed-${outcome}`,f.input())).automation;
+    const attention:unknown[]=[];f.service.deps.publishAttention=(_owner,item)=>attention.push(item);
+    f.setNow(autorunNow+121_000);await f.engine.tick();
+    const [decision]=f.service.autorun.decisions('owner-1',a.id,{}).items;
+    assert.equal(decision.outcome,null);assert.equal(decision.reason,'ANALYSIS_STALE');
+    assert.deepEqual(f.bytes,[]);assert.equal(f.service.history('owner-1',a.id,{}).items.length,0);
+    assert.ok(attention.every(item=>(item as {kind:string}).kind==='rule'));
+  }finally{await f.close();}
 });
 
 test('continue atomically links one immutable proposal to the existing paste/Enter writer receipt', async () => {

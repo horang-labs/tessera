@@ -40,8 +40,8 @@ export class AutorunEngine {
       const existing=this.repo.decisions(a.id).find(d=>d.active);
       if (existing && (existing.detail.retryAt===null || existing.detail.retryAt>this.now)) continue;
       if (!existing && (a.nextDueAt===null || a.nextDueAt>this.now || value.evidence?.kind!=='completed')) continue;
-      const occupied=this.repo.decisions().filter(d=>d.active && d.detail.attempts.some(at=>at.finishedAt===null || at.quiescent===false)).length;
-      const localOnly=[...this.flights.keys()].filter(id=>!this.repo.decisions(id).some(d=>d.active && d.detail.attempts.some(at=>at.finishedAt===null || at.quiescent===false))).length;
+      const occupied=this.repo.decisions().filter(d=>d.active && d.detail.attempts.some(at=>at.quiescent!==true)).length;
+      const localOnly=[...this.flights.keys()].filter(id=>!this.repo.decisions(id).some(d=>d.active && d.detail.attempts.some(at=>at.quiescent!==true))).length;
       if (occupied+localOnly>=2) continue;
       const controller=new AbortController();
       const task=this.analyse(a,epoch,controller,existing).catch(()=> {
@@ -98,7 +98,7 @@ export class AutorunEngine {
     this.repo.transaction(()=> {
       const current=this.current(a.id,a.revision,epoch);inspection.assertCurrent();
       if (controller.signal.aborted || current.analysisCount>=current.autorun.maxAnalyses ||
-        this.repo.decisions().filter(v=>v.active && v.detail.attempts.some(at=>at.finishedAt===null || at.quiescent===false)).length>=2) fail('ANALYSIS_LIMIT');
+        this.repo.decisions().filter(v=>v.active && v.detail.attempts.some(at=>at.quiescent!==true)).length>=2) fail('ANALYSIS_LIMIT');
       d.identity.deadlineAt=deadlineAt;d.detail.phase='analysing';d.detail.retryAt=null;d.detail.analysisAttempts++;
       d.detail.attempts.push({ordinal:d.detail.analysisAttempts,invocationId,startedAt:this.now,finishedAt:null,deadlineAt,failureCode:null,retryAt:null,quiescent:null});
       current.analysisCount++;current.autorunStatus='analysing';this.repo.save({...this.repo.get(a.id)!,automation:current});this.repo.saveDecision(d);
