@@ -7,6 +7,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const operation=process.argv[1],request=JSON.parse(process.argv[2]),root=process.argv[3];
 const identity={version:1,userId:request.userId,agentEnvironment:request.agentEnvironment,invocationId:request.invocationId};
 function read(file){if(fs.statSync(file).size>32768)throw Error('receipt bound');return JSON.parse(fs.readFileSync(file,'utf8'))}
+const birth=p=>p&&Number.isSafeInteger(p.pid)&&p.pid>0&&typeof p.start==='string'&&/^\d+$/.test(p.start);
 function write(file,value,exclusive=false){
  const tmp=exclusive?file:file+'.'+crypto.randomUUID()+'.tmp',fd=fs.openSync(tmp,exclusive?'wx':'w',384);
  try{fs.writeFileSync(fd,JSON.stringify(value));fs.fsyncSync(fd)}finally{fs.closeSync(fd)}
@@ -47,8 +48,10 @@ try{
     // Affirmative prelaunch state + sealed authorization under flock proves no launch can now occur.
     // Missing state or a started launch without a receipt never takes this path.
     if(s.phase==='prelaunch'){Object.assign(s,{phase:'settled',spawned:false,noLaunchReason:'authorization-sealed',quiescent:true,remaining:[],settledAt:Date.now()});write(file,s)}
-    if(s.phase!=='settled'||s.quiescent!==true||!Array.isArray(s.remaining)||s.remaining.some(p=>p.state!=='Z')||!Number.isSafeInteger(s.settledAt))incomplete=true;
-    else if(s.spawned===true&&(!s.wrapper||typeof s.wrapper.start!=='string'||typeof s.wrapper.bootId!=='string'||!Number.isSafeInteger(s.wrapper.pid)||!s.child||!Number.isSafeInteger(s.child.pid)))incomplete=true;
+    if(s.phase!=='settled'||s.quiescent!==true||!Array.isArray(s.remaining)||s.remaining.some(p=>!birth(p)||p.state!=='Z')||!Number.isSafeInteger(s.settledAt))incomplete=true;
+    else if(s.spawned===true&&(s.containment?.kind!=='linux-subreaper-v1'||s.containment.terminal!=='ECHILD'||!birth(s.guardian)||
+     typeof s.guardian.bootId!=='string'||!/^[a-f0-9-]{36}$/.test(s.guardian.bootId)||JSON.stringify(s.containment.guardian)!==JSON.stringify(s.guardian)||
+     (s.wrapper&&!birth(s.wrapper))||(s.child&&!birth(s.child))))incomplete=true;
     else if(s.spawned!==true&&s.spawned!==false)incomplete=true;
     else if(s.spawned===false&&(!['authorization-sealed','deadline','spawn-error'].includes(s.noLaunchReason)||s.child))incomplete=true;
     settledAt=Math.max(settledAt,s.settledAt||0);

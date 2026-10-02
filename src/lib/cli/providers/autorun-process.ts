@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { AUTORUN_CONTAINMENT_GUARDIAN } from './autorun-containment';
 import type { ChildProcess } from 'node:child_process';
 import { spawnCli } from '../spawn-cli';
 import { AUTORUN_BOUNDS } from '@/lib/automation/autorun-contracts';
@@ -12,14 +13,14 @@ export { SupervisorProcessUncertain } from './autorun-recovery-ledger';
  */
 export const AUTORUN_RECOVERY_BRIDGE = String.raw`
 const cp=require('node:child_process'),p=JSON.parse(process.argv[1]);
-const child=cp.spawn('flock',['--no-fork','-n',p.ledgerRoot+'/lock','node',p.workspace+'/group.cjs',p.workspace,p.attempt],{detached:true,stdio:'pipe'});
+const child=cp.spawn('flock',['--no-fork','-n',p.ledgerRoot+'/lock','python3','-c',${JSON.stringify(AUTORUN_CONTAINMENT_GUARDIAN)},p.workspace,p.attempt],{detached:true,stdio:'pipe'});
 child.stdout.pipe(process.stdout);child.stderr.pipe(process.stderr);process.stdin.pipe(child.stdin);
 process.stdout.on('error',()=>child.stdout.resume());process.stderr.on('error',()=>child.stderr.resume());
 process.stdin.on('error',()=>child.stdin.end());child.stdin.on('error',()=>{});
 child.on('error',()=>{process.exitCode=1});child.on('close',code=>{process.exitCode=code===0?0:1});
 `;
 
-/** Executed in the agent filesystem. A random, exclusive workspace owns this entire group. */
+/** I/O launcher beneath the mandatory guest subreaper. Only the guardian writes settlement. */
 export const AUTORUN_GROUP_WRAPPER = String.raw`
 const fs = require('node:fs'), cp = require('node:child_process');
 const root = process.argv[2], launch = JSON.parse(fs.readFileSync(root + '/launch.json', 'utf8'));
@@ -33,12 +34,13 @@ function startToken(pid){const stat=fs.readFileSync('/proc/'+pid+'/stat','utf8')
 if(attemptRoot){
  attempt=JSON.parse(fs.readFileSync(attemptRoot+'/state.json','utf8'));
  const manifest=JSON.parse(fs.readFileSync(attempt.ledgerRoot+'/invocation.json','utf8'));
- if(attempt.phase!=='prelaunch'||attempt.launchId!==manifest.launchId||!manifest.attemptIds.includes(attempt.attemptId)||
+ if(!['prelaunch','starting'].includes(attempt.phase)||attempt.launchId!==manifest.launchId||!manifest.attemptIds.includes(attempt.attemptId)||
   !['version','userId','agentEnvironment','invocationId','provider'].every(k=>attempt[k]===manifest[k]))process.exit(1);
  if(manifest.closedAt!==null||Date.now()>=manifest.deadlineAt){
   writeAttempt({...attempt,phase:'settled',spawned:false,noLaunchReason:manifest.closedAt!==null?'authorization-sealed':'deadline',quiescent:true,remaining:[],settledAt:Date.now()});process.exit(1);
  }
- attempt={...attempt,phase:'starting',wrapper:{pid:process.pid,start:startToken(process.pid),bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()}};
+ if(attempt.phase!=='starting'||attempt.guardian?.pid!==process.ppid||startToken(process.ppid)!==attempt.guardian.start)process.exit(1);
+ attempt={...attempt,wrapper:{pid:process.pid,start:startToken(process.pid),bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()}};
  writeAttempt(attempt);
 }
 const env = {...process.env};
@@ -52,35 +54,13 @@ process.stdin.on('error',()=>child.stdin.end());child.stdin.on('error',()=>{});
 let childStart=null;try{childStart=startToken(child.pid)}catch{}
 if(attempt&&child.pid){attempt={...attempt,phase:'running',child:{pid:child.pid,start:childStart}};writeAttempt(attempt)}
 child.stdout.pipe(process.stdout); child.stderr.pipe(process.stderr); process.stdin.pipe(child.stdin);
-function members() {
- const result=[];
- for(const pid of fs.readdirSync('/proc').filter(p=>/^\d+$/.test(p))) try {
-  const stat=fs.readFileSync('/proc/'+pid+'/stat','utf8'); const f=stat.slice(stat.lastIndexOf(')')+2).split(' ');
-  if(Number(f[2])===child.pid) result.push({pid:Number(pid),state:f[0],start:f[19]});
- }catch(error){if(!['ENOENT','ESRCH'].includes(error.code))throw error}
- return result;
+function exited(code){
+ const file=root+'/group-exit.json',temp=file+'.tmp';
+ fs.writeFileSync(temp,JSON.stringify({exitCode:code,attemptId:attempt?.attemptId??null}));fs.renameSync(temp,file);
 }
-let cancelled=false, force=null;
-function reused(){try{return childStart!==null&&startToken(child.pid)!==childStart}catch{return false}}
-function signalGroup(signal){if(!reused())try{process.kill(-child.pid,signal)}catch{}}
-function receipt(code,remaining,spawned=Number.isSafeInteger(child.pid)){
- const quiescent=!reused()&&remaining.every(p=>p.state==='Z');
- if(attempt)writeAttempt({...attempt,phase:'settled',spawned,...(!spawned?{noLaunchReason:'spawn-error'}:{}),exitCode:code,quiescent,remaining,settledAt:Date.now()});
- fs.writeFileSync(root+'/settled.json',JSON.stringify({exitCode:code,quiescent,remaining}));
-}
-function stop() {
- if(cancelled)return; cancelled=true;
- signalGroup('SIGTERM');
- force=setTimeout(()=>{if(members().some(p=>p.state!=='Z'))signalGroup('SIGKILL')},5000);
-}
-const timer=setInterval(()=>{if(fs.existsSync(root+'/abort')||Date.now()>=launch.deadlineAt)stop()},50);
-child.on('error',()=>{clearInterval(timer);receipt(null,[],false);process.exitCode=1;});
-child.on('exit',()=>{signalGroup('SIGTERM')});
-child.on('close',code=>{
- clearInterval(timer);if(force)clearTimeout(force);
- const settle=()=>{receipt(code,members());process.exitCode=code===0?0:1;};
- if(members().some(p=>p.state!=='Z')){signalGroup('SIGKILL');setTimeout(settle,100);}else settle();
-});
+child.on('error',()=>{exited(null);process.exitCode=1});
+child.on('exit',code=>exited(code));
+child.on('close',code=>{process.exitCode=code===0?0:1});
 fs.writeFileSync(root+'/owned.json',JSON.stringify({pid:child.pid,startedAt:Date.now()}));
 `;
 export type OwnedProcessRequest = {
@@ -99,20 +79,24 @@ export type OwnedProcessDependencies = {
 const defaultDependencies: OwnedProcessDependencies = {
   spawn: r => r.recovery && r.attempt ? spawnCli('node', ['-e', AUTORUN_RECOVERY_BRIDGE,
     JSON.stringify({ ledgerRoot: r.recovery.guestRoot, workspace: r.guestRoot, attempt: r.attempt.guestRoot })],
-    { cwd: r.root, stdio: 'pipe' }, r.agentEnvironment) : spawnCli('node', [r.guestRoot + '/group.cjs', r.guestRoot], { cwd: r.root, stdio: 'pipe' }, r.agentEnvironment),
+    { cwd: r.root, stdio: 'pipe' }, r.agentEnvironment) : spawnCli('python3', ['-c', AUTORUN_CONTAINMENT_GUARDIAN, r.guestRoot], { cwd: r.root, stdio: 'pipe' }, r.agentEnvironment),
   abort: async root => { await fs.writeFile(root + '/abort', 'cancel', { mode: 0o600 }); },
   settlement: async (root, request) => {
-    if (!request?.attempt) return JSON.parse(await fs.readFile(root + '/settled.json', 'utf8'));
+    if (!request?.attempt) {
+      const state = JSON.parse(await fs.readFile(root + '/settled.json', 'utf8'));
+      return { exitCode: state.exitCode, quiescent: state.quiescent === true &&
+        state.containment?.kind === 'linux-subreaper-v1' && state.containment?.terminal === 'ECHILD' };
+    }
     const state = JSON.parse(await fs.readFile(request.attempt.root + '/state.json', 'utf8'));
     if (state.phase !== 'settled' || state.launchId !== request.attempt.launchId || state.attemptId !== request.attempt.attemptId ||
         state.userId !== request.userId || state.agentEnvironment !== request.agentEnvironment || state.invocationId !== request.recovery?.identity.invocationId ||
-        state.provider !== request.recovery?.identity.provider || state.quiescent !== true || !Number.isSafeInteger(state.settledAt) ||
+        state.provider !== request.recovery?.identity.provider || state.containment?.kind !== 'linux-subreaper-v1' || state.containment?.terminal !== 'ECHILD' || state.quiescent !== true || !Number.isSafeInteger(state.settledAt) ||
         (state.exitCode !== null && !Number.isSafeInteger(state.exitCode)) || !Array.isArray(state.remaining) ||
         state.remaining.some((p: { state?: string }) => p.state !== 'Z')) throw new Error('incomplete owned settlement');
     return state;
   },
 };
-/** WSL descendants are signalled by the guest-owned group wrapper, never by killing wsl.exe. */
+/** WSL descendants are reaped by the guest subreaper guardian, never by killing wsl.exe. */
 export async function runOwnedSupervisor(request: OwnedProcessRequest, deps = defaultDependencies): Promise<OwnedProcessResult> {
   if (request.recovery) {
     try { request = { ...request, attempt: await createSupervisorAttempt(request.recovery) }; }

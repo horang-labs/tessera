@@ -91,7 +91,13 @@ test('owned process receipt survives host restart and closed authorization denie
     const manifest = JSON.parse(await fs.readFile(recovery.root + '/invocation.json', 'utf8'));
     const file = recovery.root + '/attempts/' + manifest.attemptIds[0] + '/state.json';
     const saved = await fs.readFile(file, 'utf8');
+    await fs.writeFile(file, JSON.stringify({ ...JSON.parse(saved), containment: undefined }));
+    assert.equal((await restarted.observeSupervisorSettlement!(request)).kind, 'unknown');
+    await fs.writeFile(file, JSON.stringify({ ...JSON.parse(saved), guardian: { ...JSON.parse(saved).guardian, start: '99999' } }));
+    assert.equal((await restarted.observeSupervisorSettlement!(request)).kind, 'unknown');
     await fs.writeFile(file, JSON.stringify({ ...JSON.parse(saved), launchId: 'foreign-generation' }));
+    assert.equal((await restarted.observeSupervisorSettlement!(request)).kind, 'unknown');
+    await fs.writeFile(file, JSON.stringify({ ...JSON.parse(saved), child: { ...JSON.parse(saved).child, start: 'invalid-birth-token' } }));
     assert.equal((await restarted.observeSupervisorSettlement!(request)).kind, 'unknown');
     await fs.writeFile(file, JSON.stringify({ ...JSON.parse(saved), padding: 'x'.repeat(40_000) }));
     assert.equal((await restarted.observeSupervisorSettlement!(request)).kind, 'unknown');

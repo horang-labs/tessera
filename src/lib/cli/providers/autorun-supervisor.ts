@@ -48,14 +48,19 @@ function nestedField(value: unknown, key: string): unknown {
 const clean = (r: { ok: boolean; stdout: string; stderr: string }) => r.ok && !r.stderr.trim();
 const unsupported = (reason: Extract<SupervisorCapabilityResult, { kind: 'unavailable' }>['reason']): SupervisorCapabilityResult => ({ kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason });
 // A capability endpoint has no uncertainty DTO. Keep its owned receipt and refuse further analysis
-// for this owner/environment until that exact group proves settlement. R2 persists decision holds.
+// for this owner/environment until that exact tree proves settlement. R2 persists decision holds.
 const uncertainWorkspaces = new Map<string, Set<string>>();
 const ownerKey = (request: SupervisorCapabilityRequest) => JSON.stringify([request.userId, request.agentEnvironment]);
 async function requireSettled(request: SupervisorCapabilityRequest) {
   const roots = uncertainWorkspaces.get(ownerKey(request));
   if (!roots) return;
   for (const root of roots) {
-    try { if (JSON.parse(await fs.readFile(root + '/settled.json', 'utf8')).quiescent === true) { roots.delete(root); await fs.rm(root, { recursive: true, force: true }); } }
+    try {
+      const receipt = JSON.parse(await fs.readFile(root + '/settled.json', 'utf8'));
+      if (receipt.quiescent === true && receipt.containment?.kind === 'linux-subreaper-v1' && receipt.containment?.terminal === 'ECHILD') {
+        roots.delete(root); await fs.rm(root, { recursive: true, force: true });
+      }
+    }
     catch { /* Retain the uncertainty hold and its ownership evidence. */ }
   }
   if (roots.size) throw new SupervisorProcessUncertain();
@@ -97,7 +102,7 @@ export const defaultSupervisorDependencies: SupervisorDependencies = {
     await requireSettled(request);
     const settings = await SettingsManager.load(request.userId, { silent: true });
     if (!request.userId || settings.agentEnvironment !== request.agentEnvironment) throw new Error('environment mismatch');
-    // #530's process-group proof requires Linux on the CLI side; unsupported native topologies fail closed.
+    // The guest subreaper/pidfd proof requires Linux; unsupported native topologies fail closed.
     if (request.agentEnvironment === 'native' && (getRuntimePlatform() !== 'linux' || isRunningInWsl())) throw new Error('unproven process ownership');
     const policy = await execCli('node', ['-e', "const fs=require('fs');process.stdout.write(JSON.stringify(['/etc/claude-code/managed-settings.json','/etc/claude-code/managed-mcp.json','/etc/claude-code/managed-settings.d','/etc/codex/config.toml','/etc/codex/requirements.toml'].some(p=>fs.existsSync(p))))"], request.agentEnvironment, 5000);
     if (!policy.ok || policy.stdout.trim() !== 'false') throw new Error('unreviewed managed policy');
