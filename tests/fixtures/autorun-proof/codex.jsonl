@@ -1,0 +1,7 @@
+{"type":"session_meta","payload":{"id":"01a0fd47-096d-7641-94f0-0013775e02e4","thread_source":"user"}}
+{"type":"event_msg","payload":{"turn_id":"01a0fd47-098b-74c2-ab46-5a4d33836280","type":"task_started"}}
+{"type":"turn_context","payload":{"turn_id":"01a0fd47-098b-74c2-ab46-5a4d33836280","model":"gpt-6.1-sol","effort":"high"}}
+{"type":"event_msg","payload":{"turn_id":"01a0fd47-098b-74c2-ab46-5a4d33836280","type":"task_complete","last_agent_message":"PROOF_OK"}}
+{"type":"event_msg","payload":{"turn_id":"01a0fd47-371c-75a3-a5ba-13003db0b03a","type":"task_started"}}
+{"type":"turn_context","payload":{"turn_id":"01a0fd47-371c-75a3-a5ba-13003db0b03a","model":"gpt-6.1-sol","effort":"high"}}
+{"type":"event_msg","payload":{"turn_id":"01a0fd47-371c-75a3-a5ba-13003db0b03a","type":"task_complete","last_agent_message":"PROOF_OK"}}

@@ -1,0 +1,60 @@
+{
+  "claude": {
+    "version": "2.1.284",
+    "turns": [
+      {
+        "provider": "claude",
+        "sessionId": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+        "submitId": "7ab43974-3790-40ac-bf63-6fb3b2eed4fa",
+        "stopId": "7ab43974-3790-40ac-bf63-6fb3b2eed4fa",
+        "finalText": "PROOF_OK",
+        "sourceCursor": 0,
+        "stopCursor": 10104,
+        "nativeEnd": 11469,
+        "fixtureEnd": 1946,
+        "blocked": false
+      },
+      {
+        "provider": "claude",
+        "sessionId": "c9303786-fff6-4b22-810e-07a5ba5b06a6",
+        "submitId": "b5eadbbd-547d-4bce-b447-0b8bfa67ab48",
+        "stopId": "b5eadbbd-547d-4bce-b447-0b8bfa67ab48",
+        "finalText": "PROOF_OK",
+        "sourceCursor": 17525,
+        "stopCursor": 19038,
+        "nativeEnd": 20478,
+        "fixtureEnd": 3164,
+        "blocked": false
+      }
+    ]
+  },
+  "codex": {
+    "version": "0.159.2",
+    "turns": [
+      {
+        "provider": "codex",
+        "sessionId": "01a0fd47-096d-7641-94f0-0013775e02e4",
+        "submitId": "01a0fd47-098b-74c2-ab46-5a4d33836280",
+        "stopId": "01a0fd47-098b-74c2-ab46-5a4d33836280",
+        "finalText": "PROOF_OK",
+        "sourceCursor": 38164,
+        "stopCursor": 42148,
+        "nativeEnd": 42436,
+        "fixtureEnd": 467,
+        "blocked": false
+      },
+      {
+        "provider": "codex",
+        "sessionId": "01a0fd47-096d-7641-94f0-0013775e02e4",
+        "submitId": "01a0fd47-371c-75a3-a5ba-13003db0b03a",
+        "stopId": "01a0fd47-371c-75a3-a5ba-13003db0b03a",
+        "finalText": "PROOF_OK",
+        "sourceCursor": 45195,
+        "stopCursor": 49195,
+        "nativeEnd": 49483,
+        "fixtureEnd": 831,
+        "blocked": false
+      }
+    ]
+  }
+}

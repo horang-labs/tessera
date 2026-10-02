@@ -1,0 +1,181 @@
+{
+  "topology": "Windows Node 24.15.0 backend -> Ubuntu-24.04 WSL CLI",
+  "proofKind": "observed; not packaged/UI QA",
+  "providers": {
+    "claude": {
+      "supervisorArgv": {
+        "command": "claude",
+        "args": [
+          "-p",
+          "--output-format",
+          "json",
+          "--no-session-persistence",
+          "--model",
+          "claude-sonnet-5-5",
+          "--effort",
+          "high",
+          "--safe-mode",
+          "--restricted",
+          "--tools",
+          "",
+          "--disable-slash-commands",
+          "--permission-prompts",
+          "none",
+          "--strict-mcp-config",
+          "--mcp-config",
+          "{\"mcpServers\":{}}",
+          "--settings",
+          "{\"disableAllHooks\":true,\"enabledPlugins\":{}}",
+          "--json-schema",
+          "{\"type\": \"object\", \"properties\": {\"outcome\": {\"type\": \"string\", \"enum\": [\"continue\", \"complete\", \"needs-user\"]}, \"proposedPrompt\": {\"type\": [\"string\", \"null\"]}, \"explanation\": {\"type\": \"string\"}, \"progress\": {\"type\": \"string\"}, \"evidenceIds\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"criterionResults\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"criterionId\": {\"type\": \"string\"}, \"status\": {\"type\": \"string\", \"enum\": [\"met\", \"unmet\", \"unknown\"]}, \"evidenceIds\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}, \"required\": [\"criterionId\", \"status\", \"evidenceIds\"], \"additionalProperties\": false}}, \"madeProgress\": {\"type\": \"boolean\"}, \"blocker\": {\"type\": [\"string\", \"null\"]}}, \"required\": [\"outcome\", \"proposedPrompt\", \"explanation\", \"progress\", \"evidenceIds\", \"criterionResults\", \"madeProgress\", \"blocker\"], \"additionalProperties\": false}\n"
+        ]
+      },
+      "supervisorClosure": {
+        "code": 0,
+        "cancelled": false,
+        "remaining": [],
+        "quiescent": true
+      },
+      "cancelManifest": {
+        "pid": 1650607,
+        "members": [
+          {
+            "pid": 1650607,
+            "state": "D",
+            "start": "875241"
+          },
+          {
+            "pid": 1650612,
+            "state": "S",
+            "start": "875241"
+          },
+          {
+            "pid": 1650981,
+            "state": "Z",
+            "start": "875254"
+          }
+        ]
+      },
+      "cancelClosure": {
+        "code": null,
+        "cancelled": true,
+        "remaining": [],
+        "quiescent": true
+      }
+    },
+    "codex": {
+      "supervisorArgv": {
+        "command": "codex",
+        "args": [
+          "exec",
+          "--json",
+          "--strict-config",
+          "--skip-git-repo-check",
+          "--ignore-user-config",
+          "--ignore-rules",
+          "--ephemeral",
+          "--sandbox",
+          "read-only",
+          "-m",
+          "gpt-6.1-sol",
+          "--output-schema",
+          "<scratch>/decision-schema.json",
+          "-c",
+          "web_search=\"disabled\"",
+          "-c",
+          "model_reasoning_effort=\"high\"",
+          "-c",
+          "service_tier=\"default\"",
+          "-c",
+          "tools.update_plan.enabled=false",
+          "-c",
+          "features.shell_tool=false",
+          "-c",
+          "features.unified_exec=false",
+          "-c",
+          "features.multi_agent=false",
+          "-c",
+          "features.multi_agent_v2=false",
+          "-c",
+          "features.apps=false",
+          "-c",
+          "features.plugins=false",
+          "-c",
+          "features.in_app_browser=false",
+          "-c",
+          "features.browser_use=false",
+          "-c",
+          "features.browser_use_external=false",
+          "-c",
+          "features.browser_use_full_cdp_access=false",
+          "-c",
+          "features.computer_use=false",
+          "-c",
+          "features.image_generation=false",
+          "-c",
+          "features.view_image=false",
+          "-c",
+          "features.goals=false",
+          "-c",
+          "features.sleep_tool=false",
+          "-c",
+          "features.skill_search=false",
+          "-c",
+          "features.hooks=false",
+          "-c",
+          "features.remote_plugin=false",
+          "-c",
+          "features.code_mode=false",
+          "-c",
+          "features.code_mode_host=false",
+          "-c",
+          "features.code_mode_only=false",
+          "-c",
+          "features.memories=false",
+          "-c",
+          "features.shell_snapshot=false",
+          "-c",
+          "features.tool_suggest=false",
+          "-c",
+          "features.skip_host_skill_discovery=true",
+          "-c",
+          "model_catalog_json=\"<scratch>/supervisor-catalog.json\"",
+          "-c",
+          "features.daemon_auto_start=false",
+          "-c",
+          "suppress_unstable_features_warning=true",
+          "-c",
+          "project_doc_max_bytes=0",
+          "-"
+        ]
+      },
+      "supervisorClosure": {
+        "code": 0,
+        "cancelled": false,
+        "remaining": [],
+        "quiescent": true
+      },
+      "cancelManifest": {
+        "pid": 1628123,
+        "members": [
+          {
+            "pid": 1628123,
+            "state": "S",
+            "start": "873299"
+          },
+          {
+            "pid": 1628125,
+            "state": "S",
+            "start": "873299"
+          }
+        ]
+      },
+      "cancelClosure": {
+        "code": null,
+        "cancelled": true,
+        "remaining": [],
+        "quiescent": true
+      }
+    }
+  }
+}
