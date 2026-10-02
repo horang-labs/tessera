@@ -1,10 +1,26 @@
 import { ClaudeHookLifecycleTracker, classifyClaudeAutomationCompletion } from '../src/lib/cli/providers/claude-code/terminal-hook-lifecycle';
 import { classifyCodexAutomationCompletion } from '../src/lib/cli/providers/codex/terminal-hook-lifecycle';
 import assert from 'node:assert/strict';
-import test, { afterEach } from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { runFixture } from './fixtures/automation';
 const managers: TerminalManager[] = [];
-afterEach(async () => { for (const manager of managers.splice(0)) await manager.shutdownAll(); });
+let previousDataDir: string | undefined, dataDir: string;
+beforeEach(async () => {
+  previousDataDir = process.env.TESSERA_DATA_DIR;
+  await fs.mkdir('tmp', { recursive: true });
+  dataDir = await fs.mkdtemp(path.resolve('tmp/automation-runtime-'));
+  process.env.TESSERA_DATA_DIR = dataDir;
+});
+afterEach(async () => {
+  try { for (const manager of managers.splice(0)) await manager.shutdownAll(); }
+  finally {
+    if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
+    else process.env.TESSERA_DATA_DIR = previousDataDir;
+    await fs.rm(dataDir, { recursive: true });
+  }
+});
 import { TerminalManager } from '../src/lib/terminal/terminal-manager';
 import { createAutomationRuntime } from '../src/lib/automation/runtime-adapter';
 import type { AutomationAuthority, Boundary } from '../src/lib/automation/runtime-port';

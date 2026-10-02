@@ -40,5 +40,5 @@ export function fixture() {
   const createSession = (id: string) => db.prepare(`INSERT INTO sessions
     (id,title,provider,provider_state,model,reasoning_effort,service_tier,worktree_id,created_at,updated_at)
     VALUES (?, 'Fixture', 'codex', '{"kind":"terminal"}', 'test-model', 'high', 'default', 'wt_test', 'test', 'test')`).run(id);
-  return { db, repo, service, runtime, createSession, setNow: (value: number) => { now = value; }, close: () => { db.close(); fs.rmSync(dir, { recursive: true }); } };
+  return { dir, db, repo, service, runtime, createSession, setNow: (value: number) => { now = value; }, close: () => { db.close(); fs.rmSync(dir, { recursive: true }); } };
 }

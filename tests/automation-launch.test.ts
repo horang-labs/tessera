@@ -1,8 +1,23 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { beforeEach, afterEach } from 'node:test';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { TerminalManager } from '../src/lib/terminal/terminal-manager';
 import { createAutomationRuntime } from '../src/lib/automation/runtime-adapter';
 import { authorityFixture, runFixture, explicitSelection } from './fixtures/automation';
+
+let previousDataDir: string | undefined, dataDir: string;
+beforeEach(async () => {
+  previousDataDir = process.env.TESSERA_DATA_DIR;
+  await fs.mkdir('tmp', { recursive: true });
+  dataDir = await fs.mkdtemp(path.resolve('tmp/automation-launch-'));
+  process.env.TESSERA_DATA_DIR = dataDir;
+});
+afterEach(async () => {
+  if (previousDataDir === undefined) delete process.env.TESSERA_DATA_DIR;
+  else process.env.TESSERA_DATA_DIR = previousDataDir;
+  await fs.rm(dataDir, { recursive: true });
+});
 
 test('scheduled creation reserves its identity before fenced ordinary launch and records exact selection', async () => {
   const trace: string[] = [];
