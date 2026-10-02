@@ -1,3 +1,4 @@
+import { createAutorunProviderPort } from '../autorun-provider';
 /**
  * Claude Code CLI Adapter
  *
@@ -94,6 +95,7 @@ export function parseClaudeTitleResponse(text: string): GeneratedTitle | null {
 // =============================================================================
 
 export class ClaudeCodeAdapter implements CliProvider {
+  readonly autorun = createAutorunProviderPort('claude-code');
   private _processRawLogs = new WeakMap<ChildProcess, CliRawLogSink>();
 
   private _attachRawLog(

@@ -1,3 +1,4 @@
+import { createAutorunProviderPort } from '../autorun-provider';
 /**
  * Codex CLI Adapter
  *
@@ -226,6 +227,7 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
 // =============================================================================
 
 export class CodexAdapter implements CliProvider {
+  readonly autorun = createAutorunProviderPort('codex');
   /**
    * Counter for JSON-RPC request IDs used by sendMessage / sendInterrupt.
    * Starts at 4 because a managed handshake can reserve local ids 1 through 3
