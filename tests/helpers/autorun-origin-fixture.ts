@@ -22,7 +22,7 @@ export async function originFixture(provider: 'codex' | 'claude-code' = 'codex',
   if (provider === 'codex') await append({ type: 'session_meta', payload: { id: 'conversation', originator: 'codex_cli_rs', source: 'cli', thread_source: 'user', cwd: dir } });
   else await fs.writeFile(file, '');
   const manager = new TerminalManager(() => {}, async () => ({ spawn: () => ({ write: (s: string) => { writes.push(s); if (failEnter && s === '\r') { failEnter = false; throw Error('Owned PTY bridge failed'); } }, resize() {}, kill() {}, onData() {}, onExit() {} }) }), undefined, { semanticPromptSubmitDelayMs: 5 });
-  const selection = { provider, model: null, reasoningEffort: null, serviceTier: null, settings: { permissionPolicy: 'inherit-cli' as const, allowPreparationFailure: false as const } };
+  const selection = { provider, model: null, reasoningEffort: null, serviceTier: scheduled && provider === 'codex' ? 'default' as const : null, settings: { permissionPolicy: 'inherit-cli' as const, allowPreparationFailure: false as const } };
   const authority = { loadRun: () => ({ run: { ...runFixture(), id: 'run', automationId: 'rule', sessionId: 'session', effectiveSelection: selection, agentEnvironment: 'wsl' as const }, target: scheduled ? { kind: 'create-session' as const, worktreeId: 'worktree', title: 'scheduled', selection } : { kind: 'wake-session' as const, sessionId: 'session' }, prompt: 'Identical instructions', ownerUserId: 'owner' }),
     recordBoundary() {}, recordRuntimeObservation() {}, recordInputOwnership() {}, pauseWake() {}, recordOutcome() {},
     reserveSession: (_id, create) => { create('session'); return 'session'; },
