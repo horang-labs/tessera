@@ -4,6 +4,8 @@ Status: implementable **design**, not shipped behavior. Source baseline and revi
 
 The [coherent automation UX amendment](session-automation-ux.md), reviewed separately from integrated fixed point `7e3e1ad527d87932cc38afd68a3d141230022de6`, now governs entry/setup/detail/history/attention and R3 file ownership. It reconciles the integrated Heartbeat/Schedule UI with Autorun without changing the execution invariants below. R3/#534 implements it before combined #528 QA.
 
+The [finalization and analysis-recovery clarification](session-autorun-finalization.md), based on integrated `f9989c3db0d48dd61f79b8e9e34346418e831e07`, defines the precise fresh-context handoff and independent analysis quarantine. It resolves the #533 review ambiguity without adding a synchronous filesystem transaction or changing public contracts in this design ticket.
+
 ## Product decision
 
 | Mode | Trigger and work | Meaning of completion |
@@ -132,7 +134,7 @@ flowchart LR
     V -->|complete or needs-user| P[Pause, drain and publish summary]
 ```
 
-After model return, atomically accept the decision only if rule revision/enabled state, owner/environment, expiry, lease, input epoch, terminal generation, provider binding, boundary and input revision still match. Use a new synchronous runtime gate callback `commitAnalysisDecision(expectedIdentity, commit)` for the in-memory checks together with A's DB CAS, including complete/needs-user. A read-then-write check outside the gate is insufficient. Content changes inside the snapshotted prefix invalidate it; harmless append-only bookkeeping does not. A new worker turn or late child work invalidates analysis. Stale/cancelled decisions remain audited, never delivered or announced as current completion.
+After model return, obtain a fresh bounded provider capture of the frozen ranges/cutoff and compare actual native-byte hash plus stable captured identity; same-length human/tool mutations must reject while harmless bookkeeping appended strictly after the cutoff remains admissible. Then, without an asynchronous gap after that capture handoff, atomically accept the decision only if rule revision/enabled state, goal revision, owner/environment, expiry, lease, input epoch, terminal generation, provider binding, boundary, input revision and exact saved selections still match. `commitAnalysisDecision(expectedIdentity, commit)` combines the synchronous in-memory checks and fresh-capture comparison with A's DB CAS, including complete/needs-user. Runtime checks outside that gate alone are insufficient. This is atomic **host-state admission**, not a lock on an externally mutable provider file: no transcript I/O belongs inside the gate. The [precise observation limit, stable-range comparison and deadlines](session-autorun-finalization.md#finalization-sequence-and-latency) govern this handoff. A newly observed worker turn or late child work invalidates analysis; stale/cancelled decisions remain audited, never delivered or announced as current completion.
 
 For continue, persist the validated proposal and a single linked AutomationRun in one transaction. `AutomationAuthority.loadRun` returns that immutable prompt; never overwrite the rule's fixed prompt or call public Control prompt. B's existing `dispatch(expectedBoundary)` → `beginAttempt` → `withWriteFence(begin/complete)` remains the only writer. Add decision identity/eligibility checks to A's begin fence. Increment existing dispatchCount only at the actual dispatch attempt; supervisor calls have their own counter. A model decision alone is not `delivered`.
 
@@ -147,6 +149,8 @@ For complete/needs-user, persist outcome and summary, set the existing rule stat
 | Crash after analysis intent or persisted proposal, before writer intent | On restart mark analysis interrupted, cancel unsent proposal, pause; require explicit re-arm and a fresh worker boundary. Do not rerun the same model call or cached decision. |
 | Crash after writer intent or possible write | Existing unknown/no-resend recovery; never infer absence of a write from transcript absence. |
 | Backend sleep/restart | No background cloud progress; invalidate expired/old-instance work, revalidate same-process wake before accepting a result, never replay a backlog. |
+
+Analysis-only process uncertainty reserves analysis capacity and blocks further analysis for the affected Session; it does **not** create a worker input-recovery lock when no writer or unknown worker write exists. The [R1 settlement observation and R2 recovery requirements](session-autorun-finalization.md#minimal-settlement-capability-and-ownership) permit releasing only an exactly identified, durably proven quiescent invocation after restart. They never revive its decision, reset counts or auto-arm; explicit fresh-boundary readiness still applies. Actual writer uncertainty keeps the existing drain/acknowledgement semantics.
 
 Persist local audit text only where needed for owner inspection; no prompts, transcript excerpts, private paths or tokens in structured logs/WS list events. Store the bounded packet used for each call so hash/provenance remains useful after source rotation; omit raw reasoning and binary media. Soft delete retains decisions, boundary keys and run linkage, subject to the original finite rule quota. No audit purge or separate JSON scheduler is added.
 
