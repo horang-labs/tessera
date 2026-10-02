@@ -18,7 +18,7 @@ const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 }).strict().refine(v => !v.sessionId || !v.worktreeId);
 const historyQuery = z.object({ cursor: z.string().min(1).optional(), limit: z.coerce.number().int().min(1).max(100).optional() }).strict();
-type Operation = { action: 'list' | 'create' | 'detail' | 'edit' | 'state' | 'delete' | 'runs' | 'resolve' | 'ownership'; id?: string; runId?: string };
+type Operation = { action: 'list' | 'create' | 'detail' | 'edit' | 'state' | 'delete' | 'runs' | 'resolve' | 'ownership' | 'preview' | 'decisions' | 'decision'; id?: string; runId?: string; decisionId?: string };
 async function body<T>(request: NextRequest, schema: z.ZodType<T>): Promise<T> {
   let value: unknown;
   try { value = await request.json(); } catch { fail('INVALID_AUTOMATION', 'A JSON body is required.'); }
@@ -69,6 +69,13 @@ export async function handleAutomationRequest(request: NextRequest, operation: O
       case 'resolve':
         await body(request, resolveBody);
         return NextResponse.json(await service.resolve(auth.userId, id, operation.runId ?? ''));
+      case 'preview': return NextResponse.json(await service.autorun.preview(auth.userId,id,await body(request,z.unknown())));
+      case 'decisions': {
+        const value=historyQuery.safeParse(Object.fromEntries(request.nextUrl.searchParams));
+        if (!value.success) fail('INVALID_AUTOMATION');
+        return NextResponse.json(service.autorun.decisions(auth.userId,id,value.data));
+      }
+      case 'decision': return NextResponse.json(service.autorun.decision(auth.userId,id,operation.decisionId??''));
       case 'ownership': return NextResponse.json(await service.sessionOwnership(auth.userId, id));
     }
   } catch (error) {

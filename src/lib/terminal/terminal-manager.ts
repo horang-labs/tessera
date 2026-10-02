@@ -2398,6 +2398,7 @@ export class TerminalManager {
     }
     runtime.backgroundProviderSessionIds.delete(providerSessionId);
     runtime.providerSessionId = providerSessionId;
+    if (runtime.sessionId) this.automation.bindConversation(userId, runtime.sessionId, providerSessionId);
     return true;
   }
 

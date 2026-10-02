@@ -29,7 +29,7 @@ for (const upgrade of [false, true]) test(`${upgrade ? 'a v39 profile upgrades' 
       })().catch(e=>{console.error(e);process.exitCode=1})`], { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, LOG_LEVEL: 'fatal', TESSERA_DATA_DIR: dir, TESSERA_PRODUCTION_DB: '1' } });
       assert.equal(child.status, 0, child.stderr);
       assert.deepEqual(JSON.parse(child.stdout.trim()), { version: String(SCHEMA_VERSION), projects: upgrade ? 'Keep me' : null, count: 0,
-        tables: ['session_automation_idempotency', 'session_automation_runs', 'session_automation_scheduler', 'session_automations'], synchronous: 2 });
+        tables: ['session_automation_analysis_attempts', 'session_automation_boundaries', 'session_automation_decisions', 'session_automation_idempotency', 'session_automation_runs', 'session_automation_scheduler', 'session_automations'], synchronous: 2 });
     }
   } finally { fs.rmSync(dir, { recursive: true }); }
 });

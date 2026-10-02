@@ -4,7 +4,7 @@
  * This DB is the source of truth for projects, sessions, and conversation messages.
  */
 
-export const SCHEMA_VERSION = 40;
+export const SCHEMA_VERSION = 41;
 
 /**
  * v38 needs the authenticated agent environment before legacy path evidence
@@ -224,6 +224,26 @@ CREATE INDEX IF NOT EXISTS idx_conv_messages_session
 `;
 
 /** v40: local automation journal. Audit rows intentionally have no Session FK. */
+export const AUTORUN_SCHEMA = `
+CREATE TABLE IF NOT EXISTS session_automation_boundaries (
+ owner_user_id TEXT NOT NULL, session_id TEXT NOT NULL, boundary_id TEXT NOT NULL,
+ automation_id TEXT NOT NULL, mode TEXT NOT NULL, consumed_at INTEGER NOT NULL,
+ PRIMARY KEY(owner_user_id,session_id,boundary_id)
+);
+CREATE TABLE IF NOT EXISTS session_automation_decisions (
+ id TEXT PRIMARY KEY, automation_id TEXT NOT NULL REFERENCES session_automations(id) ON DELETE RESTRICT,
+ boundary_id TEXT NOT NULL, phase TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+ run_id TEXT UNIQUE REFERENCES session_automation_runs(id) ON DELETE RESTRICT, detail_json TEXT NOT NULL,
+ UNIQUE(automation_id,boundary_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_autorun_active ON session_automation_decisions(automation_id) WHERE active=1;
+CREATE TABLE IF NOT EXISTS session_automation_analysis_attempts (
+ decision_id TEXT NOT NULL REFERENCES session_automation_decisions(id) ON DELETE RESTRICT,
+ ordinal INTEGER NOT NULL, selection_json TEXT NOT NULL, packet_hash TEXT NOT NULL, attempt_json TEXT NOT NULL,
+ PRIMARY KEY(decision_id,ordinal)
+);
+`;
+
 export const AUTOMATION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS session_automations (
  id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, revision INTEGER NOT NULL,
@@ -259,4 +279,4 @@ CREATE TABLE IF NOT EXISTS session_automation_idempotency (
  owner_user_id TEXT NOT NULL, key TEXT NOT NULL, request_hash TEXT NOT NULL,
  response_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(owner_user_id,key)
 );
-`;
+${AUTORUN_SCHEMA}`;

@@ -12,6 +12,7 @@ import { resolveServerDefaultUserId } from '../server-default-user';
 import { isElectronRuntime } from '../electron-runtime';
 import logger from '../logger';
 import type { ProviderLaunchRequest } from '../terminal/provider-launch-module';
+import { cliProviderRegistry } from '../cli/providers/registry';
 import { AutomationEngine } from './engine';
 import { AutomationRepository } from './repository';
 import { AutomationService, fail, type Inspection } from './service';
@@ -72,7 +73,8 @@ export function getAutomationService(): AutomationService {
 /** Called after DB/auth readiness and WS sender binding, with the shared manager already initialized. */
 export async function startAutomationHost(): Promise<Host> {
   if (globals[key]) return globals[key];
-  const { broadcastAutomationMutation } = await import('./broadcaster');
+  const { broadcastAutomationMutation, broadcastAutorunAttention } = await import('./broadcaster');
+  const { terminalManager } = await import('../terminal/shared-terminal-manager');
   const service = new AutomationService(new AutomationRepository(getDb()), {
     now: Date.now, runtime: getAutomationRuntime,
     owner: async () => {
@@ -81,7 +83,8 @@ export async function startAutomationHost(): Promise<Host> {
       const settings = await SettingsManager.load(userId, { silent: true, strict: true });
       return { userId, agentEnvironment: settings.agentEnvironment };
     },
-    inspect: inspectAutomationTarget, publish: broadcastAutomationMutation,
+    inspect: inspectAutomationTarget, publish: broadcastAutomationMutation, publishAttention: broadcastAutorunAttention,
+    provider: id => cliProviderRegistry.hasProvider(id) ? cliProviderRegistry.getProvider(id).autorun ?? null : null,
   });
   const engine = new AutomationEngine(service);
   const release = installAutomationAuthority(engine);
