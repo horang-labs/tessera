@@ -159,6 +159,9 @@ export type SupervisorDecisionRequest = SupervisorCapabilityRequest & {
   deadlineAt: number;
   signal: AbortSignal;
 };
+export type SupervisorSettlementObservationRequest = {
+  version: 1; userId: string; agentEnvironment: 'native' | 'wsl'; invocationId: string;
+};
 export interface AutorunProviderPort {
   readonly version: 1;
   /** R1-owned verified human objective/corrections and current submit evidence; no completed snapshot required. */
@@ -169,6 +172,10 @@ export interface AutorunProviderPort {
   checkSupervisorCapability(args: SupervisorCapabilityRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorCapabilityResult>;
   /** Fresh auth-only, tool-free process; signal stops only its owned tree, then proves quiescence. */
   generateSupervisorDecision(args: SupervisorDecisionRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorResult>;
+  /** Read/reconcile exact durable ownership + all-process settlement; no inference, output replay or kill.
+   * Absence/unknown retains analysis capacity quarantine; worker input ownership is handled separately by R2.
+   */
+  observeSupervisorSettlement?(args: SupervisorSettlementObservationRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorSettlementObservation>;
 }
 
 /** R2 captures current native association under its gate, then asks R1 for provenance without a model call.
