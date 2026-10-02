@@ -1693,6 +1693,10 @@ for (const provider of ['claude-code', 'codex']) {
 
 for (const tier of ['default', 'fast'] as const) {
   test(`Codex native ${tier} schedule crosses ordinary preparation and spawn fence`, async () => {
+    const configPath=path.join(testRoot,'codex-home','config.toml');
+    const previousConfig=fs.existsSync(configPath)?fs.readFileSync(configPath):null;
+    const hostileConfig='service_tier = "priority"\n';fs.writeFileSync(configPath,hostileConfig);
+    try {
     const sessionId = `native-automation-${tier}`;
     createTerminalSession(sessionId, 'codex', { kind: 'terminal' }, {
       model: 'gpt-6-test', reasoningEffort: 'high', ...(tier === 'fast' ? { serviceTier: 'priority' } : {}),
@@ -1709,6 +1713,9 @@ for (const tier of ['default', 'fast'] as const) {
     assert.equal(fenced, true);assert.equal(captured.length, 1);
     const shell = captured[0].args.join('\n');
     if (tier === 'fast') assert.match(shell, /service_tier="priority"/);
-    else assert.doesNotMatch(shell, /service_tier=/);
+    else assert.match(shell, /service_tier="default"/);
+    assert.match(fs.readFileSync(path.join(captured[0].env!.CODEX_HOME!,'config.toml'),'utf8'), /service_tier = "priority"/);
+    assert.equal(fs.readFileSync(configPath,'utf8'),hostileConfig);
+    } finally {if(previousConfig)fs.writeFileSync(configPath,previousConfig);else fs.rmSync(configPath,{force:true});}
   });
 }

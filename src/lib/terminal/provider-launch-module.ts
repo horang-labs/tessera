@@ -406,7 +406,9 @@ async function buildLaunchDecision(
       initialPrompt: request.initialPrompt,
       model,
       reasoningEffort,
-      serviceTier,
+      // Explicit automation Default must override copied account priority, including
+      // legacy reserved rows that stored null. Wake null still inherits unchanged.
+      serviceTier: request.expectedSelection?.serviceTier === 'default' ? 'default' : serviceTier,
     });
     return {
       provider: persisted.provider,

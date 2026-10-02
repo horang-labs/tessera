@@ -121,10 +121,10 @@ test('due root and managed schedules reserve existing ownership and launch from 
       const expected=row.worktree_id===f.rootId?f.workDir:f.managedDir;
       assert.equal(resolveSessionWorkspaceRoot(row.id),expected);assert.equal(row.project_id,f.projectId);
       assert.equal(row.task_id===null,row.worktree_id===f.rootId);assert.equal(row.model,'fixture-model');
-      assert.equal(row.service_tier,row.worktree_id===f.rootId?null:'priority');
+      assert.equal(row.service_tier,row.worktree_id===f.rootId?'default':'priority');
       const {buildProviderTerminalLaunch}=await import('../src/lib/terminal/provider-launch');
       const launch=buildProviderTerminalLaunch({providerId:row.provider,sessionId:row.id,resume:false,serviceTier:row.service_tier});
-      assert.deepEqual(launch.args,row.worktree_id===f.rootId?[]:['--config','service_tier="priority"']);
+      assert.deepEqual(launch.args,['--config',row.worktree_id===f.rootId?'service_tier="default"':'service_tier="priority"']);
       assert.equal(sessions.getManagedSessionCallerContext(row.id)?.projectId,f.projectId);
       assert.equal(request.userId,owner);assert.equal(request.expectedAgentEnvironment,'native');assert.equal(request.initialPrompt,'Read fixture');
       request.spawnFence!(()=>spawns++);return {terminalId:`session-${row.id}`,attachedToExistingRuntime:false};
@@ -173,7 +173,7 @@ test('restart recovery keeps root/managed reserved Session identity and never re
       const workDir=resolveSessionWorkspaceRoot(request.sessionId)!;assert.ok([f.workDir,f.managedDir].includes(workDir));
       const {buildProviderTerminalLaunch}=await import('../src/lib/terminal/provider-launch');
       const row=f.db.prepare('SELECT service_tier FROM sessions WHERE id=?').get(request.sessionId);
-      assert.deepEqual(buildProviderTerminalLaunch({providerId:'codex',sessionId:request.sessionId,resume:false,serviceTier:row.service_tier}).args,workDir===f.workDir?[]:['--config','service_tier="priority"']);
+      assert.deepEqual(buildProviderTerminalLaunch({providerId:'codex',sessionId:request.sessionId,resume:false,serviceTier:row.service_tier}).args,['--config',workDir===f.workDir?'service_tier="default"':'service_tier="priority"']);
       await manager.startDetached({sessionId:request.sessionId,terminalId:`session-${request.sessionId}`,userId:owner,providerId:'codex',agentEnvironment:'native',
         resolvedShell:{command:'fixture-only',args:[],cwd:workDir},spawnFence:request.spawnFence});
       resumed.push(request.sessionId);return {terminalId:`session-${request.sessionId}`,attachedToExistingRuntime:false};

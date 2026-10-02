@@ -11,10 +11,12 @@ export function automationServiceTier(provider: string, nativeTier: unknown, exp
 }
 
 export function nativeAutomationServiceTier(provider: string, tier: 'default' | 'fast' | null): string | null {
-  return provider === 'codex' && tier === 'fast' ? 'priority' : null;
+  // Codex 0.159.2 protocol/config_types.rs: default is explicit standard routing,
+  // whereas null inherits account/model configuration (including priority).
+  return provider === 'codex' ? tier === 'fast' ? 'priority' : tier : null;
 }
 
-/** Default means no native tier override; Fast requires an offered priority capability. */
+/** Default is Codex's standard-routing sentinel; Fast needs an offered priority capability. */
 export function automationTierOptions(model: ProviderModelOption | undefined) {
   if (!model) return [];
   const priority = model.serviceTiers?.find(tier => tier.value === 'priority');

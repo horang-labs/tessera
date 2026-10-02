@@ -146,7 +146,7 @@ test('Codex PTY reapplies the persisted model and reasoning effort when it resum
   );
 });
 
-test('Codex PTY maps the legacy frozen Default to native implicit default when resuming', () => {
+test('Codex PTY maps the legacy frozen Default to native explicit standard routing when resuming', () => {
   assert.deepEqual(
     buildProviderTerminalLaunch({
       providerId: 'codex',
@@ -158,6 +158,7 @@ test('Codex PTY maps the legacy frozen Default to native implicit default when r
     {
       command: 'codex',
       args: [
+        '--config', 'service_tier="default"',
         'resume', 'thread_123',
       ],
     },
