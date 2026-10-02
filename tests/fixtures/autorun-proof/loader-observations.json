@@ -1,0 +1,76 @@
+{
+  "trace": "owned child open/openat/openat2 only; -yy decoded file paths",
+  "evidence": [
+    {
+      "role": "projectClaude",
+      "controlOpens": 2,
+      "candidateOpens": 0
+    },
+    {
+      "role": "homeClaude",
+      "controlOpens": 2,
+      "candidateOpens": 0
+    },
+    {
+      "role": "projectAgents",
+      "controlOpens": 1,
+      "candidateOpens": 0
+    },
+    {
+      "role": "homeAgents",
+      "controlOpens": 0,
+      "candidateOpens": 0
+    }
+  ],
+  "topology": "Windows Node backend -> owned WSL strace -> Claude Code",
+  "versions": {
+    "claude": "2.1.284",
+    "strace": "strace -- version 6.8"
+  },
+  "controlDifference": "Only --safe-mode and --restricted removed; executable tools, hooks, MCP, skills/commands disabled; same model/effort/packet and auth-only home.",
+  "scope": "Project CLAUDE.md/AGENTS.md and isolated-home CLAUDE.md have successful positive controls; home AGENTS.md was never opened by either variant and is not a positive-control-attested source. Provider base/system instructions outside claim.",
+  "runs": {
+    "control": {
+      "argv": {
+        "command": "strace",
+        "args": ["-f", "-yy", "-e", "trace=open,openat,openat2", "-o", "<scratch>/loader-control.trace", "--", "claude", "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--model", "claude-sonnet-5-5", "--effort", "high", "--tools", "", "--disable-slash-commands", "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--settings", "{\"disableAllHooks\":true,\"enabledPlugins\":{}}", "--json-schema", "{\"type\": \"object\", \"properties\": {\"outcome\": {\"type\": \"string\", \"enum\": [\"continue\", \"complete\", \"needs-user\"]}, \"proposedPrompt\": {\"type\": [\"string\", \"null\"]}, \"explanation\": {\"type\": \"string\"}, \"progress\": {\"type\": \"string\"}, \"evidenceIds\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"criterionResults\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"criterionId\": {\"type\": \"string\"}, \"status\": {\"type\": \"string\", \"enum\": [\"met\", \"unmet\", \"unknown\"]}, \"evidenceIds\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}, \"required\": [\"criterionId\", \"status\", \"evidenceIds\"], \"additionalProperties\": false}}, \"madeProgress\": {\"type\": \"boolean\"}, \"blocker\": {\"type\": [\"string\", \"null\"]}}, \"required\": [\"outcome\", \"proposedPrompt\", \"explanation\", \"progress\", \"evidenceIds\", \"criterionResults\", \"madeProgress\", \"blocker\"], \"additionalProperties\": false}\n"]
+      },
+      "closure": {
+        "code": 0,
+        "cancelled": false,
+        "remaining": [],
+        "quiescent": true
+      },
+      "init": {
+        "model": "claude-sonnet-5-5",
+        "tools": [
+          "StructuredOutput"
+        ],
+        "mcp_servers": [],
+        "skills": []
+      },
+      "finality": "accepted structured success; exit0 and quiescent; zero worker hooks"
+    },
+    "candidate": {
+      "argv": {
+        "command": "strace",
+        "args": ["-f", "-yy", "-e", "trace=open,openat,openat2", "-o", "<scratch>/loader-candidate.trace", "--", "claude", "-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--model", "claude-sonnet-5-5", "--effort", "high", "--safe-mode", "--restricted", "--tools", "", "--disable-slash-commands", "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", "--settings", "{\"disableAllHooks\":true,\"enabledPlugins\":{}}", "--json-schema", "{\"type\": \"object\", \"properties\": {\"outcome\": {\"type\": \"string\", \"enum\": [\"continue\", \"complete\", \"needs-user\"]}, \"proposedPrompt\": {\"type\": [\"string\", \"null\"]}, \"explanation\": {\"type\": \"string\"}, \"progress\": {\"type\": \"string\"}, \"evidenceIds\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"criterionResults\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"criterionId\": {\"type\": \"string\"}, \"status\": {\"type\": \"string\", \"enum\": [\"met\", \"unmet\", \"unknown\"]}, \"evidenceIds\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}, \"required\": [\"criterionId\", \"status\", \"evidenceIds\"], \"additionalProperties\": false}}, \"madeProgress\": {\"type\": \"boolean\"}, \"blocker\": {\"type\": [\"string\", \"null\"]}}, \"required\": [\"outcome\", \"proposedPrompt\", \"explanation\", \"progress\", \"evidenceIds\", \"criterionResults\", \"madeProgress\", \"blocker\"], \"additionalProperties\": false}\n"]
+      },
+      "closure": {
+        "code": 0,
+        "cancelled": false,
+        "remaining": [],
+        "quiescent": true
+      },
+      "init": {
+        "model": "claude-sonnet-5-5",
+        "tools": [
+          "StructuredOutput"
+        ],
+        "mcp_servers": [],
+        "skills": []
+      },
+      "finality": "accepted structured success; exit0 and quiescent; zero worker hooks"
+    }
+  }
+}

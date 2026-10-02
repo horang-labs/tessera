@@ -174,5 +174,5 @@
     "reasoningEffort": "high",
     "multiAgentMode": "explicitRequestOnly"
   },
-  "instructionEvidenceLimit": "Claude init has no loaded-instruction sources; safe-mode contract and isolated invocation are recorded, actual loader attestation remains unverified."
+  "instructionEvidenceLimit": "Owned Windows->WSL file-open trace positive control demonstrates project CLAUDE.md/AGENTS.md and isolated-home CLAUDE.md loading; exact candidate opened none. Tested layout/version only; no claim about provider base/system instructions or future policy."
 }

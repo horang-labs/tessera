@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { build } from 'esbuild';
 const mode = process.argv[2];
-const modes = ['claude-worker', 'codex-worker', 'claude-supervisor', 'codex-supervisor', 'claude-cancel', 'codex-cancel'];
+const modes = ['claude-worker', 'codex-worker', 'claude-supervisor', 'codex-supervisor', 'claude-cancel', 'codex-cancel', 'claude-loader'];
 if (!modes.includes(mode)) throw new Error('Choose an explicit proof mode');
 const scratch = path.resolve(process.argv[3] || fs.mkdtempSync(path.join(os.homedir(), 'tmp/autorun-530-')));
 if (!scratch.startsWith(os.homedir() + '/tmp/autorun-530-')) throw new Error('Owned ~/tmp/autorun-530-* scratch required');

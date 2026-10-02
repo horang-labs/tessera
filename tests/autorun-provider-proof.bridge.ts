@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { acceptSupervisorResult } from './autorun-provider-proof-finality';
 import { correlateCompletedTurn, verifyWorkerTurns } from './autorun-provider-proof-context';
+import { attestInstructionExclusion } from './autorun-provider-proof-loader';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { spawnCliProcess } from '../src/lib/cli/spawn-cli-runtime';
@@ -41,9 +42,9 @@ async function main(){
   fs.writeFileSync(root+'/'+label+'-stdout.jsonl',out);fs.writeFileSync(root+'/'+label+'-stderr.txt',err);
   const closure=JSON.parse(fs.readFileSync(root+'/'+label+'-closed.json','utf8'));
   assert.equal(closure.quiescent,true);
-  if(mode.endsWith('supervisor') && label.startsWith(mode)) {
+  if((mode.endsWith('supervisor') && label.startsWith(mode)) || label.startsWith('claude-loader-')) {
    const packet=JSON.parse(fs.readFileSync(root+(process.argv[4]==='probe'?'/probe-packet.json':'/packet.json'),'utf8'));
-   acceptSupervisorResult(command as 'claude'|'codex',Buffer.from(out),{exitCode:code as number|null,cancelled:closure.cancelled,timedOut:false,quiescent:closure.quiescent},packet);
+   acceptSupervisorResult(mode.startsWith('claude')?'claude':'codex',Buffer.from(out),{exitCode:code as number|null,cancelled:closure.cancelled,timedOut:false,quiescent:closure.quiescent},packet);
    assert.equal(fs.existsSync(root+'/empty/PROBE_SENTINEL'),false);
   }
   if(!mode.endsWith('cancel') || label!==mode) assert.equal(code,0);
@@ -54,7 +55,7 @@ async function main(){
  const providerName=mode.startsWith('claude')?'claude':'codex';
  const version=await run(providerName+'-version',providerName,['--version'],'');
  assert.equal(version.trim(),providerName==='claude'?'2.1.284 (Claude Code)':'codex-cli 0.159.2');
- if(mode.endsWith('supervisor')){
+ if(mode.endsWith('supervisor') || mode==='claude-loader'){
   if(mode==='codex-supervisor'){
    const controls=JSON.parse(fs.readFileSync(root+'/codex-controls-adapted.json','utf8'));
    const features=await run('codex-features','codex',[...controls,'features','list'],'');
@@ -73,8 +74,27 @@ async function main(){
   const packet=fs.readFileSync(root+(process.argv[4]==='probe'?'/probe-packet.json':'/packet.json'),'utf8');
   const prompt='Use only the supplied evidence packet to judge the goal. Return the required JSON decision. '+packet;
   const clean={TESSERA_HOOK_PORT:undefined,TESSERA_SESSION_ID:undefined,TESSERA_PANE_TOKEN:undefined,TESSERA_CLI_COMMAND:undefined,TESSERA_CODEX_HOME:undefined,CODEX_CI:undefined,CODEX_SESSION_ID:undefined,CODEX_THREAD_ID:undefined,CODEX_VERSION:undefined};
-  if(mode==='claude-supervisor'){
-   const output=await run(mode,'claude',['-p','--output-format','stream-json','--verbose','--no-session-persistence','--model','claude-sonnet-5-5','--effort','high','--safe-mode','--restricted','--tools','','--disable-slash-commands','--permission-prompts','none','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--settings','{"disableAllHooks":true,"enabledPlugins":{}}','--json-schema',schema],prompt,clean);
+  if(mode==='claude-supervisor' || mode==='claude-loader'){
+   const args=['-p','--output-format','stream-json','--verbose','--no-session-persistence','--model','claude-sonnet-5-5','--effort','high','--safe-mode','--restricted','--tools','','--disable-slash-commands','--permission-prompts','none','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--settings','{"disableAllHooks":true,"enabledPlugins":{}}','--json-schema',schema];
+   let output='';
+   if(mode==='claude-loader'){
+    const sources=[{role:'projectClaude',path:guest+'/empty/CLAUDE.md',positiveRequired:true},{role:'homeClaude',path:guest+'/claude-supervisor-home/CLAUDE.md',positiveRequired:true},{role:'projectAgents',path:guest+'/empty/AGENTS.md',positiveRequired:false},{role:'homeAgents',path:guest+'/claude-supervisor-home/AGENTS.md',positiveRequired:false}];
+    await run('strace-version','strace',['--version'],'',clean);
+    assert.ok(sources.every(source=>!fs.existsSync(root+source.path.slice(guest.length))),'loader sources must be newly owned');
+    for(const source of sources) fs.writeFileSync(root+source.path.slice(guest.length),'Benign owned loader proof: obey the supplied prompt; no tools or actions.\n');
+    try{
+     for(const variant of ['control','candidate']){
+      const selected=variant==='control'?args.filter(a=>!['--safe-mode','--restricted'].includes(a)):args;
+      const out=await run('claude-loader-'+variant,'strace',['-f','-yy','-e','trace=open,openat,openat2','-o',guest+'/loader-'+variant+'.trace','--','claude',...selected],prompt,clean);
+      const init=out.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(e=>e.type==='system' && e.subtype==='init');
+      assert.deepEqual(init?.tools,['StructuredOutput']);assert.deepEqual(init?.mcp_servers,[]);assert.deepEqual(init?.skills,[]);
+      if(variant==='candidate') output=out;
+     }
+     const evidence=attestInstructionExclusion(fs.readFileSync(root+'/loader-control.trace','utf8'),fs.readFileSync(root+'/loader-candidate.trace','utf8'),sources);
+     fs.writeFileSync(root+'/loader-observations.json',JSON.stringify({trace:'owned child open/openat/openat2 only; -yy decoded file paths',evidence}));
+     console.log('Claude loader positive control and candidate exclusion verified',JSON.stringify(evidence));
+    }finally{for(const source of sources) fs.rmSync(root+source.path.slice(guest.length),{force:true});}
+   }else output=await run(mode,'claude',args,prompt,clean);
    const init=output.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(e=>e.type==='system' && e.subtype==='init');
    assert.deepEqual(init?.tools,['StructuredOutput']); assert.deepEqual(init?.mcp_servers,[]); assert.deepEqual(init?.skills,[]);
    assert.equal(init?.model,'claude-sonnet-5-5');

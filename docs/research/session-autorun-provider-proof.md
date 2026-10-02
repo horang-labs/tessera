@@ -12,7 +12,7 @@ Tested 2026-10-03 from `94c4d50fed91274bba36f824c9074a8b95a2e055`. This is a nar
 Run from the repository root with existing account auth and dependencies:
 
 ```sh
-npx tsx --test tests/autorun-provider-proof-context.test.ts tests/autorun-provider-proof-finality.test.ts
+npx tsx --test tests/autorun-provider-proof-context.test.ts tests/autorun-provider-proof-finality.test.ts tests/autorun-provider-proof-loader.test.ts
 node tests/autorun-provider-proof.live.mjs claude-worker /home/work/tmp/autorun-530-run
 node tests/autorun-provider-proof.live.mjs codex-worker /home/work/tmp/autorun-530-run
 node tests/autorun-provider-proof.live.mjs claude-supervisor /home/work/tmp/autorun-530-run
@@ -21,6 +21,7 @@ node tests/autorun-provider-proof.live.mjs claude-supervisor /home/work/tmp/auto
 node tests/autorun-provider-proof.live.mjs codex-supervisor /home/work/tmp/autorun-530-run probe
 node tests/autorun-provider-proof.live.mjs claude-cancel /home/work/tmp/autorun-530-run
 node tests/autorun-provider-proof.live.mjs codex-cancel /home/work/tmp/autorun-530-run
+node tests/autorun-provider-proof.live.mjs claude-loader /home/work/tmp/autorun-530-run
 ```
 
 Live calls are opt-in; ordinary tests never launch an account-auth CLI. The runner creates owned scratch, separate worker/supervisor config homes and an empty guest cwd. Only existing account-auth files are symlinked. It bundles the existing bridge for Windows execution. Each call records exact argv, output, closure and process manifest in scratch; raw transcripts stay there. Cancel modes need the corresponding prior supervisor argv. No credentials are printed/copied into fixtures. Stop/timeout only signal the newly created guest process group; no broad kill or ordinary Session inspection. Keep scratch for review or remove that exact directory after all manifests are quiescent.
@@ -59,7 +60,7 @@ claude -p --output-format stream-json --verbose --no-session-persistence
   --json-schema <decision schema JSON>
 ```
 
-The replayable supervisor itself exposes effective init: only `StructuredOutput`, no MCP servers/skills. StructuredOutput is an output formatter, not command/file/network execution. Builtin `agents-md` and `telemetry` **still appear** in init even with safe mode; do not claim an empty plugin roster. A harmless scratch `CLAUDE.md/AGENTS.md` marker did not appear in the response; that is **not** proof that instructions were unloaded. Init does not expose loaded instruction sources. Project-instruction exclusion relies on the installed `--safe-mode` promise (CLAUDE.md/customizations disabled), `--restricted` settings exclusion, separate auth-only home and empty cwd; actual effective prompt/loader attestation remains **unverified**, a mandatory R0/R1 acceptance gap. Hook receipts were zero; write probes returned needs-user with no tool call/file. The standard Linux managed settings/config/requirements files were absent in this probe. Managed policy remains authoritative: R1 must reject conflicting mandatory managed capabilities, rather than silently disabling them or claiming universal isolation. `--bare` was excluded because it disables OAuth.
+The replayable supervisor itself exposes effective init: only `StructuredOutput`, no MCP servers/skills. StructuredOutput is an output formatter, not command/file/network execution. Builtin `agents-md` and `telemetry` **still appear** in init even with safe mode; do not claim an empty plugin roster. A harmless scratch `CLAUDE.md/AGENTS.md` marker did not appear in the response; that is **not** proof that instructions were unloaded. Init does not expose loaded instruction sources. The owned loader proof below supplies actual file-open evidence in addition to installed flag semantics and isolation. Hook receipts were zero; write probes returned needs-user with no tool call/file. The standard Linux managed settings/config/requirements files were absent in this probe. Managed policy remains authoritative: R1 must reject conflicting mandatory managed capabilities, rather than silently disabling them or claiming universal isolation. `--bare` was excluded because it disables OAuth.
 
 Codex invocation:
 
@@ -92,7 +93,22 @@ Pinned registration audit: release `rust-v0.159.2` → **`ff6aec96948b70d94983af
 | skills list/read | `ext/skills/src/tools/mod.rs:59` requires cloud provider enabled or selected executor roots. cloud.skills.enabled=false, no executor-selected roots in exec, skip host discovery, bundled/instruction config false; SkillSearch=false. |
 | code mode / search wrappers | adapted tool_mode=null + CodeMode/CodeModeOnly/CodeModeHost false produce Direct; `register_code_mode_executors` (819) returns empty. supports_search_tool=false prevents search wrapper. |
 
-This source audit establishes disabled executable registrations for the pinned candidate with the recorded effective controls; it is not an intercepted inference request or a universal guarantee about future releases/managed policy. Builtin provider networking for inference/auth remains. The unsupported top-level `tool_registry.turn_metadata_includes_tool_info` diagnostic and a scratch HTTP routing attempt produced no usable roster; neither counts as proof. Exact effective catalog and normalized feature/init/config observations accompany the fixtures. Write refusal is additional behavioral evidence. Claude's instruction-loader limitation above remains explicit and **cannot be passed or made optional** by these tool results.
+This source audit establishes disabled executable registrations for the pinned candidate with the recorded effective controls; it is not an intercepted inference request or a universal guarantee about future releases/managed policy. Builtin provider networking for inference/auth remains. The unsupported top-level `tool_registry.turn_metadata_includes_tool_info` diagnostic and a scratch HTTP routing attempt produced no usable roster; neither counts as proof. Exact effective catalog and normalized feature/init/config observations accompany the fixtures. Write refusal is additional behavioral evidence. Tool results alone do not establish instruction exclusion; the separate observed loader proof below closes that requirement for the tested layout.
+
+## Observed Claude instruction-loader exclusion
+
+Latest orchestrator comment requested file-open-only tracing. Replay `claude-loader` first checks installed strace, then launches **new owned** WSL process trees through the same Windows bridge/group wrapper: `strace -f -yy -e trace=open,openat,openat2 -o <owned trace> -- claude <argv>`. No attach, read/write buffers, network, environment or credentials are traced. Raw syscall paths remain only in owned scratch; `loader-observations.json` preserves sanitized roles/counters, exact normalized argv/init and successful/quiescent settlement.
+
+Four newly owned benign CLAUDE.md/AGENTS.md sources are created in isolated cwd/config home and removed in finally. Positive control removes only `--safe-mode` and `--restricted`; all executable tools/hooks/MCP/slash commands remain disabled, same exact selection and evidence packet. Both variants expose only StructuredOutput, empty MCP/skills, return valid structured finals, exit0/quiescent and zero worker-hook receipts.
+
+| Source role | Control successful file opens | Exact candidate successful file opens |
+| --- | --- | --- |
+| Project CLAUDE.md | 2 | 0 |
+| Isolated-home CLAUDE.md | 2 | 0 |
+| Project AGENTS.md | 1 | 0 |
+| Isolated-home AGENTS.md | 0 | 0 |
+
+The first three sources have actual loading-positive controls and candidate exclusion; home AGENTS.md is recorded but **not** a positive-control-attested loader source. This closes the tested candidate's project instruction-loading proof without inferring from answer markers or claiming an empty provider system prompt. The parser rejects silent controls, an empty candidate trace, or any successful candidate source open. Failed open attempts do not count as loading. Future layouts/managed policy/version remain fail-closed R1 validation obligations.
 
 ## Finality, cancellation and integration obligations
 
@@ -100,7 +116,7 @@ Accept only exit 0 **after owned process quiescence**, successful provider final
 
 Observed Windows-triggered cancellation uses an owned WSL wrapper, process group manifest and abort marker. TERM then bounded KILL covers the CLI and an owned sleeping descendant; closure records list remaining members/quiescence. Killing only `wsl.exe` is excluded. Deterministic settlement faults prove valid-looking partial text cannot become a decision. This is a cancellation strategy for R1 to integrate, not a change to existing `generateText` behavior.
 
-R0 must freeze correlation/capability/cancellation DTOs and the catalog adaptation. R1 owns record/provenance/UTF-8/compaction bounds, managed-policy preflight, version/selection capability validation and bridge instrumentation. R0 must resolve/approve the explicit Claude instruction-loader evidence gap before treating the whole candidate as acceptance-proven. R2/R3 and #528/R4 retain analysis/paste races, counters, attention, normal panel/Peek, restart, approvals and final packaged Windows backend + WSL CLI QA with ordered screenshots in Downloads. This Node/backend harness is actual cross-OS evidence, **not** packaged Electron/UI evidence. No desktop build, UI screenshot, full suite or release was performed here.
+R0 must freeze correlation/capability/cancellation DTOs and the catalog adaptation. R1 owns record/provenance/UTF-8/compaction bounds, managed-policy preflight, version/selection capability validation and bridge instrumentation. R2/R3 and #528/R4 retain analysis/paste races, counters, attention, normal panel/Peek, restart, approvals and final packaged Windows backend + WSL CLI QA with ordered screenshots in Downloads. This Node/backend harness is actual cross-OS evidence, **not** packaged Electron/UI evidence. No desktop build, UI screenshot, full suite or release was performed here.
 
 ## Sources
 
