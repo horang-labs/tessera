@@ -2,22 +2,31 @@ import { createHash, randomUUID } from 'node:crypto';
 import { type AutomationErrorCode, automationInputSchema, validateAutomationInput, type Automation, type AutomationInput, type ControlResult, type ControlResponse, type InputOwnership, type SessionSelectionSnapshot, type Target, sameSessionSelection } from './contracts';
 import type { AutomationRuntime, ArmEvidence } from './runtime-port';
 import { AutomationRepository, type StoredAutomation } from './repository';
+import type { AutorunProviderPort } from '../cli/providers/session-types';
+import { AutorunService } from './autorun-service';
+import { isAutorun, type DurableAutomation, type DurableControlResult, type DurableControlResponse } from './autorun-storage';
+import { decodeAutomation, decodeAutomationInput } from './autorun-contracts';
 import { nextScheduledAt } from './schedule';
 
 export type Inspection = { selection: SessionSelectionSnapshot; canonicalWorktreeId: string | null; assertCurrent(): void };
 export type AutomationDependencies = {
+  settleAnalysisHold?: (owner: string,sessionId:string,automationId:string)=>void;
+  retainAnalysisHold?: (owner: string,sessionId:string,automationId:string)=>void;
+  provider?: (provider: string) => AutorunProviderPort | null;
+  publishAttention?: (owner: string, attention: import('./autorun-contracts').AutomationAttention) => void;
   now(): number;
   runtime(): AutomationRuntime | null;
   owner(): Promise<{ userId: string; agentEnvironment: 'native' | 'wsl' }>;
   inspect(userId: string, target: Target, environment: 'native' | 'wsl'): Promise<Inspection>;
-  publish(automation: Automation): void;
+  publish(automation: DurableAutomation): void;
 };
 export type ListOptions = { sessionId?: string; worktreeId?: string; includeDeleted?: boolean; cursor?: string; limit?: number };
 export function fail(code: AutomationErrorCode, message: string = code): never { throw Object.assign(new Error(message), { code }); }
-export function asInput(a: Automation): AutomationInput {
+export function asInput(a: Exclude<DurableAutomation, import('./autorun-contracts').AutorunAutomation>): AutomationInput {
   return { name: a.name, enabled: a.state === 'enabled', target: a.target, trigger: a.trigger, prompt: a.prompt, limits: a.limits };
 }
 export class AutomationService {
+  readonly autorun = new AutorunService(this);
   constructor(readonly repo: AutomationRepository, readonly deps: AutomationDependencies) {}
   async authorize(userId: string) {
     const owner = await this.deps.owner();
@@ -31,22 +40,29 @@ export class AutomationService {
     return value;
   }
   runtime(): AutomationRuntime { return this.deps.runtime() ?? fail('RUNTIME_ADAPTER_UNAVAILABLE'); }
-  notify(a: Automation): void { try { this.deps.publish(a); } catch { /* Publication cannot undo durable delivery. */ } }
-  detail(userId: string, id: string): ControlResult {
+  notify(a: DurableAutomation): void { try { this.deps.publish(a); } catch { /* Publication cannot undo durable delivery. */ } }
+  detail(userId: string, id: string): DurableControlResult {
     const { automation, ownership } = this.owned(userId, id);
     const inFlight = this.repo.activeRuns(id).find(r => r.run.state === 'dispatching' || (r.run.state === 'unknown' && r.resolvedAt === null));
-    return { automation, inputOwnership: ownership, inFlightRunId: inFlight?.run.id ?? null };
+    const decoded = decodeAutomation(automation);
+    if (!decoded.success) fail('OWNER_UNAVAILABLE');
+    return { automation: decoded.data, inputOwnership: ownership, inFlightRunId: inFlight?.run.id ?? null };
   }
   list(userId: string, options: ListOptions) {
     const values = this.repo.all().map(v => v.automation).filter(a => a.ownerUserId === userId &&
       (options.includeDeleted || a.state !== 'deleted') &&
       (!options.sessionId || (a.target.kind === 'wake-session' && a.target.sessionId === options.sessionId)) &&
       (!options.worktreeId || (a.target.kind === 'create-session' && a.target.worktreeId === options.worktreeId)));
-    return page(values, options);
+    return page(values.map(a => ({ version: 2 as const, id: a.id, name: a.name, revision: a.revision,
+      mode: isAutorun(a) ? 'autorun' as const : a.target.kind === 'wake-session' ? 'heartbeat' as const : 'schedule' as const,
+      state: a.state, pauseReason: a.pauseReason, sessionId: a.target.kind === 'wake-session' ? a.target.sessionId : null,
+      worktreeId: a.target.kind === 'create-session' ? a.target.worktreeId : null, nextDueAt: a.nextDueAt, dispatchCount: a.dispatchCount,
+      analysisCount: isAutorun(a) ? a.analysisCount : 0, latestDecisionId: isAutorun(a) ? a.latestDecisionId : null,
+      attention: isAutorun(a) ? a.attention?.identity ?? null : null })), options);
   }
   history(userId: string, id: string, options: ListOptions) {
     this.owned(userId, id);
-    return page(this.repo.runs(id).map(v => v.run), options);
+    return page(this.repo.runs(id).map(v => ({ ...v.run, decisionId: v.run.decisionId ?? null })), options);
   }
   async sessionOwnership(userId: string, sessionId: string): Promise<InputOwnership> {
     const owner = await this.authorize(userId);
@@ -57,8 +73,11 @@ export class AutomationService {
       automationId: null, runId: null, reason: 'runtime-adapter-unavailable',
     };
   }
-  async create(userId: string, key: string, raw: unknown): Promise<ControlResult> {
+  async create(userId: string, key: string, raw: unknown): Promise<DurableControlResult> {
     const owner = await this.authorize(userId);
+    const decoded = decodeAutomationInput(raw);
+    if (decoded.success && decoded.data.mode === 'autorun') return this.autorun.create(userId, key, decoded.data, owner);
+    if (decoded.success && 'version' in (raw as object)) { const { version: _v, mode: _m, ...legacy } = decoded.data; void _v; void _m; raw = legacy; }
     if (!key || key.length > 128) fail('INVALID_AUTOMATION', 'An Idempotency-Key of 1–128 characters is required.');
     const parsed = automationInputSchema.safeParse(raw);
     if (!parsed.success) fail('INVALID_AUTOMATION');
@@ -78,7 +97,7 @@ export class AutomationService {
     const a: Automation = { ...config, id: randomUUID(), revision: 1, state: enabled ? 'enabled' : 'disabled', pauseReason: null,
       ownerUserId: userId, agentEnvironment: owner.agentEnvironment, savedSelection: inspection.selection,
       nextDueAt: enabled ? nextScheduledAt(input.trigger, now) : null, dispatchCount: 0, createdAt: now, updatedAt: now, deletedAt: null };
-    let response: ControlResult | undefined;
+    let response: DurableControlResult | undefined;
     const commit = (evidence: ArmEvidence | null = null, ownership: InputOwnership | null = null) => this.repo.transaction(() => {
       const concurrent = replay();
       if (concurrent) { response = concurrent; fail('IDEMPOTENCY_CONFLICT'); }
@@ -86,6 +105,7 @@ export class AutomationService {
       inspection.assertCurrent();
       this.checkWakeAvailable(a);
       if (a.limits.expiresAt <= this.deps.now()) fail('INVALID_AUTOMATION');
+      if (evidence?.kind === 'completed' && a.target.kind === 'wake-session' && this.repo.boundaryConsumed(userId,a.target.sessionId,evidence.boundary.id)) fail('INPUT_BOUNDARY_UNPROVEN');
       const stored = { automation: a, evidence, ownership };
       this.repo.save(stored);
       response = this.detail(userId, a.id);
@@ -110,7 +130,7 @@ export class AutomationService {
     this.notify(a);
     return response!;
   }
-  private editable(userId: string, id: string, revision: number): StoredAutomation {
+  editable(userId: string, id: string, revision: number): StoredAutomation {
     const v = this.owned(userId, id);
     if (v.automation.state === 'deleted') fail('NOT_FOUND');
     if (v.automation.state === 'enabled') fail('PAUSE_REQUIRED');
@@ -119,8 +139,12 @@ export class AutomationService {
     if (v.automation.revision !== revision) fail('REVISION_CONFLICT');
     return v;
   }
-  async edit(userId: string, id: string, revision: number, raw: unknown): Promise<ControlResult> {
+  async edit(userId: string, id: string, revision: number, raw: unknown): Promise<DurableControlResult> {
     const owner = await this.authorize(userId), previous = this.editable(userId, id, revision);
+    const decoded = decodeAutomationInput(raw);
+    if (isAutorun(previous.automation)) return this.autorun.edit(userId, id, revision, raw, owner);
+    if (decoded.success && decoded.data.mode === 'autorun') fail('INVALID_AUTOMATION');
+    if (decoded.success) { const { version: _v, mode: _m, ...legacy } = decoded.data; void _v; void _m; raw = legacy; }
     const parsed = automationInputSchema.safeParse(raw);
     if (!parsed.success || parsed.data.enabled) fail('INVALID_AUTOMATION');
     const target = parsed.data.target, old = previous.automation.target;
@@ -128,7 +152,7 @@ export class AutomationService {
       (target.kind === 'wake-session' && old.kind === 'wake-session' && target.sessionId !== old.sessionId) ||
       (target.kind === 'create-session' && old.kind === 'create-session' && target.worktreeId !== old.worktreeId)) fail('INVALID_AUTOMATION', 'The automation target cannot change.');
     const inspection = await this.deps.inspect(userId, target, owner.agentEnvironment);
-    const checked = validateAutomationInput(parsed.data, { now: this.deps.now(), previousInput: asInput(previous.automation), isSelectionSupported: () => true });
+    const checked = validateAutomationInput(parsed.data, { now: this.deps.now(), previousInput: asInput(previous.automation as Automation), isSelectionSupported: () => true });
     if (!checked.success) fail(checked.error.code, checked.error.message);
     this.repo.transaction(() => {
       const v = this.editable(userId, id, revision); inspection.assertCurrent();
@@ -139,8 +163,9 @@ export class AutomationService {
     });
     const result = this.detail(userId, id); this.notify(result.automation); return result;
   }
-  async enable(userId: string, id: string, revision: number): Promise<ControlResponse> {
+  async enable(userId: string, id: string, revision: number): Promise<DurableControlResponse> {
     const owner = await this.authorize(userId), previous = this.editable(userId, id, revision), a = previous.automation;
+    if (isAutorun(a)) return this.autorun.enable(userId, id, revision, owner);
     if (a.dispatchCount >= a.limits.maxDispatches) fail('INVALID_AUTOMATION', 'The dispatch limit has been reached.');
     if (owner.agentEnvironment !== a.agentEnvironment) fail('OWNER_UNAVAILABLE', 'The saved agent environment has changed.');
     const inspection = await this.deps.inspect(userId, a.target, a.agentEnvironment);
@@ -155,13 +180,14 @@ export class AutomationService {
       v.automation.state = 'enabled'; v.automation.revision++; v.automation.pauseReason = null; v.automation.updatedAt = this.deps.now();
       v.automation.nextDueAt = evidence?.kind === 'completed' && a.trigger.kind === 'turn-complete'
         ? this.deps.now() + a.trigger.delayMs : nextScheduledAt(a.trigger, this.deps.now());
+      if (evidence?.kind === 'completed' && a.target.kind === 'wake-session' && this.repo.boundaryConsumed(userId,a.target.sessionId,evidence.boundary.id)) fail('INPUT_BOUNDARY_UNPROVEN');
       v.evidence = evidence; v.ownership = ownership; this.repo.save(v);
     });
     if (a.target.kind === 'wake-session') await runtime.arm({ userId, sessionId: a.target.sessionId, automationId: id, selection: a.savedSelection }, commit);
     else commit();
     const body = this.detail(userId, id); this.notify(body.automation); return { status: 200, body };
   }
-  async resolve(userId: string, id: string, runId: string): Promise<ControlResult & { run: import('./contracts').AutomationRun }> {
+  async resolve(userId: string, id: string, runId: string): Promise<DurableControlResult & { run: import('./contracts').AutomationRun }> {
     await this.authorize(userId); this.owned(userId, id);
     const r = this.repo.run(runId);
     if (!r || r.run.automationId !== id) fail('NOT_FOUND');
@@ -183,7 +209,7 @@ export class AutomationService {
     this.notify(v.automation);
     return { ...this.detail(userId, id), run: this.repo.run(runId)!.run };
   }
-  checkWakeAvailable(a: Automation): void {
+  checkWakeAvailable(a: DurableAutomation): void {
     if (a.target.kind !== 'wake-session') return;
     const sessionId = a.target.sessionId;
     if (this.repo.all().some(v => v.automation.id !== a.id && v.automation.ownerUserId === a.ownerUserId &&
@@ -197,11 +223,11 @@ export class AutomationService {
       this.repo.saveRun(r);
     }
   }
-  async pause(userId: string, id: string, deleted = false): Promise<ControlResponse> {
+  async pause(userId: string, id: string, deleted = false): Promise<DurableControlResponse> {
     await this.authorize(userId);
     return this.inhibit(userId, id, deleted ? 'deleted' : 'paused', deleted ? 'deleted' : 'user-pause');
   }
-  inhibit(userId: string, id: string, state: Automation['state'], reason: string): ControlResponse {
+  inhibit(userId: string, id: string, state: DurableAutomation['state'], reason: string): DurableControlResponse {
     this.repo.transaction(() => {
       const value = this.owned(userId, id), a = value.automation;
       if (a.state !== 'deleted' && (a.state !== state || a.pauseReason !== reason)) {
@@ -209,6 +235,7 @@ export class AutomationService {
         if (state === 'deleted') a.deletedAt = this.deps.now();
         this.repo.save(value);
       }
+      this.autorun.inhibit(id, reason);
       this.cancelUnsent(id, reason);
     });
     const value = this.owned(userId, id), a = value.automation;

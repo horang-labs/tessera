@@ -1,3 +1,4 @@
+import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import { getAgentEnvironment } from '@/lib/cli/spawn-cli';
 import { sameSessionSelection } from '@/lib/automation/contracts';
 import { AutomationInputError } from '@/lib/automation/input-error';
@@ -94,6 +95,7 @@ function createSharedState(): SharedTerminalManagerState {
   };
   if (!getAutomationRuntime()) installAutomationRuntime(createAutomationRuntime({
     manager: state.manager,
+    autorunProvider: id => cliProviderRegistry.hasProvider(id) ? cliProviderRegistry.getProvider(id).autorun ?? null : null,
     readSelection: async (userId, sessionId) => {
       const selection = await readAutomationSessionSelection(userId, sessionId);
       state.manager.automation.verifyEnvironment(userId, sessionId, await getAgentEnvironment(userId));

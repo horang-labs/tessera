@@ -200,6 +200,12 @@ function openInitializedDatabase(dbPath: string): DatabaseWrapper {
       }
 
       ensureLatestSchema(wrapper);
+      // v41 consumption survives revision changes and Heartbeat → Autorun replacement.
+      // Missing historical identities are never guessed; re-arm requires fresh evidence.
+      wrapper.exec(`INSERT OR IGNORE INTO session_automation_boundaries
+        SELECT owner_user_id, session_id, json_extract(snapshot_json,'$.boundary.id'), automation_id,
+          'heartbeat', due_at FROM session_automation_runs
+        WHERE session_id IS NOT NULL AND json_extract(snapshot_json,'$.boundary.id') IS NOT NULL`);
       wrapper.exec(CREATE_INDEXES);
       wrapper.pragma(`application_id = ${TESSERA_APPLICATION_ID}`);
     });

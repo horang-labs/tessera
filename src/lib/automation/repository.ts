@@ -1,12 +1,14 @@
 import type { DatabaseWrapper } from '../db/database';
-import { automationInputSchema, sessionSelectionSnapshotSchema, type Automation, type AutomationRun, type InputOwnership, type ControlResult } from './contracts';
+import { automationInputSchema, sessionSelectionSnapshotSchema, type AutomationRun, type InputOwnership } from './contracts';
+import { decodeAutomation, autorunDecisionDetailSchema } from './autorun-contracts';
+import { isAutorun, type DurableAutomation, type DurableControlResult, type StoredDecision } from './autorun-storage';
 import type { ArmEvidence, Boundary, RuntimeObservation } from './runtime-port';
 
 export type StoredAutomation = {
-  automation: Automation; ownership: InputOwnership | null; evidence: ArmEvidence | null;
+  automation: DurableAutomation; ownership: InputOwnership | null; evidence: ArmEvidence | null;
 };
 export type StoredRun = {
-  run: AutomationRun; snapshot: Automation; boundary: Boundary | null;
+  run: AutomationRun & { decisionId?: string | null }; prompt?: string; snapshot: DurableAutomation; boundary: Boundary | null;
   leaseEpoch: number | null; permitToken: string | null; externalStarted: boolean;
   completedWrite: boolean; retryAt: number | null; canonicalWorktreeId: string | null;
   overlapHeld: boolean; resolvedAt: number | null; observation: RuntimeObservation | null;
@@ -17,7 +19,8 @@ export type StoredRun = {
 function readAutomation(json: string): StoredAutomation {
   const value = JSON.parse(json) as StoredAutomation;
   const a = value.automation;
-  automationInputSchema.parse({ name: a.name, enabled: a.state === 'enabled', target: a.target, trigger: a.trigger, prompt: a.prompt, limits: a.limits });
+  if (isAutorun(a)) { if (!decodeAutomation(a).success) throw new Error('Invalid Autorun journal'); }
+  else automationInputSchema.parse({ name: a.name, enabled: a.state === 'enabled', target: a.target, trigger: a.trigger, prompt: a.prompt, limits: a.limits });
   sessionSelectionSnapshotSchema.parse(a.savedSelection);
   return value;
 }
@@ -98,12 +101,44 @@ export class AutomationRepository {
       .run(r.id, r.automationId, r.automationRevision, value.snapshot.ownerUserId, r.occurrenceKey, r.state,
         r.dueAt, value.retryAt, r.sessionId, value.canonicalWorktreeId, value.overlapHeld ? 1 : 0, JSON.stringify(value));
   }
-  replay(owner: string, key: string): { hash: string; response: ControlResult } | null {
+  replay(owner: string, key: string): { hash: string; response: DurableControlResult } | null {
     const row = this.db.prepare('SELECT * FROM session_automation_idempotency WHERE owner_user_id=? AND key=?').get(owner, key);
     return row ? { hash: row.request_hash, response: JSON.parse(row.response_json) } : null;
   }
-  remember(owner: string, key: string, hash: string, response: ControlResult, now: number): void {
+  remember(owner: string, key: string, hash: string, response: DurableControlResult, now: number): void {
     this.db.prepare('INSERT INTO session_automation_idempotency VALUES (?,?,?,?,?)').run(owner, key, hash, JSON.stringify(response), now);
+  }
+  decision(id: string): StoredDecision | null {
+    const row = this.db.prepare('SELECT detail_json FROM session_automation_decisions WHERE id=?').get(id);
+    if (!row) return null;
+    const stored = JSON.parse(row.detail_json) as StoredDecision;
+    const run = stored.detail.runId ? this.run(stored.detail.runId) : null;
+    if (run) stored.detail.delivery = run.run.state;
+    return stored;
+  }
+  decisions(automationId?: string): StoredDecision[] {
+    const rows = automationId
+      ? this.db.prepare('SELECT id FROM session_automation_decisions WHERE automation_id=? ORDER BY rowid DESC').all(automationId)
+      : this.db.prepare('SELECT id FROM session_automation_decisions ORDER BY rowid DESC').all();
+    return rows.map(row => this.decision(row.id)!);
+  }
+  saveDecision(value: StoredDecision): void {
+    autorunDecisionDetailSchema.parse(value.detail);
+    const d = value.detail;
+    this.db.prepare(`INSERT INTO session_automation_decisions VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET phase=excluded.phase, active=excluded.active, run_id=excluded.run_id,detail_json=excluded.detail_json`)
+      .run(d.id, d.automationId, d.boundaryId, d.phase, value.active ? 1 : 0, d.runId, JSON.stringify(value));
+    for (const attempt of d.attempts) this.db.prepare(`INSERT INTO session_automation_analysis_attempts VALUES (?,?,?,?,?)
+      ON CONFLICT(decision_id,ordinal) DO UPDATE SET attempt_json=excluded.attempt_json`)
+      .run(d.id, attempt.ordinal, JSON.stringify(value.packetSelection), d.packetHash, JSON.stringify(attempt));
+  }
+  boundaryConsumed(owner: string, sessionId: string, boundaryId: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM session_automation_boundaries
+      WHERE owner_user_id=? AND session_id=? AND boundary_id=?`).get(owner, sessionId, boundaryId));
+  }
+  consumeBoundary(boundary: Boundary, automationId: string, mode: 'heartbeat' | 'autorun', now: number): boolean {
+    return this.db.prepare(`INSERT OR IGNORE INTO session_automation_boundaries VALUES (?,?,?,?,?,?)`)
+      .run(boundary.userId, boundary.sessionId, boundary.id, automationId, mode, now).changes === 1;
   }
   acquireLease(instance: string, now: number): number | null {
     return this.transaction(() => {

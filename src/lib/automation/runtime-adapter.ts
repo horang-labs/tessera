@@ -1,3 +1,5 @@
+import { createAutorunRuntime } from './autorun-runtime';
+import type { AutorunProviderPort } from '../cli/providers/session-types';
 import { getSession, extractSessionKind } from '@/lib/db/sessions';
 import type { ProviderLaunchRequest, ProviderLaunchResult } from '@/lib/terminal/provider-launch-module';
 import { AutomationInputError } from './input-error';
@@ -8,6 +10,7 @@ import type { TerminalManager } from '@/lib/terminal/terminal-manager';
 
 export function createAutomationRuntime(options: {
   manager: TerminalManager;
+  autorunProvider?: (provider: string) => AutorunProviderPort | null;
   authority?: () => AutomationAuthority | null;
   createSession?: (sessionId: string, target: Extract<Target, { kind: 'create-session' }>) => void;
   publishCreated?: (userId: string, sessionId: string) => void;
@@ -23,6 +26,7 @@ export function createAutomationRuntime(options: {
   const recoveries = new Map<string, Promise<import('./runtime-port').RecoveryResult>>();
   const attempts = new Map<string, Promise<DispatchResult>>();
   return {
+    autorun: createAutorunRuntime({ ...options, provider: options.autorunProvider }),
     ownership: (userId, sessionId) => manager.automation.ownership(userId, sessionId),
     async arm(args, commit) {
       if (!authority()) throw new AutomationInputError('RUNTIME_ADAPTER_UNAVAILABLE', 'Automation authority is unavailable.');

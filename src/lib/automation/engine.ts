@@ -1,5 +1,7 @@
+import { AutorunEngine } from './autorun-engine';
 import { randomUUID } from 'node:crypto';
 import type { AutomationAuthority, Boundary, DispatchPermit, DispatchResult, RunSpec, RuntimeObservation } from './runtime-port';
+import { isAutorun } from './autorun-storage';
 import logger from '../logger';
 import { sameSessionSelection, type InputOwnership } from './contracts';
 import type { StoredAutomation, StoredRun } from './repository';
@@ -17,7 +19,8 @@ export class AutomationEngine implements AutomationAuthority {
   private inspections = new Map<string, Inspection>();
   private counts = { due: 0, deferred: 0, delivered: 0, unknown: 0, duplicateClaimsPrevented: 0, leaseLoss: 0, missedSlots: 0 };
   private lastClock: { wall: number; monotonic: number } | null = null;
-  constructor(readonly service: AutomationService, readonly instanceId = randomUUID()) {}
+  readonly autorun: AutorunEngine;
+  constructor(readonly service: AutomationService, readonly instanceId = randomUUID()) { this.autorun=new AutorunEngine(service,instanceId,()=>this.epoch,(a,d,prompt)=>this.createAutorunRun(a,d,prompt),id=>this.dispatchAutorun(id)); }
   get repo() { return this.service.repo; }
   get now() { return this.service.deps.now(); }
   private lease(epoch = this.epoch): void {
@@ -25,14 +28,36 @@ export class AutomationEngine implements AutomationAuthority {
   }
   loadRun(runId: string): RunSpec {
     const r = this.requiredRun(runId);
-    return { run: r.run, target: r.snapshot.target, prompt: r.snapshot.prompt, ownerUserId: r.snapshot.ownerUserId };
+    return { run: r.run, target: r.snapshot.target, prompt: isAutorun(r.snapshot) ? r.prompt ?? fail('UNRESOLVED_RUN') : r.snapshot.prompt, ownerUserId: r.snapshot.ownerUserId };
   }
   private requiredRun(id: string): StoredRun { return this.repo.run(id) ?? fail('NOT_FOUND'); }
+  private createAutorunRun(a: import('./autorun-contracts').AutorunAutomation, d: import('./autorun-storage').StoredDecision, prompt: string): string {
+    const b=d.identity.expectedBoundary;
+    const r: StoredRun={
+      run:{id:randomUUID(),automationId:a.id,automationRevision:a.revision,decisionId:d.detail.id,occurrenceKey:`decision:${d.detail.id}`,
+        dueAt:this.now,deadlineAt:Math.min(this.now+MAX_LATENESS_MS,a.limits.expiresAt),coalescedCount:0,state:'pending',reason:null,
+        sessionId:a.target.sessionId,terminalId:b.terminalId,boundaryId:b.id,attemptStartedAt:null,deliveredAt:null,finishedAt:null,
+        effectiveSelection:a.savedSelection,agentEnvironment:a.agentEnvironment,observedRuntime:'unobserved'},
+      snapshot:structuredClone(a),boundary:b,prompt,leaseEpoch:this.epoch,permitToken:null,externalStarted:false,completedWrite:false,retryAt:null,
+      canonicalWorktreeId:null,overlapHeld:false,resolvedAt:null,observation:null,recoveryStartedAt:null,recoveryEpoch:null,recoveryOwnerInstance:null,recoveryStatus:'none'};
+    this.repo.saveRun(r);return r.run.id;
+  }
+  private async dispatchAutorun(id:string):Promise<void> {
+    if (this.inFlight.has(id)) return this.inFlight.get(id);
+    const task=this.dispatch(id).finally(()=>{this.inFlight.delete(id);this.inspections.delete(id);});
+    this.inFlight.set(id,task);await task;
+  }
   private eligible(r: StoredRun, expectedRevision: number, includeStarted = false) {
     const a = this.repo.get(r.run.automationId)?.automation ?? fail('NOT_FOUND');
     if (this.stopping || a.state !== 'enabled' || a.revision !== expectedRevision || r.run.automationRevision !== expectedRevision ||
       a.limits.expiresAt <= this.now || r.run.deadlineAt <= this.now ||
       a.dispatchCount >= a.limits.maxDispatches + (includeStarted ? 1 : 0)) fail('PAUSE_REQUIRED');
+    if (isAutorun(a)) {
+      const decision=r.run.decisionId?this.repo.decision(r.run.decisionId):null;
+      if (!decision || decision.detail.phase!=='decided' || decision.detail.outcome!=='continue' || decision.detail.runId!==r.run.id ||
+        decision.detail.decision?.proposedPrompt!==r.prompt || decision.identity.goalRevision!==a.autorun.objective.revision ||
+        decision.identity.leaseEpoch!==r.leaseEpoch || decision.identity.automationRevision!==a.revision) fail('ANALYSIS_STALE');
+    }
     this.inspections.get(r.run.id)?.assertCurrent();
     if (!this.inspections.has(r.run.id)) fail('OWNER_UNAVAILABLE');
     return a;
@@ -140,7 +165,9 @@ export class AutomationEngine implements AutomationAuthority {
   }
   private occurrence(value: StoredAutomation, occurrenceKey: string, dueAt: number, coalescedCount = 0, boundary: Boundary | null = null): StoredRun | null {
     const a = value.automation;
+    if (isAutorun(a)) return null;
     if (this.repo.occurrenceExists(a.id, a.revision, occurrenceKey)) { this.counts.duplicateClaimsPrevented++; return null; }
+    if (boundary && !this.repo.consumeBoundary(boundary,a.id,'heartbeat',this.now)) return null;
     const r: StoredRun = {
       run: { id: randomUUID(), automationId: a.id, automationRevision: a.revision, occurrenceKey, dueAt,
         deadlineAt: Math.min(dueAt + MAX_LATENESS_MS, a.limits.expiresAt), coalescedCount, state: 'pending', reason: null,
@@ -167,7 +194,7 @@ export class AutomationEngine implements AutomationAuthority {
         if (previous.serverInstanceId !== b.serverInstanceId || previous.terminalId !== b.terminalId || previous.generation !== b.generation ||
           b.turnSequence < previous.turnSequence || (e.kind === 'completed' && b.turnSequence === previous.turnSequence) || b.inputRevision < previous.inputRevision) continue;
         const due = b.completedAt + a.trigger.delayMs;
-        if (!this.occurrence(v, `turn:${b.serverInstanceId}:${b.generation}:${b.turnSequence}`, due, 0, b)) continue;
+        if (!isAutorun(a) && !this.occurrence(v, `turn:${b.serverInstanceId}:${b.generation}:${b.turnSequence}`, due, 0, b)) continue;
         v.evidence = { kind: 'completed', boundary: b }; a.nextDueAt = due; a.updatedAt = this.now; this.repo.save(v);
       }
     });
@@ -186,6 +213,7 @@ export class AutomationEngine implements AutomationAuthority {
         if (a.state !== 'enabled') continue;
         if (a.limits.expiresAt <= this.now) { this.service.inhibit(a.ownerUserId, a.id, 'expired', 'expired'); continue; }
         if (a.dispatchCount >= a.limits.maxDispatches && !this.repo.activeRuns(a.id).some(r => r.run.state === 'dispatching')) { this.service.inhibit(a.ownerUserId, a.id, 'exhausted', 'dispatch-limit'); continue; }
+        if (isAutorun(a)) continue;
         const ruleId = a.id;
         this.repo.transaction(() => {
           this.lease();
@@ -211,7 +239,7 @@ export class AutomationEngine implements AutomationAuthority {
       }
       // Tick never owns a lease renewal while waiting for a provider's preparation/paste.
     } finally { this.ticking = false; }
-    await Promise.all([...this.inFlight.values()]);
+    await Promise.all([...this.inFlight.values(), this.autorun.tick()]);
   }
   private async dispatch(id: string): Promise<void> {
     let r = this.requiredRun(id);
@@ -246,6 +274,7 @@ export class AutomationEngine implements AutomationAuthority {
   }
   private async recover(): Promise<void> {
     this.lease();
+    this.autorun.recover();
     for (const value of this.repo.all()) {
       const a = value.automation;
       if (a.target.kind === 'wake-session' && a.state === 'enabled') {
@@ -343,6 +372,7 @@ export class AutomationEngine implements AutomationAuthority {
   }
   async stop(): Promise<void> {
     this.stopping = true;
+    await this.autorun.stop();
     const elected = this.epoch !== null && this.repo.ownsLease(this.instanceId, this.epoch, this.now);
     for (const v of elected ? this.repo.all() : []) {
       if (v.automation.state === 'enabled' && v.automation.target.kind === 'wake-session') this.service.inhibit(v.automation.ownerUserId, v.automation.id, 'paused', 'shutdown');

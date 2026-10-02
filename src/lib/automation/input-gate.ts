@@ -2,12 +2,15 @@ import type { TerminalAutomationCompletion } from '@/lib/cli/providers/terminal-
 import { AutomationInputError } from './input-error';
 import { randomUUID } from 'node:crypto';
 import { type InputOwnership } from './contracts';
+import { autorunHookEvidenceSchema, type AutorunHookEvidence, type AutorunTurnEvidence } from './autorun-contracts';
 import type { ArmEvidence, AutomationAuthority, Boundary, RuntimeObservation } from './runtime-port';
 
 type State = {
   ownership: InputOwnership; userId: string; generation: number; provider: string; environment: 'native' | 'wsl' | undefined;
   revision: number; turn: number; submittedRevision: number | null; confirmedRevision: number | null;
   children: Set<string>; lifecycleChildren: boolean; backgroundUnknown: boolean; leadCompletionAt: number | null;
+  conversationId?: string; nativeSubmission?: { event: Extract<AutorunHookEvidence, { kind: 'submission' }>; revision: number };
+  nativeCompletion?: Extract<AutorunHookEvidence, { kind: 'completion' }>; seenNative?: Set<string>;
   boundary: Boundary | null; status: RuntimeObservation['state']; sequence: number;
   lastHookAt: number; candidateRevision: number | null; writer: boolean; waiters: Set<() => void>; automated: boolean; live: boolean;
 };
@@ -40,6 +43,78 @@ export class AutomationInputGate {
       epoch: '', mode: 'unavailable', automationId: null, runId: null, reason: 'RUNTIME_UNAVAILABLE' }) };
   }
 
+  bindConversation(userId: string, sessionId: string, conversationId: string) {
+    const state = this.state(userId, sessionId);
+    if (!state || state.conversationId === conversationId) return;
+    if (state.conversationId) {
+      state.boundary = null; state.nativeSubmission = undefined; state.nativeCompletion = undefined;
+      this.inhibit(state, 'WORKER_IDENTITY_CHANGED');
+    }
+    state.conversationId = conversationId;
+  }
+  recordHookEvidence(raw: AutorunHookEvidence): { kind: 'accepted' | 'rejected' } {
+    const parsed = autorunHookEvidenceSchema.safeParse(raw);
+    if (!parsed.success) return { kind: 'rejected' };
+    const event = parsed.data, state = this.state(event.userId, event.sessionId), e = event.evidence;
+    if (!state?.live || state.environment !== event.agentEnvironment || state.ownership.terminalId !== event.terminalId ||
+      e.serverInstanceId !== this.serverInstanceId || e.terminalGeneration !== state.generation || e.provider !== state.provider ||
+      e.providerConversationId !== state.conversationId || state.submittedRevision !== state.revision || state.status === 'input-required') return { kind: 'rejected' };
+    state.seenNative ??= new Set();
+    const key = `${event.kind}:${e.dedupKey}`;
+    if (state.seenNative.has(key)) {
+      const current = event.kind === 'submission' ? state.nativeSubmission?.event : state.nativeCompletion;
+      return { kind: current && JSON.stringify(current.evidence) === JSON.stringify(e) ? 'accepted' : 'rejected' };
+    }
+    if (event.kind === 'submission') {
+      if (state.nativeSubmission?.revision === state.revision) return { kind: 'rejected' };
+      state.nativeSubmission = { event, revision: state.revision }; state.nativeCompletion = undefined;
+    } else {
+      const submission = state.nativeSubmission;
+      if (!submission || submission.revision !== state.revision) return { kind: 'rejected' };
+      const { completionHookId: _hook, ...native } = event.evidence;
+      void _hook;
+      // Claude completion adds its exact Stop-text hash to the original submit association.
+      const { stopTextHash: _hash, ...association } = native as typeof native & { stopTextHash?: string };
+      void _hash;
+      if (JSON.stringify(association) !== JSON.stringify(submission.event.evidence)) {
+        // Field order is irrelevant in a validated native identity.
+        if (Object.entries(association).some(([name, value]) => name !== 'dedupKey' &&
+          (submission.event.evidence as unknown as Record<string, unknown>)[name] !== value)) return { kind: 'rejected' };
+      }
+      state.nativeCompletion = event;
+    }
+    state.seenNative.add(key);
+    return { kind: 'accepted' };
+  }
+  readTurnEvidence(args: { userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string }): AutorunTurnEvidence {
+    const state = this.state(args.userId, args.sessionId);
+    if (!state?.live || state.environment !== args.agentEnvironment || state.writer || state.children.size ||
+      state.lifecycleChildren || state.backgroundUnknown || state.status === 'input-required') return { kind: 'unavailable', reason: 'unsafe-runtime' };
+    if (state.submittedRevision === null || state.submittedRevision !== state.revision) return { kind: 'idle', reason: 'no-accepted-turn' };
+    if (!state.nativeSubmission || state.nativeSubmission.revision !== state.revision || state.confirmedRevision !== state.revision)
+      return { kind: 'unavailable', reason: 'instrumentation-required' };
+    if (state.boundary) return state.nativeCompletion
+      ? { kind: 'completed', boundary: { ...state.boundary }, correlation: state.nativeCompletion.evidence }
+      : { kind: 'unavailable', reason: 'instrumentation-required' };
+    if (state.status !== 'running') return { kind: 'unavailable', reason: 'unsafe-runtime' };
+    return { kind: 'running', submission: state.nativeSubmission.event.evidence, acceptedTurn: {
+      serverInstanceId: this.serverInstanceId, terminalId: state.ownership.terminalId!, generation: state.generation,
+      sessionId: args.sessionId, userId: args.userId, turnSequence: state.turn, inputRevision: state.revision,
+    } };
+  }
+  assertAnalysis(args: { userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string; expectedBoundary: Boundary; inputEpoch: string; automationId?: string; providerConversationId?: string }) {
+    const state = this.state(args.userId, args.sessionId);
+    const turn = this.readTurnEvidence(args);
+    if (!state || turn.kind !== 'completed' || JSON.stringify(turn.boundary) !== JSON.stringify(args.expectedBoundary) ||
+      state.ownership.epoch !== args.inputEpoch || (args.automationId && (state.ownership.mode !== 'armed' || state.ownership.automationId !== args.automationId)) ||
+      (args.providerConversationId && state.conversationId !== args.providerConversationId)) throw new AutomationInputError('ANALYSIS_STALE', 'Analysis identity changed.');
+    return turn;
+  }
+  commitAnalysis(args: Parameters<AutomationInputGate['assertAnalysis']>[0], commit: () => import('./runtime-port').AnalysisDecisionCommit): import('./runtime-port').AnalysisCommitResult {
+    try { this.assertAnalysis(args); }
+    catch { return { kind: 'rejected', code: 'ANALYSIS_STALE' }; }
+    return { kind: 'committed', receipt: commit() };
+  }
   verifyEnvironment(userId: string, sessionId: string, environment: 'native' | 'wsl') {
     const state = this.state(userId, sessionId);
     if (state?.live && state.environment !== environment) throw new AutomationInputError('OWNER_UNAVAILABLE', 'The runtime agent environment changed.');
@@ -254,7 +329,20 @@ export class AutomationInputGate {
     }
     return this.ownership(userId, sessionId);
   }
-  recover(userId: string, sessionId: string, automationId: string, runId: string) {
+  settleAnalysisHold(userId: string,sessionId: string,automationId: string) {
+    const state=this.state(userId,sessionId);
+    if (state && !state.writer && state.ownership.automationId===automationId && state.ownership.runId===null &&
+      state.ownership.mode==='recovery-required' && state.ownership.reason==='SUPERVISOR_PROCESS_UNCERTAIN')
+      this.transition(state,state.live?'human':'unavailable');
+  }
+  holdAnalysis(userId: string, sessionId: string, automationId: string) {
+    if (!this.state(userId,sessionId)) this.recover(userId,sessionId,automationId,null);
+    const state=this.state(userId,sessionId)!;
+    if (state.ownership.automationId && state.ownership.automationId!==automationId) return;
+    state.automated=true;state.ownership.automationId=automationId;state.ownership.runId=null;
+    this.transition(state,'recovery-required','SUPERVISOR_PROCESS_UNCERTAIN');
+  }
+  recover(userId: string, sessionId: string, automationId: string, runId: string | null) {
     let state = this.state(userId, sessionId);
     if (!state) {
       state = { userId, generation: 0, provider: '', environment: undefined, revision: 0, turn: 0, submittedRevision: null, confirmedRevision: null, children: new Set(), lifecycleChildren: false, backgroundUnknown: false, leadCompletionAt: null,
