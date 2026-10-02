@@ -7,7 +7,21 @@ import type { AutorunProviderPort } from '../src/lib/cli/providers/session-types
 import type { AnalysisContextSnapshot } from '../src/lib/automation/autorun-contracts';
 
 export async function autorunFixture(ownerUserId = 'owner-1') {
-  const f = fixture(); f.setNow(autorunNow);
+  const f = fixture(), previous = process.env.TESSERA_DATA_DIR;
+  process.env.TESSERA_DATA_DIR = f.dir;
+  const restore = () => {
+    if (previous === undefined) delete process.env.TESSERA_DATA_DIR;
+    else process.env.TESSERA_DATA_DIR = previous;
+    f.close();
+  };
+  try {
+    const runtime = await createFixtureRuntime(f, ownerUserId);
+    return { ...runtime, close: async () => { try { await runtime.close(); } finally { restore(); } } };
+  } catch (error) { restore(); throw error; }
+}
+
+async function createFixtureRuntime(f: ReturnType<typeof fixture>, ownerUserId: string) {
+  f.setNow(autorunNow);
   const bytes: string[] = [];
   const manager = new TerminalManager(() => {}, async () => ({ spawn: () => ({
     write: (data: string) => bytes.push(data), resize() {}, kill() {}, onData() {}, onExit() {},
@@ -58,5 +72,5 @@ export async function autorunFixture(ownerUserId = 'owner-1') {
   const evidence = submit(); complete(evidence);
   await engine.tick();
   return { ...f, engine, runtime, manager, provider, bytes, input: () => ({ ...autorunInput(), enabled: true }), calls: () => calls, submit, complete,
-    close: async () => { await engine.stop(); await manager.shutdownAll(); f.close(); } };
+    close: async () => { try { await engine.stop(); } finally { await manager.shutdownAll(); } } };
 }
