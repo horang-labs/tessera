@@ -56,10 +56,15 @@ function nativeText(content: string | NativeBlock[] | undefined): string {
 function claudeCutoff(records: LocatedRecord[], request: AnalysisSnapshotRequest): { cutoff: ProviderCompletionCutoff; latestStart: number } {
   const correlation = request.correlation;
   if (correlation.provider !== 'claude-code') return refuse('binding-mismatch');
-  const users = records.filter(r => r.value.type === 'user' && r.value.promptId === correlation.nativePromptId && !r.value.isSidechain);
+  // Claude carries the lead promptId onto tool-result user messages too. Those
+  // remain in the lineage/tool pairing checks below, but cannot anchor the turn.
+  const promptRecords = records.filter(r => r.value.type === 'user' && r.value.promptId === correlation.nativePromptId && !r.value.isSidechain);
+  const users = promptRecords.filter(r =>
+    !(Array.isArray(r.value.message?.content) && r.value.message.content.some(block => block.type === 'tool_result')));
   if (users.length > 1) refuse('ambiguous-cutoff');
   if (!users.length) refuse('flush-pending');
   const user = users[0];
+  if (promptRecords.some(r => r.start < user.start)) refuse('ambiguous-cutoff');
   if (user.start < correlation.startByte) refuse('binding-mismatch');
   if (!user.value.uuid || user.value.sessionId !== request.providerConversationId) refuse('binding-mismatch');
   const lineage = new Set([user.value.uuid]);
