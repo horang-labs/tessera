@@ -22,7 +22,7 @@ test('repeated durable writes keep native memory bounded and remain readable', {
       busyTimeout: 5000,
       foreignKeys: 1,
       journalMode: 'wal',
-      synchronous: 1,
+      synchronous: 2,
     });
     assert.ok(
       result.writeDurationMs < MAX_WRITE_DURATION_MS,

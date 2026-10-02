@@ -4,6 +4,7 @@
  * This file runs in a forked child process — NOT in the Electron main process.
  */
 import '../runtime/register-runtime-aliases';
+import { startAutomationHost, stopAutomationHost, createAutomationRecoveryGate } from '../src/lib/automation/startup';
 import next from 'next';
 import { createServer, type Server } from 'http';
 import { networkInterfaces } from 'node:os';
@@ -273,8 +274,9 @@ initDatabase().then(async () => {
       });
 
       wsServer.start(server);
+      await startAutomationHost();
       await startArchivedWorktreeRetention();
-      void restoreSessionRuntimes((request) => providerLaunchModule.launch(request));
+      void restoreSessionRuntimes(createAutomationRecoveryGate((request) => providerLaunchModule.launch(request)));
       startOomDiagnostics();
       // Only now can a direct listener serve /ws, so bind it after the
       // WebSocket server exists rather than alongside the loopback listen.
@@ -359,6 +361,8 @@ initDatabase().then(async () => {
     try {
       logger.info('Closing remote access listeners...');
       await directListeners.closeAll();
+
+      await stopAutomationHost();
 
       logger.info('Closing WebSocket connections...');
       await wsServer.shutdown();
