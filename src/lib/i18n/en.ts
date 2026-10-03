@@ -690,7 +690,7 @@ export const en: I18nMessages = {
     releaseSessionHint: 'Click close button to release this session',
     readOnlyPlaceholder: 'History only \u2014 session cannot be resumed',
     terminalReadOnlyNotice: 'Running in the terminal \u2014 view only',
-    terminalWorkingNotice: 'Working in the terminal \u2014 view only',
+    terminalWorkingNotice: 'Working in the terminal',
     terminalWaitingNotice: 'Waiting for input in the terminal',
     terminalComposerHint: 'Open the terminal',
     terminalComposerLabel: 'Send text or file paths to the terminal',

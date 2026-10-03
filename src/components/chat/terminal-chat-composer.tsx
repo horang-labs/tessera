@@ -310,8 +310,10 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
           tone: 'text-(--warning)',
         }
       : {
-          icon: <Lock className="h-3.5 w-3.5 shrink-0" />,
-          label: t('chat.terminalReadOnlyNotice'),
+          icon: ownership.mode === 'human'
+            ? <SquareTerminal className="h-3.5 w-3.5 shrink-0" />
+            : <Lock className="h-3.5 w-3.5 shrink-0" />,
+          label: t(`automation.${ownership.mode}`),
           tone: 'text-(--text-muted)',
         };
 
