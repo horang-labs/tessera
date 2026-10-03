@@ -2038,3 +2038,19 @@ test('GUI runtime event received during reconnect outranks the initial snapshot'
 
   assert.equal(projectViewWorkspaceState.resolveSession(guiSessionId)?.isRunning, true);
 });
+
+test('automation lifecycle hint ignores progress replay but preserves same-status submissions and approval changes', () => {
+  const store = useTerminalSessionStore.getState();
+  const packet = { type: 'session_state' as const, sessionId: SESSION_ID, terminalId: 'terminal-a', status: 'running' as const, hookEvent: 'ControlPromptSubmit', stateAt: 10 };
+  store.applySessionState(packet);
+  store.applySessionState({ ...packet, hookEvent: 'PreToolUse', preview: 'Reading', interruptInputPolicy: 'single-escape', stateAt: 20 });
+  assert.equal(useTerminalSessionStore.getState().bySessionId[SESSION_ID].automationGateStateAt, 10);
+  assert.equal(store.applySessionState({ ...packet, hookEvent: 'PreToolUse', preview: 'Reading', interruptInputPolicy: 'single-escape', stateAt: 21 }), false);
+  store.applySessionState({ ...packet, stateAt: 30 });
+  assert.equal(store.applySessionState({ ...packet, stateAt: 40 }), true);
+  assert.equal(useTerminalSessionStore.getState().bySessionId[SESSION_ID].automationGateStateAt, 40);
+  assert.equal(store.applySessionState({ ...packet, stateAt: 40 }), false);
+  store.applySessionState({ ...packet, status: 'input_required', hookEvent: 'PermissionRequest', stateAt: 50 });
+  assert.equal(store.applySessionState({ ...packet, status: 'input_required', hookEvent: 'PermissionRequest', stateAt: 60 }), true);
+  assert.equal(useTerminalSessionStore.getState().bySessionId[SESSION_ID].automationGateStateAt, 60);
+});

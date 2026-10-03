@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { focusAutomationSessionDraft } from '../../src/components/automation/automation-entry';
+import { useTerminalSessionStore } from '../../src/stores/terminal-session-store';
 import { useTabStore } from '../../src/stores/tab-store';
 import { usePanelStore } from '../../src/stores/panel-store';
 import { Header } from '../../src/components/chat/header';
@@ -18,7 +19,8 @@ import { autorunPreviewFixture } from './autorun-contracts';
 import { automationNow, ownershipFixture, automationFixture } from './automation';
 import type { ProjectGroup } from '../../src/types/chat';
 const query = new URLSearchParams(location.search);
-Date.now = () => automationNow;
+let fixtureNow = automationNow;
+Date.now = () => fixtureNow;
 await i18n.changeLanguage(query.get('language') ?? 'en');
 document.documentElement.classList.toggle('dark', query.get('theme') !== 'light');
 const project: ProjectGroup = { encodedDir: 'tessera-dev', displayName: 'Tessera', decodedPath: '/fixture', isCurrent: true,
@@ -37,6 +39,10 @@ const scope = query.has('schedule') ? { worktreeId: 'wt-1' } : { sessionId: 'ses
 const ownership = query.has('held') ? { ...ownershipFixture(), mode: 'draining' as const } : { ...ownershipFixture(), mode: 'human' as const, automationId: null };
 applySessionInputOwnership(ownership);
 const writes: unknown[] = [];
+const previewRequests: unknown[] = [];
+(window as Window & { fixturePreviewRequests: unknown[] }).fixturePreviewRequests = previewRequests;
+window.addEventListener('fixture-terminal-state', event => { fixtureNow += 1; useTerminalSessionStore.getState().applySessionState((event as CustomEvent).detail); });
+if(query.has('gate-events')) useTerminalSessionStore.getState().applySessionState({type:'session_state',sessionId:'session-1',terminalId:'term-1',status:'running',hookEvent:'ControlPromptSubmit',stateAt:1});
 let savedRule: AutomationV2 | undefined;
 const fixtureHttp: typeof fetch = async (url, init) => {
   const path = String(url);
@@ -46,8 +52,9 @@ const fixtureHttp: typeof fetch = async (url, init) => {
     return Response.json({providerId:provider,displayName:provider,supportsReasoningEffort:true,runtimeEffortChange:true,permissionMappings:[],modeOptions:[],accessOptions:[],planLocksAccess:false,modelOptions:entries.map((entry,index)=>({...entry,isDefault:index===0,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','high','xhigh'].map(value=>({value,label:value,description:''})),serviceTiers:provider==='codex'?[{value:'priority',label:'Fast',description:''}]:[]}))});
   }
   if (path.endsWith('autorun-preview')) {
+    previewRequests.push(JSON.parse(String(init?.body ?? '{}')));
     if (query.has('loading')) await new Promise(resolve => setTimeout(resolve, 60000));
-    if ((query.has('resume-error') || query.has('heartbeat-error')) && writes.length) await new Promise(resolve => setTimeout(resolve, 1500));
+    if ((query.has('resume-error') || query.has('heartbeat-error') || query.has('heartbeat-edit')) && writes.length) await new Promise(resolve => setTimeout(resolve, 1500));
     if (query.has('late')) await new Promise(resolve => setTimeout(resolve, 1500));
     if (query.has('preview-error')) return Response.json({ error: { code: 'STALE_CONTEXT' } }, { status: 409 });
     const requested = JSON.parse(String(init?.body ?? '{}')).supervisor;
@@ -57,7 +64,7 @@ const fixtureHttp: typeof fetch = async (url, init) => {
       supervisorOptions: query.has('unsupported') ? [] : [{ ...preview.supervisorOptions[0], selection: requested }], recommendedSupervisor: query.has('unsupported') || requested.serviceTier === 'fast' ? null : requested });
     return Response.json(preview);
   }
-  if (path.endsWith('/state') && query.has('resume-error')) {
+  if (path.endsWith('/state') && (query.has('resume-error') || query.has('heartbeat-edit'))) {
     writes.push({method:init?.method,path});
     preview.readiness = {kind:'idle',reason:'consumed-boundary'} as typeof preview.readiness;
     return Response.json({error:{code:'INPUT_BOUNDARY_UNPROVEN'}},{status:409});
@@ -73,6 +80,12 @@ const fixtureHttp: typeof fetch = async (url, init) => {
 window.fetch = fixtureHttp;
 const store = createAutomationStore(scope, fixtureHttp);
 useSettingsStore.setState(state=>({settings:{...state.settings,agentEnvironment:'wsl'}}));
+if(query.has('heartbeat-edit')) {
+  const decoded=decodeAutomation({...automationFixture(),version:2,mode:'heartbeat',state:'paused',dispatchCount:3});
+  if(!decoded.success) throw Error('Invalid saved Heartbeat fixture');
+  savedRule=decoded.data;
+  store.setState({details:{'rule-1':{automation:decoded.data,inputOwnership:ownership,inFlightRunId:null}},view:{selectedId:'rule-1',setup:false,tab:'overview'}});
+}
 if(query.has('resume-error')) {
   const {enabled:_enabled,...input}=autorunInput(); void _enabled;
   const {prompt:_prompt,...base}=automationFixture(); void _prompt;
@@ -93,7 +106,7 @@ function Fixture() {
     <button onClick={() => setOpen(true)}>Open fixture manager</button>
     <button onClick={() => update(n => n+1)}>Inspect fixture writes</button>
     <output aria-label="Fixture writes">{JSON.stringify(writes)}</output>
-    {open && <AutomationManager scope={scope} store={store} initialId={query.has('resume-error')?'rule-1':undefined} initialResume={query.has('resume-error')} onClose={() => setOpen(false)} onOpenSession={() => setOpen(false)} />}
+    {open && <AutomationManager scope={scope} store={store} initialId={query.has('resume-error') || query.has('heartbeat-edit')?'rule-1':undefined} initialResume={query.has('resume-error')} onClose={() => setOpen(false)} onOpenSession={() => setOpen(false)} />}
   </main>;
 }
 function FocusFixture() {
