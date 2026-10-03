@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { automationActivationSchema } from './activation-contracts';
 import { isTerminalNamedKey } from '../terminal/session-control-input';
 import { automationInputSchema, validateAutomationInput, sessionSelectionSnapshotSchema,
   type AutomationValidationContext, type InputOwnership, type AutomationRun } from './contracts';
@@ -361,6 +362,7 @@ export const autorunReadinessSchema = z.discriminatedUnion('kind', [
 ]);
 export type AutorunReadiness = z.infer<typeof autorunReadinessSchema>;
 export const autorunPreviewSchema = z.object({
+  activation: automationActivationSchema.nullable().optional(),
   version: z.literal(1), previewId: id, sessionId: id, goalRevision: count, objective: objectiveSchema.nullable(),
   newHumanInstructions: z.array(humanInstructionSourceSchema).max(100), constraints: z.array(text(16_384)).max(100),
   criteria: criteriaSchema, criterionOrigin: z.enum(['verified-human', 'explicit', 'system-objective']),
