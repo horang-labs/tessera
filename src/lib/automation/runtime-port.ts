@@ -29,7 +29,7 @@ export type RecoveryResult =
   | {kind:'unavailable'|'unknown'; reason:string;
      inputOwnership:InputOwnership};
 export type DispatchPermit = {runId:string; leaseEpoch:number; token:string};
-export type RunSpec = {action?: import('./activation-state').NativeAutomationAction; run:AutomationRun; target:Target; prompt:string; ownerUserId:string};
+export type RunSpec = {inputEpoch?: string; action?: import('./activation-state').NativeAutomationAction; run:AutomationRun; target:Target; prompt:string; ownerUserId:string};
 export interface AutomationRuntime {
   readonly activation?: {
     deferApproval?(args: {scope: import('./activation-contracts').InteractionScope; expected?: import('./activation-contracts').NativeApprovalRequest}): void;

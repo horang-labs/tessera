@@ -10,6 +10,7 @@ export type StoredAutomation = {
   automation: DurableAutomation; ownership: InputOwnership | null; evidence: ArmEvidence | null;
 };
 export type StoredRun = {
+  inputEpoch?: string;
   action?: import('./activation-state').NativeAutomationAction;
   run: AutomationRun & { decisionId?: string | null }; prompt?: string; snapshot: DurableAutomation; boundary: Boundary | null;
   leaseEpoch: number | null; permitToken: string | null; externalStarted: boolean;

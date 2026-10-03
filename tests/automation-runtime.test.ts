@@ -35,7 +35,7 @@ async function waitForPaste(writes: string[]) {
 const selection: SessionSelectionSnapshot = { provider: 'codex', model: null,
   reasoningEffort: null, serviceTier: null,
   settings: { permissionPolicy: 'inherit-cli', allowPreparationFailure: false } };
-async function fixture(provider: 'codex' | 'claude-code' = 'codex') {
+async function fixture(provider: 'codex' | 'claude-code' = 'codex', beforeSelectionRead?: () => Promise<void>) {
   const writes: string[] = [];
   const exits: Array<(event: { exitCode: number }) => void> = [];
   const events: string[] = [];
@@ -53,7 +53,7 @@ async function fixture(provider: 'codex' | 'claude-code' = 'codex') {
     withWriteFence: (_permit, phase, write) => { events.push(phase); write(); },
   } as AutomationAuthority;
   const runtime = createAutomationRuntime({ manager, authority: () => authority,
-    readSelection: async () => ({ ...selection, provider }) });
+    readSelection: async () => { await beforeSelectionRead?.(); return { ...selection, provider }; } });
   await manager.create({ userId: 'owner', sessionId: 'session', terminalId: 'terminal',
     connectionId: 'panel', surfaceId: 'normal', providerId: provider, agentEnvironment: 'wsl',
     resolvedShell: { command: 'fixture', args: [], cwd: process.cwd() } });
@@ -398,5 +398,24 @@ for (const surfaceId of ['normal', 'peek']) {
       assert.equal(f.writes.length,timing === 'before' ? 0 : 1);
       assert.ok(!f.writes.includes('\r'),'a retained draft edit must not be submitted');
     }
+  });
+}
+
+for (const surfaceId of ['normal', 'peek']) {
+  test(`${surfaceId} cleared draft during asynchronous selection invalidates queued continuation before paste`, async () => {
+    let wait=false, entered!:()=>void, release!:()=>void;
+    const pendingRead = new Promise<void>(resolve=>{release=resolve;});
+    const reading = new Promise<void>(resolve=>{entered=resolve;});
+    const f=await fixture('codex',async()=>{if(wait){entered();await pendingRead;}});
+    f.hook('UserPromptSubmit','running'); f.hook('Stop','completed');
+    let boundary:Boundary|null=null;
+    await f.runtime.arm({userId:'owner',sessionId:'session',automationId:'rule',selection},e=>{if(e.kind==='completed')boundary=e.boundary;});
+    wait=true;
+    const pending=f.runtime.dispatch({runId:'run',leaseEpoch:1,expectedRevision:1,expectedBoundary:boundary});
+    await reading;
+    const scope={userId:'owner',sessionId:'session',agentEnvironment:'wsl' as const};
+    f.runtime.activation!.setDraftVeto(scope,{surfaceId,revision:1,hasDraft:true});
+    f.runtime.activation!.setDraftVeto(scope,{surfaceId,revision:2,hasDraft:false});
+    release(); assert.equal((await pending).kind,'cancelled'); assert.deepEqual(f.writes,[]);
   });
 }

@@ -487,7 +487,7 @@ export const automationSummaryV2Schema = z.object({
   mode: z.enum(['heartbeat', 'schedule', 'autorun']), state: persisted.state, pauseReason: persisted.pauseReason,
   sessionId: id.nullable(), worktreeId: id.nullable(), nextDueAt: time.nullable(),
   dispatchCount: count, analysisCount: count, latestDecisionId: id.nullable(),
-  attention: automationAttentionSchema.nullable(),
+  attention: automationAttentionSchema.nullable(), activation: automationActivationSchema.nullable().optional(),
 }).strict();
 export type AutomationSummaryV2 = z.infer<typeof automationSummaryV2Schema>;
 export const automationPageV2Schema = z.object({ items: z.array(automationSummaryV2Schema).max(100), nextCursor: id.nullable() }).strict();

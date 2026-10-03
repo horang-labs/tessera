@@ -35,13 +35,13 @@ export class AutomationEngine implements AutomationAuthority {
   }
   loadRun(runId: string): RunSpec {
     const r = this.requiredRun(runId);
-    return { action: r.action, run: r.run, target: r.snapshot.target, prompt: isAutorun(r.snapshot) ? r.prompt ?? fail('UNRESOLVED_RUN') : r.snapshot.prompt, ownerUserId: r.snapshot.ownerUserId };
+    return { inputEpoch:r.inputEpoch, action: r.action, run: r.run, target: r.snapshot.target, prompt: isAutorun(r.snapshot) ? r.prompt ?? fail('UNRESOLVED_RUN') : r.snapshot.prompt, ownerUserId: r.snapshot.ownerUserId };
   }
   private requiredRun(id: string): StoredRun { return this.repo.run(id) ?? fail('NOT_FOUND'); }
   private createAutorunRun(a: import('./autorun-contracts').AutorunAutomation, d: import('./autorun-storage').StoredDecision, prompt: string): string {
     const b=d.identity.expectedBoundary;
     const r: StoredRun={
-      run:{id:randomUUID(),automationId:a.id,automationRevision:a.revision,decisionId:d.detail.id,occurrenceKey:`decision:${d.detail.id}`,
+      inputEpoch:d.identity.inputEpoch, run:{id:randomUUID(),automationId:a.id,automationRevision:a.revision,decisionId:d.detail.id,occurrenceKey:`decision:${d.detail.id}`,
         dueAt:this.now,deadlineAt:Math.min(this.now+MAX_LATENESS_MS,a.limits.expiresAt),coalescedCount:0,state:'pending',reason:null,
         sessionId:a.target.sessionId,terminalId:b.terminalId,boundaryId:b.id,attemptStartedAt:null,deliveredAt:null,finishedAt:null,
         effectiveSelection:a.savedSelection,agentEnvironment:a.agentEnvironment,observedRuntime:'unobserved'},
@@ -234,7 +234,7 @@ export class AutomationEngine implements AutomationAuthority {
     if (this.repo.occurrenceExists(a.id, a.revision, occurrenceKey)) { this.counts.duplicateClaimsPrevented++; return null; }
     if (boundary && !this.repo.consumeBoundary(boundary,a.id,'heartbeat',this.now)) return null;
     const r: StoredRun = {
-      run: { id: randomUUID(), automationId: a.id, automationRevision: a.revision, occurrenceKey, dueAt,
+      inputEpoch:value.ownership?.epoch, run: { id: randomUUID(), automationId: a.id, automationRevision: a.revision, occurrenceKey, dueAt,
         deadlineAt: Math.min(dueAt + MAX_LATENESS_MS, a.limits.expiresAt), coalescedCount, state: 'pending', reason: null,
         sessionId: a.target.kind === 'wake-session' ? a.target.sessionId : null, terminalId: boundary?.terminalId ?? null,
         boundaryId: boundary?.id ?? null, attemptStartedAt: null, deliveredAt: null, finishedAt: null,

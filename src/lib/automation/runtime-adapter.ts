@@ -239,6 +239,7 @@ export function createAutomationRuntime(options: {
         }
         const { sessionId } = spec.target;
         const { ownerUserId } = spec;
+        const inputEpoch = spec.inputEpoch ?? manager.automation.ownership(ownerUserId,sessionId).epoch;
         manager.automation.verifyEnvironment(ownerUserId, sessionId, spec.run.agentEnvironment);
         const saved = await options.readSelection(ownerUserId, sessionId);
         if (!sameSessionSelection(saved, spec.run.effectiveSelection)) {
@@ -246,6 +247,7 @@ export function createAutomationRuntime(options: {
           return { kind: 'failed', reason: 'UNSUPPORTED_SELECTION' };
         }
         try {
+          if (manager.automation.ownership(ownerUserId,sessionId).epoch !== inputEpoch) throw Error('Draft epoch changed');
           if (manager.isAutomationInputBusy(ownerUserId, sessionId)) {
             return { kind: 'deferred', reason: 'RUNTIME_BUSY', retryAt: Date.now() + 30_000 };
           }

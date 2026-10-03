@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { autorunFixture } from './autorun-fixture';
 import { wakeInput } from './fixtures/automation';
+import { automationPageV2Schema } from '../src/lib/automation/autorun-contracts';
 
 test('valid fresh Heartbeat and explicit Autorun enable intent without taking input or reading a transcript', async () => {
   for (const mode of ['heartbeat', 'autorun']) {
@@ -15,6 +16,7 @@ test('valid fresh Heartbeat and explicit Autorun enable intent without taking in
       assert.equal(created.automation.state, 'enabled');
       assert.equal(created.inputOwnership?.mode, 'human');
       assert.equal(created.activation?.phase, 'waiting');
+      assert.equal(automationPageV2Schema.safeParse(f.service.list('owner-1',{})).success,true,'real list DTO accepts backend activation projection');
       assert.equal(f.calls(), 0);
       const paused = await f.service.pause('owner-1', created.automation.id);
       const resumed = await f.service.enable('owner-1', created.automation.id, paused.body.automation.revision);
