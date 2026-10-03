@@ -23,7 +23,7 @@ import {
   resolveTerminalShell,
 } from './terminal-resolver';
 import { getServerPort } from '@/lib/server-port';
-import { revokePaneToken, revokePaneTokensForTerminal } from './pane-token-registry';
+import { resolvePaneToken, revokePaneToken, revokePaneTokensForTerminal } from './pane-token-registry';
 import { cleanupCodexOverlayForTerminal } from './codex-overlay';
 import { cleanupCodexOverlayInWsl } from './codex-overlay-wsl';
 import {
@@ -191,6 +191,7 @@ interface TerminalRuntime {
   interruptInputPolicy: NonNullable<TerminalCreateOptions['interruptInputPolicy']>;
   generation: number;
   nativeInteractionRevision: number;
+  nativePaneToken?: string;
   nativeVersion?: Promise<string>;
   nativePromptWrite?: { expected: ReadyPromptEvidence; hookRevision: number; prompt: string };
   sequence: number;
@@ -546,7 +547,10 @@ export class TerminalManager {
       catch { this.nativeApprovals.cancel(approval.requestId); return { kind: 'unknown' as const, reason: 'native-approval-stale' }; }
     }
     if (state.state === 'running') return { kind: 'running' as const, identity };
-    if (state.state === 'starting') return { kind: 'starting' as const, identity };
+    // A fresh CLI may paint its empty composer before SessionStart's rollout is readable.
+    // The owned native launch plus pinned parsed frame proves readiness; it is not a user turn.
+    const starting = state.state === 'starting';
+    if (starting && !this.hasNativeLaunchIdentity(runtime, identity)) return { kind: 'starting' as const, identity };
     if (state.state === 'unknown' && !(runtime.lastSessionState?.status === 'idle' && runtime.lastSessionState.hookEvent === 'SessionStart'))
       return { kind: 'unknown' as const, reason: 'native-lifecycle-unverified' };
     if (state.writer || state.state === 'input-required' || runtime.prefillPending || runtime.semanticPromptPending)
@@ -560,9 +564,18 @@ export class TerminalManager {
     // An observation cannot survive an asynchronous version/parser wait.
     if (identity.observationRevision !== runtime.sequence + runtime.nativeInteractionRevision) return { kind: 'unknown' as const, reason: 'native-observation-changed' };
     try { this.automation.assertNativeIdentity(identity); } catch { return { kind: 'unknown' as const, reason: 'native-identity-changed' }; }
+    if (starting && !this.hasNativeLaunchIdentity(runtime, identity)) return { kind: 'starting' as const, identity };
     const frame = runtime.model.readNativePromptFrame?.();
-    return frame ? cliProviderRegistry.getProvider(identity.provider).nativeTerminalInteraction?.observePrompt(identity, version, frame)
+    const interaction = frame ? cliProviderRegistry.getProvider(identity.provider).nativeTerminalInteraction?.observePrompt(identity, version, frame)
       ?? { kind: 'unknown' as const, reason: 'native-provider-unsupported' } : { kind: 'unknown' as const, reason: 'native-parser-unavailable' };
+    return starting && interaction.kind === 'unknown' ? { kind: 'starting' as const, identity } : interaction;
+  }
+
+  private hasNativeLaunchIdentity(runtime: TerminalRuntime, identity: NativeRuntimeIdentity): boolean {
+    const pane = runtime.nativePaneToken ? resolvePaneToken(runtime.nativePaneToken) : null;
+    return !!pane && pane.userId === identity.userId && pane.sessionId === identity.sessionId
+      && pane.terminalId === identity.terminalId && pane.providerId === identity.provider
+      && runtime.generation === identity.generation && runtime.sessionId === identity.sessionId;
   }
 
   private assertNativeInteraction(expected: ReadyPromptEvidence | NativeApprovalRequest): void {
@@ -580,7 +593,7 @@ export class TerminalManager {
         || !this.automation.canSuperviseNativeApproval(identity.userId, identity.sessionId)) throw new Error('Native approval changed.');
       return;
     }
-    if (state.state !== 'turn-complete' && !(state.state === 'unknown'
+    if (state.state !== 'turn-complete' && !(state.state === 'starting' && this.hasNativeLaunchIdentity(runtime, identity)) && !(state.state === 'unknown'
       && runtime.lastSessionState?.status === 'idle' && runtime.lastSessionState.hookEvent === 'SessionStart')) throw new Error('Native input is busy.');
     const transaction = runtime.nativePromptWrite;
     if (transaction) {
@@ -1073,6 +1086,7 @@ export class TerminalManager {
         interruptInputPolicy: options.interruptInputPolicy ?? 'none',
         generation,
         nativeInteractionRevision: 0,
+        nativePaneToken: options.paneToken,
         sequence: 0,
         runtimeStateAt: Date.now(),
         ended: false,
