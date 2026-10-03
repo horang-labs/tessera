@@ -41,6 +41,22 @@ export function heartbeatSetupSubmission(store: AutomationStoreApi, intent: Setu
   };
 }
 
+/** Opening hints initialize navigation; live rule updates must not navigate the dialog. */
+export function createAutomationManagerOpening() {
+  let initialized = false;
+  return (store: AutomationStoreApi, initialId?: string, initialResume = false) => {
+    if (initialized) return;
+    initialized = true;
+    if (initialId) {
+      store.setState({ view: { ...store.getState().view, selectedId: initialId, setup: initialResume } });
+      if (initialResume) {
+        const saved = store.getState().details[initialId]?.automation;
+        void store.getState().previewAutorun(saved?.mode === 'autorun' ? { supervisor: saved.autorun.supervisor } : {});
+      }
+    }
+  };
+}
+
 export function AutomationManager({ scope, store, onClose, onOpenSession, supported = true, initialId, initialResume = false }: {
   scope: AutomationScope; store: AutomationStoreApi; onClose: () => void; onOpenSession: (id: string, objective?: string) => void; supported?: boolean; initialId?: string; initialResume?: boolean;
 }) {
@@ -55,6 +71,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
   const previousGate = useRef(gateIdentity);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
+  const [opening] = useState(() => ({ initialize: createAutomationManagerOpening(), initialId, initialResume }));
   const [intent, setIntent] = useState<SetupIntent>(initialResume ? 'resume' : 'start');
   const [method, setMethod] = useState<'autorun' | 'heartbeat'>('autorun');
   const [includeDeleted, setIncludeDeleted] = useState(false);
@@ -77,12 +94,9 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
   useEffect(() => {
     returnFocus.current = document.activeElement as HTMLElement;
     dialog.current?.showModal();
-    if (initialId) {
-      store.setState({ view: { ...store.getState().view, selectedId: initialId, setup: initialResume } });
-      if (initialResume) { const saved = store.getState().details[initialId]?.automation; void store.getState().previewAutorun(saved?.mode === 'autorun' ? { supervisor: saved.autorun.supervisor } : {}); }
-    }
+    opening.initialize(store, opening.initialId, opening.initialResume);
     return () => { const target = returnFocus.current; if (target?.isConnected && target.getClientRects().length) target.focus({ preventScroll: true }); };
-  }, [store, initialId, initialResume]);
+  }, [store, opening]);
   useEffect(() => {
     if (!view.selectedId) return;
     const refresh = () => {
