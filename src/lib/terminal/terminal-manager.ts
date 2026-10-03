@@ -2,9 +2,16 @@ import { prepareAutomationOrigin } from '@/lib/automation/autorun-origin';
 import type { TerminalAutomationCompletion } from '@/lib/cli/providers/terminal-automation-evidence';
 import type { AutomationAuthority, Boundary, DispatchPermit, DispatchResult } from '@/lib/automation/runtime-port';
 import { AutomationInputGate } from '@/lib/automation/input-gate';
+import { bindNativeAutomationInteraction } from '@/lib/automation/native-interaction';
+import type { NativeAutomationInteractionPort, NativeApprovalRequest, ReadyPromptEvidence, NativeRuntimeIdentity } from '@/lib/automation/activation-contracts';
+import { cliProviderRegistry } from '@/lib/cli/providers/registry';
+import { observeNativePrompt, observesNativePaste } from './native-prompt-observer';
+import { NativeApprovalBridge } from './native-approval-bridge';
+import { readNativeApprovalRequest } from './native-approval-request';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { Socket } from 'node:net';
 import { createRequire } from 'module';
 import logger from '@/lib/logger';
@@ -185,6 +192,9 @@ interface TerminalRuntime {
   sessionId: string | null;
   interruptInputPolicy: NonNullable<TerminalCreateOptions['interruptInputPolicy']>;
   generation: number;
+  nativeInteractionRevision: number;
+  nativeVersion?: Promise<string>;
+  nativePromptWrite?: { expected: ReadyPromptEvidence; hookRevision: number; prompt: string };
   sequence: number;
   runtimeStateAt: number;
   ended: boolean;
@@ -289,7 +299,7 @@ export type TerminalHeadlessModelLike = Pick<
   'write' | 'resize' | 'snapshot' | 'readVisibleText' | 'dispose'
 > & Partial<Pick<
   TerminalHeadlessModel,
-  'whenSettled' | 'cursorPosition' | 'isAlternateScreen' | 'diagnostics'
+  'whenSettled' | 'cursorPosition' | 'isAlternateScreen' | 'diagnostics' | 'readNativePromptFrame'
 >>;
 
 export interface TerminalManagerOomDiagnostics {
@@ -328,6 +338,8 @@ export interface TerminalManagerOomDiagnostics {
 }
 
 export interface TerminalManagerOptions {
+  /** External CLI metadata probe, injectable without starting a provider turn. */
+  nativeProviderVersion?: (provider: string, userId: string, environment: 'native' | 'wsl') => Promise<string>;
   closeExitGraceMs?: number;
   closeExitPollMs?: number;
   processIsAlive?: (pid: number) => boolean;
@@ -498,13 +510,173 @@ export class TerminalManager {
     stateAt: number;
   }>();
   private shuttingDown = false;
+  readonly nativeApprovals = new NativeApprovalBridge();
+  private readonly nativeApprovalHookRevisions = new Map<string, number>();
 
   constructor(
     private readonly sendToConnection: SendToConnection,
     private readonly ptyFactoryLoader: () => Promise<TerminalPtyFactory> = loadNodePty,
     private readonly observeSessionRuntime?: ObserveTerminalSessionRuntime,
     private readonly managerOptions: TerminalManagerOptions = {},
-  ) {}
+  ) {
+    const port: NativeAutomationInteractionPort = {
+      observe: scope => this.observeNativeInteraction(scope),
+      assertCurrent: expected => this.assertNativeInteraction(expected),
+      deferApproval: ({ scope, expected }) => {
+        const current = this.nativeApprovals.current(scope.userId, scope.sessionId);
+        if (current && current.identity.agentEnvironment === scope.agentEnvironment
+          && (!expected || isDeepStrictEqual(current, expected))) this.nativeApprovals.cancel(current.requestId);
+      },
+      submitPrompt: args => this.submitNativePrompt(args),
+      respondApproval: args => this.nativeApprovals.respond(args, expected => this.assertNativeInteraction(expected)),
+    };
+    bindNativeAutomationInteraction(this, port);
+  }
+
+  private async observeNativeInteraction(scope: { userId: string; sessionId: string; agentEnvironment: 'native' | 'wsl' }) {
+    const state = this.automation.readNativeState(scope.userId, scope.sessionId);
+    if (!state?.live || state.identity.agentEnvironment !== scope.agentEnvironment) return { kind: 'unavailable' as const, reason: 'native-runtime-unavailable' };
+    const runtime = this.getOwnedTerminal(state.identity.terminalId, scope.userId);
+    if (!runtime || runtime.ended || runtime.closing) return { kind: 'unavailable' as const, reason: 'native-runtime-unavailable' };
+    const identity: NativeRuntimeIdentity = { ...state.identity, observationRevision: runtime.sequence + runtime.nativeInteractionRevision };
+    if (state.hasDraft) return { kind: 'draft' as const, identity };
+    if (state.backgroundWork !== 'clear' || ['draining', 'recovery-required', 'unavailable'].includes(state.ownershipMode))
+      return { kind: 'unknown' as const, reason: 'native-runtime-unverified' };
+    const approval = this.nativeApprovals.current(scope.userId, scope.sessionId);
+    if (approval) {
+      try { this.assertNativeInteraction(approval); return { kind: 'approval' as const, request: approval }; }
+      catch { this.nativeApprovals.cancel(approval.requestId); return { kind: 'unknown' as const, reason: 'native-approval-stale' }; }
+    }
+    if (state.state === 'running') return { kind: 'running' as const, identity };
+    if (state.state === 'starting') return { kind: 'starting' as const, identity };
+    if (state.state === 'unknown' && !(runtime.lastSessionState?.status === 'idle' && runtime.lastSessionState.hookEvent === 'SessionStart'))
+      return { kind: 'unknown' as const, reason: 'native-lifecycle-unverified' };
+    if (state.writer || state.state === 'input-required' || runtime.prefillPending || runtime.semanticPromptPending)
+      return { kind: 'unknown' as const, reason: 'native-input-unavailable' };
+    runtime.nativeVersion ??= (this.managerOptions.nativeProviderVersion
+      ? this.managerOptions.nativeProviderVersion(identity.provider, scope.userId, scope.agentEnvironment)
+      : cliProviderRegistry.getProvider(identity.provider).checkStatus({ userId: scope.userId, environment: scope.agentEnvironment })
+        .then(result => result.version ?? '')).catch(() => '');
+    const version = await runtime.nativeVersion;
+    await runtime.model.whenSettled?.();
+    // An observation cannot survive an asynchronous version/parser wait.
+    if (identity.observationRevision !== runtime.sequence + runtime.nativeInteractionRevision) return { kind: 'unknown' as const, reason: 'native-observation-changed' };
+    try { this.automation.assertNativeIdentity(identity); } catch { return { kind: 'unknown' as const, reason: 'native-identity-changed' }; }
+    const frame = runtime.model.readNativePromptFrame?.();
+    return frame ? observeNativePrompt(identity, version, frame) : { kind: 'unknown' as const, reason: 'native-parser-unavailable' };
+  }
+
+  private assertNativeInteraction(expected: ReadyPromptEvidence | NativeApprovalRequest): void {
+    const identity = expected.identity;
+    this.automation.assertNativeIdentity(identity);
+    const runtime = this.requireLiveSessionRuntime(identity.sessionId, identity.userId);
+    const state = this.automation.readNativeState(identity.userId, identity.sessionId)!;
+    if (runtime.generation !== identity.generation || runtime.closing || runtime.prefillPending
+      || ['draining', 'recovery-required', 'unavailable'].includes(state.ownershipMode)) throw new Error('Native runtime changed.');
+    if ('requestId' in expected) {
+      const current = this.nativeApprovals.current(identity.userId, identity.sessionId);
+      if (!current || current.requestId !== expected.requestId || current.requestHash !== expected.requestHash
+        || state.nativeApprovalId !== expected.requestId || expected.deadlineAt <= Date.now()
+        || this.nativeApprovalHookRevisions.get(expected.requestId) !== runtime.nativeInteractionRevision
+        || !this.automation.canSuperviseNativeApproval(identity.userId, identity.sessionId)) throw new Error('Native approval changed.');
+      return;
+    }
+    if (state.state !== 'turn-complete' && !(state.state === 'unknown'
+      && runtime.lastSessionState?.status === 'idle' && runtime.lastSessionState.hookEvent === 'SessionStart')) throw new Error('Native input is busy.');
+    const transaction = runtime.nativePromptWrite;
+    if (transaction) {
+      if (!isDeepStrictEqual(transaction.expected, expected) || transaction.hookRevision !== runtime.nativeInteractionRevision) throw new Error('Native prompt changed.');
+      const frame = runtime.model.readNativePromptFrame?.();
+      if (!frame || frame.pending) throw new Error('Native parser is pending.');
+      if (runtime.sequence !== identity.observationRevision - runtime.nativeInteractionRevision) {
+        if (!observesNativePaste(identity.provider, transaction.prompt, frame)) throw new Error('Native pasted input is unverified.');
+      }
+      return;
+    }
+    if (runtime.semanticPromptPending || identity.observationRevision !== runtime.sequence + runtime.nativeInteractionRevision) throw new Error('Native observation changed.');
+    const frame = runtime.model.readNativePromptFrame?.();
+    const version = expected.proofVersion.split('/')[1];
+    if (!frame || observeNativePrompt(identity, version, frame).kind !== 'ready') throw new Error('Native prompt is not empty.');
+  }
+
+  private async submitNativePrompt(args: Parameters<NativeAutomationInteractionPort['submitPrompt']>[0]): Promise<DispatchResult> {
+    let possible = false;
+    let runtime: TerminalRuntime | undefined;
+    try {
+      this.assertNativeInteraction(args.expected);
+      if (args.signal.aborted || !args.prompt.trim() || !args.submissionId) throw new Error('Native prompt cancelled.');
+      runtime = this.requireLiveSessionRuntime(args.expected.identity.sessionId, args.expected.identity.userId);
+      const prompt = normalizeSemanticPrompt(args.prompt);
+      possible = true;
+      args.writeFence('begin', () => {
+        this.assertNativeInteraction(args.expected);
+        if (args.signal.aborted) throw new Error('Native prompt cancelled.');
+        possible = true;
+        runtime!.nativePromptWrite = { expected: args.expected, hookRevision: runtime!.nativeInteractionRevision, prompt };
+        runtime!.semanticPromptPending = true;
+        runtime!.process.write(bracketSemanticPrompt(prompt));
+      });
+      await new Promise<void>(resolve => setTimeout(resolve, this.managerOptions.semanticPromptSubmitDelayMs ?? 500));
+      await runtime.model.whenSettled?.();
+      args.writeFence('complete', () => {
+        this.assertNativeInteraction(args.expected);
+        if (args.signal.aborted) throw new Error('Native prompt cancelled.');
+        runtime!.process.write('\r');
+      });
+      this.automation.dirty(args.expected.identity.userId, args.expected.identity.sessionId);
+      this.observeAcceptedPrompt(args.expected.identity.userId, args.expected.identity.sessionId, 'AutomationPromptSubmit');
+      return { kind: 'delivered', sessionId: args.expected.identity.sessionId, terminalId: runtime.terminalId, at: Date.now() };
+    } catch { return possible ? { kind: 'unknown', reason: 'DELIVERY_UNKNOWN', sessionId: args.expected.identity.sessionId }
+      : { kind: 'cancelled', reason: 'INPUT_BOUNDARY_UNPROVEN' }; }
+    finally { if (runtime) { runtime.nativePromptWrite = undefined; runtime.semanticPromptPending = false; } }
+  }
+
+  canOpenNativeApproval(terminalId: string, userId: string, payload: Record<string, unknown>): boolean {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime?.sessionId || runtime.ended || runtime.closing) return false;
+    const state = this.automation.readNativeState(userId, runtime.sessionId);
+    return !!state?.live && state.state === 'running' && !state.hasDraft && state.backgroundWork === 'clear'
+      && payload.session_id === state.identity.providerConversationId
+      && Number(payload.tessera_terminal_generation) === runtime.generation
+      && this.automation.canSuperviseNativeApproval(userId, runtime.sessionId);
+  }
+
+  openNativeApproval(terminalId: string, userId: string, payload: Record<string, unknown>) {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    if (!runtime?.sessionId || runtime.ended || runtime.closing) return null;
+    const sessionId = runtime.sessionId, state = this.automation.readNativeState(userId, sessionId);
+    if (!state?.live || !this.automation.canSuperviseNativeApproval(userId, sessionId)) return null;
+    const turn = this.automation.readTurnEvidence({ userId, sessionId, agentEnvironment: state.identity.agentEnvironment });
+    const association = payload.tessera_autorun as Record<string, unknown> | undefined;
+    if (turn.kind !== 'running' || !association || association.observerSubmissionId !== turn.submission.observerSubmissionId
+      || association.sourceIdentityHash !== turn.submission.sourceIdentityHash || association.fileGeneration !== turn.submission.fileGeneration
+      || association.nativeId !== (turn.submission.provider === 'codex' ? turn.submission.nativeTurnId : turn.submission.nativePromptId)) return null;
+    const request = readNativeApprovalRequest({ ...state.identity, observationRevision: runtime.sequence + runtime.nativeInteractionRevision }, payload);
+    if (!request || this.nativeApprovals.current(userId, sessionId)) return null;
+    try { this.automation.holdNativeApproval(userId, sessionId, request); } catch { return null; }
+    const hookRevision = runtime.nativeInteractionRevision;
+    this.nativeApprovalHookRevisions.set(request.requestId, hookRevision);
+    const poll = setInterval(() => {
+      try {
+        this.assertNativeInteraction(request);
+        if (runtime.nativeInteractionRevision !== hookRevision) throw new Error('Native request replaced.');
+      } catch { this.nativeApprovals.cancel(request.requestId); }
+    }, 100);
+    poll.unref();
+    return this.nativeApprovals.open(request, result => {
+      clearInterval(poll);
+      this.nativeApprovalHookRevisions.delete(request.requestId);
+      this.automation.releaseNativeApproval(userId, sessionId, request.requestId);
+      if (result.kind !== 'delivered' && !runtime.ended && !runtime.closing) this.recordSessionState({ type: 'session_state',
+        sessionId, terminalId, status: 'input_required', hookEvent: 'PermissionRequest', stateAt: Date.now() }, userId);
+    });
+  }
+
+  ownsNativeApproval(terminalId: string, userId: string, requestId: string): boolean {
+    const runtime = this.getOwnedTerminal(terminalId, userId);
+    const request = runtime?.sessionId ? this.nativeApprovals.current(userId, runtime.sessionId) : null;
+    return !!request && request.requestId === requestId && request.identity.terminalId === terminalId && request.identity.generation === runtime?.generation;
+  }
 
   async create(options: TerminalCreateOptions): Promise<void> {
     const blockedSessionKey = options.sessionId
@@ -787,6 +959,7 @@ export class TerminalManager {
               TESSERA_PANE_TOKEN: options.paneToken,
               TESSERA_SESSION_ID: options.sessionId ?? '',
               TESSERA_HOOK_PORT: String(getServerPort()),
+              TESSERA_TERMINAL_GENERATION: String((this.generationByTerminal.get(key) ?? 0) + 1),
             }
           : {}),
         ...(launchEnv ?? {}),
@@ -804,6 +977,7 @@ export class TerminalManager {
           { name: 'TESSERA_PANE_TOKEN' },
           { name: 'TESSERA_SESSION_ID' },
           { name: 'TESSERA_HOOK_PORT' },
+          { name: 'TESSERA_TERMINAL_GENERATION' },
           { name: 'TESSERA_OPENCODE_RESUME_ID' },
           // '/'로 시작하면 이미 게스트 POSIX 경로(codex-overlay-wsl.ts) — /p 변환을
           // 붙이면 오히려 망가진다. Windows 경로일 때만 /p (orca endpointFlag 미러).
@@ -898,6 +1072,7 @@ export class TerminalManager {
         sessionId: options.sessionId ?? null,
         interruptInputPolicy: options.interruptInputPolicy ?? 'none',
         generation,
+        nativeInteractionRevision: 0,
         sequence: 0,
         runtimeStateAt: Date.now(),
         ended: false,
@@ -1585,6 +1760,7 @@ export class TerminalManager {
       interruptInputPolicy: runtime.interruptInputPolicy,
     };
     runtime.lastSessionState = message;
+    runtime.nativeInteractionRevision++;
     this.observeAcceptedPrompt(userId, sessionId, message.hookEvent);
     runtime.runtimeStateAt = stateAt;
     this.notifySessionWaiters(runtime, message);
@@ -1961,6 +2137,8 @@ export class TerminalManager {
     if (runtime.ended || runtime.closing) return;
     const { terminalId, userId } = runtime;
     runtime.closing = true;
+    const approval = runtime.sessionId ? this.nativeApprovals.current(userId, runtime.sessionId) : null;
+    if (approval) this.nativeApprovals.cancel(approval.requestId);
     this.cancelPendingPrefill(
       runtime,
       'The terminal was closed before the command could be entered. Your draft was kept.',

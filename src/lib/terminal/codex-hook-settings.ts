@@ -1,4 +1,5 @@
 import { buildHookCommand, type HookCommandStyle } from './hook-command';
+import { buildNativeApprovalHookCommand } from './native-approval-hook';
 
 export const CODEX_HOOK_EVENT_LABEL = {
   SessionStart: 'session_start',
@@ -32,10 +33,9 @@ export interface CodexHookSettings {
  * codex CODEX_HOME/hooks.json 에 쓸 상태 훅 정의.
  * 스키마: { hooks: { <Event>: [ { hooks: [ { type, command, timeout } ] } ] } }.
  * claude와 달리 matcher 키 없음(codex managed 정의는 matcher 미부착).
- * 커맨드·엔드포인트(/__tessera/hook)·폼바디는 claude와 100% 동일(hook-command.ts) —
- * 유일한 차이는 argv --settings가 아니라 CODEX_HOME/hooks.json 파일로 주입한다는 점.
- * 스크립트는 stdout을 오염시키지 않고 항상 성공 종료(|| true)하는 순수 lifecycle observer다.
- * timeout 10초: WSL NAT의 curl.exe 폴백이 5초를 넘길 수 있음(claude-hook-settings 참고).
+ * Lifecycle uses the shared observer. PermissionRequest alone installs the scoped
+ * once-only response bridge; unmanaged/Heartbeat requests keep empty stdout/manual approval.
+ * Codex receives this through CODEX_HOME/hooks.json rather than Claude's --settings.
  */
 function group(command: string): CodexHookGroup[] {
   return [{ hooks: [{ type: 'command', timeout: 10, command }] }];
@@ -47,6 +47,7 @@ export function buildCodexHookSettings(style: HookCommandStyle = 'posix'): Codex
   for (const event of Object.keys(CODEX_HOOK_EVENT_LABEL) as CodexHookEventName[]) {
     hooks[event] = group(command);
   }
+  hooks.PermissionRequest = [{ hooks: [{ type: 'command', timeout: 120, command: buildNativeApprovalHookCommand(style, 'codex') }] }];
   return { hooks };
 }
 

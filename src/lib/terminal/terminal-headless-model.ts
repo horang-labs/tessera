@@ -44,6 +44,15 @@ export interface TerminalHeadlessDiagnostics {
   totalChars: number;
 }
 
+/** Physical viewport cells at the completed parser boundary, not scrollback prose. */
+export interface NativePromptFrame {
+  lines: string[];
+  cursor: { row: number; column: number };
+  cursorLineCells: { chars: string; dim: boolean; bold: boolean }[];
+  prefixes: { chars: string; dim: boolean; bold: boolean }[][];
+  pending: boolean;
+}
+
 /**
  * Server-side xterm model used only for cold surface reattachment.
  *
@@ -240,6 +249,25 @@ export class TerminalHeadlessModel {
   cursorPosition(): TerminalDeviceQueryCursor {
     const buffer = this.terminal.buffer.active;
     return { row: buffer.cursorY + 1, column: buffer.cursorX + 1 };
+  }
+
+  readNativePromptFrame(): NativePromptFrame {
+    const buffer = this.terminal.buffer.active;
+    const line = buffer.getLine(buffer.baseY + buffer.cursorY);
+    return {
+      lines: Array.from({ length: this.terminal.rows }, (_, row) =>
+        buffer.getLine(buffer.baseY + row)?.translateToString(true) ?? ''),
+      cursor: { row: buffer.cursorY, column: buffer.cursorX },
+      cursorLineCells: Array.from({ length: this.terminal.cols }, (_, column) => {
+        const cell = line?.getCell(column);
+        return { chars: cell?.getChars() ?? '', dim: Boolean(cell?.isDim()), bold: Boolean(cell?.isBold()) };
+      }),
+      prefixes: Array.from({ length: this.terminal.rows }, (_, row) => [0, 1].map(column => {
+        const cell = buffer.getLine(buffer.baseY + row)?.getCell(column);
+        return { chars: cell?.getChars() ?? '', dim: Boolean(cell?.isDim()), bold: Boolean(cell?.isBold()) };
+      })),
+      pending: this.disposed || this.pendingWriteCount > 0 || this.pendingEscapeTail.length > 0,
+    };
   }
 
   isAlternateScreen(): boolean {

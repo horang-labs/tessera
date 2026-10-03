@@ -1,4 +1,5 @@
 import { buildHookCommand, type HookCommandStyle } from './hook-command';
+import { buildNativeApprovalHookCommand } from './native-approval-hook';
 
 /**
  * PTY claude에 --settings 로 넘길 hooks 설정(JSON 문자열)을 만든다.
@@ -43,9 +44,9 @@ export function buildClaudeHookSettings(style: HookCommandStyle = 'posix'): Reco
       PreToolUse: toolHook('*', command),
       PostToolUse: toolHook('*', command),
       PostToolUseFailure: toolHook('*', command),
-      // 권한 창이 실제로 열리는 경계만 관찰한다. 훅은 빈 stdout + 성공 종료라
-      // 승인 여부에는 관여하지 않고 Claude Code의 원래 TUI를 그대로 유지한다.
-      PermissionRequest: toolHook('*', command),
+      // Only an active Autorun can hold this exact request; others retain manual native approval.
+      PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', timeout: 120,
+        command: buildNativeApprovalHookCommand(style, 'claude-code') }] }],
     },
   };
 }

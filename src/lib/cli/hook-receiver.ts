@@ -173,7 +173,8 @@ function mapClaudeEventToStatus(
 /**
  * codex hook_event_name → 상태. claude와 별도 테이블(이벤트명·대기 신호가 다름).
  * codex는 blocked를 안 낸다: 사람 입력 경계(PermissionRequest)를 input_required로 보낸다.
- * PermissionRequest 훅은 결정을 반환하지 않으므로 codex 자체 승인 TUI가 xterm에 그대로 뜬다.
+ * Unsupported/unmanaged PermissionRequest retains Codex's native manual approval TUI.
+ * Active Autorun requests use the separate authenticated one-time bridge before this mapping.
  */
 function mapCodexEventToStatus(
   terminalId: string,
@@ -215,6 +216,22 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     const event = readString(payload.hook_event_name) || readString(payload.hookEventName);
     const isCodex = entry.providerId === 'codex';
     const isOpenCode = entry.providerId === 'opencode';
+    if (event === 'TesseraApprovalProbe') {
+      if (!terminalManager.canOpenNativeApproval(entry.terminalId, entry.userId, payload)) return send(204);
+      res.statusCode = 200; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ enabled: true })); return;
+    }
+    if (event === 'TesseraApprovalCommit' || event === 'TesseraApprovalAck') {
+      const requestId = readString(payload.requestId), hash = readString(payload.requestHash);
+      if (!terminalManager.ownsNativeApproval(entry.terminalId, entry.userId, requestId)) return send(204);
+      if (event === 'TesseraApprovalAck') {
+        terminalManager.nativeApprovals.acknowledge(requestId, hash); return send(204);
+      }
+      const committed = terminalManager.nativeApprovals.commit(requestId, hash, output => {
+        res.statusCode = 200; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(output));
+      });
+      if (!committed && !res.writableEnded) send(204);
+      return;
+    }
     // A `codex exec` started from a Claude/OpenCode pane inherits the pane token
     // and would otherwise be read as that pane's own provider (a phantom /fork).
     if (isCodexHookPayloadOnForeignPane(
@@ -335,6 +352,20 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       });
       if (observation.ignored) return send(204);
       sessionId = observation.sessionId;
+    }
+    if (event === 'PermissionRequest' && sessionId && (isCodex ? codexOrigin === 'lead' : entry.providerId === 'claude-code')) {
+      const offer = terminalManager.openNativeApproval(entry.terminalId, entry.userId, payload);
+      if (offer) {
+        const proof = payload.tessera_native_approval as { invocationId: string };
+        const disconnect = () => { if (!res.writableEnded) terminalManager.nativeApprovals.cancel(proof.invocationId); };
+        res.once('close', disconnect);
+        if (res.destroyed) terminalManager.nativeApprovals.cancel(proof.invocationId);
+        const response = await offer;
+        res.removeListener('close', disconnect);
+        if (res.destroyed) return;
+        if (!response) return send(204);
+        res.statusCode = 200; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(response)); return;
+      }
     }
     const humanOrigin = sessionId ? terminalManager.automation.ownership(entry.userId, sessionId).mode === 'human' : false;
     const mapped = isCodex

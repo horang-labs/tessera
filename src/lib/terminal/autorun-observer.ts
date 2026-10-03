@@ -38,6 +38,9 @@ process.stdin.on('end',()=>{try{
    startByte:end<0?0:stat.size-size+end+1,canonicalPath:canonical,nativeId};
   fs.writeFileSync(file,JSON.stringify(observed),{flag:'wx',mode:384});
  }
+ if(event==='UserPromptSubmit'&&observed){
+  fs.writeFileSync(path.join(dir,hash(canonical)+'.lead.json'),JSON.stringify(observed),{mode:384});
+ }
  if(observed&&observed.fileGeneration===source.fileGeneration){
   if(event==='Stop'&&!observed.completionHookId){observed.completionHookId=crypto.randomUUID();fs.writeFileSync(file,JSON.stringify(observed),{mode:384})}
   payload.tessera_autorun={...observed,dedupKey:event==='Stop'?observed.completionHookId:observed.observerSubmissionId};
