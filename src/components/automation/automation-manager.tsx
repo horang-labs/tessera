@@ -41,6 +41,12 @@ export function heartbeatSetupSubmission(store: AutomationStoreApi, intent: Setu
   };
 }
 
+/** Both existing ledgers can have additional pages independently. */
+export async function loadMoreAutomationHistory(store: AutomationStoreApi, id: string, mode: AutomationV2['mode']) {
+  if (mode === 'autorun') await Promise.all([store.getState().loadRuns(id, true), store.getState().loadDecisions(id, true)]);
+  else await store.getState().loadRuns(id, true);
+}
+
 /** Opening hints initialize navigation; live rule updates must not navigate the dialog. */
 export function createAutomationManagerOpening() {
   let initialized = false;
@@ -208,8 +214,8 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
           <SavedSelection selection={rule.savedSelection} />
         </details>}
         {rule.mode === 'autorun' && state.newDecisionCount[rule.id] > 0 && <button {...telemetryClickAttributes('automation.history.new', 'automation')} className={automationButton} onClick={() => store.getState().showNewDecisions(rule.id)}>{state.newDecisionCount[rule.id]} {t('automation.newEntries')}</button>}
-        {rule.mode === 'autorun' ? <AutorunHistory details={decisionDetails} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} decisions={(decisions[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onEvidence={id => { setEvidenceId(id); void store.getState().inspectDecision(rule.id,id); }} /> : <AutomationHistory runs={(runs[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} />}
-        {view.tab === 'history' && (rule.mode === 'autorun' ? decisions[rule.id]?.nextCursor : runs[rule.id]?.nextCursor) && <button {...telemetryClickAttributes('automation.manager.more', 'automation')} className={automationButton} onClick={() => void (rule.mode === 'autorun' ? store.getState().loadDecisions(rule.id,true) : store.getState().loadRuns(rule.id,true))}>{t('automation.more')}</button>}
+        {rule.mode === 'autorun' ? <AutorunHistory runs={(runs[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} details={decisionDetails} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} decisions={(decisions[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onEvidence={id => { setEvidenceId(id); void store.getState().inspectDecision(rule.id,id); }} /> : <AutomationHistory runs={(runs[rule.id]?.items ?? []).slice(0, view.tab === 'overview' ? 3 : undefined)} onResolve={id => void store.getState().resolve(rule.id,id)} onOpenSession={onOpenSession} />}
+        {view.tab === 'history' && (rule.mode === 'autorun' ? decisions[rule.id]?.nextCursor || runs[rule.id]?.nextCursor : runs[rule.id]?.nextCursor) && <button {...telemetryClickAttributes('automation.manager.more', 'automation')} className={automationButton} onClick={() => void loadMoreAutomationHistory(store, rule.id, rule.mode)}>{t('automation.more')}</button>}
       </>}
     </AutomationViewport></section> : <AutomationViewport>
       {requestErrorNotice}

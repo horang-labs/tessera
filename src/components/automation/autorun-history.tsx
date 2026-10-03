@@ -1,4 +1,6 @@
 'use client';
+import type { AutomationRun } from '@/lib/automation/contracts';
+import { AutomationHistory } from './automation-history';
 import { useI18n } from '@/lib/i18n';
 import type { AutorunDecisionSummary, AutorunDecisionDetail } from '@/lib/automation/autorun-contracts';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
@@ -7,10 +9,11 @@ import { AutomationReason } from './automation-reason';
 import { automationButton } from './ownership-actions';
 import { automationDisclosure } from './automation-layout';
 
-export function AutorunHistory({ decisions, details = {}, onResolve, onOpenSession, onEvidence }: { decisions: AutorunDecisionSummary[]; details?: Record<string, AutorunDecisionDetail>; onResolve: (runId: string) => void; onOpenSession: (sessionId: string) => void; onEvidence: (id: string) => void }) {
+export function AutorunHistory({ decisions, runs = [], details = {}, onResolve, onOpenSession, onEvidence }: { runs?: AutomationRun[]; decisions: AutorunDecisionSummary[]; details?: Record<string, AutorunDecisionDetail>; onResolve: (runId: string) => void; onOpenSession: (sessionId: string) => void; onEvidence: (id: string) => void }) {
   const { t } = useI18n();
   return <section className="grid gap-3" aria-label={t('automation.history')}>
-    {decisions.length === 0 && <p>{t('automation.noRuns')}</p>}
+    {runs.length > 0 && <AutomationHistory runs={runs} deliveredLabel={t('automation.deliveryRecorded')} onResolve={onResolve} onOpenSession={onOpenSession} />}
+    {decisions.length === 0 && runs.length === 0 && <p>{t('automation.noRuns')}</p>}
     {decisions.map(item => <article className="grid gap-2 rounded-lg border border-(--divider) bg-(--chat-header-bg) p-3 text-sm leading-relaxed" key={item.id}>
       <time dateTime={new Date(item.createdAt).toISOString()}>{localDue(item.createdAt)}</time>
       <strong>{item.outcome ? t(`automation.outcome_${item.outcome}`) : t(item.phase === 'analysing' ? 'automation.phase_analysing' : item.phase === 'reserved' ? 'automation.phase_waiting' : 'automation.phase_error')}</strong>

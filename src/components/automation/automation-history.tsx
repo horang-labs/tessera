@@ -14,8 +14,8 @@ export function SavedSelection({ selection }: { selection: SessionSelectionSnaps
   return <p className="break-words text-xs text-(--text-secondary)">{t('automation.saved')}: {selection.provider} · {selection.model ?? t('automation.inherited')} · {selection.reasoningEffort ?? t('automation.inherited')} · {selection.serviceTier ?? t('automation.inherited')}</p>;
 }
 
-export function AutomationHistory({ runs, onResolve, onOpenSession }: {
-  runs: AutomationRun[];
+export function AutomationHistory({ runs, onResolve, onOpenSession, deliveredLabel }: {
+  runs: AutomationRun[]; deliveredLabel?: string;
   onResolve: (runId: string) => void;
   onOpenSession: (sessionId: string) => void;
 }) {
@@ -24,7 +24,7 @@ export function AutomationHistory({ runs, onResolve, onOpenSession }: {
     <p className="text-xs text-(--text-secondary)">{t('automation.noSuccess')}</p>
     {runs.length === 0 && <p>{t('automation.noRuns')}</p>}
     {runs.map(run => <article key={run.id} className="grid gap-2 rounded-lg border border-(--divider) bg-(--chat-header-bg) p-3 text-sm leading-relaxed">
-      <p><strong>{run.state === 'delivered' ? t('automation.sent') : t(`automation.delivery_${run.state}`)}</strong> · <time dateTime={new Date(run.dueAt).toISOString()}>{localDue(run.dueAt)}</time></p>
+      <p><strong>{run.state === 'delivered' ? deliveredLabel ?? t('automation.sent') : t(`automation.delivery_${run.state}`)}</strong> · <time dateTime={new Date(run.dueAt).toISOString()}>{localDue(run.dueAt)}</time></p>
       <p>{t('automation.runtime')}: {run.observedRuntime === 'turn-complete' ? t('automation.workerEnded') : run.observedRuntime}</p>
       {run.coalescedCount > 0 && <p>{t('automation.coalesced')}: {run.coalescedCount}</p>}
       <AutomationReason reason={run.reason} />
