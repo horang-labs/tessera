@@ -174,6 +174,7 @@ export interface AutorunProviderPort {
   checkSupervisorCapability(args: SupervisorCapabilityRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorCapabilityResult>;
   /** Fresh auth-only, tool-free process; signal stops only its owned tree, then proves quiescence. */
   generateSupervisorDecision(args: SupervisorDecisionRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorResult>;
+  generateSupervisorApprovalDecision?(args: import('@/lib/automation/activation-contracts').SupervisorApprovalRequest): Promise<import('@/lib/automation/activation-contracts').SupervisorApprovalResult>;
   /** Read/reconcile exact durable ownership + all-process settlement; no inference, output replay or kill.
    * Absence/unknown retains analysis capacity quarantine; worker input ownership is handled separately by R2.
    */
