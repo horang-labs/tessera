@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readNativeApprovalRequest } from '@/lib/terminal/native-approval-request';
+import { readNativeApprovalRequest } from '@/lib/cli/providers/native-pty-approval';
 import type { NativeRuntimeIdentity } from '@/lib/automation/activation-contracts';
 const identity: NativeRuntimeIdentity = { userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl',
   serverInstanceId: 'server', terminalId: 'terminal', generation: 2, provider: 'codex',

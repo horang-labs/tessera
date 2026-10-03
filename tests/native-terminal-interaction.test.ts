@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { NativeRuntimeIdentity } from '@/lib/automation/activation-contracts';
 import { TerminalHeadlessModel } from '@/lib/terminal/terminal-headless-model';
-import { observeNativePrompt } from '@/lib/terminal/native-prompt-observer';
+import { observeNativePrompt } from '@/lib/cli/providers/native-pty-prompt';
 
 const identity: NativeRuntimeIdentity = { userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl',
   serverInstanceId: 'server', terminalId: 'terminal', generation: 1, provider: 'codex',

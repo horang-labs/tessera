@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { nativeApprovalRequestSchema, type NativeApprovalRequest, type NativeRuntimeIdentity } from '@/lib/automation/activation-contracts';
-import { supportsNativeInteraction } from './native-prompt-observer';
+import { supportsNativeInteraction } from './native-pty-prompt';
 
 const hookSchema = z.object({ hook_event_name: z.literal('PermissionRequest'), session_id: z.string().min(1),
   tool_name: z.string().min(1).max(256), tool_input: z.record(z.unknown()), cwd: z.string().min(1).max(256),

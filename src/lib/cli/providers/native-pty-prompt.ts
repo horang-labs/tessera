@@ -1,5 +1,5 @@
 import type { NativeInteraction, NativeRuntimeIdentity } from '@/lib/automation/activation-contracts';
-import type { NativePromptFrame } from './terminal-headless-model';
+import type { NativePromptFrame } from '@/lib/terminal/terminal-headless-model';
 
 export function observeNativePrompt(identity: NativeRuntimeIdentity, version: string, frame: NativePromptFrame): NativeInteraction {
   const unknown: NativeInteraction = { kind: 'unknown', reason: 'native-prompt-unverified' };

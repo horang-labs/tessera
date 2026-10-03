@@ -5,9 +5,7 @@ import { AutomationInputGate } from '@/lib/automation/input-gate';
 import { bindNativeAutomationInteraction } from '@/lib/automation/native-interaction';
 import type { NativeAutomationInteractionPort, NativeApprovalRequest, ReadyPromptEvidence, NativeRuntimeIdentity } from '@/lib/automation/activation-contracts';
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
-import { observeNativePrompt, observesNativePaste } from './native-prompt-observer';
 import { NativeApprovalBridge } from './native-approval-bridge';
-import { readNativeApprovalRequest } from './native-approval-request';
 import fs from 'fs';
 import path from 'path';
 import { randomUUID } from 'node:crypto';
@@ -563,7 +561,8 @@ export class TerminalManager {
     if (identity.observationRevision !== runtime.sequence + runtime.nativeInteractionRevision) return { kind: 'unknown' as const, reason: 'native-observation-changed' };
     try { this.automation.assertNativeIdentity(identity); } catch { return { kind: 'unknown' as const, reason: 'native-identity-changed' }; }
     const frame = runtime.model.readNativePromptFrame?.();
-    return frame ? observeNativePrompt(identity, version, frame) : { kind: 'unknown' as const, reason: 'native-parser-unavailable' };
+    return frame ? cliProviderRegistry.getProvider(identity.provider).nativeTerminalInteraction?.observePrompt(identity, version, frame)
+      ?? { kind: 'unknown' as const, reason: 'native-provider-unsupported' } : { kind: 'unknown' as const, reason: 'native-parser-unavailable' };
   }
 
   private assertNativeInteraction(expected: ReadyPromptEvidence | NativeApprovalRequest): void {
@@ -575,7 +574,7 @@ export class TerminalManager {
       || ['draining', 'recovery-required', 'unavailable'].includes(state.ownershipMode)) throw new Error('Native runtime changed.');
     if ('requestId' in expected) {
       const current = this.nativeApprovals.current(identity.userId, identity.sessionId);
-      if (!current || current.requestId !== expected.requestId || current.requestHash !== expected.requestHash
+      if (!current || state.state !== 'running' || current.requestId !== expected.requestId || current.requestHash !== expected.requestHash
         || state.nativeApprovalId !== expected.requestId || expected.deadlineAt <= Date.now()
         || this.nativeApprovalHookRevisions.get(expected.requestId) !== runtime.nativeInteractionRevision
         || !this.automation.canSuperviseNativeApproval(identity.userId, identity.sessionId)) throw new Error('Native approval changed.');
@@ -589,14 +588,14 @@ export class TerminalManager {
       const frame = runtime.model.readNativePromptFrame?.();
       if (!frame || frame.pending) throw new Error('Native parser is pending.');
       if (runtime.sequence !== identity.observationRevision - runtime.nativeInteractionRevision) {
-        if (!observesNativePaste(identity.provider, transaction.prompt, frame)) throw new Error('Native pasted input is unverified.');
+        if (!cliProviderRegistry.getProvider(identity.provider).nativeTerminalInteraction?.observesPaste(transaction.prompt, frame)) throw new Error('Native pasted input is unverified.');
       }
       return;
     }
     if (runtime.semanticPromptPending || identity.observationRevision !== runtime.sequence + runtime.nativeInteractionRevision) throw new Error('Native observation changed.');
     const frame = runtime.model.readNativePromptFrame?.();
     const version = expected.proofVersion.split('/')[1];
-    if (!frame || observeNativePrompt(identity, version, frame).kind !== 'ready') throw new Error('Native prompt is not empty.');
+    if (!frame || cliProviderRegistry.getProvider(identity.provider).nativeTerminalInteraction?.observePrompt(identity, version, frame).kind !== 'ready') throw new Error('Native prompt is not empty.');
   }
 
   private async submitNativePrompt(args: Parameters<NativeAutomationInteractionPort['submitPrompt']>[0]): Promise<DispatchResult> {
@@ -651,7 +650,8 @@ export class TerminalManager {
     if (turn.kind !== 'running' || !association || association.observerSubmissionId !== turn.submission.observerSubmissionId
       || association.sourceIdentityHash !== turn.submission.sourceIdentityHash || association.fileGeneration !== turn.submission.fileGeneration
       || association.nativeId !== (turn.submission.provider === 'codex' ? turn.submission.nativeTurnId : turn.submission.nativePromptId)) return null;
-    const request = readNativeApprovalRequest({ ...state.identity, observationRevision: runtime.sequence + runtime.nativeInteractionRevision }, payload);
+    const request = cliProviderRegistry.getProvider(state.identity.provider).nativeTerminalInteraction?.readApproval(
+      { ...state.identity, observationRevision: runtime.sequence + runtime.nativeInteractionRevision }, payload);
     if (!request || this.nativeApprovals.current(userId, sessionId)) return null;
     try { this.automation.holdNativeApproval(userId, sessionId, request); } catch { return null; }
     const hookRevision = runtime.nativeInteractionRevision;
@@ -1931,6 +1931,7 @@ export class TerminalManager {
     runtime.interruptInferredAt = undefined;
     runtime.lastSessionState = message;
     runtime.runtimeStateAt = message.stateAt ?? Date.now();
+    runtime.nativeInteractionRevision++;
     this.automation.hook(userId, message.sessionId, message.hookEvent, message.status, message.stateAt ?? Date.now(), !!message.hasWorkingSubagents, completion);
     this.notifySessionWaiters(runtime, message);
     return true;

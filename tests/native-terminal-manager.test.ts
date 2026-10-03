@@ -16,6 +16,8 @@ before(async () => {
   ]);
   await initDatabase(); registerProject('native-project', workspace, 'Native project');
   createSession('worker', 'native-project', 'worker', 'codex', { workDir: workspace });
+  const [{ cliProviderRegistry }, { codexAdapter }] = await Promise.all([import('@/lib/cli/providers/registry'), import('@/lib/cli/providers/codex/adapter')]);
+  cliProviderRegistry.register('codex', codexAdapter);
   TerminalManager = terminal.TerminalManager;
 });
 const screen = '\x1b[2J\x1b[4;1H\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m'
@@ -115,5 +117,35 @@ test('correlated native approval preserves accepted lead through gate claim and 
     assert.equal(manager.nativeApprovals.current('owner', 'worker')?.requestId, 'manual');
     port.deferApproval!({ scope, expected: waiting.request });
     assert.equal(await manual, null); assert.equal(manager.automation.readNativeState('owner', 'worker')?.nativeApprovalId, null);
+  } finally { await manager.shutdownAll(); }
+});
+
+test('native Stop invalidates a correlated pending approval before any response', async () => {
+  const { manager, port, writes } = await setup();
+  try {
+    assert.ok(port); manager.activateProviderSessionIdentity('terminal', 'owner', 'native');
+    manager.automation.authority = () => ({ canSuperviseNativeApproval: () => true,
+      recordRuntimeObservation: () => {}, recordInputOwnership: () => {}, pauseWake: () => {},
+    } as import('@/lib/automation/runtime-port').AutomationAuthority);
+    const at = Date.now() + 1000;
+    manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+      status: 'running', hookEvent: 'UserPromptSubmit', stateAt: at }, 'owner');
+    const state = manager.automation.readNativeState('owner', 'worker')!;
+    const evidence = { provider: 'codex' as const, providerConversationId: 'native', nativeTurnId: 'turn',
+      observerSubmissionId: 'submit', serverInstanceId: state.identity.serverInstanceId, terminalGeneration: state.identity.generation,
+      sourceIdentityHash: 'a'.repeat(64), fileGeneration: 'file', startByte: 0, dedupKey: 'submit' };
+    assert.equal(manager.automation.recordHookEvidence({ kind: 'submission', userId: 'owner', sessionId: 'worker',
+      terminalId: 'terminal', agentEnvironment: 'wsl', observedAt: at, evidence }).kind, 'accepted');
+    const payload = { hook_event_name: 'PermissionRequest', session_id: 'native', turn_id: 'turn', tool_name: 'exec_command',
+      tool_input: { command: 'cat marker.txt' }, cwd: workspace,
+      tessera_native_approval: { invocationId: 'approval', generation: state.identity.generation, providerVersion: '0.159.2' },
+      tessera_autorun: { observerSubmissionId: 'submit', sourceIdentityHash: 'a'.repeat(64), fileGeneration: 'file', nativeId: 'turn' } };
+    const offer = manager.openNativeApproval('terminal', 'owner', payload); assert.ok(offer);
+    const interaction = await port.observe({ userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' });
+    assert.equal(interaction.kind, 'approval'); if (interaction.kind !== 'approval') return;
+    manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+      status: 'completed', hookEvent: 'Stop', stateAt: at + 1000 }, 'owner');
+    assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'turn-complete');
+    assert.throws(() => port.assertCurrent(interaction.request), 'completed lifecycle must invalidate request');
   } finally { await manager.shutdownAll(); }
 });

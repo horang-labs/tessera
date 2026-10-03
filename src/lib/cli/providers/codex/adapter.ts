@@ -1,3 +1,4 @@
+import { createNativePtyInteraction } from '../native-pty-interaction';
 import { createAutorunProviderPort } from '../autorun-provider';
 /**
  * Codex CLI Adapter
@@ -227,6 +228,7 @@ function extractCodexActiveModel(response: { result?: Record<string, any> }): st
 // =============================================================================
 
 export class CodexAdapter implements CliProvider {
+  readonly nativeTerminalInteraction = createNativePtyInteraction('codex');
   readonly autorun = createAutorunProviderPort('codex');
   /**
    * Counter for JSON-RPC request IDs used by sendMessage / sendInterrupt.

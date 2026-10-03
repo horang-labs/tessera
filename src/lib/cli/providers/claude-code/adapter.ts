@@ -1,3 +1,4 @@
+import { createNativePtyInteraction } from '../native-pty-interaction';
 import { createAutorunProviderPort } from '../autorun-provider';
 /**
  * Claude Code CLI Adapter
@@ -95,6 +96,7 @@ export function parseClaudeTitleResponse(text: string): GeneratedTitle | null {
 // =============================================================================
 
 export class ClaudeCodeAdapter implements CliProvider {
+  readonly nativeTerminalInteraction = createNativePtyInteraction('claude-code');
   readonly autorun = createAutorunProviderPort('claude-code');
   private _processRawLogs = new WeakMap<ChildProcess, CliRawLogSink>();
 
