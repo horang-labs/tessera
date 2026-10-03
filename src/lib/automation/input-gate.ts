@@ -2,6 +2,7 @@ import type { NativeApprovalRequest, NativeRuntimeIdentity, AutomationDraftVeto 
 import type { TerminalAutomationCompletion } from '@/lib/cli/providers/terminal-automation-evidence';
 import { AutomationInputError } from './input-error';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { type InputOwnership } from './contracts';
 import { autorunHookEvidenceSchema, type AutorunHookEvidence, type AutorunTurnEvidence } from './autorun-contracts';
 import type { ArmEvidence, AutomationAuthority, Boundary, RuntimeObservation } from './runtime-port';
@@ -62,10 +63,14 @@ export class AutomationInputGate {
       backgroundWork: state.backgroundUnknown ? 'unknown' : state.children.size || state.lifecycleChildren ? 'active' : 'clear',
       hasDraft: this.hasDraft(userId, sessionId), ownershipMode: state.ownership.mode, nativeApprovalId: state.nativeApproval?.requestId ?? null };
   }
-  canSuperviseNativeApproval(userId: string, sessionId: string): boolean {
+  canSuperviseNativeApproval(userId: string, sessionId: string, request?: NativeApprovalRequest): boolean {
     const state = this.readNativeState(userId, sessionId);
+    if (request) {
+      if (!isDeepStrictEqual(request, this.state(userId, sessionId)?.nativeApproval)) return false;
+      try { this.assertNativeIdentity(request.identity); } catch { return false; }
+    }
     return !!state?.live && !!this.authority()?.canSuperviseNativeApproval?.({ userId, sessionId,
-      agentEnvironment: state.identity.agentEnvironment, provider: state.identity.provider });
+      agentEnvironment: state.identity.agentEnvironment, provider: state.identity.provider, request });
   }
   setDraftVeto(userId: string, sessionId: string, veto: AutomationDraftVeto) {
     const key = this.key(userId, sessionId), drafts = this.drafts.get(key) ?? new Map<string, AutomationDraftVeto>();

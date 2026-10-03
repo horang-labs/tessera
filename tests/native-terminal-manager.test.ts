@@ -77,7 +77,9 @@ test('correlated native approval preserves accepted lead through gate claim and 
   const { manager, port, writes } = await setup();
   try {
     assert.ok(port); manager.activateProviderSessionIdentity('terminal', 'owner', 'native');
-    manager.automation.authority = () => ({ canSuperviseNativeApproval: () => true,
+    let reservedFinalResponse = false;
+    manager.automation.authority = () => ({ canSuperviseNativeApproval: (scope: { request?: import('@/lib/automation/activation-contracts').NativeApprovalRequest }) =>
+      !reservedFinalResponse || scope.request?.requestId === 'approval',
       recordRuntimeObservation: () => {}, recordInputOwnership: () => {}, pauseWake: () => {},
     } as import('@/lib/automation/runtime-port').AutomationAuthority);
     const at = Date.now() + 1000;
@@ -103,6 +105,8 @@ test('correlated native approval preserves accepted lead through gate claim and 
     assert.throws(() => port.assertCurrent(interaction.request));
     manager.automation.setDraftVeto('owner', 'worker', { surfaceId: 'peek', revision: 2, hasDraft: false });
     manager.automation.claimNativeAction(interaction.request.identity, 'rule', 'approval-run');
+    reservedFinalResponse = true; // External authority has charged its final reserved attempt.
+    assert.equal(manager.automation.canSuperviseNativeApproval('owner', 'worker'), false, 'new admission is exhausted');
     const result = port.respondApproval({ expected: interaction.request, optionId: 'allow-once', signal: new AbortController().signal,
       writeFence: (_phase, write) => { manager.automation.verifyNativeAction(interaction.request.identity, 'rule', 'approval-run');
         port.assertCurrent(interaction.request); write(); } });
@@ -115,6 +119,7 @@ test('correlated native approval preserves accepted lead through gate claim and 
     manager.automation.writer('owner', 'worker', false);
     const retained = manager.automation.readTurnEvidence({ userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' });
     assert.equal(retained.kind, 'running'); if (retained.kind === 'running') assert.deepEqual(retained.submission, evidence);
+    reservedFinalResponse = false; // Separate manual-defer scenario has available admission.
     const manual = manager.openNativeApproval('terminal', 'owner', { ...payload,
       tessera_native_approval: { ...payload.tessera_native_approval, invocationId: 'manual' } });
     assert.ok(manual); assert.equal(typeof port.deferApproval, 'function');

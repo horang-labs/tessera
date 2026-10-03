@@ -42,6 +42,8 @@ export const nativeInteractionSchema = z.discriminatedUnion('kind', [
 export type NativeInteraction = z.infer<typeof nativeInteractionSchema>;
 export type ReadyPromptEvidence = Extract<NativeInteraction, { kind: 'ready' }>;
 export type InteractionScope = { userId: string; sessionId: string; agentEnvironment: 'native' | 'wsl' };
+/** Omit request for admission of a new hook; supply the exact held request only for continuing its review/response. */
+export type NativeApprovalAuthorityScope = InteractionScope & { provider: 'codex' | 'claude-code'; request?: NativeApprovalRequest };
 export type NativeWriteFence = (phase: 'begin' | 'complete', write: () => void) => void;
 /** Bound by the terminal-owned helper. Observations are evidence, never authority. */
 export interface NativeAutomationInteractionPort {
@@ -77,14 +79,24 @@ export const supervisorApprovalDecisionSchema = z.object({
   explanation: z.string().min(1).max(2048), scopeReferences: z.array(id).min(1).max(100),
 }).strict();
 export type SupervisorApprovalDecision = z.infer<typeof supervisorApprovalDecisionSchema>;
+export const supervisorApprovalReviewContextSchema = z.object({
+  decisionTarget: z.literal('worker-native-request'),
+  authorizationSource: z.literal('saved-objective-and-constraints'),
+  supervisorRole: z.literal('analysis-only'),
+  supervisorIsolationAppliesTo: z.literal('supervisor-process-only'),
+}).strict();
 export type SupervisorApprovalPacket = { version: 1; kind: 'approval'; objective: AutorunObjective;
-  constraints: string[]; criteria: { id: string; text: string }[]; request: NativeApprovalRequest };
+  constraints: string[]; criteria: { id: string; text: string }[]; request: NativeApprovalRequest;
+  reviewContext: z.infer<typeof supervisorApprovalReviewContextSchema> };
 export const SUPERVISOR_APPROVAL_JSON_SCHEMA = {
   type: 'object', additionalProperties: false,
   required: ['kind', 'requestId', 'requestHash', 'outcome', 'optionId', 'explanation', 'scopeReferences'],
   properties: { kind: { type: 'string', const: 'approval' }, requestId: { type: 'string' }, requestHash: { type: 'string' },
-    outcome: { type: 'string', enum: ['approve-once', 'deny', 'ask-user'] }, optionId: { type: ['string', 'null'] },
-    explanation: { type: 'string', minLength: 1, maxLength: 2048 },
+    outcome: { type: 'string', enum: ['approve-once', 'deny', 'ask-user'],
+      description: 'Judgment on the worker native request against the saved objective and constraints; not permission for the supervisor to execute tools.' },
+    optionId: { type: ['string', 'null'], description: 'Exact worker request option for one-time approval or denial; null when asking the user. Never a persistent grant.' },
+    explanation: { type: 'string', minLength: 1, maxLength: 2048,
+      description: 'Explain worker scope and risk. Supervisor analysis sandbox restrictions apply only to the supervisor process, not the worker request.' },
     scopeReferences: { type: 'array', minItems: 1, items: { type: 'string' } } },
 } as const;
 export type SupervisorApprovalRequest = InteractionScope & { selection: SupervisorSelection; capability: SupervisorCapability;
