@@ -33,7 +33,7 @@ async function setup(withIdleHook = true, authenticated = true) {
   });
   const paneToken = authenticated ? mintPaneToken({ terminalId: 'terminal', userId: 'owner', sessionId: 'worker', providerId: 'codex' }) : undefined;
   await manager.startDetached({ paneToken, terminalId: 'terminal', userId: 'owner', sessionId: 'worker', cwd: workspace,
-    connectionId: 'test', surfaceId: 'test', cols: 80, rows: 12, providerId: 'codex', agentEnvironment: 'wsl' });
+    connectionId: 'test', surfaceId: 'test', cols: 80, rows: 12, providerId: 'codex', agentEnvironment: 'wsl', interruptInputPolicy: 'single-escape' });
   if (withIdleHook) manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
     status: 'idle', hookEvent: 'SessionStart', stateAt: Date.now() }, 'owner');
   output(screen); await new Promise<void>(resolve => setImmediate(resolve));
@@ -56,6 +56,38 @@ test('real gate claim preserves ready identity and fences bootstrap on the same 
     assert.deepEqual(writes, ['\x1b[200~Read marker.txt\x1b[201~', '\r']);
     assert.throws(() => port.assertCurrent(ready));
   } finally { await manager.shutdownAll(); }
+});
+
+test('owned Escape recovers cancelled manual approval only at a pinned empty native prompt', async () => {
+  for (const change of ['none', 'input', 'hook']) {
+    const { manager, port, output } = await setup();
+    try {
+      assert.ok(port); const scope = { userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' as const };
+      manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        status: 'input_required', hookEvent: 'PermissionRequest', stateAt: Date.now() + 1000 }, 'owner');
+      assert.equal((await port.observe(scope)).kind, 'unknown', 'empty frame without owned Escape cannot dismiss a question');
+      output('\x1b[2J\x1b[3;1HWould you like to run this command?\x1b[4;1H\x1b[1m›\x1b[0m 1. Yes, proceed\x1b[6;1HPress enter to confirm or esc to cancel\x1b[4;3H');
+      await manager.sendSessionKeys('worker', 'owner', ['escape']);
+      assert.notEqual((await port.observe(scope)).kind, 'ready', 'Escape alone cannot dismiss a still-visible question');
+      if (change === 'input') await manager.sendSessionKeys('worker', 'owner', ['backspace']);
+      if (change === 'hook') manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        status: 'input_required', hookEvent: 'PermissionRequest', stateAt: Date.now() + 2000 }, 'owner');
+      output(screen); await new Promise<void>(resolve => setImmediate(resolve));
+      const ready = await port.observe(scope);
+      if (change !== 'none') { assert.equal(ready.kind, 'unknown', 'subsequent input or hook invalidates Escape proof'); continue; }
+      assert.equal(ready.kind, 'ready'); if (ready.kind !== 'ready') return;
+      assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'input-required', 'no lifecycle is fabricated');
+      assert.equal(manager.automation.readTurnEvidence(scope).kind, 'unavailable', 'no accepted turn or completion is fabricated');
+      manager.automation.setDraftVeto('owner', 'worker', { surfaceId: 'peek', revision: 1, hasDraft: true });
+      assert.throws(() => port.assertCurrent(ready));
+      manager.automation.setDraftVeto('owner', 'worker', { surfaceId: 'peek', revision: 2, hasDraft: false });
+      manager.automation.claimNativeAction(ready.identity, 'rule', 'retry');
+      assert.equal((await port.submitPrompt({ expected: ready, prompt: 'Read marker.txt', submissionId: 'retry',
+        signal: new AbortController().signal, writeFence: (_phase, write) => {
+          manager.automation.verifyNativeAction(ready.identity, 'rule', 'retry'); port.assertCurrent(ready); write();
+        } })).kind, 'delivered');
+    } finally { await manager.shutdownAll(); }
+  }
 });
 
 test('human native edits, retained surface drafts and changed output invalidate ready tokens', async () => {

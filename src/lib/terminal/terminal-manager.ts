@@ -192,6 +192,7 @@ interface TerminalRuntime {
   generation: number;
   nativeInteractionRevision: number;
   nativePaneToken?: string;
+  nativeApprovalEscape?: { inputRevision: number; hookRevision: number };
   nativeVersion?: Promise<string>;
   nativePromptWrite?: { expected: ReadyPromptEvidence; hookRevision: number; prompt: string };
   sequence: number;
@@ -556,7 +557,8 @@ export class TerminalManager {
     if (state.state === 'unknown' && !this.hasNativeLaunchIdentity(runtime, identity)
       && !(runtime.lastSessionState?.status === 'idle' && runtime.lastSessionState.hookEvent === 'SessionStart'))
       return { kind: 'unknown' as const, reason: 'native-lifecycle-unverified' };
-    if (state.writer || state.state === 'input-required' || runtime.prefillPending || runtime.semanticPromptPending)
+    const manualEscape = state.state === 'input-required' && this.hasManualApprovalEscape(runtime, identity);
+    if (state.writer || (state.state === 'input-required' && !manualEscape) || runtime.prefillPending || runtime.semanticPromptPending)
       return { kind: 'unknown' as const, reason: 'native-input-unavailable' };
     runtime.nativeVersion ??= (this.managerOptions.nativeProviderVersion
       ? this.managerOptions.nativeProviderVersion(identity.provider, scope.userId, scope.agentEnvironment)
@@ -567,6 +569,7 @@ export class TerminalManager {
     // An observation cannot survive an asynchronous version/parser wait.
     if (identity.observationRevision !== runtime.sequence + runtime.nativeInteractionRevision) return { kind: 'unknown' as const, reason: 'native-observation-changed' };
     try { this.automation.assertNativeIdentity(identity); } catch { return { kind: 'unknown' as const, reason: 'native-identity-changed' }; }
+    if (manualEscape && !this.hasManualApprovalEscape(runtime, identity)) return { kind: 'unknown' as const, reason: 'native-input-changed' };
     if ((starting || state.state === 'unknown') && !this.hasNativeLaunchIdentity(runtime, identity)
       && !(runtime.lastSessionState?.status === 'idle' && runtime.lastSessionState.hookEvent === 'SessionStart'))
       return { kind: 'unknown' as const, reason: 'native-lifecycle-unverified' };
@@ -581,6 +584,13 @@ export class TerminalManager {
     return !!pane && pane.userId === identity.userId && pane.sessionId === identity.sessionId
       && pane.terminalId === identity.terminalId && pane.providerId === identity.provider
       && runtime.generation === identity.generation && runtime.sessionId === identity.sessionId;
+  }
+
+  private hasManualApprovalEscape(runtime: TerminalRuntime, identity: NativeRuntimeIdentity): boolean {
+    const escape = runtime.nativeApprovalEscape;
+    return !!escape && escape.inputRevision === identity.inputRevision && escape.hookRevision === runtime.nativeInteractionRevision
+      && this.automation.readNativeState(identity.userId, identity.sessionId)?.nativeApprovalId === null
+      && !this.nativeApprovals.current(identity.userId, identity.sessionId);
   }
 
   private assertNativeInteraction(expected: ReadyPromptEvidence | NativeApprovalRequest): void {
@@ -598,7 +608,8 @@ export class TerminalManager {
         || !this.automation.canSuperviseNativeApproval(identity.userId, identity.sessionId, expected)) throw new Error('Native approval changed.');
       return;
     }
-    if (state.state !== 'turn-complete' && !(['starting', 'unknown'].includes(state.state) && this.hasNativeLaunchIdentity(runtime, identity)) && !(state.state === 'unknown'
+    if (state.state !== 'turn-complete' && !(state.state === 'input-required' && this.hasManualApprovalEscape(runtime, identity))
+      && !(['starting', 'unknown'].includes(state.state) && this.hasNativeLaunchIdentity(runtime, identity)) && !(state.state === 'unknown'
       && runtime.lastSessionState?.status === 'idle' && runtime.lastSessionState.hookEvent === 'SessionStart')) throw new Error('Native input is busy.');
     const transaction = runtime.nativePromptWrite;
     if (transaction) {
@@ -1576,6 +1587,15 @@ export class TerminalManager {
 
   private observeAgentInterruptInput(runtime: TerminalRuntime, data: string): void {
     const baseline = runtime.lastSessionState;
+    if (data === '\x1b' && runtime.interruptInputPolicy === 'single-escape' && runtime.sessionId && baseline?.status === 'input_required') {
+      const state = this.automation.readNativeState(runtime.userId, runtime.sessionId);
+      // This records owned human Escape, not cancellation/completion. Readiness still
+      // requires a pinned empty frame; held native approvals and changed input/hooks veto it.
+      runtime.nativeApprovalEscape = state?.state === 'input-required' && state.nativeApprovalId === null
+        && !this.nativeApprovals.current(runtime.userId, runtime.sessionId)
+        ? { inputRevision: state.identity.inputRevision, hookRevision: runtime.nativeInteractionRevision } : undefined;
+      return;
+    }
     if (
       data !== '\x1b'
       || runtime.interruptInputPolicy !== 'single-escape'
