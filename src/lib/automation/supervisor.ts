@@ -1,8 +1,8 @@
 import { AUTORUN_BOUNDS, validateSupervisorFinalResult, type SupervisorSelection, type SupervisorResult,
-  type SupervisorFailureKind } from './autorun-contracts';
+  type SupervisorCapability, type SupervisorFailureKind } from './autorun-contracts';
 
 export type SupervisorProcessOutput = {
-  selection: SupervisorSelection; cliVersion: string; invocationId: string;
+  selection: SupervisorSelection; capability?: SupervisorCapability; cliVersion: string; invocationId: string;
   packet: { criteria: { id: string }[]; context: { items: { id: string }[] } };
   stdout: Buffer; stderr: Buffer; exitCode: number | null; quiescent: boolean; cancelled: boolean; timedOut: boolean; overflow?: boolean;
 };
@@ -68,8 +68,8 @@ export function parseSupervisorResult(args: SupervisorProcessOutput): Supervisor
     try { decision = JSON.parse(messages[0].item!.text!); } catch { return fail('invalid-output'); }
     finality = { provider: 'codex', event: 'turn.completed', structuredDecisionCount: 1, executableReceipts: 0 };
   }
-  const result = validateSupervisorFinalResult({ kind: 'ok', decision, selection: args.selection, cliVersion: args.cliVersion,
+  const result = validateSupervisorFinalResult({ kind: 'ok', capability: args.capability, decision, selection: args.selection, cliVersion: args.cliVersion,
     effectiveSelection, invocationId: args.invocationId, settlement: { exitCode: 0, quiescent: true }, finality },
-  { selection: args.selection, criterionIds: args.packet.criteria.map(c => c.id), evidenceIds: args.packet.context.items.map(i => i.id) });
+  { selection: args.selection, capability: args.capability, criterionIds: args.packet.criteria.map(c => c.id), evidenceIds: args.packet.context.items.map(i => i.id) });
   return result.success ? result.data : fail('invalid-output');
 }

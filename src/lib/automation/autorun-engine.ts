@@ -111,7 +111,7 @@ export class AutorunEngine {
     const timeout=setTimeout(()=>controller.abort(),Math.max(1,deadlineAt-this.now));timeout.unref();
     let result:SupervisorResult;
     try { result=await this.service.autorun.provider(d.packetSelection.provider).generateSupervisorDecision({userId:a.ownerUserId,agentEnvironment:a.agentEnvironment,
-      selection:d.packetSelection,invocationId,trustedInstructions:TRUSTED_INSTRUCTIONS,packet:d.detail.packet,outputSchema:SUPERVISOR_DECISION_JSON_SCHEMA,deadlineAt,signal:controller.signal}); }
+      selection:d.packetSelection,capability:capability.capability,invocationId,trustedInstructions:TRUSTED_INSTRUCTIONS,packet:d.detail.packet,outputSchema:SUPERVISOR_DECISION_JSON_SCHEMA,deadlineAt,signal:controller.signal}); }
     catch { result={kind:'provider-error',code:'SUPERVISOR_PROCESS_UNCERTAIN',invocationId,settlement:{exitCode:null,quiescent:false}}; }
     finally {clearTimeout(timeout);}
     const validated=supervisorResultSchema.safeParse(result);
@@ -126,7 +126,7 @@ export class AutorunEngine {
       if (this.now>=deadlineAt) this.pause(a,'SUPERVISOR_TIMEOUT');
       return;
     }
-    const final=validateSupervisorFinalResult(result,{selection:d.packetSelection,criterionIds:packet.criteria.map(c=>c.id),evidenceIds:packet.context.items.map(i=>i.id)});
+    const final=validateSupervisorFinalResult(result,{selection:d.packetSelection,capability:capability.capability,criterionIds:packet.criteria.map(c=>c.id),evidenceIds:packet.context.items.map(i=>i.id)});
     if (!final.success) { this.failure(a,retained,result);return; }
     const captureTimer=setTimeout(()=>controller.abort(),Math.max(1,Math.min(AUTORUN_BOUNDS.flushWaitMs,deadlineAt-this.now,a.limits.expiresAt-this.now)));captureTimer.unref?.();
     let refreshed:Awaited<ReturnType<typeof runtime.captureAnalysisContext>>;
