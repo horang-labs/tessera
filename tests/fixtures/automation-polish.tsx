@@ -1,17 +1,26 @@
 // Real shared manager/forms; synthetic HTTP/ownership only. Never a provider/PTY proof.
 import { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { focusAutomationSessionDraft } from '../../src/components/automation/automation-entry';
+import { useTerminalSessionStore } from '../../src/stores/terminal-session-store';
+import { useTabStore } from '../../src/stores/tab-store';
+import { usePanelStore } from '../../src/stores/panel-store';
 import { Header } from '../../src/components/chat/header';
 import { AutomationManager } from '../../src/components/automation/automation-manager';
 import { createAutomationStore } from '../../src/stores/automation-store';
 import { useSessionStore } from '../../src/stores/session-store';
 import { applySessionInputOwnership } from '../../src/lib/automation/client-state';
+import ProviderDefaultSessionSettings from '../../src/components/settings/provider-default-session-settings';
+import { useSettingsStore } from '../../src/stores/settings-store';
+import { decodeAutomation, type AutomationV2 } from '../../src/lib/automation/autorun-contracts';
+import { autorunInput } from './autorun-contracts';
 import { i18n } from '../../src/lib/i18n';
 import { autorunPreviewFixture } from './autorun-contracts';
-import { automationNow, ownershipFixture } from './automation';
+import { automationNow, ownershipFixture, automationFixture } from './automation';
 import type { ProjectGroup } from '../../src/types/chat';
 const query = new URLSearchParams(location.search);
-Date.now = () => automationNow;
+let fixtureNow = automationNow;
+Date.now = () => fixtureNow;
 await i18n.changeLanguage(query.get('language') ?? 'en');
 document.documentElement.classList.toggle('dark', query.get('theme') !== 'light');
 const project: ProjectGroup = { encodedDir: 'tessera-dev', displayName: 'Tessera', decodedPath: '/fixture', isCurrent: true,
@@ -30,25 +39,61 @@ const scope = query.has('schedule') ? { worktreeId: 'wt-1' } : { sessionId: 'ses
 const ownership = query.has('held') ? { ...ownershipFixture(), mode: 'draining' as const } : { ...ownershipFixture(), mode: 'human' as const, automationId: null };
 applySessionInputOwnership(ownership);
 const writes: unknown[] = [];
+const previewRequests: unknown[] = [];
+(window as Window & { fixturePreviewRequests: unknown[] }).fixturePreviewRequests = previewRequests;
+window.addEventListener('fixture-terminal-state', event => { fixtureNow += 1; useTerminalSessionStore.getState().applySessionState((event as CustomEvent).detail); });
+if(query.has('gate-events')) useTerminalSessionStore.getState().applySessionState({type:'session_state',sessionId:'session-1',terminalId:'term-1',status:'running',hookEvent:'ControlPromptSubmit',stateAt:1});
+let savedRule: AutomationV2 | undefined;
 const fixtureHttp: typeof fetch = async (url, init) => {
   const path = String(url);
-  if (path.startsWith('/api/providers/session-options')) return Response.json({ modelOptions: [{ value: 'fixture-model', label: 'Fixture model', isDefault: true, defaultReasoningEffort: 'high', supportedReasoningEfforts: [{ value: 'high', label: 'High' }], serviceTiers: [] }] });
+  if (path.startsWith('/api/providers/session-options')) {
+    const provider = new URL(path, location.origin).searchParams.get('providerId');
+    const entries = provider === 'claude-code' ? [{value:'opus',label:'Opus (Settings alias)'},{value:'claude-opus-4-6',label:'Claude Opus 4.6'}] : [{value:'gpt-6.1-sol',label:'GPT-6.1-Sol'},{value:'gpt-6-astra',label:'GPT-6-Astra'}];
+    return Response.json({providerId:provider,displayName:provider,supportsReasoningEffort:true,runtimeEffortChange:true,permissionMappings:[],modeOptions:[],accessOptions:[],planLocksAccess:false,modelOptions:entries.map((entry,index)=>({...entry,isDefault:index===0,defaultReasoningEffort:'high',supportedReasoningEfforts:['low','high','xhigh'].map(value=>({value,label:value,description:''})),serviceTiers:provider==='codex'?[{value:'priority',label:'Fast',description:''}]:[]}))});
+  }
   if (path.endsWith('autorun-preview')) {
+    previewRequests.push(JSON.parse(String(init?.body ?? '{}')));
     if (query.has('loading')) await new Promise(resolve => setTimeout(resolve, 60000));
+    if ((query.has('resume-error') || query.has('heartbeat-error') || query.has('heartbeat-edit')) && writes.length) await new Promise(resolve => setTimeout(resolve, 1500));
+    if (query.has('late')) await new Promise(resolve => setTimeout(resolve, 1500));
     if (query.has('preview-error')) return Response.json({ error: { code: 'STALE_CONTEXT' } }, { status: 409 });
     const requested = JSON.parse(String(init?.body ?? '{}')).supervisor;
+    if(query.has('provider-error')) return Response.json({...preview,supervisorCheck:{selection:requested ?? preview.recommendedSupervisor,status:'unavailable',reason:'version'},supervisorOptions:[],recommendedSupervisor:null,readiness:{kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'unsupported-version'}});
+    if (requested?.model === 'opus') return Response.json({...preview,supervisorCheck:{selection:requested,status:'unavailable',reason:'selection'},supervisorOptions:[],recommendedSupervisor:null,readiness:{kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'unsupported-version'}});
     if (requested) return Response.json({ ...preview, supervisorCheck: { selection: requested, status: query.has('unsupported') ? 'unavailable' : 'available', reason: query.has('unsupported') ? 'selection' : null },
       supervisorOptions: query.has('unsupported') ? [] : [{ ...preview.supervisorOptions[0], selection: requested }], recommendedSupervisor: query.has('unsupported') || requested.serviceTier === 'fast' ? null : requested });
     return Response.json(preview);
   }
+  if (path.endsWith('/state') && (query.has('resume-error') || query.has('heartbeat-edit'))) {
+    writes.push({method:init?.method,path});
+    preview.readiness = {kind:'idle',reason:'consumed-boundary'} as typeof preview.readiness;
+    return Response.json({error:{code:'INPUT_BOUNDARY_UNPROVEN'}},{status:409});
+  }
   if (init?.method && init.method !== 'GET') {
     writes.push({ method: init.method, path, body: JSON.parse(String(init.body ?? '{}')) });
+    if(query.has('heartbeat-error')) {preview.readiness={kind:'idle',reason:'consumed-boundary'} as typeof preview.readiness;return Response.json({error:{code:'INPUT_BOUNDARY_UNPROVEN'}},{status:409});}
     return Response.json({ error: { code: 'REVISION_CONFLICT' } }, { status: 409 });
   }
-  return Response.json({ items: [], nextCursor: null });
+  if (path === '/api/automations/rule-1' && savedRule) return Response.json({automation:savedRule,inputOwnership:ownership,inFlightRunId:null});
+  return Response.json({ items: path.startsWith('/api/automations?') && savedRule ? [savedRule] : [], nextCursor: null });
 };
 window.fetch = fixtureHttp;
 const store = createAutomationStore(scope, fixtureHttp);
+useSettingsStore.setState(state=>({settings:{...state.settings,agentEnvironment:'wsl'}}));
+if(query.has('heartbeat-edit')) {
+  const decoded=decodeAutomation({...automationFixture(),version:2,mode:'heartbeat',state:'paused',dispatchCount:3});
+  if(!decoded.success) throw Error('Invalid saved Heartbeat fixture');
+  savedRule=decoded.data;
+  store.setState({details:{'rule-1':{automation:decoded.data,inputOwnership:ownership,inFlightRunId:null}},view:{selectedId:'rule-1',setup:false,tab:'overview'}});
+}
+if(query.has('resume-error')) {
+  const {enabled:_enabled,...input}=autorunInput(); void _enabled;
+  const {prompt:_prompt,...base}=automationFixture(); void _prompt;
+  const decoded=decodeAutomation({...base,...input,state:'paused',latestDecisionId:null,analysisCount:2,dispatchCount:1,autorunStatus:'paused',attention:null,autorun:{...input.autorun,objective:preview.objective,criterionOrigin:'verified-human'}});
+  if(!decoded.success) throw Error('Invalid saved fixture');
+  savedRule=decoded.data;
+  store.setState({details:{'rule-1':{automation:decoded.data,inputOwnership:ownership,inFlightRunId:null}},view:{selectedId:'rule-1',setup:true,tab:'overview'}});
+}
 await store.getState().refresh();
 function Fixture() {
   const [open, setOpen] = useState(false);
@@ -56,11 +101,22 @@ function Fixture() {
   const [_, update] = useState(0);
   return <main data-automation-polish-fixture="synthetic" className="p-4 text-sm text-(--text-primary)">
     {!query.has('schedule') && <section aria-label="Shared Session toolbar" className="mb-4 border border-(--divider)"><Header sessionId="session-1" panelId="fixture-panel" isSinglePanel peek={query.has('peek') ? { onClose: () => {}, closeButtonRef } : undefined} /></section>}
+    <details data-settings-catalog><summary>Settings catalog fixture</summary><ProviderDefaultSessionSettings /></details>
     <p>FAKE transport/runtime · shared React UI · no provider/PTY</p>
     <button onClick={() => setOpen(true)}>Open fixture manager</button>
     <button onClick={() => update(n => n+1)}>Inspect fixture writes</button>
     <output aria-label="Fixture writes">{JSON.stringify(writes)}</output>
-    {open && <AutomationManager scope={scope} store={store} onClose={() => setOpen(false)} onOpenSession={() => setOpen(false)} />}
+    {open && <AutomationManager scope={scope} store={store} initialId={query.has('resume-error') || query.has('heartbeat-edit')?'rule-1':undefined} initialResume={query.has('resume-error')} onClose={() => setOpen(false)} onOpenSession={() => setOpen(false)} />}
   </main>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture />);
+function FocusFixture() {
+  const [tab] = useState(()=>useTabStore.getState().createTab('session-1'));
+  const panel = usePanelStore(state=>state.tabPanels[tab].activePanelId);
+  const invalidate = () => { focusAutomationSessionDraft('session-1'); usePanelStore.setState(state=>({tabPanels:{...state.tabPanels,[tab]:{...state.tabPanels[tab],panels:{[panel]:{id:panel,sessionId:'session-2'}}}}})); };
+  return <main data-automation-polish-fixture="synthetic"><textarea aria-label="Duplicate Peek composer" data-session-input="session-1" />
+    <div data-panel-wrapper="true" data-panel-id="inactive" data-active="false"><textarea aria-label="Inactive normal composer" data-session-input="session-1" /></div>
+    <div data-panel-wrapper="true" data-panel-id={panel} data-active="true"><textarea aria-label="Active normal composer" data-session-input="session-1" /></div>
+    <button onClick={()=>focusAutomationSessionDraft('session-1')}>Focus recovered draft</button><button onClick={invalidate}>Change Session before focus</button>
+  </main>;
+}
+createRoot(document.getElementById('root')!).render(query.has('focus') ? <FocusFixture /> : <Fixture />);

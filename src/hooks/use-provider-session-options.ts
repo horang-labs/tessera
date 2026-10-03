@@ -27,6 +27,7 @@ interface UseProviderSessionOptionsResult {
   data: ProviderSessionOptions | null;
   isLoading: boolean;
   error: string | null;
+  retry: () => void;
 }
 
 export function useProviderSessionOptions(
@@ -38,10 +39,12 @@ export function useProviderSessionOptions(
   const cached = cacheKey ? cache.get(cacheKey) ?? null : null;
   const [state, setState] = useState<{
     cacheKey: string | null;
+    refreshNonce: number;
     data: ProviderSessionOptions | null;
     error: string | null;
   }>({
     cacheKey,
+    refreshNonce,
     data: cached,
     error: null,
   });
@@ -82,6 +85,7 @@ export function useProviderSessionOptions(
         cache.set(cacheKey, result);
         setState({
           cacheKey,
+          refreshNonce,
           data: result,
           error: null,
         });
@@ -93,6 +97,7 @@ export function useProviderSessionOptions(
 
         setState({
           cacheKey,
+          refreshNonce,
           data: null,
           error: err.message,
         });
@@ -103,10 +108,10 @@ export function useProviderSessionOptions(
     };
   }, [providerId, agentEnvironment, cacheKey, cached, refreshNonce]);
 
-  const isCurrentState = state.cacheKey === cacheKey;
+  const isCurrentState = state.cacheKey === cacheKey && state.refreshNonce === refreshNonce;
   const data = cached ?? (isCurrentState ? state.data : null);
   const error = providerId && !cached && isCurrentState ? state.error : null;
   const isLoading = Boolean(providerId && !cached && (!isCurrentState || (!state.data && !state.error)));
 
-  return { data, isLoading, error };
+  return { data, isLoading, error, retry: () => invalidateProviderSessionOptionsClientCache(providerId) };
 }

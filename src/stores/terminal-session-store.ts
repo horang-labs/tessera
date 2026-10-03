@@ -11,6 +11,8 @@ export interface TerminalSessionState {
   preview?: string;
   interruptInputPolicy?: TerminalInterruptInputPolicy;
   updatedAt: number;
+  /** Server time of an admission-relevant lifecycle event; an invalidation hint, not authorization. */
+  automationGateStateAt?: number;
   /**
    * 이 세션의 런타임이 종료됐다는 명시 신호(terminal_session_runtime running=false /
    * runtime snapshot 부재)를 받은 뒤인지. hook curl은 fire-and-forget이라 런타임이
@@ -78,8 +80,12 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
     ) {
       return false;
     }
+    const automationGateStateAt = (msg.status === 'input_required' || ['UserPromptSubmit', 'ControlPromptSubmit', 'SessionStart', 'SessionEnd', 'Stop', 'StopFailure'].includes(msg.hookEvent))
+      ? msg.stateAt ?? current?.automationGateStateAt
+      : current?.automationGateStateAt;
     if (
       current
+      && current.automationGateStateAt === automationGateStateAt
       && current.status === msg.status
       && current.hookEvent === msg.hookEvent
       && current.terminalId === msg.terminalId
@@ -98,6 +104,7 @@ export const useTerminalSessionStore = create<TerminalSessionStore>((set) => ({
           preview: msg.preview,
           interruptInputPolicy: msg.interruptInputPolicy,
           updatedAt: Date.now(),
+          automationGateStateAt,
           ...(current?.runtimeExited ? { runtimeExited: true } : {}),
         },
       },

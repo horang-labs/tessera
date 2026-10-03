@@ -51,3 +51,12 @@ export function revealAutomationField(event: SyntheticEvent<HTMLFormElement>) {
     if (parent instanceof HTMLDetailsElement) parent.open = true;
   }
 }
+
+/** Compact settings rows keep a visible label beside the editable value and unit. */
+export function AutomationSettingRow({ label, children, unit, hint }: { label: string; children: ReactNode; unit?: string; hint?: ReactNode }) {
+  return <label className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs text-(--text-secondary)">
+    <span>{label}{hint && <span className="mt-1 block text-[11px] font-normal">{hint}</span>}</span>
+    <span className="flex min-w-0 items-center gap-2">{children}{unit && <span>{unit}</span>}</span>
+  </label>;
+}
+export const automationNumberField = `${automationField} w-20 px-2 text-right`;
