@@ -1,5 +1,6 @@
 'use client';
 import { useI18n } from '@/lib/i18n';
+import { automationDisclosure } from './automation-layout';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 export function AutomationReason({ reason, summary, context='rule' }: { reason: string | null; summary?: string | null; context?: 'rule'|'request' }) {
   const { t } = useI18n();
@@ -9,5 +10,5 @@ export function AutomationReason({ reason, summary, context='rule' }: { reason: 
     : /APPROVAL|PERMISSION|QUESTION/.test(reason) ? 'reasonApproval'
     : /LIMIT|EXPIR/.test(reason) ? 'reasonLimit'
     : /UNCERTAIN|UNKNOWN/.test(reason) ? 'reasonUnknown' : context==='request'?'reasonRequest':'reasonPaused';
-  return <div className="text-xs">{summary && <p className="whitespace-pre-wrap">{summary}</p>}<p>{t(`automation.${key}`)}</p><details><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')}>{t('automation.diagnostics')}</summary><code>{reason}</code></details></div>;
+  return <div className="text-xs leading-relaxed text-(--text-secondary)">{summary && <p className="whitespace-pre-wrap">{summary}</p>}<p>{t(`automation.${key}`)}</p><details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')}>{t('automation.diagnostics')}</summary><code className="break-words">{reason}</code></details></div>;
 }

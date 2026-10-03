@@ -8,6 +8,7 @@ import { useI18n } from '@/lib/i18n';
 import { automationTierOptions } from '@/lib/automation/service-tier';
 import type { ProviderModelOption } from '@/lib/cli/provider-session-options';
 import { automationButton, automationPrimaryButton } from './ownership-actions';
+import { AutomationField as Field, automationField as fieldClass, AutomationViewport, AutomationFacts, AutomationTime, automationDisclosure, revealAutomationField } from './automation-layout';
 
 export function localDateInput(at: number) {
   const date = new Date(at);
@@ -17,8 +18,6 @@ export function localDue(at: number) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'long' }).format(at);
 }
 export function suggestSessionTitle(prompt: string) { return prompt.trim().split(/\r?\n/)[0].replace(/\s+/g, ' ').slice(0,120); }
-const fieldClass = 'w-full rounded border border-(--divider) bg-(--input-bg) p-2 text-sm';
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="grid gap-1 text-xs">{label}{children}</label>; }
 
 export function AutomationTierSelect({model,value,onChange}:{model:ProviderModelOption|undefined;value:string;onChange:(value:string)=>void}) {
   return <select {...telemetryClickAttributes('automation.form.tier','automation')} className={fieldClass} name="tier" value={value} onChange={e=>onChange(e.target.value)}>
@@ -26,8 +25,8 @@ export function AutomationTierSelect({model,value,onChange}:{model:ProviderModel
   </select>;
 }
 
-export function AutomationForm({ scope, previous, onSave, onCancel, defaultName, draft, onDraft, replacing = false }: {
-  scope: AutomationScope; previous?: Automation; defaultName?: string; draft?: unknown; onDraft?: (draft: Record<string,string>) => void;
+export function AutomationForm({ scope, previous, onSave, onCancel, defaultName, draft, onDraft, replacing = false, intro, footnote }: {
+  scope: AutomationScope; previous?: Automation; defaultName?: string; intro?: ReactNode; footnote?: ReactNode; draft?: unknown; onDraft?: (draft: Record<string,string>) => void;
   replacing?: boolean; onSave: (input: AutomationInput, previous?: Automation) => Promise<boolean>; onCancel: () => void;
 }) {
   const { t } = useI18n();
@@ -66,7 +65,7 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
   const summaryExpiry = new Date(expiryValue).getTime();
   const [error,setError] = useState(false);
   const [saving,setSaving] = useState(false);
-  return <form className="grid gap-4" onChange={event => onDraft?.(Object.fromEntries([...new FormData(event.currentTarget)].map(([key,value]) => [key,String(value)])))} onSubmit={async event => {
+  return <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onInvalidCapture={revealAutomationField} onChange={event => onDraft?.(Object.fromEntries([...new FormData(event.currentTarget)].map(([key,value]) => [key,String(value)])))} onSubmit={async event => {
     event.preventDefault();
     const fields = new FormData(event.currentTarget);
     const text = (key: string) => String(fields.get(key) ?? '');
@@ -79,17 +78,26 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
     if(!valid.success){setError(true);return;}
     setSaving(true);setError(false);try { await onSave(valid.data,previous); } finally {setSaving(false);}
   }}>
+    <AutomationViewport footer={<>
+
+      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationPrimaryButton} type="submit" disabled={saving || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.saveChanges' : wake ? 'automation.start' : 'automation.startSchedule')}</button>
+      {!previous && !replacing && <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationButton} type="submit" value="later" disabled={saving || (!wake && !selectionSupported)}>{t('automation.save')}</button>}
+      <button {...telemetryClickAttributes('automation.form.cancel','automation')} className={automationButton} type="button" onClick={onCancel}>{t('automation.cancel')}</button>
+
+    </>}>
+    {intro}
+    {wake && <p className="text-xs text-(--text-secondary)">{t('automation.fixedHelp')}</p>}
     <Field label={t('automation.prompt')}><textarea {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="prompt" rows={4} required value={prompt} onChange={e=>setPrompt(e.target.value)} /></Field>
     {!wake && <>
       <Field label={t('automation.sessionTitle')}><input {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="title" required maxLength={120} value={suggestedTitle} onChange={e=>setTitle(e.target.value)} /></Field>
       <Field label={t('automation.trigger')}><select {...telemetryClickAttributes('automation.form.trigger','automation')} className={fieldClass} name="trigger" value={kind} onChange={e=>{const next=e.target.value as 'once'|'interval';setKind(next);setMaxValue(next==='once'?'1':saved.max ?? String(previous?.limits.maxDispatches ?? getAutomationDefaults(next,now).limits.maxDispatches));}}><option value="once">{t('automation.once')}</option><option value="interval">{t('automation.interval')}</option></select></Field>
       <Field label={t('automation.at')}><input {...telemetryClickAttributes('automation.form.at','automation')} className={fieldClass} name="at" type="datetime-local" required value={atValue} onChange={e=>setAtValue(e.target.value)} /></Field>
-      {Number.isFinite(previewAt) && <p className="text-xs break-words" role="status">{t('automation.next')}: {localDue(previewAt)} · UTC: <time dateTime={new Date(previewAt).toISOString()}>{new Date(previewAt).toISOString()}</time></p>}
+      {Number.isFinite(previewAt) && <p className="text-xs break-words text-(--text-secondary)" role="status">{t('automation.next')}: <AutomationTime at={previewAt} /> · UTC: <time dateTime={new Date(previewAt).toISOString()}>{new Date(previewAt).toISOString()}</time></p>}
       {kind === 'interval' && <Field label={t('automation.every')}><input {...telemetryClickAttributes('automation.form.every','automation')} className={fieldClass} name="every" type="number" min={1} max={43200} required value={everyValue} onChange={e=>setEveryValue(e.target.value)} /></Field>}
       <p className="text-xs break-words">{t('automation.saved')}: {provider} · {resolvedModel || t('automation.choose')} · {resolvedEffort || t('automation.choose')} · {resolvedTier ?? ''}</p>
     </>}
-    {wake && <p role="status" className="text-xs break-words">{t('automation.heartbeatTimingSummary',{seconds:delayValue,max:maxValue})} · {t('automation.budgetExpiry')}: {Number.isFinite(summaryExpiry) ? localDue(summaryExpiry) : t('automation.invalid')}</p>}
-    <details open={!wake && !selectionSupported}><summary {...telemetryClickAttributes('automation.form.advanced','automation')}>{t('automation.advanced')}</summary><div className="grid gap-3 mt-2">
+    {wake && <><p role="status" className="text-sm text-(--text-secondary)">{t('automation.heartbeatTimingSummary',{seconds:delayValue,max:maxValue})}</p><AutomationFacts items={[{ label: t('automation.max'), value: maxValue }, { label: t('automation.budgetExpiry'), value: <AutomationTime at={summaryExpiry} /> }]} /></>}
+    <details className={automationDisclosure} open={!wake && !selectionSupported}><summary {...telemetryClickAttributes('automation.form.advanced','automation')}>{t('automation.advanced')}</summary><div className="grid gap-3 mt-2">
       <Field label={t('automation.name')}><input {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="name" required maxLength={120} defaultValue={saved.name ?? previous?.name ?? defaultName ?? t('automation.new')} /></Field>
       {!wake && <div className="grid gap-3 sm:grid-cols-2">
         <Field label={t('automation.provider')}><select {...telemetryClickAttributes('automation.form.provider','automation')} className={fieldClass} name="provider" value={provider} onChange={e=>{setProvider(e.target.value as Provider);setModel('');setEffort('');setTier('');}}><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select></Field>
@@ -103,12 +111,10 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
     </div></details>
     {options.isLoading && !wake && <p role="status">{t('automation.loading')}</p>}
     {options.error && !wake && <p role="alert">{t('automation.adapter')}</p>}
-    <p className="text-xs">{t('automation.permissions')}</p>{error && <p role="alert">{t('automation.invalid')}</p>}
+    <p className="text-xs text-(--text-secondary)">{t('automation.permissions')}</p>{error && <p role="alert">{t('automation.invalid')}</p>}
     {replacing && <p>{t('automation.replaceHelp')}</p>}
-    <div className="sticky bottom-0 flex flex-wrap gap-2 bg-(--chat-bg) py-2">
-      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationPrimaryButton} type="submit" disabled={saving || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.saveChanges' : wake ? 'automation.start' : 'automation.startSchedule')}</button>
-      {!previous && !replacing && <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationButton} type="submit" value="later" disabled={saving || (!wake && !selectionSupported)}>{t('automation.save')}</button>}
-      <button {...telemetryClickAttributes('automation.form.cancel','automation')} className={automationButton} type="button" onClick={onCancel}>{t('automation.cancel')}</button>
-    </div>
+
+    {footnote && <div className="grid gap-1 text-xs text-(--text-secondary)">{footnote}</div>}
+    </AutomationViewport>
   </form>;
 }

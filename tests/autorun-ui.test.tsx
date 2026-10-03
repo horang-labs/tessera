@@ -104,7 +104,7 @@ test('objective heading attributes only verified sources or a nonblank explicit 
     const preview = autorunPreviewSchema.parse({ ...base, objective });
     const html = renderToStaticMarkup(createElement(AutorunPreviewView, { preview, objectiveOverride: override, onObjective: () => {}, onOpenSession: () => {} }));
     // Inspect the objective heading, not the edit field's explicit-input label.
-    assert.equal(html.match(/<p class="text-sm">([^<]+)<\/p>/)?.[1], `Objective · ${attribution}`);
+    assert.equal(html.match(/<h3[^>]*>([^<]+)<\/h3>/)?.[1], `Objective · ${attribution}`);
   }
 });
 
@@ -127,7 +127,10 @@ test('setup labels actual remaining instruction and analysis budgets and expiry 
       await i18n.changeLanguage(language);
       const html = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: createAutomationStore({ sessionId: 'session-1' }), onDone: () => {}, onOpenSession: () => {} }));
       assert.ok(html.includes(missing), `Missing objective attribution in ${language}`);
-      assert.ok(html.includes(`${instructions}: 3 · ${analyses}: 7 · ${expiry}: `), `Unlabeled or swapped remaining budgets in ${language}`);
+      for (const [label, value] of [[instructions, '3'], [analyses, '7']]) {
+        assert.match(html, new RegExp(`<dt[^>]*>${label}</dt>\\s*<dd[^>]*>${value}</dd>`), `Unlabeled or swapped budget in ${language}`);
+      }
+      assert.match(html, new RegExp(`<dt[^>]*>${expiry}</dt>\\s*<dd`));
       assert.doesNotMatch(html, /automation\.(remainingDispatches|remainingAnalyses|budgetExpiry|unverifiedGoal)/);
       const explicit = renderToStaticMarkup(createElement(AutorunPreviewView, { preview, objectiveOverride: 'User goal', onObjective: () => {}, onOpenSession: () => {} }));
       assert.ok(!explicit.includes(missing), `Explicit override retains missing attribution in ${language}`);
@@ -169,7 +172,7 @@ test('ended continuation limits offer review before editing, not unchanged Resum
     const html=renderToStaticMarkup(createElement(ContinuationResume,{rule:rule.data,preview,loading:false,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
     assert.match(html,/>Review limits and expiry<\/button>/);
     assert.doesNotMatch(html,/>Resume<\/button>/);
-    assert.match(html,/Instruction attempts: 10\/10/);
+    assert.match(html,/<dt[^>]*>Instruction attempts<\/dt>\s*<dd[^>]*>10\/10<\/dd>/);
   }
 });
 
