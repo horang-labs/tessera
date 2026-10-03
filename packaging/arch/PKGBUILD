@@ -1,0 +1,76 @@
+# Repackages the release .deb for Arch Linux. Adapted from the PKGBUILD shared in
+# horang-labs/tessera#519. packaging/arch/build-package.sh fills in pkgver and _upstream_ver,
+# then builds it next to a copy of the .deb that the same CI job just produced.
+
+pkgname=tessera-bin
+pkgver=0.0.0
+pkgrel=1
+pkgdesc='Open-source web and desktop workspace for AI coding agents (prebuilt binary)'
+arch=('x86_64')
+url='https://github.com/horang-labs/tessera'
+license=('AGPL-3.0-only')
+
+# electron-builder pacman runtime equivalents + Electron audio/UUID runtime libs.
+depends=(
+  'alsa-lib'
+  'at-spi2-core'
+  'gtk3'
+  'libnotify'
+  'libsecret'
+  'libxss'
+  'libxtst'
+  'nss'
+  'util-linux-libs'
+  'xdg-utils'
+)
+
+provides=('tessera')
+conflicts=('tessera')
+options=('!strip' '!debug')
+
+_upstream_ver='0.0.0'
+_deb="Tessera-${_upstream_ver}-linux-amd64.deb"
+
+source=("${_deb}")
+sha256sums=('SKIP')
+
+# makepkg/libarchive may try to unpack .deb sources automatically. Keep the
+# archive intact and unpack its ar + data.tar payload ourselves.
+noextract=("${_deb}")
+
+package() {
+  local deb_root="${srcdir}/deb-root"
+  local data_archive
+  local tessera_bin
+
+  rm -rf "${deb_root}"
+  mkdir -p "${deb_root}" "${pkgdir}"
+
+  # A .deb is an ar archive containing debian-binary, control.tar.*, data.tar.*.
+  bsdtar -xf "${srcdir}/${_deb}" -C "${deb_root}"
+
+  data_archive="$(find "${deb_root}" -maxdepth 1 -type f -name 'data.tar.*' -print -quit)"
+  if [[ -z "${data_archive}" ]]; then
+    error 'Could not find data.tar.* inside the Tessera .deb'
+    return 1
+  fi
+
+  bsdtar -xf "${data_archive}" -C "${pkgdir}"
+
+  # electron-builder's Debian post-install script normally creates this link.
+  # Do it at package-build time instead so pacman owns and removes it cleanly.
+  tessera_bin="$(find "${pkgdir}/opt" -mindepth 2 -maxdepth 3 -type f -name 'tessera' -print -quit 2>/dev/null)"
+  if [[ -z "${tessera_bin}" ]]; then
+    error 'Could not locate the packaged Tessera executable under /opt'
+    return 1
+  fi
+
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -sfn "${tessera_bin#"${pkgdir}"}" "${pkgdir}/usr/bin/tessera"
+
+  # Electron/Chromium sandbox. The upstream .deb performs the same chmod in
+  # its post-install script. Files installed by pacman are owned by root.
+  while IFS= read -r -d '' sandbox; do
+    chmod 4755 "${sandbox}"
+  done < <(find "${pkgdir}/opt" -type f -name 'chrome-sandbox' -print0)
+}

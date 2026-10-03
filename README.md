@@ -101,7 +101,8 @@ Download from [GitHub Releases](https://github.com/horang-labs/tessera/releases)
 |----------|-------|
 | Windows, including WSL | Portable `.exe` |
 | macOS | `.dmg` for Apple Silicon or Intel |
-| Linux beta | `.deb` |
+| Debian / Ubuntu beta | `.deb` |
+| Arch Linux beta (CachyOS, EndeavourOS, …) | `.pkg.tar.zst` — install with `sudo pacman -U` |
 
 Windows builds are not code-signed yet, so SmartScreen may show an unknown-publisher warning. macOS builds are signed and notarized with Apple Developer ID.
 
