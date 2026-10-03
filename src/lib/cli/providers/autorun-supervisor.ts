@@ -35,7 +35,13 @@ child.stdout.on('data',b=>{bytes+=b.length;if(bytes>2097152){child.kill('SIGTERM
 child.on('error',()=>{process.exitCode=1});child.on('close',code=>{try{
  if(code!==0||process.exitCode)throw Error('native catalog unavailable');
  const all=JSON.parse(Buffer.concat(output).toString('utf8')).models;
- const models=process.argv[3]?all.filter(m=>m.slug===process.argv[3]):all.slice(0,200);
+ // Candidate discovery must fit the owned stdout bound before reaching the server.
+// Keep full native metadata only for the exact selected-model attestation.
+const models=process.argv[3]?all.filter(m=>m.slug===process.argv[3]):all.slice(0,200).map(m=>({
+ slug:m.slug,display_name:m.display_name,visibility:m.visibility,supported_in_api:m.supported_in_api,
+ supported_reasoning_levels:Array.isArray(m.supported_reasoning_levels)?m.supported_reasoning_levels.map(l=>({effort:l?.effort})):undefined,
+ service_tiers:Array.isArray(m.service_tiers)?m.service_tiers.map(t=>({id:t?.id})):undefined,additional_speed_tiers:m.additional_speed_tiers
+}));
  if(process.argv[3]&&models.length!==1)throw Error('model unavailable');process.stdout.write(JSON.stringify({models,complete:all.length<=200})+'\n');
 }catch{process.exitCode=1}});
 `;
