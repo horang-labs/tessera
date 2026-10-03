@@ -10,6 +10,11 @@ export const nativeRuntimeIdentitySchema = z.object({
   providerConversationId: id.nullable(), inputRevision: count, observationRevision: count,
 }).strict();
 export type NativeRuntimeIdentity = z.infer<typeof nativeRuntimeIdentitySchema>;
+export type NativeGateSnapshot = { identity: Omit<NativeRuntimeIdentity, 'observationRevision'>;
+  state: 'starting' | 'running' | 'input-required' | 'turn-complete' | 'exited' | 'unknown'; live: boolean; writer: boolean;
+  backgroundWork: 'clear' | 'active' | 'unknown'; hasDraft: boolean;
+  ownershipMode: 'human' | 'armed' | 'draining' | 'recovery-required' | 'unavailable'; nativeApprovalId: string | null };
+
 const requestBase = {
   requestId: id, nativeRequestId: id, identity: nativeRuntimeIdentitySchema,
   requestHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -41,6 +46,10 @@ export type NativeWriteFence = (phase: 'begin' | 'complete', write: () => void) 
 /** Bound by the terminal-owned helper. Observations are evidence, never authority. */
 export interface NativeAutomationInteractionPort {
   observe(scope: InteractionScope): Promise<NativeInteraction>;
+  /** Release an unanswered hook to native manual handling; never undo/replay a committed response.
+   * expected fences a particular request; absent expected is an explicit owner Pause for this scope.
+   */
+  deferApproval?(args: { scope: InteractionScope; expected?: NativeApprovalRequest }): void;
   /** Synchronous identity/state check immediately before each fenced native action. */
   assertCurrent(expected: ReadyPromptEvidence | NativeApprovalRequest): void;
   submitPrompt(args: { expected: ReadyPromptEvidence; prompt: string; submissionId: string;

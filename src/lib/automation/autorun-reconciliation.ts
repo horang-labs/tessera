@@ -41,5 +41,32 @@ export class AutorunReconciliation {
         }
       }catch{/* Missing or failed observation keeps quarantine and never changes worker ownership. */}
     }
+    for (const value of this.service.repo.all()) for (const decision of value.activation?.approvals ?? []) {
+      const a = value.automation;
+      if (decision.quiescent === true || decision.phase === 'analysing' || a.target.kind !== 'wake-session' ||
+        (userId && a.ownerUserId !== userId) || (sessionId && a.target.sessionId !== sessionId)) continue;
+      try {
+        const owner = await this.service.authorize(a.ownerUserId), id = decision.invocationId;
+        if (owner.agentEnvironment !== a.agentEnvironment || this.pending.has(id) || this.pending.size >= 2) continue;
+        const port = this.service.deps.provider?.(decision.selection.provider);
+        if (!port?.observeSupervisorSettlement) continue;
+        const request = {version:1 as const,userId:owner.userId,agentEnvironment:owner.agentEnvironment,invocationId:id};
+        const task = Promise.resolve().then(() => port.observeSupervisorSettlement!(request));
+        this.pending.set(id,task); void task.then(()=>this.pending.delete(id),()=>this.pending.delete(id));
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        let result:unknown;
+        try { result = await Promise.race([task,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),AUTORUN_BOUNDS.flushWaitMs);timer.unref?.();})]); }
+        finally { clearTimeout(timer); }
+        const parsed = supervisorSettlementObservationSchema.safeParse(result);
+        if (!parsed.success || parsed.data.kind !== 'quiescent' || parsed.data.userId !== request.userId ||
+          parsed.data.agentEnvironment !== request.agentEnvironment || parsed.data.invocationId !== id || parsed.data.proof.closedAt < decision.startedAt) continue;
+        const current = this.service.repo.get(a.id), retained = current?.activation?.approvals.find(d=>d.id===decision.id);
+        if (retained && retained.phase !== 'analysing' && retained.quiescent !== true) {
+          retained.quiescent=true; retained.finishedAt ??= this.service.deps.now();
+          retained.settlementObservation=parsed.data; this.service.repo.save(current!);
+        }
+      } catch { /* Exact owned settlement only releases capacity, never replays an approval. */ }
+    }
+
   }
 }

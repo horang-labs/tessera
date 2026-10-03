@@ -13,7 +13,7 @@ import { execCli } from '../cli-exec';
 import { resolveProviderCliCommand } from '../provider-command';
 import { resolveClaudeTranscriptPath } from './claude-code/transcript-path';
 import { resolveCodexTranscriptPath } from './codex/transcript-path';
-import { checkSupervisorCapability, generateSupervisorDecision, discoverSupervisorCandidates } from './autorun-supervisor';
+import { checkSupervisorCapability, generateSupervisorDecision, generateSupervisorApprovalDecision, discoverSupervisorCandidates } from './autorun-supervisor';
 import { observeSupervisorSettlement, type SettlementDependencies } from './autorun-settlement';
 import type { AnalysisSnapshotRequest, AutorunEvidenceRequest, AutorunProviderPort } from './session-types';
 
@@ -64,6 +64,8 @@ export function createAutorunProviderPort(provider: 'claude-code' | 'codex', set
       : Promise.resolve({ kind: 'unavailable', code: 'CONTEXT_UNAVAILABLE', reason: 'binding-mismatch' }),
     checkSupervisorCapability: request => request.selection.provider === provider ? checkSupervisorCapability(request)
       : Promise.resolve({ kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason: 'selection' }),
+    generateSupervisorApprovalDecision: request => request.selection.provider === provider ? generateSupervisorApprovalDecision(request)
+      : Promise.resolve({ kind: 'unavailable', reason: 'selection', invocationId: request.invocationId, settlement: { exitCode: null, quiescent: true } }),
     generateSupervisorDecision: request => request.selection.provider === provider ? generateSupervisorDecision(request)
       : Promise.resolve({ kind: 'unsupported', code: 'SUPERVISOR_UNSUPPORTED', invocationId: request.invocationId, settlement: { exitCode: null, quiescent: true } }),
   };

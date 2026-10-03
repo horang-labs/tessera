@@ -40,12 +40,14 @@ export class AutorunEngine {
     for (const value of this.repo.all()) {
       const a=value.automation;
       if (!isAutorun(a) || a.state!=='enabled') continue;
+      if (value.activation?.approvals.some(d => d.quiescent !== true) || this.repo.activeRuns(a.id).length) continue;
       if (a.analysisCount>=a.autorun.maxAnalyses && !this.repo.decisions(a.id).some(d=>d.active)) { this.pause(a,'ANALYSIS_LIMIT');continue; }
       if (this.flights.has(a.id)) continue;
       const existing=this.repo.decisions(a.id).find(d=>d.active);
       if (existing && (existing.detail.retryAt===null || existing.detail.retryAt>this.now)) continue;
       if (!existing && (a.nextDueAt===null || a.nextDueAt>this.now || value.evidence?.kind!=='completed')) continue;
-      const occupied=this.repo.decisions().filter(d=>d.active && d.detail.attempts.some(at=>at.quiescent!==true)).length;
+      const occupied=this.repo.decisions().filter(d=>d.active && d.detail.attempts.some(at=>at.quiescent!==true)).length +
+        this.repo.all().flatMap(v => v.activation?.approvals ?? []).filter(d => d.quiescent !== true).length;
       const localOnly=[...this.flights.keys()].filter(id=>!this.repo.decisions(id).some(d=>d.active && d.detail.attempts.some(at=>at.quiescent!==true))).length;
       if (occupied+localOnly>=2) continue;
       const controller=new AbortController();

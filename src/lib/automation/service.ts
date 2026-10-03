@@ -1,3 +1,4 @@
+import { newActivation } from './activation-state';
 import { createHash, randomUUID } from 'node:crypto';
 import { type AutomationErrorCode, automationInputSchema, validateAutomationInput, type Automation, type AutomationInput, type ControlResult, type ControlResponse, type InputOwnership, type SessionSelectionSnapshot, type Target, sameSessionSelection } from './contracts';
 import type { AutomationRuntime, ArmEvidence } from './runtime-port';
@@ -24,6 +25,7 @@ export function asInput(a: Exclude<DurableAutomation, import('./autorun-contract
   return { name: a.name, enabled: a.state === 'enabled', target: a.target, trigger: a.trigger, prompt: a.prompt, limits: a.limits };
 }
 export class AutomationService {
+  cancelActivation: (id: string) => void = () => {};
   readonly autorun = new AutorunService(this);
   constructor(readonly repo: AutomationRepository, readonly deps: AutomationDependencies) {}
   async authorize(userId: string) {
@@ -40,11 +42,11 @@ export class AutomationService {
   runtime(): AutomationRuntime { return this.deps.runtime() ?? fail('RUNTIME_ADAPTER_UNAVAILABLE'); }
   notify(a: DurableAutomation): void { try { this.deps.publish(a); } catch { /* Publication cannot undo durable delivery. */ } }
   detail(userId: string, id: string): DurableControlResult {
-    const { automation, ownership } = this.owned(userId, id);
+    const { automation, ownership, activation } = this.owned(userId, id);
     const inFlight = this.repo.activeRuns(id).find(r => r.run.state === 'dispatching' || (r.run.state === 'unknown' && r.resolvedAt === null));
     const decoded = decodeAutomation(automation);
     if (!decoded.success) fail('OWNER_UNAVAILABLE');
-    return { automation: decoded.data, inputOwnership: ownership, inFlightRunId: inFlight?.run.id ?? null };
+    return { activation: activation?.projection ?? null, automation: decoded.data, inputOwnership: ownership, inFlightRunId: inFlight?.run.id ?? null };
   }
   list(userId: string, options: ListOptions) {
     const values = this.repo.all().map(v => v.automation).filter(a => a.ownerUserId === userId &&
@@ -57,7 +59,8 @@ export class AutomationService {
       state: a.state, pauseReason: a.pauseReason, sessionId: a.target.kind === 'wake-session' ? a.target.sessionId : null,
       worktreeId: a.target.kind === 'create-session' ? a.target.worktreeId : null, nextDueAt: a.nextDueAt, dispatchCount: a.dispatchCount,
       analysisCount: isAutorun(a) ? a.analysisCount : 0, latestDecisionId: isAutorun(a) ? a.latestDecisionId : null,
-      attention: isAutorun(a) ? a.attention?.identity ?? null : null })), options);
+      attention: isAutorun(a) ? a.attention?.identity ?? null : null,
+      activation: this.repo.get(a.id)?.activation?.projection ?? null })), options);
   }
   history(userId: string, id: string, options: ListOptions) {
     this.owned(userId, id);
@@ -71,6 +74,14 @@ export class AutomationService {
       sessionId, terminalId: null, epoch: `unavailable:${sessionId}`, mode: 'unavailable',
       automationId: null, runId: null, reason: 'runtime-adapter-unavailable',
     };
+  }
+  async setDraftVeto(userId: string, sessionId: string, veto: import('./activation-contracts').AutomationDraftVeto) {
+    const owner = await this.authorize(userId);
+    const inspected = await this.deps.inspect(userId, { kind: 'wake-session', sessionId }, owner.agentEnvironment);
+    inspected.assertCurrent();
+    const port = this.runtime().activation ?? fail('RUNTIME_ADAPTER_UNAVAILABLE');
+    port.setDraftVeto({ ...owner, sessionId }, veto);
+    return { accepted: true as const };
   }
   async create(userId: string, key: string, raw: unknown): Promise<DurableControlResult> {
     const owner = await this.authorize(userId);
@@ -87,7 +98,7 @@ export class AutomationService {
       return old?.response;
     };
     const old = replay(); if (old) return old;
-    if (parsed.data.enabled) this.runtime();
+    if (parsed.data.enabled && parsed.data.target.kind === 'create-session') this.runtime();
     const inspection = await this.deps.inspect(userId, parsed.data.target, owner.agentEnvironment);
     const checked = validateAutomationInput(parsed.data, { now: this.deps.now(), isSelectionSupported: () => true });
     if (!checked.success) fail(checked.error.code, checked.error.message);
@@ -105,21 +116,15 @@ export class AutomationService {
       this.checkWakeAvailable(a);
       if (a.limits.expiresAt <= this.deps.now()) fail('INVALID_AUTOMATION');
       if (evidence?.kind === 'completed' && a.target.kind === 'wake-session' && this.repo.boundaryConsumed(userId,a.target.sessionId,evidence.boundary.id)) fail('INPUT_BOUNDARY_UNPROVEN');
-      const stored = { automation: a, evidence, ownership };
+      const stored = { automation: a, evidence, ownership: ownership ?? (a.target.kind === 'wake-session' ? this.deps.runtime()?.ownership(userId, a.target.sessionId) ?? null : null),
+        ...(a.target.kind === 'wake-session' ? { activation: newActivation() } : {}) };
       this.repo.save(stored);
       response = this.detail(userId, a.id);
       this.repo.remember(userId, key, hash, response, now);
     });
     try {
-      if (enabled) {
-        const runtime = this.runtime();
-        if (a.target.kind === 'wake-session') {
-          await runtime.arm({ userId, sessionId: a.target.sessionId, automationId: a.id, selection: a.savedSelection }, (e, o) => {
-            if (e.kind === 'completed' && a.trigger.kind === 'turn-complete') a.nextDueAt = this.deps.now() + a.trigger.delayMs;
-            commit(e, o);
-          });
-        } else commit();
-      } else commit();
+      // Enabling records intent. The engine acquires input only for a proven action.
+      commit();
     } catch (error) {
       // arm rolls back a temporary takeover when its callback throws. A concurrent
       // identical request can already have committed the retained original result.
@@ -171,19 +176,20 @@ export class AutomationService {
     if (!sameSessionSelection(inspection.selection, a.savedSelection)) fail('UNSUPPORTED_SELECTION');
     const checked = validateAutomationInput({ ...asInput(a), enabled: true }, { now: this.deps.now(), previousInput: asInput(a), isSelectionSupported: () => true });
     if (!checked.success) fail(checked.error.code, checked.error.message);
-    const runtime = this.runtime();
-    const commit = (evidence: ArmEvidence | null = null, ownership: InputOwnership | null = null) => this.repo.transaction(() => {
+    const commit = () => this.repo.transaction(() => {
       const v = this.editable(userId, id, revision); inspection.assertCurrent(); this.checkWakeAvailable({ ...v.automation, state: 'enabled' });
       if (v.automation.limits.expiresAt <= this.deps.now()) fail('INVALID_AUTOMATION');
       this.cancelUnsent(id, 're-enabled');
       v.automation.state = 'enabled'; v.automation.revision++; v.automation.pauseReason = null; v.automation.updatedAt = this.deps.now();
-      v.automation.nextDueAt = evidence?.kind === 'completed' && a.trigger.kind === 'turn-complete'
-        ? this.deps.now() + a.trigger.delayMs : nextScheduledAt(a.trigger, this.deps.now());
-      if (evidence?.kind === 'completed' && a.target.kind === 'wake-session' && this.repo.boundaryConsumed(userId,a.target.sessionId,evidence.boundary.id)) fail('INPUT_BOUNDARY_UNPROVEN');
-      v.evidence = evidence; v.ownership = ownership; this.repo.save(v);
+      v.automation.nextDueAt = nextScheduledAt(a.trigger, this.deps.now());
+      v.evidence = null;
+      if (a.target.kind === 'wake-session') {
+        v.activation = newActivation(v.activation?.approvals);
+        v.ownership = this.deps.runtime()?.ownership(userId, a.target.sessionId) ?? null;
+      }
+      this.repo.save(v);
     });
-    if (a.target.kind === 'wake-session') await runtime.arm({ userId, sessionId: a.target.sessionId, automationId: id, selection: a.savedSelection }, commit);
-    else commit();
+    commit();
     const body = this.detail(userId, id); this.notify(body.automation); return { status: 200, body };
   }
   async resolve(userId: string, id: string, runId: string): Promise<DurableControlResult & { run: import('./contracts').AutomationRun }> {
@@ -216,6 +222,7 @@ export class AutomationService {
         (v.ownership?.sessionId === sessionId && ['armed', 'draining', 'recovery-required'].includes(v.ownership.mode))))) fail('ACTIVE_WAKE_EXISTS');
   }
   cancelUnsent(id: string, reason: string): void {
+    this.cancelActivation(id);
     for (const r of this.repo.activeRuns(id)) {
       if (!['pending', 'deferred'].includes(r.run.state)) continue;
       r.run.state = 'cancelled'; r.run.reason = reason; r.run.finishedAt = this.deps.now(); r.overlapHeld = false;

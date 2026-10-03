@@ -5,10 +5,13 @@ import { isAutorun, type DurableAutomation, type DurableControlResult, type Stor
 import type { ArmEvidence, Boundary, RuntimeObservation } from './runtime-port';
 
 export type StoredAutomation = {
+  activation?: import('./activation-state').StoredActivation;
   humanSourceIds?: string[];
   automation: DurableAutomation; ownership: InputOwnership | null; evidence: ArmEvidence | null;
 };
 export type StoredRun = {
+  inputEpoch?: string;
+  action?: import('./activation-state').NativeAutomationAction;
   run: AutomationRun & { decisionId?: string | null }; prompt?: string; snapshot: DurableAutomation; boundary: Boundary | null;
   leaseEpoch: number | null; permitToken: string | null; externalStarted: boolean;
   completedWrite: boolean; retryAt: number | null; canonicalWorktreeId: string | null;

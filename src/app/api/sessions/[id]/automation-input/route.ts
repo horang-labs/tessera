@@ -4,3 +4,7 @@ import { handleAutomationRequest } from '@/app/api/automations/handler';
 export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   return handleAutomationRequest(request, { action: 'ownership', ...await context.params });
 }
+
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  return handleAutomationRequest(request, { action: 'draft-veto', ...await context.params });
+}
