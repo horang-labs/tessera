@@ -5,15 +5,27 @@ import { autorunPreviewFixture, autorunInput, boundary, contextSnapshot } from '
 
 test('a slow preview cannot replace newer readiness, and consumed idle stays unavailable to start', async () => {
   let release!: (r: Response) => void;
-  let calls = 0;
-  const store = createAutomationStore({ sessionId: 'session-1' }, async () => ++calls === 1
-    ? new Promise<Response>(r => { release = r; })
-    : Response.json({ ...autorunPreviewFixture(), readiness: { kind: 'idle', reason: 'consumed-boundary' } }));
-  const old = store.getState().previewAutorun();
-  await store.getState().previewAutorun();
-  release(Response.json(autorunPreviewFixture()));
+  const initial = autorunPreviewFixture();
+  const selected = { ...initial.recommendedSupervisor, model: 'gpt-6-astra', reasoningEffort: 'xhigh' };
+  const requests: unknown[] = [];
+  const store = createAutomationStore({ sessionId: 'session-1' }, async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    return requests.length === 1 ? new Promise<Response>(r => { release = r; })
+      : Response.json({ ...initial, recommendedSupervisor: selected,
+        supervisorCheck: { selection: selected, status: 'available', reason: null },
+        supervisorOptions: [{ ...initial.supervisorOptions[0], selection: selected }],
+        readiness: { kind: 'idle', reason: 'consumed-boundary' } });
+  });
+  // Distinct selections supersede; identical requests intentionally coalesce.
+  const old = store.getState().previewAutorun({ supervisor: initial.recommendedSupervisor });
+  await store.getState().previewAutorun({ supervisor: selected });
+  release(Response.json(initial));
   await old;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[1], { supervisor: selected });
   assert.equal(store.getState().preview?.readiness.kind, 'idle');
+  assert.deepEqual(store.getState().preview?.supervisorCheck.selection, selected);
 });
 
 test('decision history retains loaded pages after refresh and only reveals new entries on request', async () => {
