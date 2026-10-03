@@ -595,7 +595,7 @@ export class TerminalManager {
       if (!current || !['running', 'input-required'].includes(state.state) || current.requestId !== expected.requestId || current.requestHash !== expected.requestHash
         || state.nativeApprovalId !== expected.requestId || expected.deadlineAt <= Date.now()
         || this.nativeApprovalHookRevisions.get(expected.requestId) !== runtime.nativeInteractionRevision
-        || !this.automation.canSuperviseNativeApproval(identity.userId, identity.sessionId)) throw new Error('Native approval changed.');
+        || !this.automation.canSuperviseNativeApproval(identity.userId, identity.sessionId, expected)) throw new Error('Native approval changed.');
       return;
     }
     if (state.state !== 'turn-complete' && !(['starting', 'unknown'].includes(state.state) && this.hasNativeLaunchIdentity(runtime, identity)) && !(state.state === 'unknown'
