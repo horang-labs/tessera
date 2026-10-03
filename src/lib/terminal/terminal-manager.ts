@@ -1260,7 +1260,11 @@ export class TerminalManager {
     if (!runtime.subscribers.has(subscriberKey)) return false;
     if (runtime.sessionId) {
       this.automation.assertHuman(userId, runtime.sessionId, inputEpoch);
-      this.automation.dirty(userId, runtime.sessionId, data.endsWith('\r'));
+      // Complete emulator replies contain no human draft or submission. Focus
+      // changes and device replies must not invalidate native turn evidence.
+      if (classifyAutomatedTerminalResponse(data) !== 'complete') {
+        this.automation.dirty(userId, runtime.sessionId, data.endsWith('\r'));
+      }
     }
     runtime.viewportOwner = subscriberKey;
     if (runtime.prefillPending && data.length > 0) {

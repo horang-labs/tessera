@@ -1,4 +1,5 @@
 import { ClaudeHookLifecycleTracker, classifyClaudeAutomationCompletion } from '../src/lib/cli/providers/claude-code/terminal-hook-lifecycle';
+import { hookSubmissionFixture } from './fixtures/autorun-contracts';
 import { classifyCodexAutomationCompletion } from '../src/lib/cli/providers/codex/terminal-hook-lifecycle';
 import assert from 'node:assert/strict';
 import test, { afterEach, beforeEach } from 'node:test';
@@ -338,3 +339,39 @@ test('post-Enter observation failure cannot turn a delivered automated wake into
     assert.deepEqual(f.writes, ['\x1b[200~Continue safely\x1b[201~', '\r']);
   } finally { f.authority.recordRuntimeObservation = () => {}; }
 });
+
+for (const surfaceId of ['normal', 'peek']) {
+  test(`automatic terminal replies preserve accepted native proof on ${surfaceId}`, async () => {
+    const f = await fixture();
+    if (surfaceId === 'peek') await f.manager.create({ userId: 'owner', sessionId: 'session', terminalId: 'terminal',
+      connectionId: 'panel', surfaceId, providerId: 'codex', agentEnvironment: 'wsl',
+      resolvedShell: { command: 'fixture', args: [], cwd: process.cwd() } });
+    f.manager.activateProviderSessionIdentity('terminal', 'owner', 'conversation-1');
+    const write = (data: string) => f.manager.write('terminal', 'owner', 'panel', surfaceId, data);
+    const read = () => f.manager.automation.readTurnEvidence({ userId: 'owner', sessionId: 'session', agentEnvironment: 'wsl' });
+    const submission = { ...hookSubmissionFixture(), userId: 'owner', sessionId: 'session', terminalId: 'terminal' };
+    submission.evidence.serverInstanceId = f.manager.automation.serverInstanceId;
+    write('Read stage-one.txt'); write('\r');
+    // Automatic focus changes can arrive between Enter and native Submit.
+    write('\x1b[O');
+    f.hook('UserPromptSubmit', 'running');
+    assert.equal(f.manager.automation.recordHookEvidence(submission).kind, 'accepted');
+    assert.equal(read().kind, 'running');
+    write('\x1b[1;1R');
+    assert.equal(read().kind, 'running');
+    f.hook('Stop', 'completed');
+    assert.equal(f.manager.automation.recordHookEvidence({ ...submission, kind: 'completion',
+      evidence: { ...submission.evidence, completionHookId: 'stop-1', dedupKey: 'stop-1' } }).kind, 'accepted');
+    const completed = read();
+    assert.equal(completed.kind, 'completed');
+    for (const reply of ['\x1b[I', '\x1b[O', '\x1b[?1;2c', '\x1b]11;rgb:0000/0000/0000\x1b\\']) {
+      assert.equal(write(reply), true);
+      assert.deepEqual(read(), completed);
+      assert.equal(f.writes.at(-1), reply, 'reply still reaches the PTY unchanged');
+    }
+    write('\x1b[Ounsent');
+    assert.deepEqual(read(), { kind: 'idle', reason: 'no-accepted-turn' });
+    await assert.rejects(f.arm(), /boundary/i);
+    assert.equal(f.manager.automation.recordHookEvidence(submission).kind, 'rejected');
+  });
+}
