@@ -1,4 +1,6 @@
 import type { ChildProcess } from 'child_process';
+import type { NativeInteraction, NativeApprovalRequest, NativeRuntimeIdentity } from '@/lib/automation/activation-contracts';
+import type { NativePromptFrame } from '@/lib/terminal/terminal-headless-model';
 import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
@@ -136,6 +138,11 @@ export interface ProviderRateLimitOptions {
  * implementation details directly.
  */
 export interface CliProvider {
+  readonly nativeTerminalInteraction?: {
+    observePrompt(identity: NativeRuntimeIdentity, version: string, frame: NativePromptFrame): NativeInteraction;
+    observesPaste(prompt: string, frame: NativePromptFrame): boolean;
+    readApproval(identity: NativeRuntimeIdentity, payload: Record<string, unknown>): NativeApprovalRequest | null;
+  };
   /** Absent until R1 installs proven context/supervisor adapters; never fall back to generateText. */
   readonly autorun?: AutorunProviderPort;
   /**
