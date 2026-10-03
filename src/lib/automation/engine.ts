@@ -2,6 +2,8 @@ import { ActivationEngine } from './activation-engine';
 import type { NativeAutomationAction } from './activation-state';
 import { AutorunEngine } from './autorun-engine';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import type { NativeApprovalAuthorityScope } from './activation-contracts';
 import type { AutomationAuthority, Boundary, DispatchPermit, DispatchResult, RunSpec, RuntimeObservation } from './runtime-port';
 import { isAutorun } from './autorun-storage';
 import logger from '../logger';
@@ -186,6 +188,19 @@ export class AutomationEngine implements AutomationAuthority {
           if (r.action.kind === 'bootstrap' || (r.action.kind === 'startup' && r.action.expected.mode === 'fresh')) current.activation.firstAction = outcome.kind === 'delivered' ? 'delivered' : outcome.kind === 'unknown' ? 'unknown' : outcome.kind === 'deferred' ? 'reserved' : 'superseded';
           current.activation.projection.phase = 'waiting';
           current.activation.projection.reason = outcome.kind === 'unknown' ? 'delivery-unresolved' : outcome.kind === 'delivered' ? 'worker-running' : 'runtime-unverified';
+          if (r.action.kind === 'approval') {
+            const decisionId = r.action.decisionId;
+            const judgment = current.activation.approvals.find(d => d.id === decisionId)?.decision;
+            if (current.activation.projection.approval?.requestId === r.action.expected.requestId) {
+              current.activation.projection.approval.status = outcome.kind === 'delivered'
+                ? judgment?.outcome === 'deny' ? 'denied' : 'approved-once' : 'needs-user';
+              if (outcome.kind !== 'delivered') current.activation.projection.approval.explanation = `Native response not confirmed: ${r.run.reason ?? outcome.kind}`;
+            }
+            if (outcome.kind !== 'delivered') {
+              current.activation.projection.phase = 'needs-user';
+              current.activation.projection.reason = outcome.kind === 'unknown' ? 'delivery-unresolved' : 'approval-needs-user';
+            }
+          }
           this.repo.save(current);
         }
       }
@@ -211,12 +226,32 @@ export class AutomationEngine implements AutomationAuthority {
       }
     });
   }
-  canSuperviseNativeApproval(scope: import('./activation-contracts').InteractionScope & { provider: 'codex' | 'claude-code' }): boolean {
-    return this.repo.all().some(v => isAutorun(v.automation) && v.automation.state === 'enabled' &&
-      v.automation.ownerUserId === scope.userId && v.automation.target.sessionId === scope.sessionId && v.automation.agentEnvironment === scope.agentEnvironment &&
-      v.automation.savedSelection.provider === scope.provider && v.automation.limits.expiresAt > this.now &&
-      v.automation.dispatchCount < v.automation.limits.maxDispatches && v.automation.analysisCount < v.automation.autorun.maxAnalyses &&
-      !this.repo.activeRuns(v.automation.id).some(r => r.run.state === 'unknown'));
+  canSuperviseNativeApproval(scope: NativeApprovalAuthorityScope): boolean {
+    return this.repo.all().some(v => {
+      const a = v.automation;
+      if (!isAutorun(a) || a.state !== 'enabled' || a.ownerUserId !== scope.userId || a.target.sessionId !== scope.sessionId ||
+        a.agentEnvironment !== scope.agentEnvironment || a.savedSelection.provider !== scope.provider || a.limits.expiresAt <= this.now) return false;
+      const active = this.repo.activeRuns(a.id);
+      if (active.some(r => r.run.state === 'unknown')) return false;
+      if (a.dispatchCount < a.limits.maxDispatches && a.analysisCount < a.autorun.maxAnalyses) return true;
+      // Spent counters prohibit new work. Only a previously charged exact held review/response can continue.
+      const request = scope.request;
+      if (!request || request.deadlineAt <= this.now || a.dispatchCount > a.limits.maxDispatches || a.analysisCount > a.autorun.maxAnalyses) return false;
+      const decision = v.activation?.approvals.find(d => d.phase !== 'cancelled' && isDeepStrictEqual(d.request, request));
+      if (!decision || !isDeepStrictEqual(decision.packet.objective, a.autorun.objective) ||
+        !isDeepStrictEqual(decision.packet.constraints, a.autorun.constraints) || !isDeepStrictEqual(decision.packet.criteria, a.autorun.criteria) ||
+        this.epoch === null || !this.repo.ownsLease(this.instanceId, this.epoch, this.now)) return false;
+      if (a.dispatchCount < a.limits.maxDispatches && decision.runId === null) return true;
+      const ownership = this.service.runtime().ownership(scope.userId, scope.sessionId);
+      return active.some(r => r.action?.kind === 'approval' && r.run.id === decision.runId &&
+        r.action.decisionId === decision.id && r.action.activationId === v.activation!.projection.activationId &&
+        isDeepStrictEqual(r.action.expected, request) && decision.phase === 'decided' && decision.decision?.optionId === r.action.optionId &&
+        r.run.automationRevision === a.revision && r.run.deadlineAt > this.now &&
+        r.leaseEpoch === this.epoch && this.repo.ownsLease(this.instanceId, r.leaseEpoch!, this.now) &&
+        ((['pending', 'deferred'].includes(r.run.state) && a.dispatchCount < a.limits.maxDispatches) ||
+          (r.run.state === 'dispatching' && r.permitToken !== null && ownership.mode === 'armed' &&
+            ownership.automationId === a.id && ownership.runId === r.run.id)));
+    });
   }
   pauseWake(userId: string, sessionId: string, reason: string): void {
     for (const v of this.repo.all()) {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { automationActivationSchema, nativeApprovalRequestSchema } from './activation-contracts';
+import { automationActivationSchema, nativeApprovalRequestSchema, supervisorApprovalReviewContextSchema } from './activation-contracts';
 import { isTerminalNamedKey } from '../terminal/session-control-input';
 import { automationInputSchema, validateAutomationInput, sessionSelectionSnapshotSchema,
   type AutomationValidationContext, type InputOwnership, type AutomationRun } from './contracts';
@@ -86,7 +86,8 @@ export const objectiveSchema = z.discriminatedUnion('kind', [
 ]);
 export type AutorunObjective = z.infer<typeof objectiveSchema>;
 export const supervisorApprovalPacketSchema = z.object({ version: z.literal(1), kind: z.literal('approval'), objective: objectiveSchema,
-  constraints: z.array(text(16_384)).max(100), criteria: criteriaSchema, request: nativeApprovalRequestSchema }).strict();
+  constraints: z.array(text(16_384)).max(100), criteria: criteriaSchema, request: nativeApprovalRequestSchema,
+  reviewContext: supervisorApprovalReviewContextSchema }).strict();
 
 export const autorunConfigSchema = z.object({
   ...autorunInputConfigSchema.innerType().shape, objective: objectiveSchema,
