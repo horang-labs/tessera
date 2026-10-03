@@ -85,7 +85,7 @@ test('Heartbeat cannot resume without a checked runtime preview', async () => {
   const rule = decodeAutomation({ ...automationFixture(), state: 'paused' });
   assert.ok(rule.success); rule.data.limits.expiresAt = Date.now()+3600000;
   const html = renderToStaticMarkup(createElement(ContinuationResume, {preview:null,loading:false,rule:rule.data,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
-  assert.match(html.match(/<button[^>]*>Resume<\/button>/)?.[0] ?? '', /disabled/);
+  assert.match(html.match(/<button[^>]*>Resume<\/button>/)?.[0] ?? '', /\sdisabled(?:=|\s|>)/);
 });
 
 
@@ -112,32 +112,30 @@ test('objective heading attributes only verified sources or a nonblank explicit 
 });
 
 
-test('setup labels actual remaining instruction and analysis budgets and expiry in every locale', async context => {
-  const { AutorunSetup, AutorunPreviewView } = await import('../src/components/automation/autorun-setup');
+test('setup shows localized used and remaining counts only for saved rules, with one editable expiry', async context => {
+  const { AutorunSetup } = await import('../src/components/automation/autorun-setup');
   const { createAutomationStore } = await import('../src/stores/automation-store');
   const { i18n } = await import('../src/lib/i18n');
-  const { boundary } = await import('./fixtures/autorun-contracts');
+  const { autorunInput, boundary } = await import('./fixtures/autorun-contracts');
+  const { automationFixture } = await import('./fixtures/automation');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
   context.mock.method(Date, 'now', () => boundary.completedAt);
-  const preview = autorunPreviewSchema.parse({ ...autorunPreviewFixture(), objective: null, remaining: { dispatches: 3, analyses: 7 } });
-  const locales = [
-    { language: 'en', missing: 'Objective · Not verified', instructions: 'Instructions left', analyses: 'Analyses left', expiry: 'Expires' },
-    { language: 'ko', missing: '목표 · 확인되지 않음', instructions: '남은 지시', analyses: '남은 분석', expiry: '만료' },
-    { language: 'ja', missing: '目標 · 未確認', instructions: '残りの指示', analyses: '残りの分析', expiry: '有効期限' },
-    { language: 'zh', missing: '目标 · 未验证', instructions: '剩余指令', analyses: '剩余分析', expiry: '到期' },
-  ];
+  const preview = autorunPreviewSchema.parse(autorunPreviewFixture());
+  const { enabled: _enabled, ...input } = autorunInput(); void _enabled;
+  const { prompt: _prompt, ...base } = automationFixture(); void _prompt;
+  const previous = decodeAutomation({...base,...input,state:'paused',dispatchCount:7,analysisCount:13,latestDecisionId:null,autorunStatus:'paused',attention:null,
+    autorun:{...input.autorun,objective:preview.objective,criterionOrigin:'system-objective'}});
+  assert.ok(previous.success);
   try {
-    for (const { language, missing, instructions, analyses, expiry } of locales) {
+    for (const [language, used, remaining] of [['en','used','remaining'],['ko','회 사용','회 남음'],['ja','回使用','回'],['zh','已用','剩余']]) {
       await i18n.changeLanguage(language);
-      const html = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: createAutomationStore({ sessionId: 'session-1' }), onDone: () => {}, onOpenSession: () => {} }));
-      assert.match(html, /<textarea[^>]*required/);
-      assert.doesNotMatch(html, /From verified conversation|Set by you/);
-      for (const [label, value] of [[instructions, '3'], [analyses, '7']]) {
-        assert.match(html, new RegExp(`<dt[^>]*>${label}</dt>\\s*<dd[^>]*>${value}</dd>`), `Unlabeled or swapped budget in ${language}`);
-      }
-      assert.match(html, new RegExp(`<dt[^>]*>${expiry}</dt>\\s*<dd`));
-      assert.doesNotMatch(html, /automation\.(remainingDispatches|remainingAnalyses|budgetExpiry|unverifiedGoal)/);
-      const explicit = renderToStaticMarkup(createElement(AutorunPreviewView, { preview, objectiveOverride: 'User goal', onObjective: () => {}, onOpenSession: () => {} }));
-      assert.ok(!explicit.includes(missing), `Explicit override retains missing attribution in ${language}`);
+      const html = renderToStaticMarkup(createElement(AutorunSetup, {preview,previous:previous.data,intent:'edit',store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{}}));
+      assert.ok(html.includes(used) && html.includes(remaining), language);
+      assert.match(html, /name="max"[^>]*value="10"/); assert.match(html, /name="analyses"[^>]*value="20"/);
+      assert.equal((html.match(/name="expiry"/g) ?? []).length,1);
+      assert.doesNotMatch(html, /automation\.(usedRemaining|supervisorChecks|expiry)/);
+      const fresh = renderToStaticMarkup(createElement(AutorunSetup, {preview,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{}}));
+      assert.doesNotMatch(fresh, /<dt/); // No duplicate fresh-budget cards beside editable controls.
     }
   } finally { await i18n.changeLanguage('en'); }
 });
@@ -238,7 +236,7 @@ test('Resume keeps the saved verified objective and source visible alongside fre
     assert.match(html, /From verified conversation/);
     assert.doesNotMatch(html, /name="objective"/);
     assert.match(html, /New human instruction remains visible\./);
-    assert.match(html, /Send a new instruction/);
+    assert.match(html, /Send a new worker instruction before resuming/);
     assert.match(html, /<button[^>]*disabled=""[^>]*>Resume<\/button>/);
     assert.doesNotMatch(html, /Different fresh preview goal\./);
   }
@@ -270,7 +268,7 @@ test('preflight distinguishes checking setup from execution and offers retry onl
 });
 
 test('supervisor discovery offers real model/effort choices but never authorizes Start or replaces an unavailable saved tuple', async () => {
-  const { SupervisorPicker } = await import('../src/components/automation/supervisor-picker');
+  const { SupervisorControls } = await import('../src/components/automation/supervisor-picker');
   const { AutorunSetup, autorunCanStart } = await import('../src/components/automation/autorun-setup');
   const { createAutomationStore } = await import('../src/stores/automation-store');
   const { boundary } = await import('./fixtures/autorun-contracts');
@@ -278,14 +276,14 @@ test('supervisor discovery offers real model/effort choices but never authorizes
   const preview = autorunPreviewSchema.parse({ ...autorunPreviewFixture(), recommendedSupervisor: null, supervisorOptions: [],
     supervisorDiscovery: { complete: true, candidates: [{ ...autorunPreviewFixture().supervisorDiscovery.candidates[0], model: selected.model, label: 'GPT-6-Astra', reasoningEfforts: ['low','high','xhigh'], serviceTiers: ['default','fast'] }] },
     supervisorCheck: { selection: selected, status: 'unavailable', reason: 'selection' } });
-  const html = renderToStaticMarkup(createElement(SupervisorPicker, { candidates: preview.supervisorDiscovery.candidates, value: selected, onChange: () => {} }));
+  const html = renderToStaticMarkup(createElement(SupervisorControls, { catalog: {providerId:'codex',displayName:'Codex',supportsReasoningEffort:true,runtimeEffortChange:true,permissionMappings:[],modeOptions:[],accessOptions:[],planLocksAccess:false,modelOptions:[{value:'gpt-6-astra',label:'GPT-6-Astra',isDefault:false,supportedReasoningEfforts:['low','high','xhigh'].map(value=>({value,label:value,description:''})),serviceTiers:[{value:'priority',label:'Fast',description:''}]}]}, value: selected, onChange: () => {} }));
   assert.match(html, /<option value="gpt-6-astra" selected="">GPT-6-Astra/);
   for (const value of ['low','high','xhigh','fast']) assert.ok(html.includes(`value="${value}"`));
   assert.equal(autorunCanStart(preview, selected, 'Goal', preview.defaults.expiresAt, boundary.completedAt), false);
   const setup = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: createAutomationStore({sessionId:'session-1'}), onDone:()=>{}, onOpenSession:()=>{} }));
-  assert.match(setup, /value="xhigh" selected/); assert.match(setup, /This supervisor is unavailable/);
+  assert.match(setup, /value="xhigh" selected/); assert.match(setup, /This model could not be verified/);
   assert.match(setup, /<button[^>]*disabled=""[^>]*>Start continuation<\/button>/);
-  const missing = renderToStaticMarkup(createElement(SupervisorPicker, { candidates: [], value: selected, onChange:()=>{} }));
+  const missing = renderToStaticMarkup(createElement(SupervisorControls, { catalog: null, value: selected, onChange:()=>{} }));
   assert.match(missing, /value="gpt-6-astra" selected/); assert.match(missing, /value="xhigh" selected/);
   const stale = autorunPreviewSchema.parse({ ...preview, supervisorCheck: { selection: autorunPreviewFixture().recommendedSupervisor, status:'available', reason:null }, supervisorOptions: autorunPreviewFixture().supervisorOptions });
   assert.equal(autorunCanStart(stale, selected, 'Goal', preview.defaults.expiresAt, boundary.completedAt), false);
@@ -307,7 +305,7 @@ test('selected supervisor failure identifies the selector, while worker context 
     supervisorCheck: { selection: base.recommendedSupervisor, status: 'unavailable', reason: 'selection' },
     readiness: { kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason: 'unsupported-version' } });
   const html = renderToStaticMarkup(createElement(AutorunSetup, {preview,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{}}));
-  assert.match(html, /This supervisor is unavailable/);
+  assert.match(html, /This model could not be verified/);
   assert.doesNotMatch(html, /Latest worker context unavailable/);
   const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
   const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
@@ -319,9 +317,41 @@ test('selected supervisor failure identifies the selector, while worker context 
     autorun:{...input.autorun,objective:base.objective,criterionOrigin:'system-objective'} });
   assert.ok(rule.success);
   const resume = renderToStaticMarkup(createElement(ContinuationResume,{preview,loading:false,rule:rule.data,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
-  assert.match(resume,/This supervisor is unavailable/); assert.doesNotMatch(resume,/Latest worker context unavailable/);
+  assert.match(resume,/This model could not be verified/); assert.doesNotMatch(resume,/Latest worker context unavailable/);
 
   const context = autorunPreviewSchema.parse({...preview,readiness:{kind:'unavailable',code:'CONTEXT_UNAVAILABLE',reason:'unsafe-runtime'}});
   const blocked = renderToStaticMarkup(createElement(AutorunSetup, {preview:context,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{}}));
   assert.match(blocked,/Latest worker context unavailable/);assert.match(blocked,/>Open Session<\/button>/);
+});
+
+test('setup remains editable before readiness arrives without granting Start or Save', async () => {
+  const { AutorunSetup } = await import('../src/components/automation/autorun-setup');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const store = createAutomationStore({sessionId:'session-1'});
+  store.setState({previewLoading:true});
+  const html = renderToStaticMarkup(createElement(AutorunSetup,{preview:null,store,onDone:()=>{},onOpenSession:()=>{}}));
+  assert.match(html, /name="objective"[^>]*required/);
+  assert.match(html, /name="supervisorModel"/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Start continuation<\/button>/);
+  assert.doesNotMatch(html.match(/<textarea[^>]*name="objective"[^>]*>/)?.[0] ?? '', /\sdisabled(?:=|\s|>)/);
+});
+
+
+test('explicit objective recovery preserves existing human draft and refuses approval or held input', async () => {
+  const { addAutomationObjectiveToDraft } = await import('../src/components/automation/automation-entry');
+  const { useChatStore } = await import('../src/stores/chat-store');
+  const { useTerminalSessionStore } = await import('../src/stores/terminal-session-store');
+  const { applySessionInputOwnership } = await import('../src/lib/automation/client-state');
+  const { ownershipFixture } = await import('./fixtures/automation');
+  useChatStore.getState().setDraftInput('session-1','Keep my draft.');
+  applySessionInputOwnership({...ownershipFixture(),mode:'human',automationId:null});
+  assert.equal(addAutomationObjectiveToDraft('session-1','Fix billing.'),true);
+  assert.equal(useChatStore.getState().getDraftInput('session-1'),'Keep my draft.\n\nFix billing.');
+  applySessionInputOwnership({...ownershipFixture(),mode:'draining'});
+  assert.equal(addAutomationObjectiveToDraft('session-1','Do not insert.'),false);
+  applySessionInputOwnership({...ownershipFixture(),mode:'human',automationId:null});
+  useTerminalSessionStore.setState({bySessionId:{'session-1':{status:'input_required',hookEvent:'permission',terminalId:'term-1',updatedAt:1}}});
+  assert.equal(addAutomationObjectiveToDraft('session-1','Do not insert.'),false);
+  assert.equal(useChatStore.getState().getDraftInput('session-1'),'Keep my draft.\n\nFix billing.');
+  useTerminalSessionStore.setState({bySessionId:{}});
 });

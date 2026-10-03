@@ -23,7 +23,7 @@ test('a slow preview cannot replace newer readiness, and consumed idle stays una
   await old;
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requests.length, 2);
-  assert.deepEqual(requests[1], { supervisor: selected });
+  assert.deepEqual(requests[1], { supervisor: selected, includeSupervisorDiscovery: false });
   assert.equal(store.getState().preview?.readiness.kind, 'idle');
   assert.deepEqual(store.getState().preview?.supervisorCheck.selection, selected);
 });
@@ -57,4 +57,34 @@ test('an older detail read cannot replace a newer authoritative revision', async
   await store.getState().inspect('rule-1');
   release(Response.json(body(1))); await old;
   assert.equal(store.getState().details['rule-1'].automation.revision, 3);
+});
+
+test('a rejected boundary invalidates ready state and supersedes an in-flight check before recovery', async () => {
+  const { automationFixture } = await import('./fixtures/automation');
+  let oldReply!: (r: Response) => void;
+  let freshReply!: (r: Response) => void;
+  let previews = 0;
+  const store = createAutomationStore({ sessionId: 'session-1' }, async (url, init) => {
+    if (String(url).endsWith('autorun-preview')) {
+      previews++;
+      if (previews === 1) return Response.json(autorunPreviewFixture());
+      return new Promise<Response>(resolve => { if (previews === 2) oldReply = resolve; else freshReply = resolve; });
+    }
+    if (init?.method === 'POST') return Response.json({ error: { code: 'INPUT_BOUNDARY_UNPROVEN' } }, { status: 409 });
+    return Response.json({ items: [], nextCursor: null });
+  });
+  await store.getState().previewAutorun({ supervisor: autorunInput().autorun.supervisor });
+  const stale = store.getState().previewAutorun({ supervisor: autorunInput().autorun.supervisor });
+  assert.equal(await store.getState().enable({ ...automationFixture(), state: 'paused' }), false);
+  assert.equal(store.getState().preview, null, 'Rejected ready projection must disappear immediately');
+  assert.equal(store.getState().previewLoading, true, 'One fresh check replaces the failed control');
+  assert.equal(store.getState().error, null, 'No old error banner alongside checking');
+  oldReply(Response.json(autorunPreviewFixture()));
+  await stale;
+  assert.equal(store.getState().preview, null, 'Pre-rejection response cannot restore eligibility');
+  freshReply(Response.json({ ...autorunPreviewFixture(), readiness: { kind: 'idle', reason: 'consumed-boundary' } }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(previews, 3);
+  assert.equal(store.getState().preview?.readiness.kind, 'idle');
+  assert.equal(store.getState().previewLoading, false);
 });

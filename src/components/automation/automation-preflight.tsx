@@ -1,5 +1,6 @@
 'use client';
 
+import type { AutorunPreview } from '@/lib/automation/autorun-contracts';
 import { LoaderCircle } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
@@ -15,4 +16,19 @@ export function AutomationPreflight({ loading, error, onRetry }: { loading: bool
     <button {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} type="button" className={automationButton} onClick={onRetry}>{t('automation.checkAgain')}</button>
   </div>;
   return null;
+}
+
+
+export function AutomationReadinessRecovery({ preview, resume = false, onOpenSession, objective, onDraftObjective }: {
+  preview: AutorunPreview | null; resume?: boolean; onOpenSession: () => void; objective?: string; onDraftObjective?: (text: string) => void;
+}) {
+  const { t } = useI18n();
+  if (!preview || !['idle', 'unavailable'].includes(preview.readiness.kind)) return null;
+  const idle = preview.readiness.kind === 'idle';
+  const canDraft = idle && Boolean(objective?.trim() && onDraftObjective);
+  return <div className="grid justify-items-start gap-2" role="status">
+    <p>{t(idle ? resume ? 'automation.idleResume' : 'automation.idleStart' : 'automation.contextMissing')}</p>
+    <button type="button" className={automationButton} {...telemetryClickAttributes('automation.history.open_session', 'automation')}
+      onClick={() => canDraft ? onDraftObjective!(objective!) : onOpenSession()}>{t(canDraft ? 'automation.addObjectiveDraft' : idle ? 'automation.writeInstruction' : 'automation.openSession')}</button>
+  </div>;
 }

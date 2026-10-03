@@ -3,6 +3,10 @@
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
+import { useChatStore } from '@/stores/chat-store';
+import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
+import { useTerminalSessionStore, selectIsTerminalAwaitingInput } from '@/stores/terminal-session-store';
+import { getSessionInputOwnership } from '@/lib/automation/client-state';
 import { useI18n } from '@/lib/i18n';
 import type { AutomationScope, AutomationStoreApi } from '@/stores/automation-store';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
@@ -23,11 +27,17 @@ function Entry({ scope, store, supported = true, currentId, attention = false, p
     <button {...telemetryClickAttributes('sessionId' in scope ? 'automation.open.wake' : 'automation.open.schedule', 'sessionId' in scope ? 'chat_header' : 'worktree')} className={'sessionId' in scope ? automationToolbarButton : automationButton} type="button" aria-haspopup="dialog" title={'sessionId' in scope ? [t('automation.toolbar'), toolbarState].filter(Boolean).join(' · ') : t('automation.schedule')} onClick={() => setOpen(true)}>
       {'sessionId' in scope ? <><Repeat2 className="h-3.5 w-3.5" aria-hidden="true" /><span>{t('automation.toolbar')}</span>{toolbarState && <span aria-label={toolbarState} className={cn('h-1.5 w-1.5 rounded-full', attention ? 'bg-(--status-error-text)' : paused || reviewLimits ? 'bg-(--text-muted)' : 'bg-(--accent)')} />}</> : t(currentId ? 'automation.details' : 'automation.schedule')}
     </button>
-    {open && <AutomationManager scope={scope} store={store} initialId={currentId} initialResume={paused && !attention && !reviewLimits} supported={supported} onClose={() => setOpen(false)} onOpenSession={async id => {
+    {open && <AutomationManager scope={scope} store={store} initialId={currentId} initialResume={paused && !attention && !reviewLimits} supported={supported} onClose={() => setOpen(false)} onOpenSession={async (id, objective) => {
       const session = await materializeSession(id);
       if (!session) { store.setState({ error: 'SESSION_UNAVAILABLE' }); return; }
+      if (objective && !addAutomationObjectiveToDraft(id, objective)) { store.setState({ error: 'PAUSE_REQUIRED' }); return; }
+      if (objective) useTerminalViewModeStore.getState().setMode(id, 'chat');
       setOpen(false);
       await handleSessionClick(session);
+      if (objective) requestAnimationFrame(() => {
+        const input = [...document.querySelectorAll<HTMLTextAreaElement>('[data-session-input]')].find(input => input.dataset.sessionInput === id);
+        if (input && !input.readOnly && !input.disabled) input.focus();
+      });
     }} />}
   </>;
 }
@@ -56,4 +66,14 @@ export function AutomationSessionControls({ sessionId, provider }: { sessionId: 
     <Entry scope={scope} store={store} currentId={automationId ?? undefined} attention={Boolean(rule?.attention)} paused={rule?.state === 'paused'} reviewLimits={reviewLimits} toolbarState={stateLabel} supported={provider === 'claude-code' || provider === 'codex'} />
     <AutomationPauseAction compact rule={rule} ownership={ownership} surface="chat_header" onPause={id => void store.getState().pause(id)} />
   </div>;
+}
+
+
+/** Explicit recovery copies text only; normal composer submission remains authoritative. */
+export function addAutomationObjectiveToDraft(sessionId: string, objective: string) {
+  if (!objective.trim() || getSessionInputOwnership(sessionId).mode !== 'human' || selectIsTerminalAwaitingInput(sessionId)(useTerminalSessionStore.getState())) return false;
+  const chat = useChatStore.getState();
+  const existing = chat.getDraftInput(sessionId);
+  chat.setDraftInput(sessionId, existing ? `${existing}\n\n${objective}` : objective);
+  return true;
 }

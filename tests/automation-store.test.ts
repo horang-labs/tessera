@@ -222,7 +222,7 @@ test('only the latest explicitly selected supervisor check can replace preview a
   assert.equal(await old, null);
   completions[1](Response.json(selected)); await current;
   completions[0](Response.json(first)); await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(requests[1], { supervisor: selection });
+  assert.deepEqual(requests[1], { supervisor: selection, includeSupervisorDiscovery: false });
   assert.equal(store.getState().preview?.previewId, 'selected-preview');
   assert.equal(store.getState().previewLoading, false);
   assert.equal(store.getState().previewError, null);

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
-import { AutomationPreflight } from './automation-preflight';
+import { AutomationPreflight, AutomationReadinessRecovery } from './automation-preflight';
 import { Pause } from 'lucide-react';
 import { sameSupervisorSelection } from '@/lib/automation/autorun-contracts';
 import type { AutorunPreview, AutomationV2 } from '@/lib/automation/autorun-contracts';
@@ -14,12 +14,12 @@ import { automationButton, automationPrimaryButton, automationToolbarButton } fr
 import { useAutomationOwnership } from './use-automation';
 import { SavedSelection } from './automation-history';
 import { AutomationViewport, AutomationFacts, AutomationTime, automationDisclosure } from './automation-layout';
-export function ContinuationResume({ preview, loading, rule, store, onDone, onOpenSession, onEdit }: {
+export function ContinuationResume({ preview, loading, rule, store, onDone, onOpenSession, onEdit, onDraftObjective }: {
   preview: AutorunPreview | null; loading: boolean; rule: AutomationV2; store: AutomationStoreApi;
-  onDone: (id: string) => void; onOpenSession: () => void; onEdit: () => void;
+  onDraftObjective?: (text: string) => void; onDone: (id: string) => void; onOpenSession: () => void; onEdit: () => void;
 }) {
   const { t } = useI18n();
-  const { previewError } = useStore(store);
+  const { previewError, previewRejection } = useStore(store);
   const retry = () => void store.getState().previewAutorun(rule.mode === 'autorun' ? { supervisor: rule.autorun.supervisor } : {});
   const ownership = useAutomationOwnership(rule.target.kind === 'wake-session' ? rule.target.sessionId : '');
   const [now, setNow] = useState(() => Date.now());
@@ -31,17 +31,23 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
     ? heartbeatCanResume(preview, loading, previewError)
     : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
-  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={<><AutomationPreflight loading={loading} error={previewError} onRetry={retry} />{!loading && !previewError && preview?.readiness.kind === 'idle' && <div className="flex flex-wrap items-center gap-2"><p>{t('automation.idleFresh')}</p><button type="button" {...telemetryClickAttributes('automation.history.open_session','automation')} className={automationButton} onClick={onOpenSession}>{t('automation.writeInstruction')}</button></div>}{!loading && !previewError && rule.mode === 'autorun' && preview?.readiness.kind === 'unavailable' && !supervisorBlocked && <div className="flex flex-wrap items-center gap-2"><p>{t('automation.contextMissing')}</p><button type="button" className={automationButton} {...telemetryClickAttributes('automation.history.open_session','automation')} onClick={onOpenSession}>{t('automation.openSession')}</button></div>}{!loading && !previewError && rule.mode === 'autorun' && preview && (supervisorBlocked || ['running','completed'].includes(preview.readiness.kind)) && (preview.supervisorCheck.status !== 'available' || !preview.supervisorCheck.selection || !sameSupervisorSelection(preview.supervisorCheck.selection, rule.autorun.supervisor)) && <p>{t('automation.supervisorUnavailable')}</p>}</>} footer={<>
+  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={<>
+    <AutomationPreflight loading={loading} error={previewError} onRetry={retry} />
+    {!loading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) && <AutomationReadinessRecovery preview={preview} resume onOpenSession={onOpenSession} objective={rule.mode === 'autorun' ? rule.autorun.objective.text : rule.prompt} onDraftObjective={onDraftObjective} />}
+    {!loading && !previewError && rule.mode === 'autorun' && preview && (supervisorBlocked || ['running','completed'].includes(preview.readiness.kind)) && (preview.supervisorCheck.status !== 'available' || !preview.supervisorCheck.selection || !sameSupervisorSelection(preview.supervisorCheck.selection, rule.autorun.supervisor)) && <p>{t(preview.supervisorCheck.reason === 'selection' ? 'automation.selectionUnsupported' : 'automation.supervisorSetupFailed')}</p>}
+  </>} footer={<>
     <AutomationResumeAction reviewLimits={reviewLimits} disabled={store.getState().busy > 0 || (reviewLimits ? ownership.mode !== 'human' : !ready)} onReviewLimits={onEdit} onResume={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }} />
     {!reviewLimits && <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>}
   </>}>
     {preview && rule.mode === 'autorun' && <AutorunPreviewView preview={{ ...preview, objective: rule.autorun.objective }} readOnly objectiveOverride={rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : ''} onObjective={onEdit} onOpenSession={onOpenSession} />}
     {rule.mode === 'autorun' ? <>
       {!preview && <p className="whitespace-pre-wrap break-words">{rule.autorun.objective.text}</p>}
-      <p>{t('automation.supervisor')}: {rule.autorun.supervisor.provider} · {rule.autorun.supervisor.model} · {rule.autorun.supervisor.reasoningEffort} · {rule.autorun.supervisor.serviceTier}</p>
+      <p className="text-sm break-words"><span className="mr-2 text-xs text-(--text-secondary)">{t('automation.supervisor')}</span> {rule.autorun.supervisor.provider} · {rule.autorun.supervisor.model} · {rule.autorun.supervisor.reasoningEffort} · {rule.autorun.supervisor.serviceTier}</p>
     </> : <p className="whitespace-pre-wrap">{rule.prompt}</p>}
-    <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')}>{t('automation.optionsLimits')}</summary><SavedSelection selection={rule.savedSelection} />{rule.mode === 'autorun' && <p>{t('automation.analysisAttempts')}: {rule.analysisCount}/{rule.autorun.maxAnalyses}</p>}<button type="button" disabled={loading} className={automationButton} {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} onClick={retry}>{t('automation.checkAgain')}</button>
-    <AutomationFacts items={[{ label: t('automation.instructionAttempts'), value: `${rule.dispatchCount}/${rule.limits.maxDispatches}` }, { label: t('automation.expiry'), value: <AutomationTime at={rule.limits.expiresAt} /> }]} /></details>
+    <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.form.advanced', 'automation')}>{t('automation.optionsLimits')}</summary>
+      <AutomationFacts items={[{ label: t('automation.instructionAttempts'), value: `${rule.dispatchCount}/${rule.limits.maxDispatches}` }, ...(rule.mode === 'autorun' ? [{ label: t('automation.supervisorChecks'), value: `${rule.analysisCount}/${rule.autorun.maxAnalyses}` }] : []), { label: t('automation.expiry'), value: <AutomationTime at={rule.limits.expiresAt} /> }]} />
+    </details>
+    <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')} className="cursor-pointer rounded focus-visible:ring-2 focus-visible:ring-(--accent)">{t('automation.technicalDetails')}</summary><div className="mt-2 grid gap-2"><SavedSelection selection={rule.savedSelection} />{previewRejection && <p>{previewRejection}</p>}{preview?.readiness.kind === 'unavailable' && <p>{preview.readiness.code} · {preview.readiness.reason}</p>}{preview?.readiness.kind === 'idle' && <p>{preview.readiness.reason}</p>}{!loading && <button type="button" className={`${automationButton} justify-self-start`} {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} onClick={retry}>{t('automation.checkAgain')}</button>}</div></details>
   </AutomationViewport></section>;
 }
 

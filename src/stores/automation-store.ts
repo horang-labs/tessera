@@ -17,6 +17,8 @@ interface AutomationStore {
   preview: AutorunPreview | null;
   previewLoading: boolean;
   previewError: string | null;
+  previewRejection: string | null;
+  invalidateAutorunPreview: () => void;
   previewAutorun: (overrides?: z.input<typeof autorunPreviewInputSchema>) => Promise<AutorunPreview | null>;
   newDecisionCount: Record<string, number>;
   showNewDecisions: (id: string) => void;
@@ -45,6 +47,7 @@ interface AutomationStore {
 export function createAutomationStore(scope: AutomationScope, http: AutomationHttp = fetch) {
   let listRequest = 0;
   let previewRequest = 0;
+  let lastPreviewInput: z.input<typeof autorunPreviewInputSchema> = {};
   let pendingPreview: { key: string; abort: AbortController; promise: Promise<AutorunPreview | null> } | null = null;
   const detailRequests = new Map<string, number>();
   const pendingDecisions = new Map<string, AutorunDecisionSummary[]>();
@@ -74,13 +77,18 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
         await get().refresh(); // Replayed creates may contain historical ownership/revisions.
         return true;
       } catch (error) {
+        const code = errorCode(error);
+        if (code === 'INPUT_BOUNDARY_UNPROVEN' && 'sessionId' in scope) {
+          get().invalidateAutorunPreview();
+          set({ error: null, previewRejection: code });
+          void get().previewAutorun(lastPreviewInput);
+        } else set({ error: code });
         await get().refresh();
-        set({ error: errorCode(error) });
         return false;
       } finally { set({ busy: get().busy - 1 }); }
     }
     return {
-      items: [], details: {}, decisions: {}, newDecisionCount: {}, decisionDetails: {}, preview: null, previewLoading: false, previewError: null, view: { selectedId: null, tab: 'overview', setup: false }, drafts: {}, runs: {}, lastControl: null, loading: true, error: null, busy: 0,
+      items: [], details: {}, decisions: {}, newDecisionCount: {}, decisionDetails: {}, preview: null, previewLoading: false, previewError: null, previewRejection: null, view: { selectedId: null, tab: 'overview', setup: false }, drafts: {}, runs: {}, lastControl: null, loading: true, error: null, busy: 0,
       inspect: async (id) => {
         const serial = (detailRequests.get(id) ?? 0) + 1;
         detailRequests.set(id, serial);
@@ -95,9 +103,16 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
         }
         catch (error) { if (serial === detailRequests.get(id)) set({ error: errorCode(error) }); return null; }
       },
+      invalidateAutorunPreview: () => {
+        ++previewRequest;
+        pendingPreview?.abort.abort();
+        pendingPreview = null;
+        set({ preview: null, previewLoading: false, previewError: null });
+      },
       previewAutorun: (overrides = {}) => {
         if (!('sessionId' in scope)) return Promise.resolve(null);
-        const key = JSON.stringify(overrides);
+        lastPreviewInput = { ...overrides, includeSupervisorDiscovery: false };
+        const key = JSON.stringify(lastPreviewInput);
         if (pendingPreview?.key === key) return pendingPreview.promise;
         const serial = ++previewRequest;
         pendingPreview?.abort.abort();
@@ -212,7 +227,10 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
         if (saved) keys.delete(body);
         return saved;
       },
-      enable: (rule) => mutate(`${path(rule.id)}/state`, 'POST', { action: 'enable', expectedRevision: rule.revision }),
+      enable: (rule) => {
+        lastPreviewInput = 'mode' in rule && rule.mode === 'autorun' ? { supervisor: rule.autorun.supervisor } : {};
+        return mutate(`${path(rule.id)}/state`, 'POST', { action: 'enable', expectedRevision: rule.revision });
+      },
       pause: (id) => mutate(`${path(id)}/state`, 'POST', { action: 'pause' }),
       remove: (id) => mutate(path(id), 'DELETE'),
       resolve: async (id, runId) => {
