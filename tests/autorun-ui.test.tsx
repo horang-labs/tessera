@@ -206,3 +206,35 @@ test('Schedule and Autorun spent budgets review limits, while ordinary paused ru
     }
   } finally { await i18n.changeLanguage('en'); }
 });
+
+test('Resume keeps the saved verified objective and source visible alongside fresh readiness and new instructions', async context => {
+  const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { autorunInput, firstRunningEvidenceFixture } = await import('./fixtures/autorun-contracts');
+  const { automationFixture, automationNow, ownershipFixture } = await import('./fixtures/automation');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const { applySessionInputOwnership } = await import('../src/lib/automation/client-state');
+  context.mock.method(Date, 'now', () => automationNow);
+  applySessionInputOwnership({ ...ownershipFixture(), mode: 'human', automationId: null });
+  const { enabled: _enabled, ...input } = autorunInput(); void _enabled;
+  const { prompt: _prompt, ...base } = automationFixture(); void _prompt;
+  const objective = { ...firstRunningEvidenceFixture().goal.objective, text: 'Preserve the saved billing goal.',
+    sources: [{ ...firstRunningEvidenceFixture().goal.objective.sources[0], excerpt: 'Original billing instruction.' }] };
+  const rule = decodeAutomation({ ...base, ...input, state: 'paused', analysisCount: 0, latestDecisionId: null,
+    autorunStatus: 'paused', attention: null, autorun: { ...input.autorun, objective, criterionOrigin: 'verified-human' } });
+  assert.ok(rule.success);
+  for (const freshObjective of [null, { kind: 'explicit', text: 'Different fresh preview goal.', revision: 1 }] as const) {
+    const preview = autorunPreviewSchema.parse({ ...autorunPreviewFixture(), objective: freshObjective,
+      readiness: { kind: 'idle', reason: 'consumed-boundary' },
+      newHumanInstructions: [{ ...objective.sources[0], recordId: 'new-record', excerpt: 'New human instruction remains visible.' }] });
+    const html = renderToStaticMarkup(createElement(ContinuationResume, { rule: rule.data, preview, loading: false,
+      store: createAutomationStore({ sessionId: 'session-1' }), onDone: () => {}, onOpenSession: () => {}, onEdit: () => {} }));
+    assert.match(html, /Preserve the saved billing goal\./);
+    assert.match(html, /Original billing instruction\./);
+    assert.match(html, /Objective · From verified conversation/);
+    assert.match(html, /New human instruction remains visible\./);
+    assert.match(html, /Send a new instruction/);
+    assert.match(html, /<button[^>]*disabled=""[^>]*>Resume<\/button>/);
+    assert.doesNotMatch(html, /Different fresh preview goal\./);
+  }
+});
