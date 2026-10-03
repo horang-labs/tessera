@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { AutomationForm, localDue } from './automation-form';
 import { AutomationHistory, SavedSelection } from './automation-history';
 import { AutomationError } from './automation-error';
-import { AutomationReason } from './automation-reason';
+import { AutomationReason, automationReasonKey } from './automation-reason';
 import { useAutomationOwnership } from './use-automation';
 import { automationButton } from './ownership-actions';
 import { ContinuationResume, heartbeatCanResume, AutomationPauseAction, AutomationResumeAction, automationNeedsLimitReview } from './continuation-resume';
@@ -136,6 +136,14 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     <button {...telemetryClickAttributes('automation.setup.heartbeat', 'automation')} className={method === 'heartbeat' ? selectedAutomationButton : automationButton} type="button" title={t('automation.heartbeat')} aria-pressed={method === 'heartbeat'} onClick={() => setMethod('heartbeat')}>{t('automation.heartbeatMethod')}</button>
   </div>;
   const setupFootnote = <p>{t('automation.setupNote')}</p>;
+  const requestErrorCode = showSetup && state.previewRejection === error ? null : error;
+  const sessionRecovery = Boolean(sessionId && requestErrorCode && ['reasonContext', 'reasonApproval', 'reasonUnknown'].includes(automationReasonKey(requestErrorCode, 'request')));
+  const requestErrorNotice = requestErrorCode ? <AutomationError code={requestErrorCode} recovery={
+    <button type="button" className={automationButton} {...telemetryClickAttributes(sessionRecovery ? 'automation.history.open_session' : 'automation.manager.refresh', 'automation')} onClick={() => {
+      if (sessionRecovery) onOpenSession(sessionId);
+      else { void store.getState().refresh(); if (view.selectedId) void store.getState().inspect(view.selectedId); }
+    }}>{t(sessionRecovery ? 'automation.openSession' : 'automation.retry')}</button>
+  } /> : undefined;
   return createPortal(<dialog {...telemetryIgnoreAttributes('event_boundary')} data-automation-dialog ref={dialog} aria-label={t('automation.title')}
     className="m-auto max-h-[calc(100dvh-1rem)] w-[min(calc(100vw-1rem),42rem)] overflow-hidden rounded-xl border border-(--divider) bg-(--chat-bg) p-0 text-(--text-primary) shadow-xl backdrop:bg-black/50 open:flex open:flex-col"
     onCancel={event => { event.preventDefault(); event.stopPropagation(); if (evidenceId) setEvidenceId(null); else onClose(); }}
@@ -148,22 +156,22 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     </header>
     <div className="shrink-0 flex flex-wrap items-center gap-2 px-4 pt-2 text-xs">
     {(view.selectedId || view.setup || evidenceId) && <button {...telemetryClickAttributes('automation.manager.back', 'automation')} className={automationButton} type="button" onClick={() => { if (evidenceId) setEvidenceId(null); else returnToList(); }}>{t('automation.back')}</button>}
-    <AutomationError code={showSetup && state.previewRejection === error ? null : error} />
     {deleteConfirm && rule && (showSetup || evidenceId) && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm','automation')} className={automationButton} onClick={() => void deleteRule(rule)}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel','automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
     {sessionId && !showSetup && <p role="status" className="text-xs text-(--text-secondary)">{t(`automation.${ownership.mode}`)}</p>}
     </div>
     {showSetup ? <section className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {items.some(item => item.state === 'deleted') && <button {...telemetryClickAttributes('automation.manager.include_deleted', 'automation')} className={automationButton} type="button" onClick={() => { setIncludeDeleted(true); returnToList(); }}>{t('automation.deleted')}</button>}
       {!supported ? <p className="px-4">{t('automation.unsupported')}</p> : <>
-        {intent === 'resume' && rule ? <ContinuationResume preview={preview} loading={previewLoading} rule={rule} store={store} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} onEdit={() => void setup('edit', rule)} /> : sessionId && method === 'autorun' ? <>
-          {<AutorunSetup key={`${view.selectedId}:${intent}`} preview={preview} store={store} previous={intent === 'replace' ? rule : previewPrevious} intent={intent} intro={setupIntro} footnote={setupFootnote} defaultName={`${context.title} · Autorun`} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} />}
+        {intent === 'resume' && rule ? <ContinuationResume requestErrorNotice={requestErrorNotice} preview={preview} loading={previewLoading} rule={rule} store={store} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} onEdit={() => void setup('edit', rule)} /> : sessionId && method === 'autorun' ? <>
+          {<AutorunSetup requestErrorNotice={requestErrorNotice} key={`${view.selectedId}:${intent}`} preview={preview} store={store} previous={intent === 'replace' ? rule : previewPrevious} intent={intent} intro={setupIntro} footnote={setupFootnote} defaultName={`${context.title} · Autorun`} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} />}
         </> : <>
-          <AutomationForm {...heartbeatSetupSubmission(store, intent, sessionId, rule, done)} footerNote={sessionId && (intent === 'replace' || state.previewRejection) ? <><AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} />{!previewLoading && !previewError && <AutomationReadinessRecovery preview={preview} method="heartbeat" onOpenSession={() => onOpenSession(sessionId)} objective={String((state.drafts[fixedDraftKey] as Record<string,string> | undefined)?.prompt ?? '')} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId,text) : undefined} />}</> : undefined} intro={setupIntro} footnote={<>{setupFootnote}{sessionId && state.previewRejection && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics','automation')} className="cursor-pointer">{t('automation.technicalDetails')}</summary><p>{state.previewRejection}</p>{preview && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && <p>{preview.readiness.reason}</p>}</details>}</>} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
+          <AutomationForm {...heartbeatSetupSubmission(store, intent, sessionId, rule, done)} footerNote={(previewLoading || previewError) && requestErrorNotice ? <AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} /> : requestErrorNotice ?? (sessionId && (intent === 'replace' || state.previewRejection) ? <><AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} />{!previewLoading && !previewError && <AutomationReadinessRecovery preview={preview} method="heartbeat" onOpenSession={() => onOpenSession(sessionId)} objective={String((state.drafts[fixedDraftKey] as Record<string,string> | undefined)?.prompt ?? '')} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId,text) : undefined} />}</> : undefined)} intro={setupIntro} footnote={<>{setupFootnote}{sessionId && state.previewRejection && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics','automation')} className="cursor-pointer">{t('automation.technicalDetails')}</summary><p>{state.previewRejection}</p>{preview && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && <p>{preview.readiness.reason}</p>}</details>}</>} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
             defaultName={`${context.title} · ${sessionId ? 'Heartbeat' : t('automation.schedule')}`} replacing={intent === 'replace'} draft={state.drafts[fixedDraftKey]} onDraft={draft => store.setState(s => ({ drafts: { ...s.drafts, [fixedDraftKey]: draft } }))}
             onCancel={() => updateView({ setup: false })} />
         </>}
       </>}
     </section> : rule ? <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport>
+      {requestErrorNotice}
       {evidenceId ? decisionDetails[evidenceId] ? <AutorunEvidence detail={decisionDetails[evidenceId]} onOpenSession={onOpenSession} /> : <p>{t('automation.loading')}</p> : <>
         <h3 className="text-base font-semibold break-words">{rule.name}</h3><p className="text-xs text-(--text-muted)">{t(rule.mode === 'autorun' ? 'automation.continueWork' : rule.mode === 'heartbeat' ? 'automation.heartbeat' : 'automation.schedule')}</p>
         <p className={automationNotice} role="status">{t(`automation.state_${rule.state}`)}{rule.mode === 'autorun' && ` · ${t(`automation.phase_${rule.autorunStatus}`)}`}</p>
@@ -192,6 +200,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
         {view.tab === 'history' && (rule.mode === 'autorun' ? decisions[rule.id]?.nextCursor : runs[rule.id]?.nextCursor) && <button {...telemetryClickAttributes('automation.manager.more', 'automation')} className={automationButton} onClick={() => void (rule.mode === 'autorun' ? store.getState().loadDecisions(rule.id,true) : store.getState().loadRuns(rule.id,true))}>{t('automation.more')}</button>}
       </>}
     </AutomationViewport></section> : <AutomationViewport>
+      {requestErrorNotice}
       <div className="my-4 flex flex-wrap gap-3"><button {...telemetryClickAttributes('automation.manager.new', 'automation')} className={automationButton} onClick={() => void setup('start')}>{t('automation.new')}</button><label><input {...telemetryClickAttributes('automation.manager.include_deleted', 'automation')} type="checkbox" checked={includeDeleted} onChange={e => setIncludeDeleted(e.target.checked)} />{t('automation.deleted')}</label><button {...telemetryClickAttributes('automation.manager.refresh', 'automation')} className={automationButton} onClick={() => void store.getState().refresh()}>{t('automation.retry')}</button></div>
       {loading && <p role="status">{t('automation.loading')}</p>}
       {visible.map((item,index) => <article className="grid gap-2 rounded-lg border border-(--divider) bg-(--chat-header-bg) p-3" key={item.id}>

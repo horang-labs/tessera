@@ -40,9 +40,9 @@ export function autorunCanStart(preview: AutorunPreview, selection: SupervisorSe
     && preview.remaining.dispatches > 0 && preview.remaining.analyses > 0 && expiresAt > now;
 }
 
-export function AutorunSetup({ preview, store, previous, intent = 'start', onDone, onOpenSession, defaultName, intro, footnote, onDraftObjective }: {
+export function AutorunSetup({ preview, store, previous, intent = 'start', onDone, onOpenSession, defaultName, intro, footnote, onDraftObjective, requestErrorNotice }: {
   preview: AutorunPreview | null; store: AutomationStoreApi; previous?: AutomationV2;
-  onDraftObjective?: (text: string) => void; intro?: ReactNode; footnote?: ReactNode; defaultName?: string; intent?: 'start' | 'resume' | 'edit' | 'replace'; onDone: (id: string) => void; onOpenSession: () => void;
+  requestErrorNotice?: ReactNode; onDraftObjective?: (text: string) => void; intro?: ReactNode; footnote?: ReactNode; defaultName?: string; intent?: 'start' | 'resume' | 'edit' | 'replace'; onDone: (id: string) => void; onOpenSession: () => void;
 }) {
   const { t } = useI18n();
   const [now, setNow] = useState(() => Date.now());
@@ -125,7 +125,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
       }
     } finally { setSaving(false); }
   }}>
-    <AutomationViewport footerNote={<>
+    <AutomationViewport footerNote={!previewLoading && !previewError && requestErrorNotice ? requestErrorNotice : <>
       <AutomationPreflight loading={previewLoading} error={previewError} onRetry={retry} />
       {!previewLoading && !previewError && !ready && (expiresAt <= now || (old && (old.dispatchCount >= old.limits.maxDispatches || old.analysisCount >= old.autorun.maxAnalyses))) ? <p>{t('automation.reasonLimit')}</p>
         : !previewLoading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) ? <AutomationReadinessRecovery preview={preview} resume={intent === 'resume'} onOpenSession={onOpenSession} objective={objectiveEdited ? override : preview.objective?.text} onDraftObjective={onDraftObjective} />
