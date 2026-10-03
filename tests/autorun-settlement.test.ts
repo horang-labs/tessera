@@ -149,6 +149,7 @@ test('sealed affirmative prelaunch intent reconciles without ever starting a pro
   } finally { await fs.rm(f.home, { recursive: true }); }
 });
 import { generateSupervisorDecision, defaultSupervisorDependencies } from '../src/lib/cli/providers/autorun-supervisor';
+import { selectionMetadataHash } from '../src/lib/cli/providers/supervisor-model-policy';
 import { SUPERVISOR_DECISION_JSON_SCHEMA } from '../src/lib/automation/autorun-contracts';
 import { contextSnapshot, supervisorFinalFixture } from './fixtures/autorun-contracts';
 test('real generate wiring preserves all probe/inference receipts after workspace cleanup', async () => {
@@ -162,12 +163,14 @@ test('real generate wiring preserves all probe/inference receipts after workspac
     await fs.mkdir(workspace); await fs.mkdir(workspace + '/empty'); await fs.writeFile(workspace + '/group.cjs', AUTORUN_GROUP_WRAPPER);
     const deadlineAt = Date.now() + 15_000;
     const recovery = await registerSupervisorInvocation({ ...request, provider: 'claude-code', deadlineAt }, f.home, f.deps);
-    const result = await generateSupervisorDecision({ ...request, selection, deadlineAt, signal: new AbortController().signal,
+    const metadata={value:selection.model,label:'Sonnet',isDefault:false,supportedReasoningEfforts:[{value:'high',label:'High',description:'Deep'}]};
+    const capability={...supervisorFinalFixture().capability,selection,cliVersion:'2.1.284',proofId:'claude-2.1.284-safe-restricted-v2',metadataHash:selectionMetadataHash(metadata,{tools:['StructuredOutput'],model:selection.model,effort:'high',tier:null},selection)};
+    const result = await generateSupervisorDecision({ ...request, selection, capability, deadlineAt, signal: new AbortController().signal,
       trustedInstructions: 'Judge supplied fixture.', outputSchema: SUPERVISOR_DECISION_JSON_SCHEMA,
       packet: { version: 1, objective: { kind: 'explicit', text: 'Fix login.', revision: 1 }, criteria: [{ id: 'goal', text: 'Test passes.' }],
         criterionOrigin: 'explicit', constraints: [], context: contextSnapshot(), priorDecisions: [] } }, {
       ...defaultSupervisorDependencies, prepare: async () => ({ root: workspace, guestRoot: workspace, command, environment: {}, recovery,
-        cleanup: () => fs.rm(workspace, { recursive: true }) }), claudeModelAvailable: async () => true,
+        cleanup: () => fs.rm(workspace, { recursive: true }) }), claudeModelMetadata: async () => metadata,
     });
     assert.equal(result.kind, 'ok');
     const restarted = createAutorunProviderPort('claude-code', { ...f.deps });

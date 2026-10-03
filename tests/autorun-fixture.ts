@@ -30,6 +30,7 @@ async function createFixtureRuntime(f: ReturnType<typeof fixture>, ownerUserId: 
   let calls = 0;
   const provider: AutorunProviderPort = {
     version: 1,
+    discoverSupervisors: async () => ({ candidates: [{provider:'codex', model:'gpt-6.1-sol', label:'Sol', reasoningEfforts:['high'],serviceTiers:['default'],source:'native',unavailableReason:null}], complete:true }),
     readAutorunEvidence: async args => ({ kind: 'ok', goal: { kind: 'verified', objective: {
       kind: 'verified-human', text: 'Fix login.', revision: args.goalRevision,
       sources: [{ messageId: 'message-1', recordId: 'record-1', textHash: 'd'.repeat(64), excerpt: 'Fix login.', origin: 'tessera-human-correlated' }],
@@ -41,9 +42,9 @@ async function createFixtureRuntime(f: ReturnType<typeof fixture>, ownerUserId: 
     },
     checkSupervisorCapability: async args => ({ kind: 'available', capability: { version: 1, selection: args.selection,
       cliVersion: args.selection.provider === 'codex' ? '0.159.2' : '2.1.284',
-      proofId: args.selection.provider === 'codex' ? 'codex-0.159.2-packet-catalog-v1' : 'claude-2.1.284-safe-restricted-v1',
-      isolationPolicyVersion: 'autorun-530-v1', available: true, checkedAt: autorunNow } }),
-    generateSupervisorDecision: async args => { calls++; return { ...supervisorFinalFixture(), invocationId: args.invocationId } as Awaited<ReturnType<AutorunProviderPort['generateSupervisorDecision']>>; },
+      proofId: args.selection.provider === 'codex' ? 'codex-0.159.2-packet-catalog-v2' : 'claude-2.1.284-safe-restricted-v2',
+      metadataHash:'c'.repeat(64), isolationPolicyVersion: 'autorun-530-selection-v2', available: true, checkedAt: autorunNow } }),
+    generateSupervisorDecision: async args => { calls++; return { ...supervisorFinalFixture(), selection:args.selection, capability:args.capability, cliVersion:args.capability.cliVersion, effectiveSelection:{kind:'verified',selection:args.selection}, invocationId: args.invocationId } as Awaited<ReturnType<AutorunProviderPort['generateSupervisorDecision']>>; },
   };
   f.service.deps.inspect = async () => ({ selection: worker, canonicalWorktreeId: null, assertCurrent() {} });
   f.service.deps.provider = () => provider;

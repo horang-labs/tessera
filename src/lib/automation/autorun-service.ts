@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { AutomationService, fail, type ListOptions } from './service';
 import { sameSessionSelection } from './contracts';
-import { AUTORUN_BOUNDS, PROVEN_SUPERVISOR_COMBINATIONS, autorunConfigSchema, autorunPreviewSchema,
+import { AUTORUN_BOUNDS, supervisorDiscoverySchema, supervisorSelectionSchema, autorunConfigSchema, autorunPreviewSchema,
   autorunPreviewInputSchema, autorunEvidenceResultSchema, decodeAutomationInput, sameSupervisorSelection,
   supervisorCapabilitySchema, validateAutomationInputV2, autorunPauseReasonSchema, type AutorunInput, type AutorunPreview, type AutorunAutomation,
   type AutorunConfig, type AutomationAttention, type AutorunDecisionSummary } from './autorun-contracts';
@@ -68,29 +68,41 @@ export class AutorunService {
       } else readiness = { kind: 'unavailable', code: evidence.data.code, reason: evidence.data.reason };
     }
     if (input.objectiveOverride) objective = { kind: 'explicit', text: input.objectiveOverride, revision: goalRevision };
-    const options: AutorunPreview['supervisorOptions'] = [];
-    for (const proof of PROVEN_SUPERVISOR_COMBINATIONS) {
-      const port = this.service.deps.provider?.(proof.selection.provider);
-      if (!port) continue;
-      const result = await port.checkSupervisorCapability({ ...owner, selection: proof.selection });
-      if (result.kind === 'available') {
-        const parsed = supervisorCapabilitySchema.safeParse(result.capability);
-        if (parsed.success && sameSupervisorSelection(parsed.data.selection, proof.selection)) options.push(parsed.data);
+    const discoveries = await Promise.all(['claude-code','codex'].map(async provider => {
+      try { const result=await this.service.deps.provider?.(provider)?.discoverSupervisors?.(owner);
+        return result ? supervisorDiscoverySchema.parse(result) : {candidates:[],complete:false};
+      } catch { return {candidates:[],complete:false}; }
+    }));
+    const unique=new Map(discoveries.flatMap(d=>d.candidates).map(c=>[c.provider+':'+c.model,c]));
+    const supervisorDiscovery={candidates:[...unique.values()].slice(0,200),complete:discoveries.every(d=>d.complete)&&unique.size<=200};
+    const worker=inspection.selection;
+    const workerChoice=worker.model&&worker.reasoningEffort?supervisorSelectionSchema.safeParse({provider:worker.provider,model:worker.model,reasoningEffort:worker.reasoningEffort,serviceTier:worker.serviceTier}):null;
+    const suggestion=supervisorDiscovery.candidates.find(c=>c.unavailableReason===null&&c.reasoningEfforts.length&&c.serviceTiers.some(t=>t!=='fast'));
+    const selected=input.supervisor ?? previous?.autorun.supervisor ?? (workerChoice?.success&&workerChoice.data.serviceTier!=='fast'?workerChoice.data:undefined) ??
+      (suggestion?{provider:suggestion.provider,model:suggestion.model,reasoningEffort:suggestion.reasoningEfforts[0],serviceTier:suggestion.serviceTiers.find(t=>t!=='fast')!}:null);
+    const options: AutorunPreview['supervisorOptions']=[];
+    let supervisorCheck: AutorunPreview['supervisorCheck']={selection:selected,status:selected?'unavailable':'unselected',reason:selected?'adapter-missing':null};
+    if(selected){
+      const port=this.service.deps.provider?.(selected.provider);
+      if(port){
+        const result=await port.checkSupervisorCapability({...owner,selection:selected});
+        const parsed=result.kind==='available'?supervisorCapabilitySchema.safeParse(result.capability):null;
+        if(parsed?.success&&sameSupervisorSelection(parsed.data.selection,selected)){
+          options.push(parsed.data);supervisorCheck={selection:selected,status:'available',reason:null};
+        }else supervisorCheck={selection:selected,status:'unavailable',reason:result.kind==='unavailable'?result.reason:'metadata-drift'};
       }
     }
     inspection.assertCurrent();
     if (ownership.epoch !== this.service.runtime().ownership(userId, sessionId).epoch ||
       !isDeepStrictEqual(turn, runtime.readTurnEvidence({ ...owner, sessionId }))) fail('ANALYSIS_STALE');
-    const worker = inspection.selection;
-    const preferred = previous?.autorun.supervisor ?? (worker.model && worker.reasoningEffort ? worker : null);
-    const recommended = options.find(o => preferred && sameSupervisorSelection(o.selection, preferred as AutorunConfig['supervisor'])) ?? options.find(o => o.selection.serviceTier !== 'fast');
+    const recommended=options[0]?.selection.serviceTier!=='fast'?options[0]:undefined;
     if(this.hasQuarantine(userId,sessionId))readiness={kind:'unavailable',code:'ANALYSIS_STALE',reason:'unsafe-runtime'};
     if (!options.length) readiness = { kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason: 'unsupported-version' };
     const preview = autorunPreviewSchema.parse({ version: 1, previewId: randomUUID(), sessionId, goalRevision, objective,
       newHumanInstructions, constraints: input.constraints ?? previous?.autorun.constraints ?? [],
       criteria: input.criteria ?? previous?.autorun.criteria ?? [{ id: 'goal', text: 'Supervisor judgment against the saved objective.' }],
       criterionOrigin: input.criteria ? 'explicit' : previous?.autorun.criterionOrigin ?? 'system-objective',
-      workerSelection: worker, supervisorOptions: options, recommendedSupervisor: recommended?.selection ?? null, readiness,
+      workerSelection: worker, supervisorDiscovery, supervisorCheck, supervisorOptions: options, recommendedSupervisor: recommended?.selection ?? null, readiness,
       defaults: { delayMs: 120_000, maxDispatches: 10, maxAnalyses: 20, analysisTimeoutMs: 120_000, expiresAt: this.now + 28_800_000 },
       remaining: { dispatches: previous ? Math.max(0,previous.limits.maxDispatches-previous.dispatchCount) : 10,
         analyses: previous ? Math.max(0,previous.autorun.maxAnalyses-previous.analysisCount) : 20 } });
@@ -106,7 +118,7 @@ export class AutorunService {
     if(input.enabled){await this.reconcileAnalyses(userId,input.target.sessionId);this.assertSettled(userId,input.target.sessionId);}
     const preview = await this.preview(userId, input.target.sessionId, {
       ...(input.autorun.objective.kind === 'explicit' ? { objectiveOverride: input.autorun.objective.text } : reference?.preview.objective?.kind === 'explicit' ? { objectiveOverride: reference.preview.objective.text } : {}),
-      constraints: input.autorun.constraints, criteria: input.autorun.criteria,
+      constraints: input.autorun.constraints, criteria: input.autorun.criteria, supervisor: input.autorun.supervisor,
     }, saved);
     if (reference && digest(preview.objective) !== digest(reference.preview.objective)) fail('ANALYSIS_STALE');
     if (!preview.objective) fail('OBJECTIVE_REQUIRED');
