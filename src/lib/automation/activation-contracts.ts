@@ -46,6 +46,10 @@ export type NativeWriteFence = (phase: 'begin' | 'complete', write: () => void) 
 /** Bound by the terminal-owned helper. Observations are evidence, never authority. */
 export interface NativeAutomationInteractionPort {
   observe(scope: InteractionScope): Promise<NativeInteraction>;
+  /** Release an unanswered hook to native manual handling; never undo/replay a committed response.
+   * expected fences a particular request; absent expected is an explicit owner Pause for this scope.
+   */
+  deferApproval?(args: { scope: InteractionScope; expected?: NativeApprovalRequest }): void;
   /** Synchronous identity/state check immediately before each fenced native action. */
   assertCurrent(expected: ReadyPromptEvidence | NativeApprovalRequest): void;
   submitPrompt(args: { expected: ReadyPromptEvidence; prompt: string; submissionId: string;
