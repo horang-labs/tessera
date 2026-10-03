@@ -132,6 +132,7 @@ export class AutomationInputGate {
     if (!state || state.conversationId === conversationId) return;
     if (state.conversationId) {
       state.boundary = null; state.nativeSubmission = undefined; state.nativeCompletion = undefined;
+      state.submittedRevision = null; state.confirmedRevision = null; state.candidateRevision = null;
       this.inhibit(state, 'WORKER_IDENTITY_CHANGED');
     }
     state.conversationId = conversationId;
@@ -240,6 +241,10 @@ export class AutomationInputGate {
   hook(userId: string, sessionId: string, event: string, status: 'running' | 'completed' | 'input_required' | 'idle', at: number, children: boolean, completion: TerminalAutomationCompletion = null) {
     const state = this.state(userId, sessionId);
     if (!state || !state.live || at <= state.lastHookAt) return;
+    // Codex emits startup on its first real turn, after our host Enter can be delivered.
+    // Preserve that pending submit; only the subsequent native submit confirms it.
+    const pendingHostStartup = event === 'SessionStart' && status === 'idle' && state.status === 'running'
+      && state.submittedRevision === state.revision && state.confirmedRevision === null;
     state.lastHookAt = at;
     state.lifecycleChildren = children;
     if (event === 'UserPromptSubmit') {
@@ -264,7 +269,7 @@ export class AutomationInputGate {
       state.submittedRevision = null;
       this.inhibit(state, 'TURN_UNPROVEN');
     }
-    state.status = status === 'input_required' ? 'input-required' : status === 'completed' ? 'turn-complete' : status === 'running' ? 'running' : 'unknown';
+    state.status = status === 'input_required' ? 'input-required' : status === 'completed' ? 'turn-complete' : status === 'running' || pendingHostStartup ? 'running' : 'unknown';
     const clean = state.submittedRevision !== null && state.submittedRevision === state.revision;
     if (completion === 'failed-lead-stop') {
       state.leadCompletionAt = null;

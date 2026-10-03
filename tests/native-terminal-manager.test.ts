@@ -6,6 +6,7 @@ import path from 'node:path';
 import { getNativeAutomationInteraction } from '@/lib/automation/native-interaction';
 import type { TerminalPtyFactory } from '@/lib/terminal/types';
 import { mintPaneToken } from '@/lib/terminal/pane-token-registry';
+import { buildAutorunHookEvidence } from '@/lib/cli/providers/autorun-hook-evidence';
 
 process.env.TESSERA_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'tessera-native-interaction-'));
 process.env.NODE_ENV = 'test';
@@ -215,10 +216,13 @@ test('late startup hooks do not prevent a current empty native prompt after mode
         manager.automation.verifyNativeAction(first.identity, 'rule', 'first'); port.assertCurrent(first); write();
       } })).kind, 'delivered');
     manager.automation.writer('owner', 'worker', false);
+    manager.automation.drain('owner', 'worker', 'rule'); // Exhausted first dispatch returns human input.
     const at = Date.now() + 1000;
     for (const [hookEvent, status] of [['SessionStart', 'idle'], ['UserPromptSubmit', 'running']] as const)
       manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
         hookEvent, status, stateAt: at + (status === 'running' ? 1 : 0) }, 'owner');
+    manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+      hookEvent: 'InterruptFallback', status: 'idle', stateAt: at + 2 }, 'owner');
     assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'unknown');
     // Native HTTP400/model-selection output is history; the actual input frame is empty again.
     output(screen); await new Promise<void>(resolve => setImmediate(resolve));
@@ -238,4 +242,59 @@ test('late startup hooks do not prevent a current empty native prompt after mode
         manager.automation.verifyNativeAction(retry.identity, 'rule', 'retry'); port.assertCurrent(retry); write();
       } })).kind, 'delivered');
   } finally { await manager.shutdownAll(); }
+});
+
+test('late native SessionStart preserves the host submit until real native confirmation and approval', async () => {
+  for (const mode of ['fresh', 'restored', 'reset']) {
+    const { manager, port } = await setup(false);
+    try {
+      assert.ok(port); const scope = { userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' as const };
+      manager.automation.authority = () => ({ canSuperviseNativeApproval: () => true,
+        recordRuntimeObservation: () => {}, recordInputOwnership: () => {}, pauseWake: () => {},
+      } as import('@/lib/automation/runtime-port').AutomationAuthority);
+      if (mode !== 'fresh') manager.activateProviderSessionIdentity('terminal', 'owner', 'native');
+      const ready = await port.observe(scope); assert.equal(ready.kind, 'ready'); if (ready.kind !== 'ready') return;
+      manager.automation.claimNativeAction(ready.identity, 'rule', 'bootstrap');
+      assert.equal((await port.submitPrompt({ expected: ready, prompt: 'Read marker.txt', submissionId: 'bootstrap',
+        signal: new AbortController().signal, writeFence: (_phase, write) => {
+          manager.automation.verifyNativeAction(ready.identity, 'rule', 'bootstrap'); port.assertCurrent(ready); write();
+        } })).kind, 'delivered');
+      manager.automation.writer('owner', 'worker', false);
+      manager.activateProviderSessionIdentity('terminal', 'owner', 'native');
+      if (mode === 'reset') manager.activateProviderSessionIdentity('terminal', 'owner', 'reset-native');
+      const at = Date.now() + 1000;
+      manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        status: 'idle', hookEvent: 'SessionStart', stateAt: at }, 'owner');
+      assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, mode === 'reset' ? 'unknown' : 'running');
+      assert.equal(manager.automation.readTurnEvidence(scope).kind, mode === 'reset' ? 'idle' : 'unavailable',
+        'SessionStart is not accepted-turn evidence; conversation reset invalidates the prior host submit');
+      manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        status: 'running', hookEvent: 'UserPromptSubmit', stateAt: at + 1 }, 'owner');
+      const association = { observerSubmissionId: 'submit', sourceIdentityHash: 'a'.repeat(64), fileGeneration: 'file',
+        startByte: 0, nativeId: 'turn', dedupKey: 'submit' };
+      const payload = { hook_event_name: 'UserPromptSubmit', session_id: mode === 'reset' ? 'reset-native' : 'native',
+        turn_id: 'turn', tessera_autorun: association };
+      const event = buildAutorunHookEvidence({ ...scope, provider: 'codex',
+        observation: manager.automation.observe('owner', 'worker')!, payload });
+      assert.ok(event);
+      if (mode === 'reset') { assert.equal(manager.automation.recordHookEvidence(event).kind, 'rejected'); continue; }
+      assert.equal(manager.automation.recordHookEvidence({ ...event, evidence: { ...event.evidence,
+        terminalGeneration: event.evidence.terminalGeneration + 1 } }).kind, 'rejected');
+      assert.equal(manager.automation.recordHookEvidence({ ...event, evidence: { ...event.evidence,
+        providerConversationId: 'foreign' } }).kind, 'rejected');
+      assert.equal(manager.automation.recordHookEvidence(event).kind, 'accepted');
+      assert.equal(manager.automation.readTurnEvidence(scope).kind, 'running');
+      manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        status: 'idle', hookEvent: 'SessionStart', stateAt: at }, 'owner'); // Older than real submit.
+      assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'running');
+      manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        status: 'running', hookEvent: 'PreToolUse', stateAt: at + 2 }, 'owner');
+      const offer = manager.openNativeApproval('terminal', 'owner', { ...payload, hook_event_name: 'PermissionRequest',
+        tool_name: 'exec_command', tool_input: { command: 'cat marker.txt' }, cwd: workspace,
+        tessera_native_approval: { invocationId: 'late-approval', generation: ready.identity.generation, providerVersion: '0.159.2' } });
+      assert.ok(offer); const approval = await port.observe(scope); assert.equal(approval.kind, 'approval');
+      if (approval.kind === 'approval') port.deferApproval!({ scope, expected: approval.request });
+      assert.equal(await offer, null);
+    } finally { await manager.shutdownAll(); }
+  }
 });
