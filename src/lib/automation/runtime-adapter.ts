@@ -195,10 +195,12 @@ export function createAutomationRuntime(options: {
           let result: DispatchResult;
           try {
             native.assertCurrent(expected); manager.automation.assertNativeIdentity(identity);
+            if (manager.automation.ownership(spec.ownerUserId,sessionId).epoch !== action.inputEpoch) throw Error('Draft epoch changed');
             if (action.kind === 'bootstrap') origin = await prepareAutomationOrigin({ userId: spec.ownerUserId,
               sessionId: spec.target.sessionId, agentEnvironment: spec.run.agentEnvironment, runId: spec.run.id,
               runtime: identity, fresh: identity.providerConversationId === null });
             native.assertCurrent(expected); manager.automation.assertNativeIdentity(identity);
+            if (manager.automation.ownership(spec.ownerUserId,sessionId).epoch !== action.inputEpoch) throw Error('Draft epoch changed');
             manager.automation.claimNativeAction(identity, spec.run.automationId, spec.run.id); claimed = true;
             const permit = port.beginAttempt(args.runId, args.leaseEpoch, args.expectedRevision);
             const writeFence: import('./activation-contracts').NativeWriteFence = (phase, write) => {

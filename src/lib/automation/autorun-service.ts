@@ -211,7 +211,7 @@ export class AutorunService {
       inspection.assertCurrent(); this.service.checkWakeAvailable({ ...current.automation, state: 'enabled' });
       Object.assign(current.automation, { revision: revision+1, state: 'enabled', pauseReason: null, autorunStatus: 'waiting', updatedAt: this.now, nextDueAt: null });
       current.evidence = null; current.ownership = this.service.deps.runtime()?.ownership(userId,a.target.sessionId) ?? null;
-      current.activation = newActivation(); this.repo.save(current);
+      current.activation = newActivation(current.activation?.approvals); this.repo.save(current);
     });
     const body=this.service.detail(userId,id);this.service.notify(body.automation);return {status:200,body};
   }

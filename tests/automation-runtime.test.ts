@@ -375,3 +375,28 @@ for (const surfaceId of ['normal', 'peek']) {
     assert.equal(f.manager.automation.recordHookEvidence(submission).kind, 'rejected');
   });
 }
+
+for (const surfaceId of ['normal', 'peek']) {
+  test(`${surfaceId} retained draft veto prevents continuation after arm and invalidates a pending submit even if cleared`, async () => {
+    for (const timing of ['before', 'during']) {
+      const f = await fixture();
+      f.hook('UserPromptSubmit', 'running'); f.hook('Stop', 'completed');
+      let boundary: Boundary | null = null;
+      await f.runtime.arm({userId:'owner',sessionId:'session',automationId:'rule',selection}, e => {
+        if (e.kind === 'completed') boundary = e.boundary;
+      });
+      const scope = {userId:'owner',sessionId:'session',agentEnvironment:'wsl' as const};
+      if (timing === 'before') f.runtime.activation!.setDraftVeto(scope,{surfaceId,revision:1,hasDraft:true});
+      const pending = f.runtime.dispatch({runId:'run',leaseEpoch:1,expectedRevision:1,expectedBoundary:boundary});
+      if (timing === 'during') {
+        await waitForPaste(f.writes);
+        f.runtime.activation!.setDraftVeto(scope,{surfaceId,revision:1,hasDraft:true});
+        f.runtime.activation!.setDraftVeto(scope,{surfaceId,revision:2,hasDraft:false});
+      }
+      const outcome = await pending;
+      assert.equal(outcome.kind,timing === 'before' ? 'cancelled' : 'unknown');
+      assert.equal(f.writes.length,timing === 'before' ? 0 : 1);
+      assert.ok(!f.writes.includes('\r'),'a retained draft edit must not be submitted');
+    }
+  });
+}

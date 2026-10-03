@@ -184,7 +184,7 @@ export class AutomationService {
       v.automation.nextDueAt = nextScheduledAt(a.trigger, this.deps.now());
       v.evidence = null;
       if (a.target.kind === 'wake-session') {
-        v.activation = newActivation();
+        v.activation = newActivation(v.activation?.approvals);
         v.ownership = this.deps.runtime()?.ownership(userId, a.target.sessionId) ?? null;
       }
       this.repo.save(v);

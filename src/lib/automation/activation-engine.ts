@@ -70,17 +70,22 @@ export class ActivationEngine {
         }
         continue;
       }
+      const inputEpoch = runtime.ownership(a.ownerUserId,a.target.sessionId).epoch;
       const native = await runtime.activation.observe({ ...owner, sessionId: a.target.sessionId });
       this.assertLease();
       const current = this.service.repo.get(a.id);
-      if (!current?.activation || current.automation.state !== 'enabled' || current.automation.revision !== a.revision) continue;
+      if (!current?.activation || current.automation.state !== 'enabled' || current.automation.revision !== a.revision ||
+        runtime.ownership(a.ownerUserId,a.target.sessionId).epoch !== inputEpoch) continue;
       if (native.kind === 'approval') {
         if (!isAutorun(a)) {
           runtime.activation.deferApproval?.({scope:{...owner,sessionId:a.target.sessionId},expected:native.request});
           this.projection(a.id, 'approval-needs-user'); continue;
         }
         const task = this.approval(a, native.request).finally(() => this.jobs.delete(a.id));
-        this.jobs.set(a.id, task); void task.catch(() => this.projection(a.id, 'approval-needs-user', 'needs-user')); continue;
+        this.jobs.set(a.id, task); void task.catch(() => {
+          runtime.activation?.deferApproval?.({scope:{...owner,sessionId:a.target.sessionId},expected:native.request});
+          this.projection(a.id, 'approval-needs-user', 'needs-user');
+        }); continue;
       }
       if ((native.kind === 'unavailable' || native.kind === 'unknown') && current.activation.firstAction === 'pending' && runtime.activation.prepareStartup &&
         !this.service.repo.occurrenceExists(a.id, a.revision, `startup:${current.activation.projection.activationId}`)) {
@@ -94,7 +99,7 @@ export class ActivationEngine {
               }
             }
             const prompt = this.firstPrompt(a);
-            const id = this.reserve(a,{kind:'startup',activationId:current.activation.projection.activationId!,expected},prompt);
+            const id = this.reserve(a,{kind:'startup',activationId:current.activation.projection.activationId!,expected,inputEpoch:expected.ownershipEpoch},prompt);
             await this.deliver(id); continue;
           }
         } catch { this.projection(a.id,'runtime-unavailable'); }
@@ -119,7 +124,7 @@ export class ActivationEngine {
       try {
         this.assertLease(); runtime.activation.assertCurrent(native);
         const prompt = this.firstPrompt(a);
-        const id = this.reserve(a, { kind: 'bootstrap', activationId: current.activation.projection.activationId!, expected: native }, prompt);
+        const id = this.reserve(a, { kind: 'bootstrap', activationId: current.activation.projection.activationId!, expected: native, inputEpoch }, prompt);
         await this.deliver(id);
       } catch { this.projection(a.id, 'runtime-unverified'); }
     }
@@ -132,6 +137,7 @@ export class ActivationEngine {
   }
   private async approval(a: Extract<DurableAutomation, { mode: 'autorun' }>, request: NativeApprovalRequest) {
     const leaseEpoch = this.assertLease();
+    const inputEpoch = this.service.runtime().ownership(a.ownerUserId,a.target.sessionId).epoch;
     const runtime = this.service.runtime().activation!, now = this.service.deps.now();
     const defer = () => runtime.deferApproval?.({scope:{userId:a.ownerUserId,sessionId:a.target.sessionId,agentEnvironment:a.agentEnvironment},expected:request});
     const value = this.service.repo.get(a.id)!;
@@ -150,6 +156,7 @@ export class ActivationEngine {
     }
     const controller = new AbortController(); this.flights.set(a.id, controller);
     const deadlineAt = Math.min(request.deadlineAt, now + a.autorun.analysisTimeoutMs, a.limits.expiresAt);
+    controller.signal.addEventListener('abort', () => { defer(); this.projection(a.id,'approval-needs-user','needs-user'); }, {once:true});
     const timer = setTimeout(() => controller.abort(), Math.max(1, deadlineAt - this.service.deps.now())); timer.unref();
     const decision: StoredApprovalDecision = { id: randomUUID(), request, packet: { version: 1, kind: 'approval', objective: a.autorun.objective,
       constraints: a.autorun.constraints, criteria: a.autorun.criteria, request }, selection: a.autorun.supervisor, capability: capability.capability,
@@ -160,6 +167,7 @@ export class ActivationEngine {
         const current = this.service.repo.get(a.id)!;
         if (!isAutorun(current.automation) || current.automation.state !== 'enabled' || current.automation.revision !== a.revision ||
           current.automation.analysisCount >= a.autorun.maxAnalyses || controller.signal.aborted ||
+          this.service.runtime().ownership(a.ownerUserId,a.target.sessionId).epoch !== inputEpoch ||
           current.activation!.approvals.some(d => d.request.requestId === request.requestId && d.request.requestHash === request.requestHash) ||
           this.service.repo.decisions().filter(d => d.active && d.detail.attempts.some(at => at.quiescent !== true)).length +
           this.service.repo.all().flatMap(v => v.activation?.approvals ?? []).filter(d => d.quiescent !== true).length >= 2) throw Error('Approval changed');
@@ -174,10 +182,10 @@ export class ActivationEngine {
         trustedInstructions: APPROVAL_INSTRUCTIONS, packet: decision.packet, outputSchema: SUPERVISOR_APPROVAL_JSON_SCHEMA, deadlineAt, signal: controller.signal });
       const current = this.service.repo.get(a.id)!;
       const retained = current.activation!.approvals.find(d => d.id === decision.id)!;
-      retained.finishedAt = this.service.deps.now(); retained.quiescent = result.settlement.quiescent;
+      retained.finishedAt = this.service.deps.now(); retained.quiescent = result.invocationId === decision.invocationId && result.settlement.quiescent === true;
       const parsed = result.kind === 'ok' ? supervisorApprovalDecisionSchema.safeParse(result.decision) : null;
       const validScopes = new Set(['objective', ...a.autorun.constraints.map((_, i) => `constraint:${i}`), ...a.autorun.criteria.map(c => c.id)]);
-      if (controller.signal.aborted || current.automation.state !== 'enabled' || current.automation.revision !== a.revision ||
+      if (controller.signal.aborted || this.service.runtime().ownership(a.ownerUserId,a.target.sessionId).epoch !== inputEpoch || current.automation.state !== 'enabled' || current.automation.revision !== a.revision ||
         this.service.deps.now() >= deadlineAt || result.kind !== 'ok' || result.invocationId !== decision.invocationId ||
         result.settlement.quiescent !== true || result.settlement.exitCode !== 0 || !sameSupervisorSelection(result.selection, a.autorun.supervisor) ||
         !sameSupervisorCapability(result.capability, capability.capability) || result.cliVersion !== capability.capability.cliVersion || !parsed?.success ||
@@ -194,7 +202,7 @@ export class ActivationEngine {
       this.service.repo.save(current);
       if (!allowed) { defer(); this.projection(a.id, 'approval-needs-user', 'needs-user'); return; }
       const id = this.reserve(a, { kind: 'approval', activationId: current.activation!.projection.activationId!, expected: request,
-        optionId: option!.id, decisionId: decision.id }, '');
+        optionId: option!.id, decisionId: decision.id, inputEpoch }, '');
       await this.deliver(id);
     } catch {
       const current = this.service.repo.get(a.id), retained = current?.activation?.approvals.find(d => d.id === decision.id);

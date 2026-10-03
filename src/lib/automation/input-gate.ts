@@ -14,7 +14,7 @@ type State = {
   conversationId?: string; nativeSubmission?: { event: Extract<AutorunHookEvidence, { kind: 'submission' }>; revision: number };
   nativeCompletion?: Extract<AutorunHookEvidence, { kind: 'completion' }>; seenNative?: Set<string>;
   boundary: Boundary | null; status: RuntimeObservation['state']; sequence: number;
-  lastHookAt: number; candidateRevision: number | null; writer: boolean; waiters: Set<() => void>; automated: boolean; live: boolean;
+  draftRevision?: number; writerDraftRevision?: number; lastHookAt: number; candidateRevision: number | null; writer: boolean; waiters: Set<() => void>; automated: boolean; live: boolean;
 };
 
 /** Process-owned evidence and input mutex. No screen/silence/subscriber heuristics. */
@@ -72,6 +72,10 @@ export class AutomationInputGate {
     const previous = drafts.get(veto.surfaceId);
     if (previous && previous.revision >= veto.revision) return;
     drafts.set(veto.surfaceId, { ...veto }); this.drafts.set(key, drafts);
+    if (veto.hasDraft || previous?.hasDraft) {
+      const state = this.state(userId,sessionId);
+      if (state) { state.draftRevision=(state.draftRevision ?? 0)+1; state.ownership.epoch=randomUUID(); this.changed(state); }
+    }
   }
   hasDraft(userId: string, sessionId: string) {
     return [...(this.drafts.get(this.key(userId, sessionId))?.values() ?? [])].some(draft => draft.hasDraft);
@@ -92,12 +96,12 @@ export class AutomationInputGate {
       throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'Native action ownership changed.');
     state.ownership = { ...state.ownership, mode: 'armed', automationId, runId,
       epoch: state.ownership.mode === 'human' ? randomUUID() : state.ownership.epoch, reason: null };
-    state.writer = true; state.automated = true; this.changed(state);
+    state.writer = true; state.writerDraftRevision = state.draftRevision ?? 0; state.automated = true; this.changed(state);
   }
   verifyNativeAction(identity: NativeRuntimeIdentity, automationId: string, runId: string) {
     this.assertNativeIdentity(identity);
     const state = this.state(identity.userId, identity.sessionId)!;
-    if (!state.writer || state.ownership.mode !== 'armed' || state.ownership.automationId !== automationId || state.ownership.runId !== runId)
+    if (!state.writer || state.writerDraftRevision !== (state.draftRevision ?? 0) || state.ownership.mode !== 'armed' || state.ownership.automationId !== automationId || state.ownership.runId !== runId)
       throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'Native action was paused.');
   }
   holdNativeApproval(userId: string, sessionId: string, request: NativeApprovalRequest) {
@@ -163,7 +167,7 @@ export class AutomationInputGate {
   }
   readTurnEvidence(args: { userId: string; agentEnvironment: 'native' | 'wsl'; sessionId: string }): AutorunTurnEvidence {
     const state = this.state(args.userId, args.sessionId);
-    if (!state?.live || state.environment !== args.agentEnvironment || state.writer || state.children.size ||
+    if (!state?.live || state.environment !== args.agentEnvironment || state.writer || this.hasDraft(args.userId,args.sessionId) || state.children.size ||
       state.lifecycleChildren || state.backgroundUnknown || state.status === 'input-required') return { kind: 'unavailable', reason: 'unsafe-runtime' };
     if (state.submittedRevision === null || state.submittedRevision !== state.revision) return { kind: 'idle', reason: 'no-accepted-turn' };
     if (!state.nativeSubmission || state.nativeSubmission.revision !== state.revision || state.confirmedRevision !== state.revision)
@@ -366,16 +370,16 @@ export class AutomationInputGate {
   }
   begin(userId: string, sessionId: string, automationId: string, runId: string, boundary: Boundary | null) {
     const state = this.state(userId, sessionId);
-    if (!state || state.writer || !state.live || state.ownership.mode !== 'armed'
+    if (!state || state.writer || !state.live || this.hasDraft(userId,sessionId) || state.ownership.mode !== 'armed'
       || state.ownership.automationId !== automationId || !boundary || !state.boundary
       || JSON.stringify(state.boundary) !== JSON.stringify(boundary)) {
       throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'The completed turn boundary changed.');
     }
-    state.writer = true; state.ownership.runId = runId;
+    state.writer = true; state.writerDraftRevision = state.draftRevision ?? 0; state.ownership.runId = runId;
   }
   verify(userId: string, sessionId: string, boundary: Boundary) {
     const state = this.state(userId, sessionId);
-    if (!state?.live || !state.writer || !state.boundary || state.boundary.id !== boundary.id
+    if (!state?.live || !state.writer || this.hasDraft(userId,sessionId) || state.writerDraftRevision !== (state.draftRevision ?? 0) || !state.boundary || state.boundary.id !== boundary.id
       || state.revision !== boundary.inputRevision || state.status !== 'turn-complete') {
       throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'The provider boundary changed during delivery.');
     }
