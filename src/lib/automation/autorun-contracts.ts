@@ -240,7 +240,7 @@ export type ContextUnavailableReason = 'missing' | 'flush-pending' | 'malformed'
   | 'binding-mismatch' | 'unsupported-version' | 'instrumentation-required' | 'scan-limit' | 'record-limit'
   | 'packet-limit' | 'stale' | 'unsafe-runtime' | 'compacted-latest-turn';
 
-export const SUPERVISOR_PROOF_POLICY = 'autorun-530-v1' as const;
+export const SUPERVISOR_PROOF_POLICY = 'autorun-530-selection-v2' as const;
 /** These describe #530 evidence, not current installation availability. R1 must re-attest preflight. */
 export const PROVEN_SUPERVISOR_COMBINATIONS = [
   { selection: { provider: 'claude-code', model: 'claude-sonnet-5-5', reasoningEffort: 'high', serviceTier: null },
@@ -251,18 +251,32 @@ export const PROVEN_SUPERVISOR_COMBINATIONS = [
 export function sameSupervisorSelection(a: SupervisorSelection, b: SupervisorSelection) {
   return a.provider === b.provider && a.model === b.model && a.reasoningEffort === b.reasoningEffort && a.serviceTier === b.serviceTier;
 }
+export const SUPERVISOR_ISOLATION_PROFILES = {
+  'claude-code': { cliVersion: '2.1.284', proofId: 'claude-2.1.284-safe-restricted-v2' },
+  codex: { cliVersion: '0.159.2', proofId: 'codex-0.159.2-packet-catalog-v2' },
+} as const;
+export const supervisorCapabilityUnavailableReasonSchema = z.enum(['version', 'selection', 'managed-policy', 'isolation', 'metadata-drift', 'adapter-missing']);
+export type SupervisorCapabilityUnavailableReason = z.infer<typeof supervisorCapabilityUnavailableReasonSchema>;
+export const supervisorCandidateSchema = z.object({
+  provider: z.enum(['claude-code', 'codex']), model: text(256), label: text(256),
+  reasoningEfforts: z.array(text(64)).max(20), serviceTiers: z.array(z.enum(['default', 'fast']).nullable()).max(3),
+  source: z.enum(['native', 'curated', 'configured']),
+  unavailableReason: z.enum(['metadata-unavailable', 'unsupported-selection', 'unsupported-policy']).nullable(),
+}).strict();
+export type SupervisorCandidate = z.infer<typeof supervisorCandidateSchema>;
+export const supervisorDiscoverySchema = z.object({ candidates: z.array(supervisorCandidateSchema).max(200), complete: z.boolean() }).strict();
+export type SupervisorDiscovery = z.infer<typeof supervisorDiscoverySchema>;
 export const supervisorCapabilitySchema = z.object({
   version: z.literal(1), selection: supervisorSelectionSchema, cliVersion: id, proofId: id,
-  isolationPolicyVersion: z.literal(SUPERVISOR_PROOF_POLICY), available: z.literal(true), checkedAt: time,
-}).strict().refine(value => PROVEN_SUPERVISOR_COMBINATIONS.some(proof => proof.cliVersion === value.cliVersion &&
-  proof.proofId === value.proofId && sameSupervisorSelection(value.selection, proof.selection)));
+  metadataHash: hash, isolationPolicyVersion: z.literal(SUPERVISOR_PROOF_POLICY), available: z.literal(true), checkedAt: time,
+}).strict().refine(value => { const profile = SUPERVISOR_ISOLATION_PROFILES[value.selection.provider]; return profile.cliVersion === value.cliVersion && profile.proofId === value.proofId; });
 export type SupervisorCapability = z.infer<typeof supervisorCapabilitySchema>;
 export type SupervisorCapabilityResult =
   | { kind: 'available'; capability: SupervisorCapability }
-  | { kind: 'unavailable'; code: 'SUPERVISOR_UNSUPPORTED'; reason: 'version' | 'selection' | 'managed-policy' | 'isolation' | 'metadata-drift' | 'adapter-missing' };
+  | { kind: 'unavailable'; code: 'SUPERVISOR_UNSUPPORTED'; reason: SupervisorCapabilityUnavailableReason };
 const finalityFields = { structuredDecisionCount: z.literal(1), executableReceipts: z.literal(0) };
 export const supervisorFinalResultSchema = z.object({
-  kind: z.literal('ok'), decision: supervisorDecisionSchema, selection: supervisorSelectionSchema, cliVersion: id,
+  kind: z.literal('ok'), capability: supervisorCapabilitySchema, decision: supervisorDecisionSchema, selection: supervisorSelectionSchema, cliVersion: id,
   effectiveSelection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('verified'), selection: supervisorSelectionSchema }).strict(),
     z.object({ kind: z.literal('requested-only') }).strict(),
@@ -304,14 +318,17 @@ export const supervisorSettlementObservationSchema = z.discriminatedUnion('kind'
   }).strict(),
 ]).refine(value => value.kind !== 'quiescent' || (value.proof.closedAt <= value.proof.settledAt && value.proof.settledAt <= value.observedAt));
 export type SupervisorSettlementObservation = z.infer<typeof supervisorSettlementObservationSchema>;
-export function validateSupervisorFinalResult(value: unknown, context: DecisionValidationContext & { selection: SupervisorSelection }) {
+export function sameSupervisorCapability(a: SupervisorCapability, b: SupervisorCapability) {
+  return sameSupervisorSelection(a.selection,b.selection) && a.cliVersion === b.cliVersion && a.proofId === b.proofId && a.isolationPolicyVersion === b.isolationPolicyVersion && a.metadataHash === b.metadataHash;
+}
+export function validateSupervisorFinalResult(value: unknown, context: DecisionValidationContext & { selection: SupervisorSelection; capability?: SupervisorCapability }) {
   const invalid = { success: false as const, code: 'SUPERVISOR_INVALID_OUTPUT' as const };
   const result = supervisorFinalResultSchema.safeParse(value);
   if (!result.success) return invalid;
   const final = result.data;
   if (final.finality.provider !== final.selection.provider || !sameSupervisorSelection(final.selection, context.selection) ||
       (final.effectiveSelection.kind === 'verified' && !sameSupervisorSelection(final.effectiveSelection.selection, context.selection)) ||
-      !PROVEN_SUPERVISOR_COMBINATIONS.some(proof => proof.cliVersion === final.cliVersion && sameSupervisorSelection(proof.selection, final.selection))) return invalid;
+      !context.capability || !sameSupervisorCapability(final.capability,context.capability) || final.cliVersion !== final.capability.cliVersion || !sameSupervisorSelection(final.selection,final.capability.selection)) return invalid;
   return validateSupervisorDecision(final.decision, context).success ? { success: true as const, data: final } : invalid;
 }
 
@@ -347,12 +364,17 @@ export const autorunPreviewSchema = z.object({
   version: z.literal(1), previewId: id, sessionId: id, goalRevision: count, objective: objectiveSchema.nullable(),
   newHumanInstructions: z.array(humanInstructionSourceSchema).max(100), constraints: z.array(text(16_384)).max(100),
   criteria: criteriaSchema, criterionOrigin: z.enum(['verified-human', 'explicit', 'system-objective']),
-  workerSelection: sessionSelectionSnapshotSchema, supervisorOptions: z.array(supervisorCapabilitySchema).max(10),
+  workerSelection: sessionSelectionSnapshotSchema, supervisorOptions: z.array(supervisorCapabilitySchema).max(1),
+  supervisorDiscovery: supervisorDiscoverySchema,
+  supervisorCheck: z.object({ selection: supervisorSelectionSchema.nullable(), status: z.enum(['unselected','available','unavailable']), reason: supervisorCapabilityUnavailableReasonSchema.nullable() }).strict(),
   recommendedSupervisor: supervisorSelectionSchema.nullable(), readiness: autorunReadinessSchema,
   defaults: z.object({ delayMs: z.number().int().min(30_000).max(86_400_000), maxDispatches: z.number().int().min(1).max(100),
     maxAnalyses: z.number().int().min(1).max(100), analysisTimeoutMs: z.number().int().min(30_000).max(300_000), expiresAt: time }).strict(),
   remaining: z.object({ dispatches: z.number().int().min(0).max(100), analyses: z.number().int().min(0).max(100) }).strict(),
 }).strict().refine(value => {
+  const check = value.supervisorCheck;
+  if (check.status === 'available' ? (!check.selection || check.reason !== null || value.supervisorOptions.length !== 1 || !sameSupervisorSelection(value.supervisorOptions[0].selection,check.selection))
+    : (value.supervisorOptions.length !== 0 || (check.status === 'unselected' ? check.selection !== null || check.reason !== null : !check.selection || check.reason === null))) return false;
   const readiness = value.readiness;
   if (readiness.kind === 'completed' && readiness.boundary.sessionId !== value.sessionId) return false;
   if (readiness.kind === 'running' && (readiness.acceptedTurn.sessionId !== value.sessionId ||
@@ -366,6 +388,7 @@ export const autorunPreviewSchema = z.object({
 });
 export type AutorunPreview = z.infer<typeof autorunPreviewSchema>;
 export const autorunPreviewInputSchema = z.object({
+  supervisor: supervisorSelectionSchema.optional(),
   objectiveOverride: text(16_384).optional(), constraints: z.array(text(16_384)).max(100).optional(),
   criteria: criteriaSchema.optional(),
 }).strict().refine(value => bytes((value.objectiveOverride ?? '') + (value.constraints ?? []).join('')) <= AUTORUN_BOUNDS.objectiveConstraintBytes);

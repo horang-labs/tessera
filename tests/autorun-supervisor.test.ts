@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
 import { parseSupervisorResult } from '../src/lib/automation/supervisor';
-import { autorunInput } from './fixtures/autorun-contracts';
+import { autorunInput, autorunPreviewFixture } from './fixtures/autorun-contracts';
 const packet = { criteria: [{ id: 'two' }], context: { items: [{ id: 'a1' }, { id: 'a2' }] } };
 for (const provider of ['codex', 'claude-code'] as const) test(`${provider} accepts only one successful native final after exit zero and tree quiescence`, () => {
   const selection = provider === 'codex' ? autorunInput().autorun.supervisor : { provider, model: 'claude-sonnet-5-5', reasoningEffort: 'high', serviceTier: null };
   const recorded = fs.readFileSync(`tests/fixtures/autorun-proof/${provider === 'codex' ? 'codex' : 'claude'}-decision.jsonl`);
   const output = provider === 'claude-code' ? Buffer.concat([Buffer.from(JSON.stringify({ type: 'system', subtype: 'init', ...JSON.parse(fs.readFileSync('tests/fixtures/autorun-proof/capability-observations.json', 'utf8')).claudeInit }) + '\n'), recorded]) : recorded;
-  const args = { selection, cliVersion: provider === 'codex' ? '0.159.2' : '2.1.284', invocationId: 'test-call', packet,
+  const capability={...autorunPreviewFixture().supervisorOptions[0],selection,cliVersion:provider==='codex'?'0.159.2':'2.1.284',proofId:provider==='codex'?'codex-0.159.2-packet-catalog-v2':'claude-2.1.284-safe-restricted-v2'};
+  const args = { selection, capability, cliVersion: provider === 'codex' ? '0.159.2' : '2.1.284', invocationId: 'test-call', packet,
     stdout: output, stderr: Buffer.alloc(0), exitCode: 0, quiescent: true, cancelled: false, timedOut: false };
   assert.equal(parseSupervisorResult(args).kind, 'ok');
   assert.notEqual(parseSupervisorResult({ ...args, exitCode: 1 }).kind, 'ok');

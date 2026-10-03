@@ -152,6 +152,7 @@ export type SupervisorCapabilityRequest = {
   selection: import('@/lib/automation/autorun-contracts').SupervisorSelection;
 };
 export type SupervisorDecisionRequest = SupervisorCapabilityRequest & {
+  capability: import('@/lib/automation/autorun-contracts').SupervisorCapability;
   invocationId: string;
   trustedInstructions: string;
   packet: import('@/lib/automation/autorun-contracts').SupervisorPacket;
@@ -168,6 +169,7 @@ export interface AutorunProviderPort {
   readAutorunEvidence(args: AutorunEvidenceRequest): Promise<import('@/lib/automation/autorun-contracts').AutorunEvidenceResult>;
   /** Provider-owned bounded native read; owner/environment always explicit. */
   readAnalysisContext(args: AnalysisSnapshotRequest): Promise<import('@/lib/automation/autorun-contracts').AnalysisContextResult>;
+  discoverSupervisors?(args: { userId: string; agentEnvironment: 'native'|'wsl' }): Promise<import('@/lib/automation/autorun-contracts').SupervisorDiscovery>;
   /** Fresh installed metadata/policy attestation, no model call. */
   checkSupervisorCapability(args: SupervisorCapabilityRequest): Promise<import('@/lib/automation/autorun-contracts').SupervisorCapabilityResult>;
   /** Fresh auth-only, tool-free process; signal stops only its owned tree, then proves quiescence. */

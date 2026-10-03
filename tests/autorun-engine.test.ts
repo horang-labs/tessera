@@ -90,7 +90,8 @@ test('only confirmed exited capacity/service failures retry the same packet and 
     const packets:unknown[]=[],selections:unknown[]=[];let calls=0;
     f.provider.generateSupervisorDecision=async args=>{calls++;packets.push(args.packet);selections.push(args.selection);
       return {kind:'capacity',code:'SUPERVISOR_CAPACITY',invocationId:args.invocationId,settlement:{exitCode:1,quiescent:true}};};
-    const a=(await f.service.create('owner-1','retry',f.input())).automation;
+    const input=f.input();input.autorun.supervisor={...input.autorun.supervisor,model:'gpt-6-astra',reasoningEffort:'xhigh'};
+    const a=(await f.service.create('owner-1','retry',input)).automation;
     f.setNow(autorunNow+120_110);await f.engine.tick();
     let [d]=f.service.autorun.decisions('owner-1',a.id,{}).items;
     assert.equal(d.retryAt,autorunNow+135_110);assert.equal(calls,1);
@@ -99,7 +100,7 @@ test('only confirmed exited capacity/service failures retry the same packet and 
     assert.equal(d.retryAt,autorunNow+195_110);assert.equal(calls,2);
     for (let at=145_110;at<=195_110;at+=10_000) { f.setNow(autorunNow+at);f.engine.heartbeat(); }
     await f.engine.tick();assert.equal(calls,3);
-    assert.deepEqual(packets[0],packets[1]);assert.deepEqual(packets[1],packets[2]);assert.deepEqual(selections[0],selections[2]);
+    assert.deepEqual(packets[0],packets[1]);assert.deepEqual(packets[1],packets[2]);assert.deepEqual(selections[0],selections[2]);assert.deepEqual(selections[0],input.autorun.supervisor);
     const detail=f.service.autorun.decision('owner-1',a.id,d.id);assert.equal(detail.attempts.length,3);
     assert.equal(f.service.detail('owner-1',a.id).automation.state,'paused');assert.deepEqual(f.bytes,[]);
   }finally{await f.close();}

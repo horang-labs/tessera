@@ -13,7 +13,7 @@ import { execCli } from '../cli-exec';
 import { resolveProviderCliCommand } from '../provider-command';
 import { resolveClaudeTranscriptPath } from './claude-code/transcript-path';
 import { resolveCodexTranscriptPath } from './codex/transcript-path';
-import { checkSupervisorCapability, generateSupervisorDecision } from './autorun-supervisor';
+import { checkSupervisorCapability, generateSupervisorDecision, discoverSupervisorCandidates } from './autorun-supervisor';
 import { observeSupervisorSettlement, type SettlementDependencies } from './autorun-settlement';
 import type { AnalysisSnapshotRequest, AutorunEvidenceRequest, AutorunProviderPort } from './session-types';
 
@@ -56,6 +56,7 @@ async function resolveSource(request: ReadRequest): Promise<NativeContextSource 
 /** Additive only: title, translation, worker spawn and transcript viewing keep their existing behavior. */
 export function createAutorunProviderPort(provider: 'claude-code' | 'codex', settlementDeps?: SettlementDependencies): AutorunProviderPort {
   return { version: 1,
+    discoverSupervisors: request => discoverSupervisorCandidates({...request,provider}),
     observeSupervisorSettlement: request => observeSupervisorSettlement(request, provider, settlementDeps),
     readAnalysisContext: request => request.workerSelection.provider === provider ? readAnalysisContext(request, { resolveSource, verifyBinding })
       : Promise.resolve({ kind: 'unavailable', code: 'CONTEXT_UNAVAILABLE', reason: 'binding-mismatch' }),

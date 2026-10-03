@@ -6,17 +6,17 @@ import { evidenceHash, readAnalysisContext, readAutorunEvidence } from '../src/l
 import { recordHumanSubmission, readHumanSubmissions } from '../src/lib/automation/autorun-human-evidence';
 import { generateSupervisorDecision, defaultSupervisorDependencies } from '../src/lib/cli/providers/autorun-supervisor';
 import { SupervisorProcessUncertain } from '../src/lib/cli/providers/autorun-process';
-import { contextSnapshot, autorunInput, boundary } from './fixtures/autorun-contracts';
+import { contextSnapshot, autorunInput, boundary, autorunPreviewFixture } from './fixtures/autorun-contracts';
 
 test('attestation uncertainty stays uncertain through decision settlement', async () => {
   let cleaned = false;
   const packet = { version: 1 as const, objective: { kind: 'explicit' as const, text: 'Fix login.', revision: 1 },
     criteria: autorunInput().autorun.criteria, criterionOrigin: 'explicit' as const, constraints: [], context: contextSnapshot(), priorDecisions: [] };
   const result = await generateSupervisorDecision({ userId: 'owner', agentEnvironment: 'wsl', selection: autorunInput().autorun.supervisor,
-    invocationId: 'probe-uncertain', signal: new AbortController().signal, deadlineAt: Date.now() + 1000,
+    capability:autorunPreviewFixture().supervisorOptions[0], invocationId: 'probe-uncertain', signal: new AbortController().signal, deadlineAt: Date.now() + 1000,
     packet, outputSchema: {}, trustedInstructions: 'Judge evidence.' }, {
     prepare: async () => ({ root: '/owned', guestRoot: '/owned', command: 'codex', environment: {}, cleanup: async () => { cleaned = true; } }),
-    probe: async () => { throw new SupervisorProcessUncertain(); }, claudeModelAvailable: async () => true,
+    probe: async () => { throw new SupervisorProcessUncertain(); }, claudeModelMetadata: async () => null, writeCatalog:async()=>{},
   });
   assert.ok(result.kind !== 'ok');
   if (result.kind !== 'ok') { assert.equal(result.code, 'SUPERVISOR_PROCESS_UNCERTAIN'); assert.equal(result.settlement.quiescent, false); }
