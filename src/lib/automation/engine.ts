@@ -56,19 +56,22 @@ export class AutomationEngine implements AutomationAuthority {
       if (!value?.activation || value.automation.state !== 'enabled' || value.automation.revision !== a.revision || a.target.kind !== 'wake-session' ||
         value.activation.projection.activationId !== action.activationId || this.repo.activeRuns(a.id).length || a.dispatchCount >= a.limits.maxDispatches)
         fail('ANALYSIS_STALE');
-      if (action.kind === 'bootstrap' && value.activation.firstAction !== 'pending') fail('ANALYSIS_STALE');
-      this.service.runtime().activation!.assertCurrent(action.expected);
+      if ((action.kind === 'bootstrap' || action.kind === 'startup') && value.activation.firstAction !== 'pending') fail('ANALYSIS_STALE');
+      if (action.kind === 'startup') this.service.runtime().activation!.assertStartup!(action.expected);
+      else this.service.runtime().activation!.assertCurrent(action.expected);
       const id = randomUUID();
       const r: StoredRun = { action, prompt, run: { id, automationId: a.id, automationRevision: a.revision,
-        occurrenceKey: action.kind === 'bootstrap' ? `activation:${action.activationId}` : `approval:${action.expected.requestId}:${action.expected.requestHash}`,
+        occurrenceKey: action.kind === 'startup' ? `startup:${action.activationId}` : action.kind === 'bootstrap' ? `activation:${action.activationId}` : `approval:${action.expected.requestId}:${action.expected.requestHash}`,
         dueAt: this.now, deadlineAt: action.kind === 'approval' ? Math.min(a.limits.expiresAt, action.expected.deadlineAt) : a.limits.expiresAt,
-        coalescedCount: 0, state: 'pending', reason: null, sessionId: a.target.sessionId, terminalId: action.expected.identity.terminalId,
+        coalescedCount: 0, state: 'pending', reason: null, sessionId: a.target.sessionId, terminalId: action.kind === 'startup' ? null : action.expected.identity.terminalId,
         boundaryId: null, attemptStartedAt: null, deliveredAt: null, finishedAt: null, effectiveSelection: a.savedSelection,
         agentEnvironment: a.agentEnvironment, observedRuntime: 'unobserved' }, snapshot: structuredClone(a), boundary: null,
         leaseEpoch: this.epoch, permitToken: null, externalStarted: false, completedWrite: false, retryAt: null, canonicalWorktreeId: null,
         overlapHeld: false, resolvedAt: null, observation: null, recoveryStartedAt: null, recoveryEpoch: null, recoveryOwnerInstance: null, recoveryStatus: 'none' };
-      if (action.kind === 'bootstrap') value.activation.firstAction = 'reserved';
-      else { const d = value.activation.approvals.find(d => d.id === action.decisionId); if (!d) fail('ANALYSIS_STALE'); d.runId = id; }
+      if (action.kind === 'bootstrap' || action.kind === 'startup') {
+        if (action.kind !== 'startup' || action.expected.mode === 'fresh') value.activation.firstAction = 'reserved';
+        if (this.repo.occurrenceExists(a.id, a.revision, r.run.occurrenceKey)) fail('ANALYSIS_STALE');
+      } else { const d = value.activation.approvals.find(d => d.id === action.decisionId); if (!d) fail('ANALYSIS_STALE'); d.runId = id; }
       value.activation.projection.phase = 'dispatching'; value.activation.projection.reason = null;
       this.repo.save(value); this.repo.saveRun(r); return id;
     });
@@ -127,7 +130,8 @@ export class AutomationEngine implements AutomationAuthority {
       if (!['pending', 'deferred'].includes(r.run.state) || r.leaseEpoch !== leaseEpoch) fail('UNRESOLVED_RUN');
       this.eligible(r, expectedRevision);
       const stored = this.repo.get(r.run.automationId)!;
-      stored.automation.dispatchCount++; stored.automation.updatedAt = this.now;
+      if (r.action?.kind !== 'startup' || r.action.expected.mode === 'fresh') stored.automation.dispatchCount++;
+      stored.automation.updatedAt = this.now;
       r.run.state = 'dispatching'; r.run.attemptStartedAt = this.now; r.permitToken = randomUUID();
       this.repo.save(stored); this.repo.saveRun(r);
       return { runId, leaseEpoch, token: r.permitToken };
@@ -155,7 +159,7 @@ export class AutomationEngine implements AutomationAuthority {
     });
     this.repo.transaction(() => {
       const r = this.permit(permit);
-      this.eligible(r, r.run.automationRevision, true);
+      if (phase === 'begin' || r.action) this.eligible(r, r.run.automationRevision, true);
       this.inspections.get(r.run.id)?.assertCurrent();
       this.reservedSession(r);
       write();
@@ -179,7 +183,7 @@ export class AutomationEngine implements AutomationAuthority {
       if (r.action) {
         const current = this.repo.get(r.run.automationId)!;
         if (current.activation && current.activation.projection.activationId === r.action.activationId) {
-          if (r.action.kind === 'bootstrap') current.activation.firstAction = outcome.kind === 'delivered' ? 'delivered' : outcome.kind === 'unknown' ? 'unknown' : outcome.kind === 'deferred' ? 'reserved' : 'superseded';
+          if (r.action.kind === 'bootstrap' || (r.action.kind === 'startup' && r.action.expected.mode === 'fresh')) current.activation.firstAction = outcome.kind === 'delivered' ? 'delivered' : outcome.kind === 'unknown' ? 'unknown' : outcome.kind === 'deferred' ? 'reserved' : 'superseded';
           current.activation.projection.phase = 'waiting';
           current.activation.projection.reason = outcome.kind === 'unknown' ? 'delivery-unresolved' : outcome.kind === 'delivered' ? 'worker-running' : 'runtime-unverified';
           this.repo.save(current);
@@ -269,6 +273,7 @@ export class AutomationEngine implements AutomationAuthority {
       this.epoch = this.repo.acquireLease(this.instanceId, now);
       if (this.epoch === null || !this.service.deps.runtime()) return;
       if (this.recoveredEpoch !== this.epoch) { await this.recover(); this.recoveredEpoch = this.epoch; this.recoveredRuntime = true; }
+      await this.activation.tick();
       for (const v of this.repo.all()) {
         const a = v.automation;
         if (a.state !== 'enabled') continue;
@@ -293,7 +298,6 @@ export class AutomationEngine implements AutomationAuthority {
           }
         });
       }
-      await this.activation.tick();
       for (const r of this.repo.dueRuns(this.now)) {
         if (!['pending', 'deferred'].includes(r.run.state) || r.run.dueAt > this.now || (r.retryAt !== null && r.retryAt > this.now) || this.inFlight.has(r.run.id)) continue;
         const task = this.dispatch(r.run.id).finally(() => { this.inFlight.delete(r.run.id); this.inspections.delete(r.run.id); });
@@ -343,8 +347,8 @@ export class AutomationEngine implements AutomationAuthority {
       if (a.target.kind === 'wake-session' && a.state === 'enabled') {
         const live = this.service.runtime().ownership(a.ownerUserId, a.target.sessionId);
         if (this.recoveredRuntime && live.mode === 'armed' && live.automationId === a.id && live.epoch === value.ownership?.epoch) continue;
-        if (value.activation && !this.repo.activeRuns(a.id).some(r => ['dispatching', 'unknown'].includes(r.run.state))) {
-          value.evidence = null; value.ownership = live; value.automation.nextDueAt = null; this.repo.save(value);
+        if (value.activation && !this.service.autorun.hasQuarantine(a.ownerUserId,a.target.sessionId) && !this.repo.activeRuns(a.id).some(r => ['dispatching', 'unknown'].includes(r.run.state))) {
+          value.evidence = null; value.ownership = live.mode === 'armed' ? this.service.runtime().drain({userId:a.ownerUserId,sessionId:a.target.sessionId,automationId:a.id}) : live; value.automation.nextDueAt = null; this.repo.save(value);
           continue;
         }
         this.service.inhibit(a.ownerUserId, a.id, 'paused', 'restart-rearm-required');
@@ -382,6 +386,14 @@ export class AutomationEngine implements AutomationAuthority {
   }
   recordRuntimeObservation(event: RuntimeObservation): void {
     const stop = new Set<string>();
+    for (const value of this.repo.all()) {
+      const a = value.automation;
+      if (a.state !== 'enabled' || a.ownerUserId !== event.userId || a.target.kind !== 'wake-session' || a.target.sessionId !== event.sessionId) continue;
+      if (event.exitKind === 'explicit-stop' || event.exitKind === 'shutdown') stop.add(a.id);
+      if (event.state === 'input-required' && value.activation && value.activation.projection.phase !== 'analysing') {
+        value.activation.projection.reason='approval-needs-user'; this.repo.save(value); this.service.notify(a);
+      }
+    }
     this.repo.transaction(() => {
       for (const r of this.repo.observedRuns(event.userId, event.sessionId)) {
         if (r.snapshot.ownerUserId !== event.userId || r.run.sessionId !== event.sessionId ||

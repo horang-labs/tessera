@@ -59,9 +59,13 @@ test('Autorun answers only exact one-time native approval options; Heartbeat wai
       f.manager.recordSessionState({ type: 'session_state', sessionId: 'session-1', terminalId: 'terminal-1',
         hookEvent: 'PermissionRequest', status: 'input_required', stateAt: f.service.deps.now() + 1000 }, 'owner-1');
       const responses: string[] = [];
-      let stale = false, checks = 0;
+      let stale = false, checks = 0, defers = 0;
       bindNativeAutomationInteraction(f.manager, {
         observe: async () => ({ kind: 'approval', request }),
+        deferApproval(args) {
+          if (args.expected) assert.equal(args.expected.nativeRequestId, 'native-1');
+          defers++; f.manager.automation.releaseNativeApproval('owner-1','session-1',request.requestId);
+        },
         assertCurrent() { if (stale) throw Error('request changed'); },
         submitPrompt: async () => { throw Error('must not type task text into approval'); },
         async respondApproval(args) {
@@ -93,6 +97,7 @@ test('Autorun answers only exact one-time native approval options; Heartbeat wai
       await f.engine.tick();
       assert.deepEqual(responses, outcome === 'approve-once' || outcome === 'lost-ack' ? ['once'] : outcome === 'deny' ? ['deny'] : []);
       assert.equal(checks, outcome === 'heartbeat' ? 0 : 1);
+      if (outcome === 'ask-user') assert.equal(defers, 1, 'manual approval hook released as soon as judgment returns');
       assert.equal(f.service.detail('owner-1', rule.id).automation.dispatchCount, responses.length);
       if (outcome === 'lost-ack') {
         assert.equal(f.service.history('owner-1', rule.id, {}).items[0].state, 'unknown');

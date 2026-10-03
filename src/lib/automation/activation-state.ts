@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { AutomationActivation, NativeApprovalRequest, ReadyPromptEvidence, SupervisorApprovalDecision, SupervisorApprovalPacket } from './activation-contracts';
 import type { SupervisorCapability, SupervisorSelection } from './autorun-contracts';
 
+export type StartupEvidence = {
+  userId: string; sessionId: string; agentEnvironment: 'native'|'wsl'; serverInstanceId: string;
+  ownershipEpoch: string; generation: number | null; mode: 'fresh'|'resume';
+};
 export type NativeAutomationAction =
+  | { kind: 'startup'; activationId: string; expected: StartupEvidence }
   | { kind: 'bootstrap'; activationId: string; expected: ReadyPromptEvidence }
   | { kind: 'approval'; activationId: string; expected: NativeApprovalRequest; optionId: string; decisionId: string };
 export type StoredApprovalDecision = {
@@ -10,6 +15,7 @@ export type StoredApprovalDecision = {
   capability: SupervisorCapability; invocationId: string; startedAt: number; finishedAt: number | null;
   quiescent: boolean | null; phase: 'analysing' | 'decided' | 'cancelled';
   decision: SupervisorApprovalDecision | null; runId: string | null;
+  settlementObservation?: Extract<import('./autorun-contracts').SupervisorSettlementObservation,{kind:'quiescent'}>;
 };
 export type StoredActivation = {
   projection: AutomationActivation; firstAction: 'pending' | 'reserved' | 'delivered' | 'unknown' | 'superseded';

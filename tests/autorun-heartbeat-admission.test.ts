@@ -13,7 +13,7 @@ test('eligible Heartbeat admission and delivery remain usable when Autorun super
   try{
     f.service.deps.provider=()=>null;
     const a=(await f.service.create('owner-1','heartbeat-only',heartbeat(f))).automation;
-    assert.equal(f.runtime.ownership('owner-1','session-1').mode,'armed');
+    assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');
     f.setNow(autorunNow+121_000);await f.engine.tick();
     assert.equal(f.service.history('owner-1',a.id,{}).items[0].state,'delivered');
     assert.equal(f.calls(),0);assert.equal(f.bytes.length,2);
@@ -27,7 +27,9 @@ test('a consumed Autorun idle boundary cannot be rearmed by Heartbeat replacemen
     f.setNow(autorunNow+121_000);await f.engine.tick();await f.service.pause('owner-1',a.id,true);
     f.service.deps.provider=()=>null;
     const replacement=(await f.service.create('owner-1','replacement',heartbeat(f,false))).automation;
-    await assert.rejects(f.service.enable('owner-1',replacement.id,replacement.revision),{code:'INPUT_BOUNDARY_UNPROVEN'});
+    const enabled=await f.service.enable('owner-1',replacement.id,replacement.revision);
+    assert.equal(enabled.body.automation.state,'enabled');
+    await f.engine.tick(); assert.equal(f.service.history('owner-1',replacement.id,{}).items.length,0);
     assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');assert.deepEqual(f.bytes,[]);
   }finally{await f.close();}
 });

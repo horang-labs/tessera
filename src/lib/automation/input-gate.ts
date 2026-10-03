@@ -21,6 +21,7 @@ type State = {
 export class AutomationInputGate {
   readonly serverInstanceId = randomUUID();
   private states = new Map<string, State>();
+  private startups = new Map<string, {automationId:string;runId:string}>();
   private drafts = new Map<string, Map<string, AutomationDraftVeto>>();
   authority: () => AutomationAuthority | null = () => null;
   publish: (userId: string, value: InputOwnership) => void = () => {};
@@ -29,18 +30,29 @@ export class AutomationInputGate {
 
   started(userId: string, sessionId: string, terminalId: string, generation: number, provider: string, environment?: 'native' | 'wsl') {
     const old = this.state(userId, sessionId);
+    const startup = this.startups.get(this.key(userId,sessionId));
+    this.startups.delete(this.key(userId,sessionId));
     const held = old && old.ownership.mode !== 'human' && old.ownership.mode !== 'unavailable';
     const state: State = { userId, generation, provider, environment, revision: 0, turn: 0, submittedRevision: null, confirmedRevision: null, children: new Set(), lifecycleChildren: false, backgroundUnknown: false, leadCompletionAt: null,
       boundary: null, status: 'starting', sequence: 0, lastHookAt: 0, candidateRevision: null, writer: old?.writer ?? false, waiters: old?.waiters ?? new Set(),
       automated: old?.automated ?? false, live: true,
-      ownership: { sessionId, terminalId, epoch: randomUUID(), mode: held ? 'recovery-required' : 'human',
-        automationId: held ? old.ownership.automationId : null, runId: held ? old.ownership.runId : null,
+      ownership: { sessionId, terminalId, epoch: randomUUID(), mode: startup ? 'armed' : held ? 'recovery-required' : 'human',
+        automationId: startup?.automationId ?? (held ? old.ownership.automationId : null), runId: startup?.runId ?? (held ? old.ownership.runId : null),
         reason: held ? 'RUNTIME_REPLACED' : null } };
     this.states.set(this.key(userId, sessionId), state);
     this.changed(state);
     this.authority()?.recordRuntimeObservation(this.observation(state));
   }
 
+  claimStartup(userId:string,sessionId:string,automationId:string,runId:string) {
+    const state = this.state(userId,sessionId);
+    if (state?.live || state?.writer || this.startups.has(this.key(userId,sessionId)) || this.hasDraft(userId,sessionId))
+      throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN','Startup ownership changed.');
+    this.startups.set(this.key(userId,sessionId),{automationId,runId});
+  }
+  cancelStartup(userId:string,sessionId:string,runId:string) {
+    if (this.startups.get(this.key(userId,sessionId))?.runId === runId) this.startups.delete(this.key(userId,sessionId));
+  }
   readNativeState(userId: string, sessionId: string): import('./activation-contracts').NativeGateSnapshot | null {
     const state = this.state(userId, sessionId);
     if (!state || !state.environment || !['codex', 'claude-code'].includes(state.provider)) return null;

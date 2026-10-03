@@ -98,7 +98,7 @@ export class AutomationService {
       return old?.response;
     };
     const old = replay(); if (old) return old;
-    if (parsed.data.enabled) this.runtime();
+    if (parsed.data.enabled && parsed.data.target.kind === 'create-session') this.runtime();
     const inspection = await this.deps.inspect(userId, parsed.data.target, owner.agentEnvironment);
     const checked = validateAutomationInput(parsed.data, { now: this.deps.now(), isSelectionSupported: () => true });
     if (!checked.success) fail(checked.error.code, checked.error.message);

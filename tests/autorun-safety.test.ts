@@ -106,20 +106,15 @@ test('a returned success for a different invocation cannot become a current comp
   }finally{await f.close();}
 });
 
-test('native approval before analysis persists rule attention before owner publication and survives detail/list recovery',async()=>{
+test('untyped native input requirement preserves enabled intent and exposes manual waiting without inference',async()=>{
   const f=await autorunFixture();
   try{
     const a=(await f.service.create('owner-1','approval-attention',f.input())).automation;
-    const published:unknown[]=[];
-    f.service.deps.publishAttention=(owner,item)=>{
-      assert.equal(owner,'owner-1');const current=f.service.detail(owner,a.id).automation;
-      assert.equal('attention' in current&&current.attention?.identity.reason,'NATIVE_APPROVAL');published.push(item);
-    };
     f.manager.automation.hook('owner-1','session-1','PermissionRequest','input_required',autorunNow+200,false);
-    const current=f.service.detail('owner-1',a.id).automation;
-    assert.equal('attention' in current&&current.attention?.identity.kind,'rule');
-    assert.equal(f.service.list('owner-1',{}).items[0].attention?.reason,'NATIVE_APPROVAL');
-    assert.equal(published.length,1);assert.equal(f.calls(),0);assert.equal(f.service.autorun.decisions('owner-1',a.id,{}).items.length,0);
+    const current=f.service.detail('owner-1',a.id);
+    assert.equal(current.automation.state,'enabled');assert.equal(current.activation?.reason,'approval-needs-user');
+    assert.equal(f.service.list('owner-1',{}).items[0].activation?.reason,'approval-needs-user');
+    assert.equal(f.calls(),0);assert.equal(f.service.autorun.decisions('owner-1',a.id,{}).items.length,0);assert.deepEqual(f.bytes,[]);
   }finally{await f.close();}
 });
 

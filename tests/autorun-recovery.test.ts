@@ -19,7 +19,8 @@ test('a different backend lease interrupts retained analysis and never replays i
     assert.equal(d.phase,'interrupted');assert.equal(d.outcome,null);assert.deepEqual(f.bytes,[]);
     const current=f.service.detail('owner-1',a.id);
     assert.equal(current.automation.state,'paused');
-    await assert.rejects(f.service.enable('owner-1',a.id,current.automation.revision),{code:'INPUT_BOUNDARY_UNPROVEN'});
+    const resumed=await f.service.enable('owner-1',a.id,current.automation.revision);
+    assert.equal(resumed.body.automation.state,'enabled','quiescent interrupted analysis permits intent Resume without replay');
     await restarted.tick();assert.equal(f.calls(),1);
   }finally{await f.close();}
 });

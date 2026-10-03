@@ -26,6 +26,7 @@ export function createAutomationRuntime(options: {
   createSession?: (sessionId: string, target: Extract<Target, { kind: 'create-session' }>) => void;
   publishCreated?: (userId: string, sessionId: string) => void;
   launch?: (request: ProviderLaunchRequest) => Promise<ProviderLaunchResult>;
+  startupCanResume?: (sessionId: string) => Promise<boolean>;
   canResume?: (sessionId: string) => Promise<boolean>;
   verifySelection?: (userId: string, sessionId: string, selection: SessionSelectionSnapshot) => void;
   readSelection: (userId: string, sessionId: string) => Promise<SessionSelectionSnapshot>;
@@ -37,8 +38,29 @@ export function createAutomationRuntime(options: {
   const recoveries = new Map<string, Promise<import('./runtime-port').RecoveryResult>>();
   const attempts = new Map<string, Promise<DispatchResult>>();
   const nativeControllers = new Map<string, Set<AbortController>>();
+  function assertStartup(expected: import('./activation-state').StartupEvidence) {
+    const state = manager.automation.readNativeState(expected.userId, expected.sessionId);
+    const ownership = manager.automation.ownership(expected.userId, expected.sessionId);
+    if (manager.automation.serverInstanceId !== expected.serverInstanceId || state?.live || state?.writer ||
+      (state?.identity.generation ?? null) !== expected.generation || ownership.epoch !== expected.ownershipEpoch ||
+      !['human', 'unavailable'].includes(ownership.mode) || manager.automation.hasDraft(expected.userId, expected.sessionId))
+      throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'Startup identity or draft changed.');
+  }
   return {
     activation: {
+      deferApproval(args) { getNativeAutomationInteraction(manager)?.deferApproval?.(args); },
+      async prepareStartup(scope) {
+        if (!options.launch) return null;
+        const state = manager.automation.readNativeState(scope.userId, scope.sessionId);
+        const expected = { ...scope, serverInstanceId: manager.automation.serverInstanceId,
+          ownershipEpoch: manager.automation.ownership(scope.userId, scope.sessionId).epoch, generation: state?.identity.generation ?? null,
+          mode: 'fresh' as 'fresh'|'resume' };
+        try { assertStartup(expected); } catch { return null; }
+        const resume = options.startupCanResume ? await options.startupCanResume(scope.sessionId)
+          : await (await import('../terminal/shared-provider-launch-module')).providerLaunchModule.canResumeSession(scope.sessionId);
+        expected.mode = resume ? 'resume' : 'fresh'; assertStartup(expected); return expected;
+      },
+      assertStartup,
       async observe(scope) {
         const port = getNativeAutomationInteraction(manager);
         if (!port) return { kind: 'unavailable', reason: 'native-interaction-adapter-missing' };
@@ -73,6 +95,8 @@ export function createAutomationRuntime(options: {
     },
     drain: (args) => {
       for (const controller of nativeControllers.get(args.automationId) ?? []) controller.abort();
+      const state = manager.automation.readNativeState(args.userId,args.sessionId);
+      if (state) getNativeAutomationInteraction(manager)?.deferApproval?.({scope:{userId:args.userId,sessionId:args.sessionId,agentEnvironment:state.identity.agentEnvironment}});
       return manager.automation.drain(args.userId, args.sessionId, args.automationId);
     },
     releaseRecovery: (args, commit) => manager.automation.release(args.userId, args.sessionId, args.runId, commit),
@@ -114,6 +138,46 @@ export function createAutomationRuntime(options: {
           try { port.recordOutcome(args.runId, result); }
           catch { result = { kind: 'unknown', reason: 'OUTCOME_UNRECORDED', sessionId }; }
           if (result.kind === 'unknown' && sessionId) manager.automation.recover(spec.ownerUserId, sessionId, spec.run.automationId, args.runId);
+          return result;
+        }
+        if (spec.action?.kind === 'startup') {
+          const expected = spec.action.expected, sessionId = spec.target.sessionId;
+          let possibleSpawn = false;
+          let origin: Awaited<ReturnType<typeof prepareAutomationOrigin>> | undefined;
+          let result: DispatchResult;
+          try {
+            if (!options.launch) throw Error('Startup unavailable');
+            assertStartup(expected);
+            const saved = await options.readSelection(spec.ownerUserId, sessionId);
+            if (!sameSessionSelection(saved, spec.run.effectiveSelection)) throw Error('Selection changed');
+            if (expected.mode === 'fresh') origin = await prepareAutomationOrigin({ userId: spec.ownerUserId, sessionId,
+              agentEnvironment: spec.run.agentEnvironment, runId: spec.run.id, fresh: true });
+            assertStartup(expected);
+            const permit = port.beginAttempt(args.runId, args.leaseEpoch, args.expectedRevision);
+            const launched = await options.launch({ mode: 'detached', sessionId, userId: spec.ownerUserId,
+              ...(expected.mode === 'fresh' ? {initialPrompt:spec.prompt} : {}), allowPreparationFailure: false,
+              expectedAgentEnvironment: spec.run.agentEnvironment, expectedSelection: spec.run.effectiveSelection,
+              spawnFence: spawn => {
+                assertStartup(expected); options.verifySelection?.(spec.ownerUserId, sessionId, saved);
+                port.withWriteFence(permit, 'begin', () => {
+                  assertStartup(expected);
+                  if (expected.mode === 'fresh') manager.automation.claimStartup(spec.ownerUserId,sessionId,spec.run.automationId,spec.run.id);
+                  possibleSpawn = true; spawn(); origin?.submitted();
+                });
+              },
+            });
+            if (origin) await origin.flush();
+            if (!possibleSpawn || launched.attachedToExistingRuntime) throw Error('Startup did not own a new worker');
+            result = {kind:'delivered',sessionId,terminalId:launched.terminalId,at:(options.now ?? Date.now)()};
+          } catch {
+            if (origin && !possibleSpawn) await origin.cancelled().catch(() => {});
+            result = possibleSpawn ? {kind:'unknown',reason:'STARTUP_UNKNOWN',sessionId} : {kind:'cancelled',reason:'STARTUP_REJECTED'};
+          }
+          try { port.recordOutcome(spec.run.id, result); }
+          catch { result = {kind:'unknown',reason:'OUTCOME_UNRECORDED',sessionId}; }
+          manager.automation.cancelStartup(spec.ownerUserId,sessionId,spec.run.id);
+          if (result.kind === 'unknown') manager.automation.recover(spec.ownerUserId,sessionId,spec.run.automationId,spec.run.id);
+          else if (possibleSpawn && expected.mode === 'fresh') manager.automation.finish(spec.ownerUserId,sessionId,false);
           return result;
         }
         if (spec.action) {

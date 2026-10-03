@@ -82,7 +82,8 @@ test('backend-crash unknown supervisor calls keep both profile slots while human
       assert.equal(f.runtime.ownership('owner-1',decision.identity.expectedBoundary.sessionId).mode,'human');
     }
     const third=f.service.detail('owner-1',ids.find(id=>!occupied.some(d=>d.detail.automationId===id))!).automation;
-    await f.service.enable('owner-1',third.id,third.revision);
+    if (third.state === 'paused') await f.service.enable('owner-1',third.id,third.revision);
+    else assert.equal(third.state,'enabled','settled waiting intent survives restart');
     for(let step=1;step<=12;step++){f.setNow(autorunNow+151_000+step*10_000);await replacement.tick();}
     assert.equal(calls,2);assert.deepEqual(f.bytes,[]);
     await replacement.stop();

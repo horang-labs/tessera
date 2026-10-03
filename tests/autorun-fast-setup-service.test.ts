@@ -32,7 +32,7 @@ test('omitted inventory with no concrete saved/requested/worker supervisor prese
     assert.deepEqual(preview.supervisorOptions,[]);assert.equal(preview.recommendedSupervisor,null);
   }finally{await f.close();}
 });
-test('Start and Resume omit inventories but freshly attest the requested/saved tuple on every admission',async()=>{
+test('Start and Resume save selected intent without inventories or execution attestation',async()=>{
   const f=await autorunFixture();
   try{
     let inventories=0;const selections:unknown[]=[],check=f.provider.checkSupervisorCapability;
@@ -40,15 +40,16 @@ test('Start and Resume omit inventories but freshly attest the requested/saved t
     f.provider.checkSupervisorCapability=async args=>{selections.push(args.selection);return check(args);};
     const input=f.input();input.autorun.supervisor={...input.autorun.supervisor,model:'gpt-6-astra',reasoningEffort:'xhigh'};
     const rule=(await f.service.create('owner-1','fast-start',input)).automation;
-    assert.equal(inventories,0);assert.deepEqual(selections,[input.autorun.supervisor]);
+    assert.equal(inventories,0);assert.deepEqual(selections,[]);
     const paused=await f.service.pause('owner-1',rule.id);
     const resumed=await f.service.enable('owner-1',rule.id,paused.body.automation.revision);
     assert.equal(resumed.body.automation.state,'enabled');assert.equal(inventories,0);
-    assert.deepEqual(selections,[input.autorun.supervisor,input.autorun.supervisor]);
+    assert.deepEqual(selections,[]);
     const again=await f.service.pause('owner-1',rule.id);
     f.provider.checkSupervisorCapability=async args=>{selections.push(args.selection);return {kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'metadata-drift'};};
-    await assert.rejects(f.service.enable('owner-1',rule.id,again.body.automation.revision),{code:'SUPERVISOR_UNSUPPORTED'});
-    assert.equal(inventories,0);assert.deepEqual(selections[2],input.autorun.supervisor);assert.equal(f.calls(),0);
+    const waiting=await f.service.enable('owner-1',rule.id,again.body.automation.revision);
+    assert.equal(waiting.body.automation.state,'enabled');
+    assert.equal(inventories,0);assert.deepEqual(selections,[]);assert.equal(f.calls(),0);
     assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');
   }finally{await f.close();}
 });
@@ -65,7 +66,7 @@ test('existing preview callers retain inventory discovery by default and can sti
     assert.equal(inventories,4);
   }finally{await f.close();}
 });
-test('saving while idle preserves the rule, but explicit goal and valid capability do not allow Start without an accepted turn',async()=>{
+test('saving and Start while idle need no accepted turn; execution readiness remains separate',async()=>{
   const f=await autorunFixture();
   try{
     let inventories=0;f.provider.discoverSupervisors=async()=>{inventories++;throw Error('admission inventory');};
@@ -73,7 +74,9 @@ test('saving while idle preserves the rule, but explicit goal and valid capabili
     const input=f.input();
     const preview=await f.service.autorun.preview('owner-1','session-1',{includeSupervisorDiscovery:false,supervisor:input.autorun.supervisor,objectiveOverride:input.autorun.objective.text});
     assert.deepEqual(preview.readiness,{kind:'idle',reason:'no-accepted-turn'});assert.equal(preview.supervisorCheck.status,'available');
-    await assert.rejects(f.service.create('owner-1','idle-start',input),{code:'INPUT_BOUNDARY_UNPROVEN'});
+    const started=await f.service.create('owner-1','idle-start',input);
+    assert.equal(started.automation.state,'enabled'); assert.equal(started.activation?.phase,'waiting');
+    await f.service.pause('owner-1',started.automation.id,true);
     const saved=(await f.service.create('owner-1','idle-save',{...input,enabled:false})).automation;
     assert.equal(saved.state,'disabled');assert.equal(inventories,0);assert.equal(f.calls(),0);
     assert.equal(f.runtime.ownership('owner-1','session-1').mode,'human');

@@ -32,6 +32,9 @@ export type DispatchPermit = {runId:string; leaseEpoch:number; token:string};
 export type RunSpec = {action?: import('./activation-state').NativeAutomationAction; run:AutomationRun; target:Target; prompt:string; ownerUserId:string};
 export interface AutomationRuntime {
   readonly activation?: {
+    deferApproval?(args: {scope: import('./activation-contracts').InteractionScope; expected?: import('./activation-contracts').NativeApprovalRequest}): void;
+    prepareStartup?(args: import('./activation-contracts').InteractionScope): Promise<import('./activation-state').StartupEvidence | null>;
+    assertStartup?(expected: import('./activation-state').StartupEvidence): void;
     observe(args: import('./activation-contracts').InteractionScope): Promise<import('./activation-contracts').NativeInteraction>;
     assertCurrent(expected: import('./activation-contracts').ReadyPromptEvidence | import('./activation-contracts').NativeApprovalRequest): void;
     setDraftVeto(args: import('./activation-contracts').InteractionScope, veto: import('./activation-contracts').AutomationDraftVeto): void;

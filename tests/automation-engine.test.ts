@@ -60,6 +60,9 @@ test('an armed completed turn fires once across same-process sleep and only a fr
     await engine.tick();
     const wake = { ...input(), target: { kind: 'wake-session' as const, sessionId: 's' }, trigger: { kind: 'turn-complete' as const, delayMs: 30_000 } };
     const created = await f.service.create('owner', 'wake', wake);
+    await f.runtime.arm({userId:'owner',sessionId:'s',automationId:created.automation.id,selection:created.automation.savedSelection},(e,o)=>{
+      engine.recordInputOwnership('owner',o); if(e.kind==='completed') engine.recordBoundary({userId:'owner',boundary:e.boundary});
+    });
     let sends = 0;
     f.runtime.dispatch = async ({ runId, leaseEpoch, expectedRevision, expectedBoundary }) => {
       assert.equal(expectedBoundary?.source, 'confirmed-lead-turn');
@@ -159,6 +162,9 @@ test('wake dispatch refuses drift from the exact saved nullable launch choices',
     const saved = { ...((await f.service.deps.inspect('owner', inherited.target, 'wsl')).selection), model: null, reasoningEffort: null, serviceTier: null };
     f.service.deps.inspect = async () => ({ selection: saved, canonicalWorktreeId: null, assertCurrent() {} });
     const created = await f.service.create('owner', 'inherited', inherited);
+    await f.runtime.arm({userId:'owner',sessionId:'s',automationId:created.automation.id,selection:saved},(e,o)=>{
+      engine.recordInputOwnership('owner',o); if(e.kind==='completed') engine.recordBoundary({userId:'owner',boundary:e.boundary});
+    });
     assert.equal(created.automation.savedSelection.model, null);
     let writes = 0;
     f.service.deps.inspect = async () => ({ selection: { ...saved, model: 'changed' }, canonicalWorktreeId: null, assertCurrent() {} });
