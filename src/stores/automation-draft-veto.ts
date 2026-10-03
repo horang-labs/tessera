@@ -4,7 +4,7 @@ import { useChatStore } from './chat-store';
 
 // Revisions survive mounted-surface and auth-store cache turnover in this renderer.
 const revisions = new Map<string, number>();
-type DraftSource = { kind: string; attached: boolean; held: number; hasDraft: boolean };
+type DraftSource = { kind: string; attached: boolean; held: number; hasDraft: boolean; lease: number };
 const localSources = new Map<string, Map<DraftSource, boolean>>();
 const localChanges = new Map<string, number>();
 const listeners = new Map<string, Set<() => void>>();
@@ -13,7 +13,8 @@ export function createAutomationDraftSource(sessionId: string, kind = 'local') {
   const sources = localSources.get(sessionId) ?? new Map<DraftSource, boolean>();
   // Reclaim a disconnected source of this kind; other mounted surfaces keep their own record.
   const source = [...sources.keys()].find(item => item.kind === kind && !item.attached)
-    ?? { kind, attached: true, held: 0, hasDraft: false };
+    ?? { kind, attached: true, held: 0, hasDraft: false, lease: 0 };
+  const lease = ++source.lease;
   source.attached = true;
   if (!sources.has(source)) sources.set(source, false);
   localSources.set(sessionId, sources);
@@ -25,8 +26,14 @@ export function createAutomationDraftSource(sessionId: string, kind = 'local') {
     for (const listener of listeners.get(sessionId) ?? []) listener();
   };
   return {
-    connect: () => { source.attached = true; return () => { source.attached = false; }; },
-    setHasDraft: (present: boolean) => { source.hasDraft = present; update(); },
+    connect: () => {
+      if (source.lease === lease) source.attached = true;
+      return () => { if (source.lease === lease) source.attached = false; };
+    },
+    setHasDraft: (present: boolean) => {
+      if (source.lease !== lease) return; // A superseded mount cannot re-latch a reclaimed collection.
+      source.hasDraft = present; update();
+    },
     hold: () => {
       source.held++; update();
       let released = false;

@@ -178,6 +178,7 @@ test('GUI retained text transfers to PTY clearing and remount attachment reconci
   remountedAttachments.setHasDraft(false);
   await publisher.flush();
   assert.equal(sent.at(-1), true, 'Actual empty attachment collection cannot cancel an outstanding upload');
+  oldAttachments.setHasDraft(true); // Late upload completion from the old unmounted hook.
   releasePending();
   await publisher.flush();
   assert.equal(sent.at(-1), false);
