@@ -133,6 +133,8 @@ export function useMessageInputAttachments({
     previousDraftSource.current = draftSource;
   }, [draftSource]);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  // Reconcile the actual local collection on remount; outstanding reads/uploads keep their holds.
+  useEffect(() => { draftSource.setHasDraft(attachments.length > 0); }, [draftSource, attachments]);
   const attachmentCounterRef = useRef(0);
   const attachmentsRef = useRef<AttachmentItem[]>([]);
 

@@ -153,3 +153,32 @@ test('remounted GUI source reclaims its retained veto for explicit clearing with
   await publisher.flush();
   assert.equal(sent.at(-1), false, 'No abandoned anonymous key may keep a phantom veto');
 });
+
+test('GUI retained text transfers to PTY clearing and remount attachment reconciliation preserves pending uploads', async () => {
+  const { createAutomationDraftSource, createAutomationDraftPublisher } = await import('../src/stores/automation-draft-veto');
+  const sessionId = 'session-transfer';
+  const sent: boolean[] = [];
+  const publisher = createAutomationDraftPublisher(sessionId, async (_url, init) => { sent.push(JSON.parse(String(init?.body)).hasDraft); return Response.json({ ok: true }); });
+  useChatStore.getState().setDraftInput(sessionId, 'GUI retained text');
+  await publisher.flush();
+  assert.equal(sent.at(-1), true);
+  // Terminal and GUI text now consume this one retained source, without an anonymous text veto.
+  useChatStore.getState().setDraftInput(sessionId, '');
+  await publisher.flush();
+  assert.equal(sent.at(-1), false);
+  const oldAttachments = createAutomationDraftSource(sessionId, 'attachments');
+  const detach = oldAttachments.connect();
+  oldAttachments.setHasDraft(true);
+  const releasePending = oldAttachments.hold();
+  detach();
+  await publisher.flush();
+  assert.equal(sent.at(-1), true);
+  const remountedAttachments = createAutomationDraftSource(sessionId, 'attachments');
+  // The real hook reconciles its empty local collection after remount, rather than on disconnect.
+  remountedAttachments.setHasDraft(false);
+  await publisher.flush();
+  assert.equal(sent.at(-1), true, 'Actual empty attachment collection cannot cancel an outstanding upload');
+  releasePending();
+  await publisher.flush();
+  assert.equal(sent.at(-1), false);
+});
