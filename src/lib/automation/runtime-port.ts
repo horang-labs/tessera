@@ -52,7 +52,7 @@ export interface AutomationRuntime {
       expectedBoundary:Boundary|null}): Promise<DispatchResult>;
 }
 export interface AutomationAuthority {
-  canSuperviseNativeApproval?(scope: import('./activation-contracts').InteractionScope & {provider: 'codex' | 'claude-code'}): boolean; // implemented by A; called by B
+  canSuperviseNativeApproval?(scope: import('./activation-contracts').NativeApprovalAuthorityScope): boolean; // implemented by A; called by B
   loadRun(runId:string): RunSpec;
   reserveSession(runId:string, create:(sessionId:string)=>void): string;
   beginAttempt(runId:string, leaseEpoch:number, expectedRevision:number): DispatchPermit;
