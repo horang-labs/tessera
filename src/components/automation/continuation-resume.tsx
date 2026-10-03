@@ -8,9 +8,9 @@ import { useI18n } from '@/lib/i18n';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { AutorunPreviewView, autorunCanStart } from './autorun-setup';
 import { automationButton, automationPrimaryButton } from './ownership-actions';
-import { localDue } from './automation-form';
 import { useAutomationOwnership } from './use-automation';
 import { SavedSelection } from './automation-history';
+import { AutomationViewport, AutomationFacts, AutomationTime, automationDisclosure } from './automation-layout';
 export function ContinuationResume({ preview, loading, rule, store, onDone, onOpenSession, onEdit }: {
   preview: AutorunPreview | null; loading: boolean; rule: AutomationV2; store: AutomationStoreApi;
   onDone: (id: string) => void; onOpenSession: () => void; onEdit: () => void;
@@ -25,22 +25,23 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
     ? heartbeatCanResume(preview, loading)
     : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
-  return <section className="grid gap-3">
+  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footer={<>
+    <AutomationResumeAction reviewLimits={reviewLimits} disabled={store.getState().busy > 0 || (reviewLimits ? ownership.mode !== 'human' : !ready)} onReviewLimits={onEdit} onResume={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }} />
+    {!reviewLimits && <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>}
+    <button {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().previewAutorun()}>{t('automation.checkAgain')}</button>
+  </>}>
     {loading && <p role="status">{t('automation.checking')}</p>}
-    {preview && rule.mode === 'autorun' && <AutorunPreviewView preview={preview} objectiveOverride={rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : ''} onObjective={onEdit} onOpenSession={onOpenSession} />}
+    {preview && rule.mode === 'autorun' && <AutorunPreviewView preview={{ ...preview, objective: rule.autorun.objective }} objectiveOverride={rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : ''} onObjective={onEdit} onOpenSession={onOpenSession} />}
     {rule.mode !== 'autorun' && <><p>{t('automation.fixedHelp')}</p>{preview?.readiness.kind === 'idle' && <><p>{t('automation.idleFresh')}</p><button {...telemetryClickAttributes('automation.history.open_session','automation')} className={automationButton} onClick={onOpenSession}>{t('automation.writeInstruction')}</button></>}</>}
     {rule.mode === 'autorun' ? <>
-      <p className="whitespace-pre-wrap">{rule.autorun.objective.text}</p>
+      {!preview && <p className="whitespace-pre-wrap break-words">{rule.autorun.objective.text}</p>}
       <p>{t('automation.supervisor')}: {rule.autorun.supervisor.provider} · {rule.autorun.supervisor.model} · {rule.autorun.supervisor.reasoningEffort} · {rule.autorun.supervisor.serviceTier}</p>
       {preview && !preview.supervisorOptions.some(o => o.available && sameSupervisorSelection(o.selection, rule.autorun.supervisor)) && <p>{t('automation.reasonSupervisor')}</p>}
       <p>{t('automation.analysisAttempts')}: {rule.analysisCount}/{rule.autorun.maxAnalyses}</p>
     </> : <p className="whitespace-pre-wrap">{rule.prompt}</p>}
-    <SavedSelection selection={rule.savedSelection} />
-    <p>{t('automation.instructionAttempts')}: {rule.dispatchCount}/{rule.limits.maxDispatches} · {localDue(rule.limits.expiresAt)}</p>
-    <AutomationResumeAction reviewLimits={reviewLimits} disabled={store.getState().busy > 0 || (reviewLimits ? ownership.mode !== 'human' : !ready)} onReviewLimits={onEdit} onResume={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }} />
-    {!reviewLimits && <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>}
-    <button {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} className={automationButton} type="button" onClick={() => void store.getState().previewAutorun()}>{t('automation.checkAgain')}</button>
-  </section>;
+    <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')}>{t('automation.diagnostics')}</summary><SavedSelection selection={rule.savedSelection} /></details>
+    <AutomationFacts items={[{ label: t('automation.instructionAttempts'), value: `${rule.dispatchCount}/${rule.limits.maxDispatches}` }, { label: t('automation.expiry'), value: <AutomationTime at={rule.limits.expiresAt} /> }]} />
+  </AutomationViewport></section>;
 }
 
 /** Autorun-only context/capability failures defer to base Heartbeat server admission. */

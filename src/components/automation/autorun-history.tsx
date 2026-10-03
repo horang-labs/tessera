@@ -5,12 +5,13 @@ import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { localDue } from './automation-form';
 import { AutomationReason } from './automation-reason';
 import { automationButton } from './ownership-actions';
+import { automationDisclosure } from './automation-layout';
 
 export function AutorunHistory({ decisions, details = {}, onResolve, onOpenSession, onEvidence }: { decisions: AutorunDecisionSummary[]; details?: Record<string, AutorunDecisionDetail>; onResolve: (runId: string) => void; onOpenSession: (sessionId: string) => void; onEvidence: (id: string) => void }) {
   const { t } = useI18n();
   return <section className="grid gap-3" aria-label={t('automation.history')}>
     {decisions.length === 0 && <p>{t('automation.noRuns')}</p>}
-    {decisions.map(item => <article className="grid gap-2 rounded border border-(--divider) p-3" key={item.id}>
+    {decisions.map(item => <article className="grid gap-2 rounded-lg border border-(--divider) bg-(--chat-header-bg) p-3 text-sm leading-relaxed" key={item.id}>
       <time dateTime={new Date(item.createdAt).toISOString()}>{localDue(item.createdAt)}</time>
       <strong>{item.outcome ? t(`automation.outcome_${item.outcome}`) : t(item.phase === 'analysing' ? 'automation.phase_analysing' : item.phase === 'reserved' ? 'automation.phase_waiting' : 'automation.phase_error')}</strong>
       <p className="text-xs">{t('automation.supervisor')}: {item.supervisorSelection.provider} · {item.supervisorSelection.model}</p>
@@ -53,7 +54,7 @@ export function AutorunEvidence({ detail, onOpenSession }: { detail: AutorunDeci
       </article>)}
       {context.items.filter(item => evidence.has(item.id)).map(item => <blockquote className="whitespace-pre-wrap border-l pl-2" key={item.id}>{item.text}</blockquote>)}
     </>}
-    <details><summary {...telemetryClickAttributes('automation.autorun.attempts', 'automation')}>{t('automation.attempts')}</summary>{detail.attempts.map(attempt => <article key={attempt.ordinal}>
+    <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.autorun.attempts', 'automation')}>{t('automation.attempts')}</summary>{detail.attempts.map(attempt => <article key={attempt.ordinal}>
       <p>{attempt.ordinal} · {localDue(attempt.startedAt)} · {attempt.finishedAt ? localDue(attempt.finishedAt) : t('automation.phase_analysing')}</p>
       <AutomationReason reason={attempt.failureCode} />{attempt.retryAt && <p>{t('automation.retryAt')}: {localDue(attempt.retryAt)}</p>}
     </article>)}</details>
@@ -65,7 +66,7 @@ function UnknownDelivery({ runId, sessionId, onResolve, onOpenSession }: { runId
   const { t } = useI18n();
   return <section><p>{t('automation.recovery')}</p>
     {sessionId && <button {...telemetryClickAttributes('automation.history.open_session', 'automation')} className={automationButton} type="button" onClick={() => onOpenSession(sessionId)}>{t('automation.openSession')}</button>}
-    <details><summary {...telemetryClickAttributes('automation.history.recover', 'automation')}>{t('automation.recover')}</summary><p>{t('automation.recovery')}</p>
+    <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.history.recover', 'automation')}>{t('automation.recover')}</summary><p>{t('automation.recovery')}</p>
       <button {...telemetryClickAttributes('automation.history.recover_confirm', 'automation')} className={automationButton} type="button" onClick={() => onResolve(runId)}>{t('automation.recover')}</button>
     </details></section>;
 }

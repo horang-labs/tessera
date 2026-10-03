@@ -3,10 +3,11 @@
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import type { InputOwnership } from '@/lib/automation/contracts';
 import { useI18n } from '@/lib/i18n';
+import { buttonVariants } from '@/components/ui/button';
 
-export const automationButton = 'min-h-9 max-sm:min-h-11 rounded border border-(--divider) px-3 py-1 text-xs hover:bg-(--sidebar-hover) focus-visible:ring-2 focus-visible:ring-(--accent) disabled:opacity-50';
+export const automationButton = `${buttonVariants({ variant: 'outline', size: 'sm' })} min-h-9 max-sm:min-h-11 h-auto`;
 
-export const automationPrimaryButton = `${automationButton} border-transparent bg-(--accent) text-white font-medium hover:bg-(--accent-hover)`;
+export const automationPrimaryButton = `${buttonVariants({ size: 'sm' })} min-h-9 max-sm:min-h-11 h-auto`;
 
 export function OwnershipActions({ ownership, automationId, onPause, onDelete }: {
   ownership: Readonly<InputOwnership>;

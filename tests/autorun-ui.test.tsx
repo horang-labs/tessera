@@ -104,7 +104,7 @@ test('objective heading attributes only verified sources or a nonblank explicit 
     const preview = autorunPreviewSchema.parse({ ...base, objective });
     const html = renderToStaticMarkup(createElement(AutorunPreviewView, { preview, objectiveOverride: override, onObjective: () => {}, onOpenSession: () => {} }));
     // Inspect the objective heading, not the edit field's explicit-input label.
-    assert.equal(html.match(/<p class="text-sm">([^<]+)<\/p>/)?.[1], `Objective · ${attribution}`);
+    assert.equal(html.match(/<h3[^>]*>([^<]+)<\/h3>/)?.[1], `Objective · ${attribution}`);
   }
 });
 
@@ -127,7 +127,10 @@ test('setup labels actual remaining instruction and analysis budgets and expiry 
       await i18n.changeLanguage(language);
       const html = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: createAutomationStore({ sessionId: 'session-1' }), onDone: () => {}, onOpenSession: () => {} }));
       assert.ok(html.includes(missing), `Missing objective attribution in ${language}`);
-      assert.ok(html.includes(`${instructions}: 3 · ${analyses}: 7 · ${expiry}: `), `Unlabeled or swapped remaining budgets in ${language}`);
+      for (const [label, value] of [[instructions, '3'], [analyses, '7']]) {
+        assert.match(html, new RegExp(`<dt[^>]*>${label}</dt>\\s*<dd[^>]*>${value}</dd>`), `Unlabeled or swapped budget in ${language}`);
+      }
+      assert.match(html, new RegExp(`<dt[^>]*>${expiry}</dt>\\s*<dd`));
       assert.doesNotMatch(html, /automation\.(remainingDispatches|remainingAnalyses|budgetExpiry|unverifiedGoal)/);
       const explicit = renderToStaticMarkup(createElement(AutorunPreviewView, { preview, objectiveOverride: 'User goal', onObjective: () => {}, onOpenSession: () => {} }));
       assert.ok(!explicit.includes(missing), `Explicit override retains missing attribution in ${language}`);
@@ -169,7 +172,7 @@ test('ended continuation limits offer review before editing, not unchanged Resum
     const html=renderToStaticMarkup(createElement(ContinuationResume,{rule:rule.data,preview,loading:false,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
     assert.match(html,/>Review limits and expiry<\/button>/);
     assert.doesNotMatch(html,/>Resume<\/button>/);
-    assert.match(html,/Instruction attempts: 10\/10/);
+    assert.match(html,/<dt[^>]*>Instruction attempts<\/dt>\s*<dd[^>]*>10\/10<\/dd>/);
   }
 });
 
@@ -202,4 +205,36 @@ test('Schedule and Autorun spent budgets review limits, while ordinary paused ru
       assert.ok(html.includes(label));assert.match(html,/disabled="/);
     }
   } finally { await i18n.changeLanguage('en'); }
+});
+
+test('Resume keeps the saved verified objective and source visible alongside fresh readiness and new instructions', async context => {
+  const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { autorunInput, firstRunningEvidenceFixture } = await import('./fixtures/autorun-contracts');
+  const { automationFixture, automationNow, ownershipFixture } = await import('./fixtures/automation');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const { applySessionInputOwnership } = await import('../src/lib/automation/client-state');
+  context.mock.method(Date, 'now', () => automationNow);
+  applySessionInputOwnership({ ...ownershipFixture(), mode: 'human', automationId: null });
+  const { enabled: _enabled, ...input } = autorunInput(); void _enabled;
+  const { prompt: _prompt, ...base } = automationFixture(); void _prompt;
+  const objective = { ...firstRunningEvidenceFixture().goal.objective, text: 'Preserve the saved billing goal.',
+    sources: [{ ...firstRunningEvidenceFixture().goal.objective.sources[0], excerpt: 'Original billing instruction.' }] };
+  const rule = decodeAutomation({ ...base, ...input, state: 'paused', analysisCount: 0, latestDecisionId: null,
+    autorunStatus: 'paused', attention: null, autorun: { ...input.autorun, objective, criterionOrigin: 'verified-human' } });
+  assert.ok(rule.success);
+  for (const freshObjective of [null, { kind: 'explicit', text: 'Different fresh preview goal.', revision: 1 }] as const) {
+    const preview = autorunPreviewSchema.parse({ ...autorunPreviewFixture(), objective: freshObjective,
+      readiness: { kind: 'idle', reason: 'consumed-boundary' },
+      newHumanInstructions: [{ ...objective.sources[0], recordId: 'new-record', excerpt: 'New human instruction remains visible.' }] });
+    const html = renderToStaticMarkup(createElement(ContinuationResume, { rule: rule.data, preview, loading: false,
+      store: createAutomationStore({ sessionId: 'session-1' }), onDone: () => {}, onOpenSession: () => {}, onEdit: () => {} }));
+    assert.match(html, /Preserve the saved billing goal\./);
+    assert.match(html, /Original billing instruction\./);
+    assert.match(html, /Objective · From verified conversation/);
+    assert.match(html, /New human instruction remains visible\./);
+    assert.match(html, /Send a new instruction/);
+    assert.match(html, /<button[^>]*disabled=""[^>]*>Resume<\/button>/);
+    assert.doesNotMatch(html, /Different fresh preview goal\./);
+  }
 });
