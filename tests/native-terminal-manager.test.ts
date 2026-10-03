@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getNativeAutomationInteraction } from '@/lib/automation/native-interaction';
 import type { TerminalPtyFactory } from '@/lib/terminal/types';
+import { mintPaneToken } from '@/lib/terminal/pane-token-registry';
 
 process.env.TESSERA_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'tessera-native-interaction-'));
 process.env.NODE_ENV = 'test';
@@ -22,16 +23,17 @@ before(async () => {
 });
 const screen = '\x1b[2J\x1b[4;1H\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m'
   + '\x1b[6;1H? for shortcuts\x1b[4;3H';
-async function setup() {
+async function setup(withIdleHook = true, authenticated = true) {
   const writes: string[] = []; let output: (data: string) => void = () => {};
   const factory: TerminalPtyFactory = { spawn: () => ({ write: data => writes.push(data), resize: () => {}, kill: () => {},
     onData: cb => { output = cb; }, onExit: () => {} }) };
   const manager = new TerminalManager(() => {}, async () => factory, undefined, {
     semanticPromptSubmitDelayMs: 0, nativeProviderVersion: async () => '0.159.2',
   });
-  await manager.startDetached({ terminalId: 'terminal', userId: 'owner', sessionId: 'worker', cwd: workspace,
+  const paneToken = authenticated ? mintPaneToken({ terminalId: 'terminal', userId: 'owner', sessionId: 'worker', providerId: 'codex' }) : undefined;
+  await manager.startDetached({ paneToken, terminalId: 'terminal', userId: 'owner', sessionId: 'worker', cwd: workspace,
     connectionId: 'test', surfaceId: 'test', cols: 80, rows: 12, providerId: 'codex', agentEnvironment: 'wsl' });
-  manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+  if (withIdleHook) manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
     status: 'idle', hookEvent: 'SessionStart', stateAt: Date.now() }, 'owner');
   output(screen); await new Promise<void>(resolve => setImmediate(resolve));
   return { manager, writes, output, port: getNativeAutomationInteraction(manager) };
@@ -148,4 +150,45 @@ test('native Stop invalidates a correlated pending approval before any response'
     assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'turn-complete');
     assert.throws(() => port.assertCurrent(interaction.request), 'completed lifecycle must invalidate request');
   } finally { await manager.shutdownAll(); }
+});
+
+// Actual packaged e065: native trust accepted, clean Codex prompt, but no initial lifecycle hook/turn.
+test('authenticated fresh native empty prompt can bootstrap while gate still reports starting', async () => {
+  const { manager, port, writes } = await setup(false);
+  try {
+    assert.ok(port); assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'starting');
+    const scope = { userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' as const };
+    assert.equal(manager.automation.readTurnEvidence(scope).kind, 'idle');
+    const ready = await port.observe(scope); assert.equal(ready.kind, 'ready'); if (ready.kind !== 'ready') return;
+    assert.equal(ready.identity.providerConversationId, null);
+    manager.automation.claimNativeAction(ready.identity, 'rule', 'run');
+    const result = await port.submitPrompt({ expected: ready, prompt: 'Read marker.txt', submissionId: 'run',
+      signal: new AbortController().signal, writeFence: (_phase, write) => {
+        manager.automation.verifyNativeAction(ready.identity, 'rule', 'run'); port.assertCurrent(ready); write();
+      } });
+    assert.equal(result.kind, 'delivered'); assert.equal(writes.length, 2);
+  } finally { await manager.shutdownAll(); }
+});
+
+test('starting state preserves trust/menu/draft and unrelated-shell vetoes', async () => {
+  for (const authenticated of [true, false]) {
+    const { manager, port, output } = await setup(false, authenticated);
+    try {
+      assert.ok(port); const scope = { userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' as const };
+      if (!authenticated) { assert.equal((await port.observe(scope)).kind, 'starting'); continue; }
+      output('\x1b[2J\x1b[4;1HDo you trust this folder?\x1b[6;1H1. Yes\x1b[6;3H');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal((await port.observe(scope)).kind, 'starting');
+      output(screen + '\x1b[4;1H\x1b[2m›\x1b[0m\x1b[4;3H');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal((await port.observe(scope)).kind, 'starting');
+      output(screen + '\x1b[4;3H\x1b[0munsent draft');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal((await port.observe(scope)).kind, 'draft');
+      output(screen); manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        status: 'running', hookEvent: 'UserPromptSubmit', stateAt: Date.now() }, 'owner');
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal((await port.observe(scope)).kind, 'running');
+    } finally { await manager.shutdownAll(); }
+  }
 });
