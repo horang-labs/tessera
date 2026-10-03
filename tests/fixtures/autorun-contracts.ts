@@ -51,8 +51,10 @@ export function autorunPreviewFixture() {
     objective: { kind: 'explicit', text: 'Fix login.', revision: 1 }, newHumanInstructions: [],
     criteria: [{ id: 'goal', text: 'Test passes.' }], criterionOrigin: 'system-objective', constraints: [],
     workerSelection: contextSnapshot().workerSelection,
-    supervisorOptions: [{ version: 1, selection: autorunInput().autorun.supervisor, cliVersion: '0.159.2',
-      proofId: 'codex-0.159.2-packet-catalog-v1', isolationPolicyVersion: 'autorun-530-v1', available: true, checkedAt: boundary.completedAt }],
+    supervisorDiscovery: { candidates: [{ provider: 'codex', model: 'gpt-6.1-sol', label: 'GPT-6.1-Sol', reasoningEfforts: ['high'], serviceTiers: ['default'], source: 'native', unavailableReason: null }], complete: true },
+    supervisorCheck: { selection: autorunInput().autorun.supervisor, status: 'available', reason: null },
+    supervisorOptions: [{ metadataHash: 'c'.repeat(64), version: 1, selection: autorunInput().autorun.supervisor, cliVersion: '0.159.2',
+      proofId: 'codex-0.159.2-packet-catalog-v2', isolationPolicyVersion: 'autorun-530-selection-v2', available: true, checkedAt: boundary.completedAt }],
     recommendedSupervisor: autorunInput().autorun.supervisor,
     defaults: { delayMs: 120000, maxDispatches: 10, maxAnalyses: 20, analysisTimeoutMs: 120000, expiresAt: boundary.completedAt + 28800000 },
     remaining: { dispatches: 10, analyses: 20 },
@@ -62,7 +64,7 @@ export function autorunPreviewFixture() {
 
 export function supervisorFinalFixture() {
   return {
-    kind: 'ok', selection: autorunInput().autorun.supervisor, cliVersion: '0.159.2',
+    kind: 'ok', capability: autorunPreviewFixture().supervisorOptions[0], selection: autorunInput().autorun.supervisor, cliVersion: '0.159.2',
     effectiveSelection: { kind: 'requested-only' }, invocationId: 'invocation-1',
     settlement: { exitCode: 0, quiescent: true },
     finality: { provider: 'codex', event: 'turn.completed', structuredDecisionCount: 1, executableReceipts: 0 },

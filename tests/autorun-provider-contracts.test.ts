@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { validateSupervisorFinalResult, supervisorCapabilitySchema } from '../src/lib/automation/autorun-contracts';
 import { getAutorunProviderPort } from '../src/lib/cli/providers/provider-contract';
-import { autorunInput, supervisorFinalFixture } from './fixtures/autorun-contracts';
+import { autorunInput, supervisorFinalFixture, autorunPreviewFixture } from './fixtures/autorun-contracts';
 
 test('partial, unsuccessful or uncertain supervisor settlements never authorize a decision', () => {
   const final = supervisorFinalFixture();
-  const context = { selection: autorunInput().autorun.supervisor, criterionIds: ['goal'], evidenceIds: ['record-2'] };
+  const context = { capability:final.capability, selection: autorunInput().autorun.supervisor, criterionIds: ['goal'], evidenceIds: ['record-2'] };
   assert.equal(validateSupervisorFinalResult(final, context).success, true);
   for (const invalid of [
     { ...final, settlement: { exitCode: 1, quiescent: true } },
@@ -21,26 +21,27 @@ test('partial, unsuccessful or uncertain supervisor settlements never authorize 
   ]) assert.equal(validateSupervisorFinalResult(invalid, context).success, false);
 });
 
-test('only exact proven selection/version/isolation combinations can advertise supervisor capability', () => {
-  const proof = { version: 1, selection: autorunInput().autorun.supervisor, cliVersion: '0.159.2',
-    proofId: 'codex-0.159.2-packet-catalog-v1', isolationPolicyVersion: 'autorun-530-v1',
-    available: true, checkedAt: 1800000000000 };
+test('selection-bound capabilities require the exact policy/version and canonical metadata hash', () => {
+  const proof = autorunPreviewFixture().supervisorOptions[0];
   assert.equal(supervisorCapabilitySchema.safeParse(proof).success, true);
+  assert.equal(supervisorCapabilitySchema.safeParse({...proof,selection:{...proof.selection,model:'gpt-6-astra',reasoningEffort:'xhigh',serviceTier:'fast'}}).success,true);
   for (const invalid of [
-    { ...proof, cliVersion: '0.160.0' }, { ...proof, proofId: 'read-only-sandbox' },
-    { ...proof, selection: { ...proof.selection, model: 'other' } },
-    { ...proof, selection: { ...proof.selection, serviceTier: 'fast' } },
-    { ...proof, available: false },
-  ]) assert.equal(supervisorCapabilitySchema.safeParse(invalid).success, false);
+    {...proof,cliVersion:'0.160.0'}, {...proof,proofId:'read-only-sandbox'},
+    {...proof,isolationPolicyVersion:'autorun-530-v1'}, {...proof,metadataHash:'unverified'}, {...proof,available:false},
+  ]) assert.equal(supervisorCapabilitySchema.safeParse(invalid).success,false);
+  const final=supervisorFinalFixture(), context={selection:proof.selection,capability:proof,criterionIds:['goal'],evidenceIds:['record-2']};
+  assert.equal(validateSupervisorFinalResult({...final,capability:{...proof,metadataHash:'f'.repeat(64)}},context).success,false);
+  assert.equal(validateSupervisorFinalResult(final,{...context,capability:undefined}).success,false);
   assert.deepEqual(getAutorunProviderPort({}), { kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED' });
 });
 
 test('Claude finality uses native successful result and preserves its explicit tier-null proof', () => {
   const final = supervisorFinalFixture();
   const selection = { provider: 'claude-code' as const, model: 'claude-sonnet-5-5', reasoningEffort: 'high', serviceTier: null };
-  const claude = { ...final, selection, cliVersion: '2.1.284',
+  const capability={...final.capability,selection,cliVersion:'2.1.284',proofId:'claude-2.1.284-safe-restricted-v2'};
+  const claude = { ...final, selection, capability, effectiveSelection:{kind:'verified',selection},cliVersion: '2.1.284',
     finality: { provider: 'claude-code', event: 'result/success', isError: false, terminalReason: 'completed', structuredDecisionCount: 1, executableReceipts: 0 } };
-  const context = { selection, criterionIds: ['goal'], evidenceIds: ['record-2'] };
+  const context = { selection, capability, criterionIds: ['goal'], evidenceIds: ['record-2'] };
   assert.equal(validateSupervisorFinalResult(claude, context).success, true);
   assert.equal(validateSupervisorFinalResult({ ...claude, finality: { ...claude.finality, isError: true } }, context).success, false);
   assert.equal(validateSupervisorFinalResult({ ...claude, finality: { ...claude.finality, terminalReason: 'timeout' } }, context).success, false);
