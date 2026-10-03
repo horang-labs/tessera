@@ -124,7 +124,8 @@ export function useMessageInputAttachments({
   setInputValue,
   t,
 }: UseMessageInputAttachmentsOptions) {
-  const draftSource = useMemo(() => createAutomationDraftSource(sessionId), [sessionId]);
+  const draftSource = useMemo(() => createAutomationDraftSource(sessionId, 'attachments'), [sessionId]);
+  useEffect(() => draftSource.connect(), [draftSource]);
   const previousDraftSource = useRef(draftSource);
   useEffect(() => {
     // The existing Session switch explicitly discards this composer's attachments.

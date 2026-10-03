@@ -4,29 +4,33 @@ import { useChatStore } from './chat-store';
 
 // Revisions survive mounted-surface and auth-store cache turnover in this renderer.
 const revisions = new Map<string, number>();
-const localSources = new Map<string, Map<object, boolean>>();
+type DraftSource = { kind: string; attached: boolean; held: number; hasDraft: boolean };
+const localSources = new Map<string, Map<DraftSource, boolean>>();
 const localChanges = new Map<string, number>();
 const listeners = new Map<string, Set<() => void>>();
 /** A pending upload/local attachment contributes only presence, never its content. */
-export function createAutomationDraftSource(sessionId: string) {
-  const key = {};
-  let held = 0;
-  let hasDraft = false;
+export function createAutomationDraftSource(sessionId: string, kind = 'local') {
+  const sources = localSources.get(sessionId) ?? new Map<DraftSource, boolean>();
+  // Reclaim a disconnected source of this kind; other mounted surfaces keep their own record.
+  const source = [...sources.keys()].find(item => item.kind === kind && !item.attached)
+    ?? { kind, attached: true, held: 0, hasDraft: false };
+  source.attached = true;
+  if (!sources.has(source)) sources.set(source, false);
+  localSources.set(sessionId, sources);
   const update = () => {
-    const sources = localSources.get(sessionId) ?? new Map<object, boolean>();
-    const present = hasDraft || held > 0;
-    if ((sources.get(key) ?? false) === present) return;
-    sources.set(key, present);
-    localSources.set(sessionId, sources);
+    const present = source.hasDraft || source.held > 0;
+    if (sources.get(source) === present) return;
+    sources.set(source, present);
     localChanges.set(sessionId, (localChanges.get(sessionId) ?? 0) + 1);
     for (const listener of listeners.get(sessionId) ?? []) listener();
   };
   return {
-    setHasDraft: (present: boolean) => { hasDraft = present; update(); },
+    connect: () => { source.attached = true; return () => { source.attached = false; }; },
+    setHasDraft: (present: boolean) => { source.hasDraft = present; update(); },
     hold: () => {
-      held++; update();
+      source.held++; update();
       let released = false;
-      return () => { if (!released) { released = true; held--; update(); } };
+      return () => { if (!released) { released = true; source.held--; update(); } };
     },
   };
 }

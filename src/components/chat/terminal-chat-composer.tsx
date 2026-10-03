@@ -121,7 +121,8 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
     store.setDraftInput(sessionId, typeof next === 'function' ? next(store.getDraftInput(sessionId)) : next);
   }, [sessionId]);
   const [dragDepth, setDragDepth] = useState(0);
-  const uploadDraftSource = useMemo(() => createAutomationDraftSource(sessionId), [sessionId]);
+  const uploadDraftSource = useMemo(() => createAutomationDraftSource(sessionId, 'terminal-uploads'), [sessionId]);
+  useEffect(() => uploadDraftSource.connect(), [uploadDraftSource]);
   const [pendingImageUploads, setPendingImageUploads] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);

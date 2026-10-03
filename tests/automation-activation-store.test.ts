@@ -131,3 +131,25 @@ test('separate normal/Peek uploads and GUI attachments veto by metadata; complet
   assert.equal(sent.at(-1)?.hasDraft, false);
   assert.ok(sent.every((item, index) => index === 0 || item.revision > sent[index-1].revision));
 });
+
+test('remounted GUI source reclaims its retained veto for explicit clearing without clearing another live surface', async () => {
+  const { createAutomationDraftSource, createAutomationDraftPublisher } = await import('../src/stores/automation-draft-veto');
+  const sessionId = 'session-remount';
+  const sent: boolean[] = [];
+  const publisher = createAutomationDraftPublisher(sessionId, async (_url, init) => { sent.push(JSON.parse(String(init?.body)).hasDraft); return Response.json({ ok: true }); });
+  const normal = createAutomationDraftSource(sessionId, 'gui');
+  const detachNormal = normal.connect();
+  normal.setHasDraft(true);
+  const peek = createAutomationDraftSource(sessionId, 'gui');
+  peek.setHasDraft(true);
+  detachNormal();
+  await publisher.flush();
+  assert.equal(sent.at(-1), true, 'Disconnect preserves a retained draft');
+  const remounted = createAutomationDraftSource(sessionId, 'gui');
+  remounted.setHasDraft(false);
+  await publisher.flush();
+  assert.equal(sent.at(-1), true, 'Explicitly clearing the remounted surface preserves the live Peek draft');
+  peek.setHasDraft(false);
+  await publisher.flush();
+  assert.equal(sent.at(-1), false, 'No abandoned anonymous key may keep a phantom veto');
+});

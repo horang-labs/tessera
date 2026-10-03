@@ -348,7 +348,8 @@ export function MessageInput({
     setInputValue: setInputValueFromProgrammaticEdit,
     t,
   });
-  const localDraftSource = useMemo(() => createAutomationDraftSource(sessionId), [sessionId]);
+  const localDraftSource = useMemo(() => createAutomationDraftSource(sessionId, 'gui'), [sessionId]);
+  useEffect(() => localDraftSource.connect(), [localDraftSource]);
   const previousDraftSource = useRef(localDraftSource);
   useEffect(() => {
     // Switching Session explicitly moves this GUI-only surface; retained text was saved above.
