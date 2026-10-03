@@ -104,3 +104,52 @@ test('edited Heartbeat summary uses the same restored values as its fields',asyn
   const summary=html.match(/<summary[^>]*>(.*?)<\/summary>/)?.[1] ?? '';assert.match(summary,/45s delay/);assert.match(summary,/3 instructions/);assert.match(html,/2030/);
   assert.match(html,/name="delay"[^>]*value="45"/);assert.match(html,/name="max"[^>]*value="3"/);
 });
+
+test('Heartbeat replacement button matches its guarded submit through pending, ready and failed delete', async () => {
+  const { heartbeatSetupSubmission } = await import('../src/components/automation/automation-manager');
+  const { AutomationForm } = await import('../src/components/automation/automation-form');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const { automationFixture, wakeInput } = await import('./fixtures/automation');
+  const { autorunInput, autorunPreviewFixture } = await import('./fixtures/autorun-contracts');
+  const { enabled: _enabled, ...input } = autorunInput(); void _enabled;
+  const { prompt: _prompt, ...base } = automationFixture(); void _prompt;
+  const decoded = decodeAutomation({ ...base, ...input, state: 'paused', analysisCount: 2, latestDecisionId: null, autorunStatus: 'paused', attention: null,
+    autorun: { ...input.autorun, objective: { ...input.autorun.objective, revision: 1 }, criterionOrigin: 'explicit' } });
+  assert.ok(decoded.success, JSON.stringify(decoded));
+  const old = decoded.data;
+  let retained = old;
+  let rejectDelete = true;
+  const writes: { method: string; body: unknown }[] = [];
+  const store = createAutomationStore({ sessionId: 'session-1' }, async (_url, init) => {
+    if (init?.method && init.method !== 'GET') {
+      writes.push({ method: init.method, body: JSON.parse(String(init.body ?? '{}')) });
+      if (init.method === 'DELETE' && rejectDelete) return Response.json({ error: { code: 'REVISION_CONFLICT' } }, { status: 409 });
+      if (init.method === 'DELETE') retained = { ...old, state: 'deleted' };
+      return Response.json({ automation: init.method === 'DELETE' ? retained : { ...automationFixture(), version: 2, mode: 'heartbeat', id: 'new-heartbeat', state: 'enabled' }, inputOwnership: null });
+    }
+    return Response.json({ items: [retained], nextCursor: null });
+  });
+  store.setState({ items: [old], preview: autorunPreviewFixture(), previewLoading: true, previewError: null, previewRejection: null });
+  const done: string[] = [];
+  const actions = () => heartbeatSetupSubmission(store, 'replace', 'session-1', old, id => done.push(id));
+  const button = () => renderToStaticMarkup(createElement(AutomationForm, { scope: { sessionId: 'session-1' }, replacing: true, ...actions(), onCancel() {} })).match(/<button[^>]*type="submit"[^>]*>/)?.[0] ?? '';
+  const enabledInput = { ...wakeInput(), enabled: true };
+  assert.match(button(), /disabled=""/, 'Pending replacement must visibly block the same action as its handler');
+  assert.equal(await actions().onSave(enabledInput), false);
+  assert.deepEqual(writes, []);
+  store.setState({ previewLoading: false, previewError: 'PREVIEW_TIMEOUT' });
+  assert.match(button(), /disabled=""/);
+  assert.equal(await actions().onSave(enabledInput), false);
+  assert.deepEqual(writes, []);
+  store.setState({ previewError: null });
+  assert.doesNotMatch(button(), /disabled=""/);
+  assert.equal(await actions().onSave(enabledInput), false);
+  assert.equal(retained.state, 'paused');
+  assert.deepEqual(writes.map(item => item.method), ['DELETE']);
+  rejectDelete = false;
+  assert.equal(await actions().onSave(enabledInput), true);
+  assert.deepEqual(writes.map(item => item.method), ['DELETE', 'DELETE', 'POST']);
+  assert.deepEqual(writes.at(-1)?.body, enabledInput);
+  assert.deepEqual(done, ['new-heartbeat']);
+});

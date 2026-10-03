@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from 'zustand';
 import { AutomationPreflight, AutomationReadinessRecovery } from './automation-preflight';
+import type { Automation, AutomationInput } from '@/lib/automation/contracts';
 import type { AutomationV2 } from '@/lib/automation/autorun-contracts';
 import type { AutomationScope, AutomationStoreApi } from '@/stores/automation-store';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
@@ -24,6 +25,24 @@ import { AutomationViewport, AutomationFacts, AutomationTime, automationDisclosu
 const selectedAutomationButton = cn(automationButton, 'border-(--accent) bg-(--accent)/10 text-(--accent) font-semibold');
 
 type SetupIntent = 'start' | 'resume' | 'edit' | 'replace';
+/** Keep the rendered Heartbeat action and its guarded control path together. */
+export function heartbeatSetupSubmission(store: AutomationStoreApi, intent: SetupIntent, sessionId: string, rule: AutomationV2 | undefined, onDone: (id: string) => void) {
+  const { preview, previewLoading, previewError, previewRejection } = store.getState();
+  return {
+    submitBlocked: Boolean(intent !== 'edit' && sessionId && (intent === 'replace' || previewRejection) && !heartbeatCanResume(preview, previewLoading, previewError)),
+    onSave: async (input: AutomationInput, previous?: Automation) => {
+      if (intent === 'replace' && rule) {
+        if (!heartbeatCanResume(preview, previewLoading, previewError)) { store.setState({ error: 'INPUT_BOUNDARY_UNPROVEN' }); return false; }
+        if (!await store.getState().remove(rule.id)) return false;
+      }
+      const success = await store.getState().save(input, previous);
+      const id = store.getState().lastControl?.body.automation.id;
+      if (success && id) onDone(id);
+      return success;
+    },
+  };
+}
+
 export function AutomationManager({ scope, store, onClose, onOpenSession, supported = true, initialId, initialResume = false }: {
   scope: AutomationScope; store: AutomationStoreApi; onClose: () => void; onOpenSession: (id: string, objective?: string) => void; supported?: boolean; initialId?: string; initialResume?: boolean;
 }) {
@@ -139,18 +158,9 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
         {intent === 'resume' && rule ? <ContinuationResume preview={preview} loading={previewLoading} rule={rule} store={store} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} onEdit={() => void setup('edit', rule)} /> : sessionId && method === 'autorun' ? <>
           {<AutorunSetup key={`${view.selectedId}:${intent}`} preview={preview} store={store} previous={intent === 'replace' ? rule : previewPrevious} intent={intent} intro={setupIntro} footnote={setupFootnote} defaultName={`${context.title} · Autorun`} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} />}
         </> : <>
-          <AutomationForm submitBlocked={Boolean(intent !== 'edit' && sessionId && state.previewRejection && !heartbeatCanResume(preview, previewLoading, previewError))} footerNote={sessionId && state.previewRejection ? <><AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} />{!previewLoading && !previewError && <AutomationReadinessRecovery preview={preview} method="heartbeat" onOpenSession={() => onOpenSession(sessionId)} objective={String((state.drafts[fixedDraftKey] as Record<string,string> | undefined)?.prompt ?? '')} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId,text) : undefined} />}</> : undefined} intro={setupIntro} footnote={<>{setupFootnote}{sessionId && state.previewRejection && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics','automation')} className="cursor-pointer">{t('automation.technicalDetails')}</summary><p>{state.previewRejection}</p>{preview && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && <p>{preview.readiness.reason}</p>}</details>}</>} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
+          <AutomationForm {...heartbeatSetupSubmission(store, intent, sessionId, rule, done)} footerNote={sessionId && (intent === 'replace' || state.previewRejection) ? <><AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} />{!previewLoading && !previewError && <AutomationReadinessRecovery preview={preview} method="heartbeat" onOpenSession={() => onOpenSession(sessionId)} objective={String((state.drafts[fixedDraftKey] as Record<string,string> | undefined)?.prompt ?? '')} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId,text) : undefined} />}</> : undefined} intro={setupIntro} footnote={<>{setupFootnote}{sessionId && state.previewRejection && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics','automation')} className="cursor-pointer">{t('automation.technicalDetails')}</summary><p>{state.previewRejection}</p>{preview && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && <p>{preview.readiness.reason}</p>}</details>}</>} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
             defaultName={`${context.title} · ${sessionId ? 'Heartbeat' : t('automation.schedule')}`} replacing={intent === 'replace'} draft={state.drafts[fixedDraftKey]} onDraft={draft => store.setState(s => ({ drafts: { ...s.drafts, [fixedDraftKey]: draft } }))}
-            onSave={async (input, previous) => {
-              if (intent === 'replace' && rule) {
-                if (!heartbeatCanResume(preview, previewLoading, previewError)) { store.setState({ error: 'INPUT_BOUNDARY_UNPROVEN' }); return false; }
-                if (!await store.getState().remove(rule.id)) return false;
-              }
-              const success = await store.getState().save(input, previous);
-              const id = store.getState().lastControl?.body.automation.id;
-              if (success && id) done(id);
-              return success;
-            }} onCancel={() => updateView({ setup: false })} />
+            onCancel={() => updateView({ setup: false })} />
         </>}
       </>}
     </section> : rule ? <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport>
