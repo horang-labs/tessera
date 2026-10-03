@@ -592,7 +592,7 @@ export class TerminalManager {
       || ['draining', 'recovery-required', 'unavailable'].includes(state.ownershipMode)) throw new Error('Native runtime changed.');
     if ('requestId' in expected) {
       const current = this.nativeApprovals.current(identity.userId, identity.sessionId);
-      if (!current || state.state !== 'running' || current.requestId !== expected.requestId || current.requestHash !== expected.requestHash
+      if (!current || !['running', 'input-required'].includes(state.state) || current.requestId !== expected.requestId || current.requestHash !== expected.requestHash
         || state.nativeApprovalId !== expected.requestId || expected.deadlineAt <= Date.now()
         || this.nativeApprovalHookRevisions.get(expected.requestId) !== runtime.nativeInteractionRevision
         || !this.automation.canSuperviseNativeApproval(identity.userId, identity.sessionId)) throw new Error('Native approval changed.');
@@ -672,6 +672,10 @@ export class TerminalManager {
       { ...state.identity, observationRevision: runtime.sequence + runtime.nativeInteractionRevision }, payload);
     if (!request || this.nativeApprovals.current(userId, sessionId)) return null;
     try { this.automation.holdNativeApproval(userId, sessionId, request); } catch { return null; }
+    // This authenticated, correlated request owns the approval input boundary.
+    // Pin its revision after recording it; later lifecycle events still invalidate it.
+    this.recordSessionState({ type: 'session_state', sessionId, terminalId, status: 'input_required',
+      hookEvent: 'PermissionRequest', stateAt: Math.max(Date.now(), (runtime.lastSessionState?.stateAt ?? 0) + 1) }, userId);
     const hookRevision = runtime.nativeInteractionRevision;
     this.nativeApprovalHookRevisions.set(request.requestId, hookRevision);
     const poll = setInterval(() => {
