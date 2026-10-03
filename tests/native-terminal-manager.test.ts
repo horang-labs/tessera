@@ -94,8 +94,14 @@ test('correlated native approval preserves accepted lead through gate claim and 
       tessera_native_approval: { invocationId: 'approval', generation: state.identity.generation, providerVersion: '0.159.2' },
       tessera_autorun: { observerSubmissionId: 'submit', sourceIdentityHash: 'a'.repeat(64), fileGeneration: 'file', nativeId: 'turn' } };
     const offer = manager.openNativeApproval('terminal', 'owner', payload); assert.ok(offer);
+    assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'input-required',
+      'an authenticated held PermissionRequest is the native approval input boundary');
     const interaction = await port.observe({ userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' });
     assert.equal(interaction.kind, 'approval'); if (interaction.kind !== 'approval') return;
+    assert.throws(() => port.assertCurrent({ ...interaction.request, requestHash: 'b'.repeat(64) }));
+    manager.automation.setDraftVeto('owner', 'worker', { surfaceId: 'peek', revision: 1, hasDraft: true });
+    assert.throws(() => port.assertCurrent(interaction.request));
+    manager.automation.setDraftVeto('owner', 'worker', { surfaceId: 'peek', revision: 2, hasDraft: false });
     manager.automation.claimNativeAction(interaction.request.identity, 'rule', 'approval-run');
     const result = port.respondApproval({ expected: interaction.request, optionId: 'allow-once', signal: new AbortController().signal,
       writeFence: (_phase, write) => { manager.automation.verifyNativeAction(interaction.request.identity, 'rule', 'approval-run');
