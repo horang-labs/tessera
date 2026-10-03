@@ -690,7 +690,7 @@ export const zh: I18nMessages = {
     releaseSessionHint: '点击关闭按钮释放此会话',
     readOnlyPlaceholder: '仅历史记录 \u2014 无法恢复会话',
     terminalReadOnlyNotice: '正在终端中运行 \u2014 仅供查看',
-    terminalWorkingNotice: '正在终端中工作 \u2014 仅供查看',
+    terminalWorkingNotice: '正在终端中工作',
     terminalWaitingNotice: '正在终端中等待输入',
     terminalComposerHint: '打开终端',
     terminalComposerLabel: '发送到终端的文本或文件路径',

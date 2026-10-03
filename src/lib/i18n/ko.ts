@@ -692,7 +692,7 @@ export const ko: I18nMessages = {
     releaseSessionHint: '닫기 버튼으로 세션을 해제하세요',
     readOnlyPlaceholder: '기록 전용 \u2014 세션을 재개할 수 없습니다',
     terminalReadOnlyNotice: '터미널에서 진행 중 \u2014 보기 전용',
-    terminalWorkingNotice: '터미널에서 작업 중 \u2014 보기 전용',
+    terminalWorkingNotice: '터미널에서 작업 중',
     terminalWaitingNotice: '터미널에서 입력을 기다리는 중',
     terminalComposerHint: '터미널 열기',
     terminalComposerLabel: '터미널로 보낼 텍스트 또는 파일 경로',

@@ -690,7 +690,7 @@ export const ja: I18nMessages = {
     releaseSessionHint: '閉じるボタンでセッションを解放してください',
     readOnlyPlaceholder: '履歴のみ \u2014 セッションを再開できません',
     terminalReadOnlyNotice: 'ターミナルで実行中 \u2014 閲覧のみ',
-    terminalWorkingNotice: 'ターミナルで作業中 \u2014 閲覧のみ',
+    terminalWorkingNotice: 'ターミナルで作業中',
     terminalWaitingNotice: 'ターミナルで入力を待機中',
     terminalComposerHint: 'ターミナルを開く',
     terminalComposerLabel: 'ターミナルに送信するテキストまたはファイルパス',
