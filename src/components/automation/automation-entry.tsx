@@ -1,8 +1,11 @@
 'use client';
 
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
+import { useTabStore } from '@/stores/tab-store';
+import { usePanelStore } from '@/stores/panel-store';
+import { useSessionStore } from '@/stores/session-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useTerminalViewModeStore } from '@/stores/terminal-view-mode-store';
 import { useTerminalSessionStore, selectIsTerminalAwaitingInput } from '@/stores/terminal-session-store';
@@ -21,23 +24,25 @@ import { useAutomationOwnership, useAutomationStore } from './use-automation';
 function Entry({ scope, store, supported = true, currentId, attention = false, paused = false, reviewLimits = false, toolbarState }: { scope: AutomationScope; store: AutomationStoreApi; supported?: boolean; currentId?: string; attention?: boolean; paused?: boolean; reviewLimits?: boolean; toolbarState?: string | null }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const navigationRequest = useRef(0);
   const { materializeSession } = useSessionNavigation();
   const { handleSessionClick } = useSessionClickHandlers();
   return <>
     <button {...telemetryClickAttributes('sessionId' in scope ? 'automation.open.wake' : 'automation.open.schedule', 'sessionId' in scope ? 'chat_header' : 'worktree')} className={'sessionId' in scope ? automationToolbarButton : automationButton} type="button" aria-haspopup="dialog" title={'sessionId' in scope ? [t('automation.toolbar'), toolbarState].filter(Boolean).join(' · ') : t('automation.schedule')} onClick={() => setOpen(true)}>
       {'sessionId' in scope ? <><Repeat2 className="h-3.5 w-3.5" aria-hidden="true" /><span>{t('automation.toolbar')}</span>{toolbarState && <span aria-label={toolbarState} className={cn('h-1.5 w-1.5 rounded-full', attention ? 'bg-(--status-error-text)' : paused || reviewLimits ? 'bg-(--text-muted)' : 'bg-(--accent)')} />}</> : t(currentId ? 'automation.details' : 'automation.schedule')}
     </button>
-    {open && <AutomationManager scope={scope} store={store} initialId={currentId} initialResume={paused && !attention && !reviewLimits} supported={supported} onClose={() => setOpen(false)} onOpenSession={async (id, objective) => {
+    {open && <AutomationManager scope={scope} store={store} initialId={currentId} initialResume={paused && !attention && !reviewLimits} supported={supported} onClose={() => { ++navigationRequest.current; setOpen(false); }} onOpenSession={async (id, objective) => {
+      const request = ++navigationRequest.current;
+      const activeSession = useSessionStore.getState().activeSessionId;
+      const activeTab = useTabStore.getState().activeTabId;
       const session = await materializeSession(id);
+      if (request !== navigationRequest.current || activeSession !== useSessionStore.getState().activeSessionId || activeTab !== useTabStore.getState().activeTabId) return;
       if (!session) { store.setState({ error: 'SESSION_UNAVAILABLE' }); return; }
       if (objective && !addAutomationObjectiveToDraft(id, objective)) { store.setState({ error: 'PAUSE_REQUIRED' }); return; }
       if (objective) useTerminalViewModeStore.getState().setMode(id, 'chat');
       setOpen(false);
       await handleSessionClick(session);
-      if (objective) requestAnimationFrame(() => {
-        const input = [...document.querySelectorAll<HTMLTextAreaElement>('[data-session-input]')].find(input => input.dataset.sessionInput === id);
-        if (input && !input.readOnly && !input.disabled) input.focus();
-      });
+      if (objective) focusAutomationSessionDraft(id);
     }} />}
   </>;
 }
@@ -76,4 +81,20 @@ export function addAutomationObjectiveToDraft(sessionId: string, objective: stri
   const existing = chat.getDraftInput(sessionId);
   chat.setDraftInput(sessionId, existing ? `${existing}\n\n${objective}` : objective);
   return true;
+}
+
+
+/** Recovery navigates through the existing normal-panel route, including from Peek. */
+export function focusAutomationSessionDraft(sessionId: string) {
+  const location = useTabStore.getState().findSessionLocation(sessionId);
+  if (!location) return;
+  const focus = () => {
+    const panels = usePanelStore.getState();
+    const tab = panels.tabPanels[location.tabId];
+    if (useTabStore.getState().activeTabId !== location.tabId || panels.activeTabId !== location.tabId || tab?.activePanelId !== location.panelId || tab.panels[location.panelId]?.sessionId !== sessionId || document.querySelector('dialog[open]')) return;
+    const root = [...document.querySelectorAll<HTMLElement>('[data-panel-wrapper="true"][data-panel-id]')].find(root => root.dataset.panelId === location.panelId && root.dataset.active === 'true');
+    const input = root && [...root.querySelectorAll<HTMLTextAreaElement>('[data-session-input]')].find(input => input.dataset.sessionInput === sessionId);
+    if (input && input.getClientRects().length && !input.readOnly && !input.disabled) input.focus();
+  };
+  requestAnimationFrame(() => { focus(); requestAnimationFrame(focus); });
 }

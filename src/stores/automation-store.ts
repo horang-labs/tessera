@@ -19,6 +19,7 @@ interface AutomationStore {
   previewError: string | null;
   previewRejection: string | null;
   invalidateAutorunPreview: () => void;
+  recheckAutorunPreview: () => Promise<AutorunPreview | null>;
   previewAutorun: (overrides?: z.input<typeof autorunPreviewInputSchema>) => Promise<AutorunPreview | null>;
   newDecisionCount: Record<string, number>;
   showNewDecisions: (id: string) => void;
@@ -108,6 +109,11 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
         pendingPreview?.abort.abort();
         pendingPreview = null;
         set({ preview: null, previewLoading: false, previewError: null });
+      },
+      recheckAutorunPreview: () => {
+        const input = lastPreviewInput;
+        get().invalidateAutorunPreview();
+        return get().previewAutorun(input);
       },
       previewAutorun: (overrides = {}) => {
         if (!('sessionId' in scope)) return Promise.resolve(null);

@@ -1,4 +1,6 @@
 export const automationEn = {
+  "idleHeartbeatStart": "Send a new worker instruction before Heartbeat can start.",
+  "addMessageDraft": "Add message to Session draft",
   "autorunMethod": "Autorun",
   "heartbeatMethod": "Heartbeat",
   "supervisorSetupFailed": "The supervisor could not be prepared. Check the provider setup in Technical details.",
@@ -174,6 +176,8 @@ export const automationEn = {
   unsupported: 'Wake-up supports Claude Code and Codex PTY Sessions only.',
 };
 export const automationKo: typeof automationEn = {
+  "idleHeartbeatStart": "Heartbeat를 시작하려면 세션에 새 지시를 보내세요.",
+  "addMessageDraft": "메시지를 세션 입력 초안에 추가",
   "autorunMethod": "Autorun",
   "heartbeatMethod": "Heartbeat",
   "supervisorSetupFailed": "감독 모델을 준비하지 못했습니다. 기술 정보에서 제공자 설정을 확인하세요.",
@@ -349,6 +353,8 @@ export const automationKo: typeof automationEn = {
   unsupported: 'Claude Code와 Codex PTY 세션만 이어가기를 지원합니다.',
 };
 export const automationJa: typeof automationEn = { ...automationEn,
+  "idleHeartbeatStart": "Heartbeatを開始するにはセッションに新しい指示を送信してください。",
+  "addMessageDraft": "メッセージをセッションの入力下書きに追加",
   "autorunMethod": "Autorun",
   "heartbeatMethod": "Heartbeat",
   "supervisorSetupFailed": "監督モデルを準備できませんでした。技術情報でプロバイダーの設定を確認してください。",
@@ -506,6 +512,8 @@ export const automationJa: typeof automationEn = { ...automationEn,
   noSuccess: 'プロンプトの送信やターンの終了は、タスクの成功を意味しません。',
 };
 export const automationZh: typeof automationEn = { ...automationEn,
+  "idleHeartbeatStart": "启动 Heartbeat 前，请向会话发送新指令。",
+  "addMessageDraft": "将消息添加到会话输入草稿",
   "autorunMethod": "Autorun",
   "heartbeatMethod": "Heartbeat",
   "supervisorSetupFailed": "无法准备监督模型。请在技术详情中检查提供商设置。",

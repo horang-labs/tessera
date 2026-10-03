@@ -355,3 +355,11 @@ test('explicit objective recovery preserves existing human draft and refuses app
   assert.equal(useChatStore.getState().getDraftInput('session-1'),'Keep my draft.\n\nFix billing.');
   useTerminalSessionStore.setState({bySessionId:{}});
 });
+
+test('a retained objective never replaces fresh human corrections from a missing-goal preview', async () => {
+  const { AutorunPreviewView } = await import('../src/components/automation/autorun-setup');
+  const objective={kind:'explicit' as const,text:'Retained billing goal.',revision:1};
+  const preview=autorunPreviewSchema.parse({...autorunPreviewFixture(),objective:null,newHumanInstructions:[{messageId:'m2',recordId:'r2',excerpt:'Preserve invoices too.',textHash:'d'.repeat(64),origin:'tessera-human-correlated'}]});
+  const html=renderToStaticMarkup(createElement(AutorunPreviewView,{preview,objectiveSnapshot:objective,objectiveOverride:'',objectiveEdited:false,onObjective:()=>{},onOpenSession:()=>{}}));
+  assert.match(html,/Retained billing goal\./);assert.match(html,/Preserve invoices too\./);
+});

@@ -25,8 +25,8 @@ export function AutomationTierSelect({model,value,onChange}:{model:ProviderModel
   </select>;
 }
 
-export function AutomationForm({ scope, previous, onSave, onCancel, defaultName, draft, onDraft, replacing = false, intro, footnote }: {
-  scope: AutomationScope; previous?: Automation; defaultName?: string; intro?: ReactNode; footnote?: ReactNode; draft?: unknown; onDraft?: (draft: Record<string,string>) => void;
+export function AutomationForm({ scope, previous, onSave, onCancel, defaultName, draft, onDraft, replacing = false, intro, footnote, footerNote, submitBlocked = false }: {
+  submitBlocked?: boolean; footerNote?: ReactNode; scope: AutomationScope; previous?: Automation; defaultName?: string; intro?: ReactNode; footnote?: ReactNode; draft?: unknown; onDraft?: (draft: Record<string,string>) => void;
   replacing?: boolean; onSave: (input: AutomationInput, previous?: Automation) => Promise<boolean>; onCancel: () => void;
 }) {
   const { t } = useI18n();
@@ -67,6 +67,7 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
   const [saving,setSaving] = useState(false);
   return <form className="flex min-h-0 flex-1 flex-col overflow-hidden" onInvalidCapture={revealAutomationField} onChange={event => onDraft?.(Object.fromEntries([...new FormData(event.currentTarget)].map(([key,value]) => [key,String(value)])))} onSubmit={async event => {
     event.preventDefault();
+    if (submitBlocked && (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') !== 'later') return;
     const fields = new FormData(event.currentTarget);
     const text = (key: string) => String(fields.get(key) ?? '');
     const instant = (key: string, original: number|null) => original !== null && text(key) === localDateInput(original) ? original : new Date(text(key)).getTime();
@@ -78,9 +79,9 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
     if(!valid.success){setError(true);return;}
     setSaving(true);setError(false);try { await onSave(valid.data,previous); } finally {setSaving(false);}
   }}>
-    <AutomationViewport footer={<>
+    <AutomationViewport footerNote={footerNote} footer={<>
 
-      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationPrimaryButton} type="submit" disabled={saving || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.saveChanges' : wake ? 'automation.start' : 'automation.startSchedule')}</button>
+      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationPrimaryButton} type="submit" disabled={saving || submitBlocked || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.saveChanges' : wake ? 'automation.start' : 'automation.startSchedule')}</button>
       {!previous && !replacing && <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationButton} type="submit" value="later" disabled={saving || (!wake && !selectionSupported)}>{t('automation.save')}</button>}
       <button {...telemetryClickAttributes('automation.form.cancel','automation')} className={automationButton} type="button" onClick={onCancel}>{t('automation.cancel')}</button>
 

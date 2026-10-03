@@ -88,3 +88,25 @@ test('a rejected boundary invalidates ready state and supersedes an in-flight ch
   assert.equal(store.getState().preview?.readiness.kind, 'idle');
   assert.equal(store.getState().previewLoading, false);
 });
+
+test('a turn change rechecks the requested tuple rather than retained previous capability', async () => {
+  const initial = autorunPreviewFixture();
+  const selected = {...initial.recommendedSupervisor,model:'gpt-6-astra',reasoningEffort:'xhigh'};
+  const bodies: unknown[]=[];
+  const replies: ((response: Response)=>void)[]=[];
+  const store=createAutomationStore({sessionId:'session-1'},async (_url,init)=>{
+    bodies.push(JSON.parse(String(init?.body)));
+    if(bodies.length===1) return Response.json(initial);
+    return new Promise<Response>(resolve=>replies.push(resolve));
+  });
+  await store.getState().previewAutorun({supervisor:initial.recommendedSupervisor});
+  const pending=store.getState().previewAutorun({supervisor:selected});
+  const fresh=store.getState().recheckAutorunPreview();
+  assert.deepEqual(bodies[2],{supervisor:selected,includeSupervisorDiscovery:false});
+  assert.equal(await pending,null);
+  replies[1](Response.json({...initial,supervisorCheck:{selection:selected,status:'available',reason:null},supervisorOptions:[{...initial.supervisorOptions[0],selection:selected}],recommendedSupervisor:selected}));
+  await fresh;
+  replies[0](Response.json(initial));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(store.getState().preview?.supervisorCheck.selection,selected);
+});

@@ -3,6 +3,7 @@ import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telem
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from 'zustand';
+import { AutomationPreflight, AutomationReadinessRecovery } from './automation-preflight';
 import type { AutomationV2 } from '@/lib/automation/autorun-contracts';
 import type { AutomationScope, AutomationStoreApi } from '@/stores/automation-store';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
@@ -100,10 +101,9 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
     if (!changed || !showSetup || !sessionId) return;
     const state = store.getState();
     if (!state.preview && !state.previewLoading) return;
-    const selection = state.preview?.supervisorCheck.selection ?? (rule?.mode === 'autorun' ? rule.autorun.supervisor : null);
-    state.invalidateAutorunPreview();
-    if (ownership.mode === 'human') void state.previewAutorun(selection ? { supervisor: selection } : {});
-  }, [gateIdentity, showSetup, sessionId, store, ownership.mode, rule]);
+    if (ownership.mode === 'human') void state.recheckAutorunPreview();
+    else state.invalidateAutorunPreview();
+  }, [gateIdentity, showSetup, sessionId, store, ownership.mode]);
   const visible = items.filter(item => includeDeleted || item.state !== 'deleted').sort((a,b) => {
     const priority = (item: typeof a) => item.attention ? 0 : item.state === 'enabled' ? 1 : 2;
     return priority(a)-priority(b);
@@ -139,7 +139,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
         {intent === 'resume' && rule ? <ContinuationResume preview={preview} loading={previewLoading} rule={rule} store={store} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} onEdit={() => void setup('edit', rule)} /> : sessionId && method === 'autorun' ? <>
           {<AutorunSetup key={`${view.selectedId}:${intent}`} preview={preview} store={store} previous={intent === 'replace' ? rule : previewPrevious} intent={intent} intro={setupIntro} footnote={setupFootnote} defaultName={`${context.title} · Autorun`} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} />}
         </> : <>
-          <AutomationForm intro={setupIntro} footnote={setupFootnote} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
+          <AutomationForm submitBlocked={Boolean(sessionId && state.previewRejection && !heartbeatCanResume(preview, previewLoading, previewError))} footerNote={sessionId && state.previewRejection ? <><AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} />{!previewLoading && !previewError && <AutomationReadinessRecovery preview={preview} method="heartbeat" onOpenSession={() => onOpenSession(sessionId)} objective={String((state.drafts[fixedDraftKey] as Record<string,string> | undefined)?.prompt ?? '')} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId,text) : undefined} />}</> : undefined} intro={setupIntro} footnote={<>{setupFootnote}{sessionId && state.previewRejection && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics','automation')} className="cursor-pointer">{t('automation.technicalDetails')}</summary><p>{state.previewRejection}</p>{preview && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && <p>{preview.readiness.reason}</p>}</details>}</>} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
             defaultName={`${context.title} · ${sessionId ? 'Heartbeat' : t('automation.schedule')}`} replacing={intent === 'replace'} draft={state.drafts[fixedDraftKey]} onDraft={draft => store.setState(s => ({ drafts: { ...s.drafts, [fixedDraftKey]: draft } }))}
             onSave={async (input, previous) => {
               if (intent === 'replace' && rule) {

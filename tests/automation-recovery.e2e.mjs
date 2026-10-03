@@ -1,0 +1,32 @@
+async page => {
+  const base=page.url().split('?')[0];
+  if(!base.startsWith('http://172.17.241.221:34539/')) throw Error('Wrong owned fixture');
+  const root='/home/work/tmp/tessera-534-fast-setup-ui/screenshots';
+  const control=id=>page.locator(`[data-ph-capture-attribute-control="${id}"]`);
+  const require=(ok,message)=>{if(!ok)throw Error(message);};
+  const open=async query=>{await page.goto(base+'?'+query);require(await page.locator('[data-automation-polish-fixture="synthetic"]').count(),'Wrong page');await page.getByRole('button',{name:'Open fixture manager',exact:true}).click();};
+  await page.setViewportSize({width:390,height:844});
+  await open('heartbeat-error');await control('automation.setup.heartbeat').click();await page.locator('[name="prompt"]').fill('Fixed instruction');
+  await control('automation.form.save').first().click();await page.locator('[aria-busy="true"]').waitFor();
+  require(await control('automation.form.save').first().isDisabled(),'Heartbeat rejected ready state retained');
+  require(await page.getByRole('alert').count()===0,'Heartbeat stale error plus check');
+  await page.screenshot({path:root+'/012-heartbeat-rejection-check-390.png'});
+  await page.getByText('Send a new worker instruction before Heartbeat can start.').waitFor();
+  require(await page.getByRole('button',{name:'Add message to Session draft'}).isVisible(),'Heartbeat recovery missing');
+  await page.screenshot({path:root+'/013-heartbeat-recovery-390.png'});
+  await open('provider-error');await page.getByText('The supervisor could not be prepared.',{exact:false}).waitFor();
+  await page.getByRole('button',{name:'Technical details',exact:true}).click();
+  require(await page.locator('[data-supervisor-details]').evaluate(el=>el.open),'Provider recovery opens wrong disclosure');
+  require(await page.locator('[data-ph-capture-attribute-control="automation.autorun.sources"]').evaluate(el=>!el.parentElement.open),'Provider recovery opened source');
+  await page.goto(base+'?focus');await page.getByRole('button',{name:'Focus recovered draft'}).click();
+  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Active normal composer');
+  require(!await page.getByLabel('Duplicate Peek composer').evaluate(el=>document.activeElement===el),'Peek steals normal recovery focus');
+  await page.getByRole('button',{name:'Change Session before focus'}).click();
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  require(!await page.getByLabel('Active normal composer',{exact:true}).evaluate(el=>document.activeElement===el),'Late focus steals changed Session');
+  await open('resume-error');await page.waitForFunction(()=>!document.querySelector('[data-ph-capture-attribute-control="automation.manager.enable"]').disabled);
+  await page.getByRole('button',{name:'Resume',exact:true}).click();await page.locator('[aria-busy="true"]').waitFor();
+  await page.screenshot({path:root+'/010-rejected-resume-refresh-390.png'});
+  await page.getByText('Send a new worker instruction before resuming.').waitFor();await page.screenshot({path:root+'/011-saved-resume-recovery-390.png'});
+  return 'PASS: Heartbeat admission recovery, actual diagnostics target, duplicate Peek/inactive/late Session focus guards (synthetic)';
+}

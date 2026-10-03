@@ -14,21 +14,22 @@ import { SupervisorPicker } from './supervisor-picker';
 import { AutomationPreflight, AutomationReadinessRecovery } from './automation-preflight';
 import { AutomationField, AutomationSettingRow, AutomationViewport, automationField, automationNumberField, automationDisclosure, revealAutomationField } from './automation-layout';
 
-export function AutorunPreviewView({ preview, objectiveOverride, objectiveEdited = Boolean(objectiveOverride.trim()), readOnly = false, onObjective }: {
-  preview: AutorunPreview | null; objectiveOverride: string; objectiveEdited?: boolean; readOnly?: boolean; onObjective: (text: string) => void; onOpenSession: () => void;
+export function AutorunPreviewView({ preview, objectiveOverride, objectiveEdited = Boolean(objectiveOverride.trim()), readOnly = false, onObjective, objectiveSnapshot }: {
+  objectiveSnapshot?: AutorunPreview['objective']; preview: AutorunPreview | null; objectiveOverride: string; objectiveEdited?: boolean; readOnly?: boolean; onObjective: (text: string) => void; onOpenSession: () => void;
 }) {
   const { t } = useI18n();
-  const objective = objectiveEdited ? objectiveOverride : preview?.objective?.text ?? '';
-  const source = objectiveEdited || preview?.objective?.kind === 'explicit' ? 'automation.explicitGoal' : preview?.objective?.kind === 'verified-human' ? 'automation.verifiedGoal' : 'automation.unverifiedGoal';
+  const displayedObjective = objectiveSnapshot ?? preview?.objective;
+  const objective = objectiveEdited ? objectiveOverride : displayedObjective?.text ?? '';
+  const source = objectiveEdited || displayedObjective?.kind === 'explicit' ? 'automation.explicitGoal' : displayedObjective?.kind === 'verified-human' ? 'automation.verifiedGoal' : 'automation.unverifiedGoal';
   return <section className="grid gap-2">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">{t('automation.goal')}</h3>
-      {(preview?.objective || (objectiveEdited && objective.trim())) && <details data-supervisor-details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.autorun.sources', 'automation')} className="cursor-pointer">{t(source)}</summary>
-        <div className="mt-2 grid gap-2"><p className="whitespace-pre-wrap break-words">{objective}</p>{!objectiveEdited && preview?.objective?.kind === 'verified-human' && preview?.objective.sources.map(source => <blockquote key={source.recordId} className="whitespace-pre-wrap border-l pl-2">{source.excerpt}</blockquote>)}</div>
+      {(displayedObjective || (objectiveEdited && objective.trim())) && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.autorun.sources', 'automation')} className="cursor-pointer">{t(source)}</summary>
+        <div className="mt-2 grid gap-2"><p className="whitespace-pre-wrap break-words">{objective}</p>{!objectiveEdited && displayedObjective?.kind === 'verified-human' && displayedObjective.sources.map(source => <blockquote key={source.recordId} className="whitespace-pre-wrap border-l pl-2">{source.excerpt}</blockquote>)}</div>
       </details>}
     </div>
     {readOnly ? <p className="whitespace-pre-wrap break-words">{objective}</p>
       : <textarea name="objective" aria-label={t('automation.goal')} required className={automationField} rows={3} value={objective} placeholder={t('automation.objectivePlaceholder')} {...telemetryIgnoreAttributes('non_action')} onChange={event => onObjective(event.target.value)} />}
-    {Boolean(preview?.newHumanInstructions.length) && <details data-supervisor-details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.autorun.sources', 'automation')} className="cursor-pointer">{t('automation.newInstructionsCount', { count: preview?.newHumanInstructions.length })}</summary>{preview?.newHumanInstructions.map(source => <blockquote key={source.recordId} className="mt-2 whitespace-pre-wrap">{source.excerpt}</blockquote>)}</details>}
+    {Boolean(preview?.newHumanInstructions.length) && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.autorun.sources', 'automation')} className="cursor-pointer">{t('automation.newInstructionsCount', { count: preview?.newHumanInstructions.length })}</summary>{preview?.newHumanInstructions.map(source => <blockquote key={source.recordId} className="mt-2 whitespace-pre-wrap">{source.excerpt}</blockquote>)}</details>}
   </section>;
 }
 
@@ -72,8 +73,8 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
     const initial = chooseAutorunSupervisor(preview, draft?.autorun?.supervisor ?? old?.autorun.supervisor);
     if (initial) { setSupervisor(initial); setSupervisorDraft(initial); }
   }, [preview, supervisorEdited, draft, old]);
-  const [objectivePreview, setObjectivePreview] = useState(preview);
-  useEffect(() => { if (preview?.objective) setObjectivePreview(preview); }, [preview]);
+  const [objectiveSnapshot, setObjectiveSnapshot] = useState(old?.autorun.objective ?? preview?.objective);
+  useEffect(() => { if (preview?.objective && !old) setObjectiveSnapshot(preview.objective); }, [preview, old]);
   const [saving, setSaving] = useState(false);
   const [invalid, setInvalid] = useState(false);
   const [fieldsSummary, setFieldsSummary] = useState(draftFields);
@@ -137,7 +138,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
 
     </>}>
     {intro}
-    <AutorunPreviewView preview={preview?.objective ? preview : objectivePreview} objectiveOverride={override} objectiveEdited={objectiveEdited} onObjective={saveDraft} onOpenSession={onOpenSession} />
+    <AutorunPreviewView preview={preview} objectiveSnapshot={objectiveSnapshot} objectiveOverride={override} objectiveEdited={objectiveEdited} onObjective={saveDraft} onOpenSession={onOpenSession} />
     <SupervisorPicker value={supervisorDraft} onChange={changeSupervisor} />
     <details className={automationDisclosure} open={invalid}><summary {...telemetryClickAttributes('automation.form.advanced', 'automation')}>{t('automation.optionsLimits')} <span className="font-normal text-xs">· {t('automation.limitsSummary', { seconds: fieldsSummary.delay ?? (old?.trigger.delayMs ?? defaults.delayMs)/1000, max: fieldsSummary.max ?? old?.limits.maxDispatches ?? defaults.maxDispatches })}</span></summary>
       <div className="grid gap-4">

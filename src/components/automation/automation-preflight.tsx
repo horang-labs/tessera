@@ -19,16 +19,16 @@ export function AutomationPreflight({ loading, error, onRetry }: { loading: bool
 }
 
 
-export function AutomationReadinessRecovery({ preview, resume = false, onOpenSession, objective, onDraftObjective }: {
-  preview: AutorunPreview | null; resume?: boolean; onOpenSession: () => void; objective?: string; onDraftObjective?: (text: string) => void;
+export function AutomationReadinessRecovery({ preview, resume = false, method = 'autorun', onOpenSession, objective, onDraftObjective }: {
+  method?: 'autorun' | 'heartbeat'; preview: AutorunPreview | null; resume?: boolean; onOpenSession: () => void; objective?: string; onDraftObjective?: (text: string) => void;
 }) {
   const { t } = useI18n();
   if (!preview || !['idle', 'unavailable'].includes(preview.readiness.kind)) return null;
   const idle = preview.readiness.kind === 'idle';
   const canDraft = idle && Boolean(objective?.trim() && onDraftObjective);
   return <div className="grid justify-items-start gap-2" role="status">
-    <p>{t(idle ? resume ? 'automation.idleResume' : 'automation.idleStart' : 'automation.contextMissing')}</p>
+    <p>{t(idle ? resume ? 'automation.idleResume' : method === 'heartbeat' ? 'automation.idleHeartbeatStart' : 'automation.idleStart' : 'automation.contextMissing')}</p>
     <button type="button" className={automationButton} {...telemetryClickAttributes('automation.history.open_session', 'automation')}
-      onClick={() => canDraft ? onDraftObjective!(objective!) : onOpenSession()}>{t(canDraft ? 'automation.addObjectiveDraft' : idle ? 'automation.writeInstruction' : 'automation.openSession')}</button>
+      onClick={() => canDraft ? onDraftObjective!(objective!) : onOpenSession()}>{t(canDraft ? method === 'heartbeat' ? 'automation.addMessageDraft' : 'automation.addObjectiveDraft' : idle ? 'automation.writeInstruction' : 'automation.openSession')}</button>
   </div>;
 }

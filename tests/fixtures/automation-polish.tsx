@@ -1,6 +1,9 @@
 // Real shared manager/forms; synthetic HTTP/ownership only. Never a provider/PTY proof.
 import { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { focusAutomationSessionDraft } from '../../src/components/automation/automation-entry';
+import { useTabStore } from '../../src/stores/tab-store';
+import { usePanelStore } from '../../src/stores/panel-store';
 import { Header } from '../../src/components/chat/header';
 import { AutomationManager } from '../../src/components/automation/automation-manager';
 import { createAutomationStore } from '../../src/stores/automation-store';
@@ -44,10 +47,11 @@ const fixtureHttp: typeof fetch = async (url, init) => {
   }
   if (path.endsWith('autorun-preview')) {
     if (query.has('loading')) await new Promise(resolve => setTimeout(resolve, 60000));
-    if (query.has('resume-error') && writes.length) await new Promise(resolve => setTimeout(resolve, 1500));
+    if ((query.has('resume-error') || query.has('heartbeat-error')) && writes.length) await new Promise(resolve => setTimeout(resolve, 1500));
     if (query.has('late')) await new Promise(resolve => setTimeout(resolve, 1500));
     if (query.has('preview-error')) return Response.json({ error: { code: 'STALE_CONTEXT' } }, { status: 409 });
     const requested = JSON.parse(String(init?.body ?? '{}')).supervisor;
+    if(query.has('provider-error')) return Response.json({...preview,supervisorCheck:{selection:requested ?? preview.recommendedSupervisor,status:'unavailable',reason:'version'},supervisorOptions:[],recommendedSupervisor:null,readiness:{kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'unsupported-version'}});
     if (requested?.model === 'opus') return Response.json({...preview,supervisorCheck:{selection:requested,status:'unavailable',reason:'selection'},supervisorOptions:[],recommendedSupervisor:null,readiness:{kind:'unavailable',code:'SUPERVISOR_UNSUPPORTED',reason:'unsupported-version'}});
     if (requested) return Response.json({ ...preview, supervisorCheck: { selection: requested, status: query.has('unsupported') ? 'unavailable' : 'available', reason: query.has('unsupported') ? 'selection' : null },
       supervisorOptions: query.has('unsupported') ? [] : [{ ...preview.supervisorOptions[0], selection: requested }], recommendedSupervisor: query.has('unsupported') || requested.serviceTier === 'fast' ? null : requested });
@@ -60,6 +64,7 @@ const fixtureHttp: typeof fetch = async (url, init) => {
   }
   if (init?.method && init.method !== 'GET') {
     writes.push({ method: init.method, path, body: JSON.parse(String(init.body ?? '{}')) });
+    if(query.has('heartbeat-error')) {preview.readiness={kind:'idle',reason:'consumed-boundary'} as typeof preview.readiness;return Response.json({error:{code:'INPUT_BOUNDARY_UNPROVEN'}},{status:409});}
     return Response.json({ error: { code: 'REVISION_CONFLICT' } }, { status: 409 });
   }
   if (path === '/api/automations/rule-1' && savedRule) return Response.json({automation:savedRule,inputOwnership:ownership,inFlightRunId:null});
@@ -91,4 +96,14 @@ function Fixture() {
     {open && <AutomationManager scope={scope} store={store} initialId={query.has('resume-error')?'rule-1':undefined} initialResume={query.has('resume-error')} onClose={() => setOpen(false)} onOpenSession={() => setOpen(false)} />}
   </main>;
 }
-createRoot(document.getElementById('root')!).render(<Fixture />);
+function FocusFixture() {
+  const [tab] = useState(()=>useTabStore.getState().createTab('session-1'));
+  const panel = usePanelStore(state=>state.tabPanels[tab].activePanelId);
+  const invalidate = () => { focusAutomationSessionDraft('session-1'); usePanelStore.setState(state=>({tabPanels:{...state.tabPanels,[tab]:{...state.tabPanels[tab],panels:{[panel]:{id:panel,sessionId:'session-2'}}}}})); };
+  return <main data-automation-polish-fixture="synthetic"><textarea aria-label="Duplicate Peek composer" data-session-input="session-1" />
+    <div data-panel-wrapper="true" data-panel-id="inactive" data-active="false"><textarea aria-label="Inactive normal composer" data-session-input="session-1" /></div>
+    <div data-panel-wrapper="true" data-panel-id={panel} data-active="true"><textarea aria-label="Active normal composer" data-session-input="session-1" /></div>
+    <button onClick={()=>focusAutomationSessionDraft('session-1')}>Focus recovered draft</button><button onClick={invalidate}>Change Session before focus</button>
+  </main>;
+}
+createRoot(document.getElementById('root')!).render(query.has('focus') ? <FocusFixture /> : <Fixture />);

@@ -33,15 +33,14 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
   return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={<>
     <AutomationPreflight loading={loading} error={previewError} onRetry={retry} />
-    {!loading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) && <AutomationReadinessRecovery preview={preview} resume onOpenSession={onOpenSession} objective={rule.mode === 'autorun' ? rule.autorun.objective.text : rule.prompt} onDraftObjective={onDraftObjective} />}
+    {!loading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) && <AutomationReadinessRecovery preview={preview} resume method={rule.mode === 'autorun' ? 'autorun' : 'heartbeat'} onOpenSession={onOpenSession} objective={rule.mode === 'autorun' ? rule.autorun.objective.text : rule.prompt} onDraftObjective={onDraftObjective} />}
     {!loading && !previewError && rule.mode === 'autorun' && preview && (supervisorBlocked || ['running','completed'].includes(preview.readiness.kind)) && (preview.supervisorCheck.status !== 'available' || !preview.supervisorCheck.selection || !sameSupervisorSelection(preview.supervisorCheck.selection, rule.autorun.supervisor)) && <p>{t(preview.supervisorCheck.reason === 'selection' ? 'automation.selectionUnsupported' : 'automation.supervisorSetupFailed')}</p>}
   </>} footer={<>
     <AutomationResumeAction reviewLimits={reviewLimits} disabled={store.getState().busy > 0 || (reviewLimits ? ownership.mode !== 'human' : !ready)} onReviewLimits={onEdit} onResume={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }} />
     {!reviewLimits && <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>}
   </>}>
-    {preview && rule.mode === 'autorun' && <AutorunPreviewView preview={{ ...preview, objective: rule.autorun.objective }} readOnly objectiveOverride={rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : ''} onObjective={onEdit} onOpenSession={onOpenSession} />}
+    {rule.mode === 'autorun' && <AutorunPreviewView preview={preview} objectiveSnapshot={rule.autorun.objective} readOnly objectiveOverride={rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : ''} onObjective={onEdit} onOpenSession={onOpenSession} />}
     {rule.mode === 'autorun' ? <>
-      {!preview && <p className="whitespace-pre-wrap break-words">{rule.autorun.objective.text}</p>}
       <p className="text-sm break-words"><span className="mr-2 text-xs text-(--text-secondary)">{t('automation.supervisor')}</span> {rule.autorun.supervisor.provider} · {rule.autorun.supervisor.model} · {rule.autorun.supervisor.reasoningEffort} · {rule.autorun.supervisor.serviceTier}</p>
     </> : <p className="whitespace-pre-wrap">{rule.prompt}</p>}
     <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.form.advanced', 'automation')}>{t('automation.optionsLimits')}</summary>
