@@ -86,32 +86,32 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
 
     </>}>
     {intro}
-    {wake && <p className="text-xs text-(--text-secondary)">{t('automation.fixedHelp')}</p>}
-    <Field label={t('automation.prompt')}><textarea {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="prompt" rows={4} required value={prompt} onChange={e=>setPrompt(e.target.value)} /></Field>
+
+    <Field label={t('automation.prompt')}><textarea {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="prompt" rows={3} required value={prompt} onChange={e=>setPrompt(e.target.value)} /></Field>
     {!wake && <>
-      <Field label={t('automation.sessionTitle')}><input {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="title" required maxLength={120} value={suggestedTitle} onChange={e=>setTitle(e.target.value)} /></Field>
       <Field label={t('automation.trigger')}><select {...telemetryClickAttributes('automation.form.trigger','automation')} className={fieldClass} name="trigger" value={kind} onChange={e=>{const next=e.target.value as 'once'|'interval';setKind(next);setMaxValue(next==='once'?'1':saved.max ?? String(previous?.limits.maxDispatches ?? getAutomationDefaults(next,now).limits.maxDispatches));}}><option value="once">{t('automation.once')}</option><option value="interval">{t('automation.interval')}</option></select></Field>
       <Field label={t('automation.at')}><input {...telemetryClickAttributes('automation.form.at','automation')} className={fieldClass} name="at" type="datetime-local" required value={atValue} onChange={e=>setAtValue(e.target.value)} /></Field>
-      {Number.isFinite(previewAt) && <p className="text-xs break-words text-(--text-secondary)" role="status">{t('automation.next')}: <AutomationTime at={previewAt} /> · UTC: <time dateTime={new Date(previewAt).toISOString()}>{new Date(previewAt).toISOString()}</time></p>}
+      {Number.isFinite(previewAt) && <p className="text-xs break-words text-(--text-secondary)" role="status">{t('automation.next')}: <AutomationTime at={previewAt} /></p>}
       {kind === 'interval' && <Field label={t('automation.every')}><input {...telemetryClickAttributes('automation.form.every','automation')} className={fieldClass} name="every" type="number" min={1} max={43200} required value={everyValue} onChange={e=>setEveryValue(e.target.value)} /></Field>}
-      <p className="text-xs break-words">{t('automation.saved')}: {provider} · {resolvedModel || t('automation.choose')} · {resolvedEffort || t('automation.choose')} · {resolvedTier ?? ''}</p>
     </>}
-    {wake && <><p role="status" className="text-sm text-(--text-secondary)">{t('automation.heartbeatTimingSummary',{seconds:delayValue,max:maxValue})}</p><AutomationFacts items={[{ label: t('automation.max'), value: maxValue }, { label: t('automation.budgetExpiry'), value: <AutomationTime at={summaryExpiry} /> }]} /></>}
-    <details className={automationDisclosure} open={!wake && !selectionSupported}><summary {...telemetryClickAttributes('automation.form.advanced','automation')}>{t('automation.advanced')}</summary><div className="grid gap-3 mt-2">
-      <Field label={t('automation.name')}><input {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="name" required maxLength={120} defaultValue={saved.name ?? previous?.name ?? defaultName ?? t('automation.new')} /></Field>
       {!wake && <div className="grid gap-3 sm:grid-cols-2">
         <Field label={t('automation.provider')}><select {...telemetryClickAttributes('automation.form.provider','automation')} className={fieldClass} name="provider" value={provider} onChange={e=>{setProvider(e.target.value as Provider);setModel('');setEffort('');setTier('');}}><option value="claude-code">Claude Code</option><option value="codex">Codex</option></select></Field>
         <Field label={t('automation.model')}><select {...telemetryClickAttributes('automation.form.model','automation')} className={fieldClass} name="model" value={resolvedModel} onChange={e=>{setModel(e.target.value);setEffort('');setTier('');}}><option value="">{t('automation.choose')}</option>{options.data?.modelOptions.filter(m=>m.value !== 'auto').map(m=><option value={m.value} key={m.value}>{m.label}</option>)}</select></Field>
         <Field label={t('automation.effort')}><select {...telemetryClickAttributes('automation.form.effort','automation')} className={fieldClass} name="effort" value={resolvedEffort} onChange={e=>setEffort(e.target.value)}><option value="">{t('automation.choose')}</option>{chosen?.supportedReasoningEfforts.filter(e=>e.value !== 'auto').map(e=><option key={e.value} value={e.value}>{e.label}</option>)}</select></Field>
         {provider==='codex' && <Field label={t('automation.tier')}><AutomationTierSelect model={chosen} value={resolvedTier ?? ''} onChange={setTier} /></Field>}
       </div>}
+    <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.form.advanced','automation')}>{t('automation.optionsLimits')} {wake && <span className="font-normal text-xs">· {t('automation.limitsSummary',{seconds:delayValue,max:maxValue})}</span>}</summary><div className="grid gap-3 mt-2">
+      {!wake && <Field label={t('automation.sessionTitle')}><input {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="title" required maxLength={120} value={suggestedTitle} onChange={e=>setTitle(e.target.value)} /></Field>}
+      <Field label={t('automation.name')}><input {...telemetryIgnoreAttributes('non_action')} className={fieldClass} name="name" required maxLength={120} defaultValue={saved.name ?? previous?.name ?? defaultName ?? t('automation.new')} /></Field>
       {wake && <Field label={t('automation.delay')}><input {...telemetryClickAttributes('automation.form.delay','automation')} className={fieldClass} name="delay" type="number" min={30} max={86400} required value={delayValue} onChange={e=>setDelayValue(e.target.value)} /></Field>}
       <Field label={t('automation.max')}><input {...telemetryClickAttributes('automation.form.max','automation')} className={fieldClass} name="max" type="number" min={1} max={100} readOnly={kind==='once'} required value={maxValue} onChange={e=>setMaxValue(e.target.value)} /></Field>
       <Field label={t('automation.expiry')}><input {...telemetryClickAttributes('automation.form.expiry','automation')} className={fieldClass} name="expiry" type="datetime-local" required value={expiryValue} onChange={e=>setExpiryValue(e.target.value)} /></Field>
+      <AutomationFacts items={[{ label: t('automation.max'), value: maxValue }, { label: t('automation.budgetExpiry'), value: <AutomationTime at={summaryExpiry} /> }]} />
+      <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.diagnostics','automation')}>{t('automation.diagnostics')}</summary><p className="text-xs text-(--text-secondary)">{t('automation.permissions')}</p>{!wake && Number.isFinite(previewAt) && <p>UTC: <time dateTime={new Date(previewAt).toISOString()}>{new Date(previewAt).toISOString()}</time></p>}</details>
     </div></details>
     {options.isLoading && !wake && <p role="status">{t('automation.loading')}</p>}
     {options.error && !wake && <p role="alert">{t('automation.adapter')}</p>}
-    <p className="text-xs text-(--text-secondary)">{t('automation.permissions')}</p>{error && <p role="alert">{t('automation.invalid')}</p>}
+    {error && <p role="alert">{t('automation.invalid')}</p>}
     {replacing && <p>{t('automation.replaceHelp')}</p>}
 
     {footnote && <div className="grid gap-1 text-xs text-(--text-secondary)">{footnote}</div>}

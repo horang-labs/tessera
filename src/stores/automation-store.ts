@@ -1,7 +1,8 @@
+import type { z } from 'zod';
 import { v4 as uuid } from 'uuid';
 import { createStore } from 'zustand/vanilla';
 import type { Automation, AutomationInput, AutomationRun } from '@/lib/automation/contracts';
-import { autorunPreviewSchema, decodeAutomation, automationSummaryV2Schema, autorunDecisionPageSchema, autorunDecisionDetailSchema, type AutomationV2, type AutomationInputV2, type AutomationSummaryV2, type AutorunPreview, type AutorunDecisionSummary, type AutorunDecisionDetail, type ControlResultV2 } from '@/lib/automation/autorun-contracts';
+import { autorunPreviewSchema, decodeAutomation, automationSummaryV2Schema, autorunDecisionPageSchema, autorunDecisionDetailSchema, type AutomationV2, type AutomationInputV2, type AutomationSummaryV2, type AutorunPreview, autorunPreviewInputSchema, type AutorunDecisionSummary, type AutorunDecisionDetail, type ControlResultV2 } from '@/lib/automation/autorun-contracts';
 import { automationAttentionSchema, automationAttentionSummarySchema, type AutomationAttention } from '@/lib/automation/autorun-contracts';
 import { getAutorunAttentionKey } from '@/lib/automation/client-state';
 import { useNotificationStore } from './notification-store';
@@ -15,7 +16,8 @@ interface AutomationStore {
   details: Record<string, ControlResultV2>;
   preview: AutorunPreview | null;
   previewLoading: boolean;
-  previewAutorun: (overrides?: unknown) => Promise<AutorunPreview | null>;
+  previewError: string | null;
+  previewAutorun: (overrides?: z.input<typeof autorunPreviewInputSchema>) => Promise<AutorunPreview | null>;
   newDecisionCount: Record<string, number>;
   showNewDecisions: (id: string) => void;
   decisions: Record<string, Page<AutorunDecisionSummary>>;
@@ -43,6 +45,7 @@ interface AutomationStore {
 export function createAutomationStore(scope: AutomationScope, http: AutomationHttp = fetch) {
   let listRequest = 0;
   let previewRequest = 0;
+  let pendingPreview: { key: string; abort: AbortController; promise: Promise<AutorunPreview | null> } | null = null;
   const detailRequests = new Map<string, number>();
   const pendingDecisions = new Map<string, AutorunDecisionSummary[]>();
   const runPages = new Map<string, number>();
@@ -77,7 +80,7 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
       } finally { set({ busy: get().busy - 1 }); }
     }
     return {
-      items: [], details: {}, decisions: {}, newDecisionCount: {}, decisionDetails: {}, preview: null, previewLoading: false, view: { selectedId: null, tab: 'overview', setup: false }, drafts: {}, runs: {}, lastControl: null, loading: true, error: null, busy: 0,
+      items: [], details: {}, decisions: {}, newDecisionCount: {}, decisionDetails: {}, preview: null, previewLoading: false, previewError: null, view: { selectedId: null, tab: 'overview', setup: false }, drafts: {}, runs: {}, lastControl: null, loading: true, error: null, busy: 0,
       inspect: async (id) => {
         const serial = (detailRequests.get(id) ?? 0) + 1;
         detailRequests.set(id, serial);
@@ -92,19 +95,35 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
         }
         catch (error) { if (serial === detailRequests.get(id)) set({ error: errorCode(error) }); return null; }
       },
-      previewAutorun: async (overrides = {}) => {
-        if (!('sessionId' in scope)) return null;
+      previewAutorun: (overrides = {}) => {
+        if (!('sessionId' in scope)) return Promise.resolve(null);
+        const key = JSON.stringify(overrides);
+        if (pendingPreview?.key === key) return pendingPreview.promise;
         const serial = ++previewRequest;
-        set({ previewLoading: true, preview: null, error: null });
-        try {
-          const preview = autorunPreviewSchema.parse(await request(`/api/sessions/${encodeURIComponent(scope.sessionId)}/autorun-preview`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(overrides),
-          }));
-          if (serial !== previewRequest) return null;
-          if (preview.sessionId !== scope.sessionId) throw new Error('INVALID_RESPONSE');
-          set({ preview, previewLoading: false });
-          return preview;
-        } catch (error) { if (serial === previewRequest) set({ previewLoading: false, error: errorCode(error) }); return null; }
+        pendingPreview?.abort.abort();
+        const abort = new AbortController();
+        set({ previewLoading: true, previewError: null });
+        let timer: ReturnType<typeof setTimeout>;
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          abort.signal.addEventListener('abort', () => reject(new Error('PREVIEW_CANCELLED')), { once: true });
+          timer = setTimeout(() => { reject(new Error('PREVIEW_TIMEOUT')); abort.abort(); }, 120000);
+        });
+        const promise = (async () => {
+          try {
+            const preview = autorunPreviewSchema.parse(await Promise.race([request(`/api/sessions/${encodeURIComponent(scope.sessionId)}/autorun-preview`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: key, signal: abort.signal,
+            }), cancelled]));
+            if (serial !== previewRequest) return null;
+            if (preview.sessionId !== scope.sessionId) throw new Error('INVALID_RESPONSE');
+            set({ preview, previewLoading: false });
+            return preview;
+          } catch (error) {
+            if (serial === previewRequest) set({ previewLoading: false, previewError: errorCode(error) });
+            return null;
+          } finally { clearTimeout(timer!); if (serial === previewRequest) pendingPreview = null; }
+        })();
+        pendingPreview = { key, abort, promise };
+        return promise;
       },
       showNewDecisions: id => {
         const pending = pendingDecisions.get(id);

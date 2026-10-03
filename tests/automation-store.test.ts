@@ -159,3 +159,71 @@ test('reviewing spent limits keeps lifetime counters and saves disabled before a
     assert.deepEqual(writes[1],{method:'POST',body:{action:'enable',expectedRevision:2}});
   }
 });
+
+test('identical in-flight setup checks share one request and preserve the draft', async () => {
+  const { autorunPreviewFixture } = await import('./fixtures/autorun-contracts');
+  let release!: (response: Response) => void;
+  let calls = 0;
+  const store = createAutomationStore({ sessionId: 'session-1' }, async () => {
+    calls++; return new Promise<Response>(resolve => { release = resolve; });
+  });
+  store.setState({ drafts: { 'autorun:new:fields': { objective: 'Retained goal' } } });
+  const first = store.getState().previewAutorun();
+  const second = store.getState().previewAutorun();
+  assert.equal(calls, 1);
+  release(Response.json(autorunPreviewFixture()));
+  assert.ok(await first); assert.ok(await second);
+  assert.equal(store.getState().previewLoading, false);
+  assert.deepEqual(store.getState().drafts['autorun:new:fields'], { objective: 'Retained goal' });
+});
+
+test('a setup check times out truthfully, ignores late success, and recovers only on explicit retry', async context => {
+  const { autorunPreviewFixture } = await import('./fixtures/autorun-contracts');
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  let release!: (response: Response) => void;
+  let calls = 0;
+  let signal: AbortSignal | undefined;
+  const store = createAutomationStore({ sessionId: 'session-1' }, async (_url, init) => {
+    calls++; signal = init?.signal ?? undefined;
+    if (calls === 1) return new Promise<Response>(resolve => { release = resolve; });
+    return Response.json(autorunPreviewFixture());
+  });
+  const first = store.getState().previewAutorun();
+  context.mock.timers.tick(120000);
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(store.getState().previewLoading, false);
+  assert.equal(store.getState().previewError, 'PREVIEW_TIMEOUT');
+  assert.equal(signal?.aborted, true);
+  assert.equal(await first, null);
+  assert.equal(calls, 1, 'Timeout must not automatically start another check');
+  release(Response.json(autorunPreviewFixture()));
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(store.getState().preview, null);
+  assert.equal(store.getState().previewError, 'PREVIEW_TIMEOUT');
+  assert.ok(await store.getState().previewAutorun());
+  assert.equal(calls, 2);
+  assert.equal(store.getState().previewError, null);
+});
+
+test('only the latest explicitly selected supervisor check can replace preview authority', async () => {
+  const { autorunPreviewSchema } = await import('../src/lib/automation/autorun-contracts');
+  const { autorunPreviewFixture } = await import('./fixtures/autorun-contracts');
+  const first = autorunPreviewSchema.parse(autorunPreviewFixture());
+  const selection = { ...first.recommendedSupervisor!, model: 'gpt-6-astra', reasoningEffort: 'xhigh' };
+  const selected = autorunPreviewSchema.parse({ ...first, previewId: 'selected-preview', recommendedSupervisor: selection,
+    supervisorCheck: { selection, status: 'available', reason: null }, supervisorOptions: [{ ...first.supervisorOptions[0], selection }] });
+  const completions: ((response: Response) => void)[] = [];
+  const requests: unknown[] = [];
+  const store = createAutomationStore({ sessionId: 'session-1' }, async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body))); return new Promise<Response>(resolve => completions.push(resolve));
+  });
+  const old = store.getState().previewAutorun({ supervisor: first.recommendedSupervisor! });
+  const current = store.getState().previewAutorun({ supervisor: selection });
+  assert.equal(await old, null);
+  completions[1](Response.json(selected)); await current;
+  completions[0](Response.json(first)); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(requests[1], { supervisor: selection });
+  assert.equal(store.getState().preview?.previewId, 'selected-preview');
+  assert.equal(store.getState().previewLoading, false);
+  assert.equal(store.getState().previewError, null);
+});

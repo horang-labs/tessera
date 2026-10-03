@@ -73,14 +73,14 @@ test('editing a retained interval anchor previews the next future slot locally a
 });
 
 
-test('Heartbeat shows restored timing and finite limits before collapsed Advanced',async()=>{
+test('Heartbeat summarizes restored timing while keeping limits inspectable behind one disclosure',async()=>{
   const {AutomationForm}=await import('../src/components/automation/automation-form');
   for(const draft of [undefined,{delay:'45',max:'3',expiry:'2030-01-02T12:30'}]){
     const html=renderToStaticMarkup(createElement(AutomationForm,{scope:{sessionId:'heartbeat'},draft,onSave:async()=>true,onCancel(){}}));
-    const visible=html.split('<details')[0];
-    assert.match(visible,/After confirmed turn/);assert.match(visible,draft ? /45 seconds/ : /120 seconds/);
-    assert.match(visible,draft ? /3 attempts/ : /10 attempts/);assert.match(visible,/Expires/);
-    if(draft)assert.match(visible,/2030/);
+    const summary=html.match(/<summary[^>]*>(.*?)<\/summary>/)?.[1] ?? '';
+    assert.match(summary,draft ? /45s delay/ : /120s delay/);
+    assert.match(summary,draft ? /3 instructions/ : /10 instructions/);assert.match(html,/Expires/);
+    if(draft)assert.match(html,/2030/);
     assert.doesNotMatch(html,/<details open/);
   }
 });
@@ -101,6 +101,6 @@ test('edited Heartbeat summary uses the same restored values as its fields',asyn
   const {automationFixture}=await import('./fixtures/automation');
   const previous={...automationFixture(),trigger:{kind:'turn-complete' as const,delayMs:45000},limits:{maxDispatches:3,expiresAt:Date.UTC(2030,0,2,12,30)}};
   const html=renderToStaticMarkup(createElement(AutomationForm,{scope:{sessionId:'heartbeat'},previous,onSave:async()=>true,onCancel(){}}));
-  const visible=html.split('<details')[0];assert.match(visible,/45 seconds/);assert.match(visible,/3 attempts/);assert.match(visible,/2030/);
+  const summary=html.match(/<summary[^>]*>(.*?)<\/summary>/)?.[1] ?? '';assert.match(summary,/45s delay/);assert.match(summary,/3 instructions/);assert.match(html,/2030/);
   assert.match(html,/name="delay"[^>]*value="45"/);assert.match(html,/name="max"[^>]*value="3"/);
 });
