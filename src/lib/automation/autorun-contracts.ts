@@ -387,7 +387,12 @@ export const autorunPreviewSchema = z.object({
       value.supervisorOptions.some(option => sameSupervisorSelection(option.selection, value.recommendedSupervisor!))));
 });
 export type AutorunPreview = z.infer<typeof autorunPreviewSchema>;
+export function getAutorunSetupDefaults(now: number): AutorunPreview['defaults'] {
+  return { delayMs: 120_000, maxDispatches: 10, maxAnalyses: 20,
+    analysisTimeoutMs: 120_000, expiresAt: now + 28_800_000 };
+}
 export const autorunPreviewInputSchema = z.object({
+  includeSupervisorDiscovery: z.boolean().default(true),
   supervisor: supervisorSelectionSchema.optional(),
   objectiveOverride: text(16_384).optional(), constraints: z.array(text(16_384)).max(100).optional(),
   criteria: criteriaSchema.optional(),
