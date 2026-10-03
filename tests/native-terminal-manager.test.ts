@@ -192,3 +192,39 @@ test('starting state preserves trust/menu/draft and unrelated-shell vetoes', asy
     } finally { await manager.shutdownAll(); }
   }
 });
+
+test('late startup hooks do not prevent a current empty native prompt after model recovery', async () => {
+  const { manager, port, output } = await setup(false);
+  try {
+    assert.ok(port); const scope = { userId: 'owner', sessionId: 'worker', agentEnvironment: 'wsl' as const };
+    const first = await port.observe(scope); assert.equal(first.kind, 'ready'); if (first.kind !== 'ready') return;
+    manager.automation.claimNativeAction(first.identity, 'rule', 'first');
+    assert.equal((await port.submitPrompt({ expected: first, prompt: 'Read marker.txt', submissionId: 'first',
+      signal: new AbortController().signal, writeFence: (_phase, write) => {
+        manager.automation.verifyNativeAction(first.identity, 'rule', 'first'); port.assertCurrent(first); write();
+      } })).kind, 'delivered');
+    manager.automation.writer('owner', 'worker', false);
+    const at = Date.now() + 1000;
+    for (const [hookEvent, status] of [['SessionStart', 'idle'], ['UserPromptSubmit', 'running']] as const)
+      manager.recordSessionState({ type: 'session_state', sessionId: 'worker', terminalId: 'terminal',
+        hookEvent, status, stateAt: at + (status === 'running' ? 1 : 0) }, 'owner');
+    assert.equal(manager.automation.readNativeState('owner', 'worker')?.state, 'unknown');
+    // Native HTTP400/model-selection output is history; the actual input frame is empty again.
+    output(screen); await new Promise<void>(resolve => setImmediate(resolve));
+    const ready = await port.observe(scope); assert.equal(ready.kind, 'ready'); if (ready.kind !== 'ready') return;
+    manager.automation.claimNativeAction(ready.identity, 'rule', 'retry');
+    assert.doesNotThrow(() => port.assertCurrent(ready));
+    assert.equal(manager.automation.readTurnEvidence(scope).kind, 'unavailable', 'no completion is invented');
+    manager.automation.writer('owner', 'worker', false);
+    output(screen + '\x1b[4;3H\x1b[0munsent draft'); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.throws(() => port.assertCurrent(ready));
+    assert.equal((await port.observe(scope)).kind, 'draft');
+    output(screen); await new Promise<void>(resolve => setImmediate(resolve));
+    const retry = await port.observe(scope); assert.equal(retry.kind, 'ready'); if (retry.kind !== 'ready') return;
+    manager.automation.claimNativeAction(retry.identity, 'rule', 'retry');
+    assert.equal((await port.submitPrompt({ expected: retry, prompt: 'Read marker.txt', submissionId: 'retry',
+      signal: new AbortController().signal, writeFence: (_phase, write) => {
+        manager.automation.verifyNativeAction(retry.identity, 'rule', 'retry'); port.assertCurrent(retry); write();
+      } })).kind, 'delivered');
+  } finally { await manager.shutdownAll(); }
+});
