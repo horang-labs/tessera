@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 export const automationField = 'w-full min-w-0 rounded-md border border-(--input-border) bg-(--input-bg) px-3 py-2 text-sm text-(--input-text) outline-none placeholder:text-(--input-placeholder) focus:border-(--accent) focus:ring-2 focus:ring-(--accent)/20 disabled:opacity-60 min-h-10 max-sm:min-h-11';
 export const automationDisclosure = 'rounded-lg border border-(--divider) bg-(--chat-header-bg) p-3 [&>summary]:cursor-pointer [&>summary]:text-sm [&>summary]:font-medium [&>summary]:text-(--text-secondary) [&>summary]:rounded [&>summary]:focus-visible:ring-2 [&>summary]:focus-visible:ring-(--accent) [&>summary]:min-h-6 max-sm:[&>summary]:min-h-8 [&[open]>summary]:mb-3';
 export const automationNotice = 'rounded-lg border border-(--divider) bg-(--chat-header-bg) px-3 py-2.5 text-sm leading-relaxed text-(--text-secondary)';
+export const automationDiagnosticsDisclosure = 'text-xs text-(--text-secondary) [&>summary]:cursor-pointer [&>summary]:rounded [&>summary]:focus-visible:ring-2 [&>summary]:focus-visible:ring-(--accent) [&[open]>summary]:mb-2';
 
 export function AutomationField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return <label className={cn('grid min-w-0 gap-1.5 text-xs font-medium text-(--text-secondary)', className)}><span>{label}</span>{children}</label>;

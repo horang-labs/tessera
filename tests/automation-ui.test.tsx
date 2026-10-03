@@ -14,6 +14,18 @@ test('failed create and generic request errors never claim a persisted paused ru
   }
 });
 
+test('request errors expose one actionable message and keep the raw code secondary', async () => {
+  const { AutomationError } = await import('../src/components/automation/automation-error');
+  for (const code of ['CONTEXT_UNAVAILABLE', 'REVISION_CONFLICT', 'NETWORK_ERROR']) {
+    const html = renderToStaticMarkup(createElement(AutomationError, { code, recovery: createElement('button', { type: 'button' }, 'Open Session') }));
+    assert.equal((html.match(/<p(?:\s[^>]*)?>/g) ?? []).length, 1, 'A request failure must not repeat generic and specific messages');
+    assert.equal((html.match(/role="alert"/g) ?? []).length, 1);
+    assert.match(html, /<button[^>]*>Open Session<\/button>/);
+    assert.match(html, new RegExp(`<details[^>]*>.*<code[^>]*>${code}<\/code>.*<\/details>`));
+    assert.doesNotMatch(html, /<details[^>]* open/);
+  }
+});
+
 test('actual rule pause and typed actionable reasons retain their established presentation',async()=>{
   const {AutomationReason}=await import('../src/components/automation/automation-reason');
   const {AutomationError}=await import('../src/components/automation/automation-error');
@@ -152,4 +164,28 @@ test('Heartbeat replacement button matches its guarded submit through pending, r
   assert.deepEqual(writes.map(item => item.method), ['DELETE', 'DELETE', 'POST']);
   assert.deepEqual(writes.at(-1)?.body, enabledInput);
   assert.deepEqual(done, ['new-heartbeat']);
+});
+
+test('Autorun shows one request error at its footer after pending setup settles', async () => {
+  const { AutorunSetup } = await import('../src/components/automation/autorun-setup');
+  const { AutomationError } = await import('../src/components/automation/automation-error');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const { autorunPreviewFixture } = await import('./fixtures/autorun-contracts');
+  const preview = autorunPreviewFixture();
+  const store = createAutomationStore({ sessionId: 'session-1' });
+  const notice = createElement(AutomationError, { code: 'CONTEXT_UNAVAILABLE', recovery: createElement('button', { type: 'button' }, 'Open Session') });
+  for (const previewLoading of [true, false]) {
+    store.setState({ preview, previewLoading });
+    const html = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: { ...store, getInitialState: store.getState }, requestErrorNotice: notice, onDone() {}, onOpenSession() {} }));
+    const footer = html.match(/<footer[^>]*>(.*?)<\/footer>/)?.[1] ?? '';
+    if (previewLoading) {
+      assert.match(footer, /aria-busy="true"/);
+      assert.doesNotMatch(footer, /CONTEXT_UNAVAILABLE|role="alert"/);
+    } else {
+      assert.match(footer, /CONTEXT_UNAVAILABLE/);
+      assert.equal((footer.match(/role="alert"/g) ?? []).length, 1);
+      assert.equal((footer.match(/>Open Session<\/button>/g) ?? []).length, 1);
+      assert.doesNotMatch(footer, /aria-busy="true"/);
+    }
+  }
 });

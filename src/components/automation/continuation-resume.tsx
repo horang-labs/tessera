@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import { AutomationPreflight, AutomationReadinessRecovery } from './automation-preflight';
 import { Pause } from 'lucide-react';
@@ -14,8 +14,8 @@ import { automationButton, automationPrimaryButton, automationToolbarButton } fr
 import { useAutomationOwnership } from './use-automation';
 import { SavedSelection } from './automation-history';
 import { AutomationViewport, AutomationFacts, AutomationTime, automationDisclosure } from './automation-layout';
-export function ContinuationResume({ preview, loading, rule, store, onDone, onOpenSession, onEdit, onDraftObjective }: {
-  preview: AutorunPreview | null; loading: boolean; rule: AutomationV2; store: AutomationStoreApi;
+export function ContinuationResume({ preview, loading, rule, store, onDone, onOpenSession, onEdit, onDraftObjective, requestErrorNotice }: {
+  requestErrorNotice?: ReactNode; preview: AutorunPreview | null; loading: boolean; rule: AutomationV2; store: AutomationStoreApi;
   onDraftObjective?: (text: string) => void; onDone: (id: string) => void; onOpenSession: () => void; onEdit: () => void;
 }) {
   const { t } = useI18n();
@@ -31,7 +31,7 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
     ? heartbeatCanResume(preview, loading, previewError)
     : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
-  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={<>
+  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={!loading && requestErrorNotice ? requestErrorNotice : <>
     <AutomationPreflight loading={loading} error={previewError} onRetry={retry} />
     {!loading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) && <AutomationReadinessRecovery preview={preview} resume method={rule.mode === 'autorun' ? 'autorun' : 'heartbeat'} onOpenSession={onOpenSession} objective={rule.mode === 'autorun' ? rule.autorun.objective.text : rule.prompt} onDraftObjective={onDraftObjective} />}
     {!loading && !previewError && rule.mode === 'autorun' && preview && (supervisorBlocked || ['running','completed'].includes(preview.readiness.kind)) && (preview.supervisorCheck.status !== 'available' || !preview.supervisorCheck.selection || !sameSupervisorSelection(preview.supervisorCheck.selection, rule.autorun.supervisor)) && <p>{t(preview.supervisorCheck.reason === 'selection' ? 'automation.selectionUnsupported' : 'automation.supervisorSetupFailed')}</p>}
