@@ -174,13 +174,17 @@ test('Autorun shows one request error at its footer after pending setup settles'
   const preview = autorunPreviewFixture();
   const store = createAutomationStore({ sessionId: 'session-1' });
   const notice = createElement(AutomationError, { code: 'CONTEXT_UNAVAILABLE', recovery: createElement('button', { type: 'button' }, 'Open Session') });
-  for (const previewLoading of [true, false]) {
-    store.setState({ preview, previewLoading });
+  for (const [previewLoading, previewError] of [[true, null], [false, null], [false, 'PREVIEW_TIMEOUT']] as const) {
+    store.setState({ preview, previewLoading, previewError });
     const html = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: { ...store, getInitialState: store.getState }, requestErrorNotice: notice, onDone() {}, onOpenSession() {} }));
     const footer = html.match(/<footer[^>]*>(.*?)<\/footer>/)?.[1] ?? '';
     if (previewLoading) {
       assert.match(footer, /aria-busy="true"/);
       assert.doesNotMatch(footer, /CONTEXT_UNAVAILABLE|role="alert"/);
+    } else if (previewError) {
+      assert.doesNotMatch(footer, /CONTEXT_UNAVAILABLE/);
+      assert.match(footer, />Check again<\/button>/);
+      assert.equal((footer.match(/role="alert"/g) ?? []).length, 1);
     } else {
       assert.match(footer, /CONTEXT_UNAVAILABLE/);
       assert.equal((footer.match(/role="alert"/g) ?? []).length, 1);

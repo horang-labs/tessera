@@ -31,7 +31,7 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
     ? heartbeatCanResume(preview, loading, previewError)
     : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
-  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={!loading && requestErrorNotice ? requestErrorNotice : <>
+  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={!loading && !previewError && requestErrorNotice ? requestErrorNotice : <>
     <AutomationPreflight loading={loading} error={previewError} onRetry={retry} />
     {!loading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) && <AutomationReadinessRecovery preview={preview} resume method={rule.mode === 'autorun' ? 'autorun' : 'heartbeat'} onOpenSession={onOpenSession} objective={rule.mode === 'autorun' ? rule.autorun.objective.text : rule.prompt} onDraftObjective={onDraftObjective} />}
     {!loading && !previewError && rule.mode === 'autorun' && preview && (supervisorBlocked || ['running','completed'].includes(preview.readiness.kind)) && (preview.supervisorCheck.status !== 'available' || !preview.supervisorCheck.selection || !sameSupervisorSelection(preview.supervisorCheck.selection, rule.autorun.supervisor)) && <p>{t(preview.supervisorCheck.reason === 'selection' ? 'automation.selectionUnsupported' : 'automation.supervisorSetupFailed')}</p>}

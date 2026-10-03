@@ -125,7 +125,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
       }
     } finally { setSaving(false); }
   }}>
-    <AutomationViewport footerNote={!previewLoading && requestErrorNotice ? requestErrorNotice : <>
+    <AutomationViewport footerNote={!previewLoading && !previewError && requestErrorNotice ? requestErrorNotice : <>
       <AutomationPreflight loading={previewLoading} error={previewError} onRetry={retry} />
       {!previewLoading && !previewError && !ready && (expiresAt <= now || (old && (old.dispatchCount >= old.limits.maxDispatches || old.analysisCount >= old.autorun.maxAnalyses))) ? <p>{t('automation.reasonLimit')}</p>
         : !previewLoading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) ? <AutomationReadinessRecovery preview={preview} resume={intent === 'resume'} onOpenSession={onOpenSession} objective={objectiveEdited ? override : preview.objective?.text} onDraftObjective={onDraftObjective} />
