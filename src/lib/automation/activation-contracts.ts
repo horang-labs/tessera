@@ -10,6 +10,11 @@ export const nativeRuntimeIdentitySchema = z.object({
   providerConversationId: id.nullable(), inputRevision: count, observationRevision: count,
 }).strict();
 export type NativeRuntimeIdentity = z.infer<typeof nativeRuntimeIdentitySchema>;
+export type NativeGateSnapshot = { identity: Omit<NativeRuntimeIdentity, 'observationRevision'>;
+  state: 'starting' | 'running' | 'input-required' | 'turn-complete' | 'exited' | 'unknown'; live: boolean; writer: boolean;
+  backgroundWork: 'clear' | 'active' | 'unknown'; hasDraft: boolean;
+  ownershipMode: 'human' | 'armed' | 'draining' | 'recovery-required' | 'unavailable'; nativeApprovalId: string | null };
+
 const requestBase = {
   requestId: id, nativeRequestId: id, identity: nativeRuntimeIdentitySchema,
   requestHash: z.string().regex(/^[a-f0-9]{64}$/),

@@ -29,8 +29,13 @@ export type RecoveryResult =
   | {kind:'unavailable'|'unknown'; reason:string;
      inputOwnership:InputOwnership};
 export type DispatchPermit = {runId:string; leaseEpoch:number; token:string};
-export type RunSpec = {run:AutomationRun; target:Target; prompt:string; ownerUserId:string};
-export interface AutomationRuntime { // implemented by B; A supplies persistence callbacks
+export type RunSpec = {action?: import('./activation-state').NativeAutomationAction; run:AutomationRun; target:Target; prompt:string; ownerUserId:string};
+export interface AutomationRuntime {
+  readonly activation?: {
+    observe(args: import('./activation-contracts').InteractionScope): Promise<import('./activation-contracts').NativeInteraction>;
+    assertCurrent(expected: import('./activation-contracts').ReadyPromptEvidence | import('./activation-contracts').NativeApprovalRequest): void;
+    setDraftVeto(args: import('./activation-contracts').InteractionScope, veto: import('./activation-contracts').AutomationDraftVeto): void;
+  }; // implemented by B; A supplies persistence callbacks
   /** Optional until R2 installs the real gate; legacy delivery/input/drain remain unchanged. */
   readonly autorun?: AutorunRuntimePort;
   reconcileRun(args:{runId:string; leaseEpoch:number}): Promise<RecoveryResult>;
@@ -43,7 +48,8 @@ export interface AutomationRuntime { // implemented by B; A supplies persistence
   dispatch(args:{runId:string; leaseEpoch:number; expectedRevision:number;
       expectedBoundary:Boundary|null}): Promise<DispatchResult>;
 }
-export interface AutomationAuthority { // implemented by A; called by B
+export interface AutomationAuthority {
+  canSuperviseNativeApproval?(scope: import('./activation-contracts').InteractionScope & {provider: 'codex' | 'claude-code'}): boolean; // implemented by A; called by B
   loadRun(runId:string): RunSpec;
   reserveSession(runId:string, create:(sessionId:string)=>void): string;
   beginAttempt(runId:string, leaseEpoch:number, expectedRevision:number): DispatchPermit;

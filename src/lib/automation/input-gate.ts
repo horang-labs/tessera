@@ -1,3 +1,4 @@
+import type { NativeApprovalRequest, NativeRuntimeIdentity, AutomationDraftVeto } from './activation-contracts';
 import type { TerminalAutomationCompletion } from '@/lib/cli/providers/terminal-automation-evidence';
 import { AutomationInputError } from './input-error';
 import { randomUUID } from 'node:crypto';
@@ -9,6 +10,7 @@ type State = {
   ownership: InputOwnership; userId: string; generation: number; provider: string; environment: 'native' | 'wsl' | undefined;
   revision: number; turn: number; submittedRevision: number | null; confirmedRevision: number | null;
   children: Set<string>; lifecycleChildren: boolean; backgroundUnknown: boolean; leadCompletionAt: number | null;
+  nativeApproval?: NativeApprovalRequest;
   conversationId?: string; nativeSubmission?: { event: Extract<AutorunHookEvidence, { kind: 'submission' }>; revision: number };
   nativeCompletion?: Extract<AutorunHookEvidence, { kind: 'completion' }>; seenNative?: Set<string>;
   boundary: Boundary | null; status: RuntimeObservation['state']; sequence: number;
@@ -19,6 +21,7 @@ type State = {
 export class AutomationInputGate {
   readonly serverInstanceId = randomUUID();
   private states = new Map<string, State>();
+  private drafts = new Map<string, Map<string, AutomationDraftVeto>>();
   authority: () => AutomationAuthority | null = () => null;
   publish: (userId: string, value: InputOwnership) => void = () => {};
   private key(userId: string, sessionId: string) { return JSON.stringify([userId, sessionId]); }
@@ -36,6 +39,66 @@ export class AutomationInputGate {
     this.states.set(this.key(userId, sessionId), state);
     this.changed(state);
     this.authority()?.recordRuntimeObservation(this.observation(state));
+  }
+
+  readNativeState(userId: string, sessionId: string): import('./activation-contracts').NativeGateSnapshot | null {
+    const state = this.state(userId, sessionId);
+    if (!state || !state.environment || !['codex', 'claude-code'].includes(state.provider)) return null;
+    return { identity: { userId, sessionId, agentEnvironment: state.environment, serverInstanceId: this.serverInstanceId,
+      terminalId: state.ownership.terminalId!, generation: state.generation, provider: state.provider as 'codex' | 'claude-code',
+      providerConversationId: state.conversationId ?? null, inputRevision: state.revision }, state: state.status, live: state.live, writer: state.writer,
+      backgroundWork: state.backgroundUnknown ? 'unknown' : state.children.size || state.lifecycleChildren ? 'active' : 'clear',
+      hasDraft: this.hasDraft(userId, sessionId), ownershipMode: state.ownership.mode, nativeApprovalId: state.nativeApproval?.requestId ?? null };
+  }
+  canSuperviseNativeApproval(userId: string, sessionId: string): boolean {
+    const state = this.readNativeState(userId, sessionId);
+    return !!state?.live && !!this.authority()?.canSuperviseNativeApproval?.({ userId, sessionId,
+      agentEnvironment: state.identity.agentEnvironment, provider: state.identity.provider });
+  }
+  setDraftVeto(userId: string, sessionId: string, veto: AutomationDraftVeto) {
+    const key = this.key(userId, sessionId), drafts = this.drafts.get(key) ?? new Map<string, AutomationDraftVeto>();
+    const previous = drafts.get(veto.surfaceId);
+    if (previous && previous.revision >= veto.revision) return;
+    drafts.set(veto.surfaceId, { ...veto }); this.drafts.set(key, drafts);
+  }
+  hasDraft(userId: string, sessionId: string) {
+    return [...(this.drafts.get(this.key(userId, sessionId))?.values() ?? [])].some(draft => draft.hasDraft);
+  }
+  assertNativeIdentity(identity: NativeRuntimeIdentity) {
+    const state = this.state(identity.userId, identity.sessionId);
+    if (!state?.live || identity.serverInstanceId !== this.serverInstanceId || identity.terminalId !== state.ownership.terminalId ||
+      identity.generation !== state.generation || identity.provider !== state.provider || identity.agentEnvironment !== state.environment ||
+      identity.inputRevision !== state.revision || (state.conversationId ?? null) !== identity.providerConversationId ||
+      state.children.size || state.lifecycleChildren || state.backgroundUnknown || this.hasDraft(identity.userId, identity.sessionId))
+      throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'Native interaction identity or draft changed.');
+  }
+  claimNativeAction(identity: NativeRuntimeIdentity, automationId: string, runId: string) {
+    this.assertNativeIdentity(identity);
+    const state = this.state(identity.userId, identity.sessionId)!;
+    if (state.writer || !['human', 'armed'].includes(state.ownership.mode) ||
+      (state.ownership.mode === 'armed' && state.ownership.automationId !== automationId))
+      throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'Native action ownership changed.');
+    state.ownership = { ...state.ownership, mode: 'armed', automationId, runId,
+      epoch: state.ownership.mode === 'human' ? randomUUID() : state.ownership.epoch, reason: null };
+    state.writer = true; state.automated = true; this.changed(state);
+  }
+  verifyNativeAction(identity: NativeRuntimeIdentity, automationId: string, runId: string) {
+    this.assertNativeIdentity(identity);
+    const state = this.state(identity.userId, identity.sessionId)!;
+    if (!state.writer || state.ownership.mode !== 'armed' || state.ownership.automationId !== automationId || state.ownership.runId !== runId)
+      throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'Native action was paused.');
+  }
+  holdNativeApproval(userId: string, sessionId: string, request: NativeApprovalRequest) {
+    this.assertNativeIdentity(request.identity);
+    if (request.identity.userId !== userId || request.identity.sessionId !== sessionId) throw new AutomationInputError('OWNER_UNAVAILABLE', 'Approval owner changed.');
+    this.state(userId, sessionId)!.nativeApproval = request;
+  }
+  releaseNativeApproval(userId: string, sessionId: string, requestId: string) {
+    const state = this.state(userId, sessionId);
+    if (state?.nativeApproval?.requestId !== requestId) return;
+    state.nativeApproval = undefined;
+    // Resolution resumes this accepted turn; it is not a new submission/completion.
+    if (state.submittedRevision === state.revision && state.confirmedRevision === state.revision) state.status = 'running';
   }
 
   ownership(userId: string, sessionId: string): InputOwnership {
@@ -134,6 +197,7 @@ export class AutomationInputGate {
   dirty(userId: string, sessionId: string, submitted = false) {
     const state = this.state(userId, sessionId);
     if (!state) return;
+    state.nativeApproval = undefined;
     state.revision++;
     state.candidateRevision = submitted ? state.revision : null;
     state.boundary = null; state.leadCompletionAt = null;
@@ -193,7 +257,7 @@ export class AutomationInputGate {
     if (completed && !state.boundary) {
       this.complete(state, at);
     } else if (!completed) state.boundary = null;
-    if (status === 'input_required' || (status === 'idle' && event !== 'SessionStart')) {
+    if ((status === 'input_required' && !state.nativeApproval) || (status === 'idle' && event !== 'SessionStart')) {
       state.submittedRevision = null;
       this.inhibit(state, status === 'input_required' ? 'INPUT_REQUIRED' : 'BOUNDARY_UNPROVEN');
     }
@@ -271,7 +335,7 @@ export class AutomationInputGate {
   arm(userId: string, sessionId: string, automationId: string, provider: string, commit: (evidence: ArmEvidence, value: InputOwnership) => void): InputOwnership {
     const state = this.state(userId, sessionId);
     if (!state || !state.live || !['claude-code', 'codex'].includes(state.provider) || state.provider !== provider || state.writer
-      || state.children.size > 0 || state.lifecycleChildren || state.backgroundUnknown || state.ownership.mode !== 'human' || state.submittedRevision === null
+      || state.children.size > 0 || state.lifecycleChildren || state.backgroundUnknown || this.hasDraft(userId, sessionId) || state.ownership.mode !== 'human' || state.submittedRevision === null
       || state.submittedRevision !== state.revision
       || (!state.boundary && state.status !== 'running')) {
       throw new AutomationInputError('INPUT_BOUNDARY_UNPROVEN', 'A clean submitted turn boundary is required.');
