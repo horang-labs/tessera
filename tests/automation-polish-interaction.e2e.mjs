@@ -17,10 +17,10 @@ async page => {
   const require = (condition, message) => { if (!condition) throw new Error(message); };
   await open('');
   await control('automation.autorun.start').waitFor();
-  await control('automation.autorun.criteria').click();
+  await control('automation.form.advanced').click();
   await page.locator('[name="constraints"]').fill('Preserve public API.\nKeep retained drafts.');
   await page.locator('[name="criteria"]').fill('Login regression passes.');
-  await control('automation.autorun.criteria').click();
+  await control('automation.form.advanced').click();
   await control('automation.form.save').click();
   const writes = await inspect();
   require(writes.length === 1, 'Exactly one explicit create expected');
@@ -42,7 +42,7 @@ async page => {
   await control('automation.manager.close').click();
   require(await page.getByRole('button', { name: 'Open fixture manager', exact: true }).evaluate(el => document.activeElement === el), 'Close did not restore focus');
   await page.getByRole('button', { name: 'Open fixture manager', exact: true }).click();
-  await control('automation.form.advanced').click();
+  if (!await page.locator('[name="name"]').isVisible()) await control('automation.form.advanced').click();
   require(await page.locator('[name="name"]').inputValue() === 'Retained corrected name', 'Close discarded advanced draft');
   await control('automation.setup.heartbeat').click();
   await page.locator('[name="prompt"]').fill('Retained fixed instruction');
@@ -56,7 +56,6 @@ async page => {
   await open('?idle');
   await control('automation.autorun.start').waitFor();
   require(await control('automation.autorun.start').isDisabled(), 'Consumed idle became startable');
-  await control('automation.autorun.objective_edit').click();
   await page.locator('[name="objective"]').fill('Explicit goal cannot cure consumed idle');
   require(await control('automation.autorun.start').isDisabled(), 'Goal override manufactured readiness');
   require(await control('automation.history.open_session').first().isVisible(), 'Blocked state lost its next action');

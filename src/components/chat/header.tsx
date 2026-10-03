@@ -422,6 +422,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
           )}
         >
           <div className={cn("flex items-center gap-2 max-sm:gap-0", isCompact && styles.actions)}>
+            {session.kind === 'terminal' && <AutomationSessionControls key={sessionId} sessionId={sessionId} provider={session.provider} />}
             {search?.isOpen ? (
               <MessageSearchBar
                 query={search.query}
@@ -435,11 +436,12 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
               />
             ) : (
               <>
-              {canToggleTerminalView && (
+              {canToggleTerminalView && <>
+                <button type="button" className={cn("rounded p-0.5 sm:hidden text-(--text-secondary)", PHONE_TOUCH_TARGET)} title={t(isTerminalChatView ? 'chat.viewAsTerminal' : 'chat.viewAsChat')} aria-label={t(isTerminalChatView ? 'chat.viewAsTerminal' : 'chat.viewAsChat')} {...telemetryClickAttributes(isTerminalChatView ? 'chat_header.view_mode.terminal' : 'chat_header.view_mode.chat', 'chat_header')} onClick={() => setTerminalViewMode(sessionId, isTerminalChatView ? 'terminal' : 'chat')}>{isTerminalChatView ? <MessageSquare className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}</button>
                 <div
                   role="group"
                   aria-label={t('chat.viewMode')}
-                  className="flex shrink-0 items-center gap-px rounded bg-(--sidebar-hover) p-px"
+                  className="hidden sm:flex shrink-0 items-center gap-px rounded bg-(--sidebar-hover) p-px"
                   data-testid="terminal-view-toggle"
                 >
                   {(['terminal', 'chat'] as const).map((mode) => {
@@ -478,7 +480,7 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
                     );
                   })}
                 </div>
-              )}
+              </>}
               {session.kind !== 'terminal' && (
                 <button
                   type="button"
@@ -620,7 +622,6 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
         />
       )}
     </div>
-    {session.kind === 'terminal' && <AutomationSessionControls key={sessionId} sessionId={sessionId} provider={session.provider} />}
     </>
   );
 }
