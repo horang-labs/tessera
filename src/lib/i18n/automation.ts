@@ -1,4 +1,5 @@
 export const automationEn = {
+  deliveryRecorded: 'Delivery recorded',
   "activation_waiting": "Waiting",
   "activation_starting": "Starting the worker",
   "activation_analysing": "Checking the next instruction",
@@ -202,6 +203,7 @@ export const automationEn = {
   unsupported: 'Wake-up supports Claude Code and Codex PTY Sessions only.',
 };
 export const automationKo: typeof automationEn = {
+  deliveryRecorded: '전달 기록됨',
   "activation_waiting": "대기 중",
   "activation_starting": "작업자 시작 중",
   "activation_analysing": "다음 지시 확인 중",
@@ -405,6 +407,7 @@ export const automationKo: typeof automationEn = {
   unsupported: 'Claude Code와 Codex PTY 세션만 이어가기를 지원합니다.',
 };
 export const automationJa: typeof automationEn = { ...automationEn,
+  deliveryRecorded: '送信記録あり',
   "activation_waiting": "待機中",
   "activation_starting": "ワーカーを起動中",
   "activation_analysing": "次の指示を確認中",
@@ -590,6 +593,7 @@ export const automationJa: typeof automationEn = { ...automationEn,
   noSuccess: 'プロンプトの送信やターンの終了は、タスクの成功を意味しません。',
 };
 export const automationZh: typeof automationEn = { ...automationEn,
+  deliveryRecorded: '已记录发送',
   "activation_waiting": "等待中",
   "activation_starting": "正在启动工作代理",
   "activation_analysing": "正在检查下一条指令",
