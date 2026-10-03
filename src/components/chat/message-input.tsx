@@ -175,8 +175,13 @@ export function MessageInput({
   // (before React commits the state update) so an older ACK cannot clear it.
   const setInputValueFromProgrammaticEdit = useCallback((value: SetStateAction<string>) => {
     recordTerminalDraftEdit(sessionId);
-    setInputValue(value);
-  }, [sessionId]);
+    setInputValue(current => {
+      const next = typeof value === 'function' ? value(current) : value;
+      // Programmatic text/attachment markers use the same retained source as typed text and PTY.
+      setDraftInput(sessionId, next);
+      return next;
+    });
+  }, [sessionId, setDraftInput]);
   const clearInput = useCallback(() => {
     setInputValue('');
     setDraftInput(sessionId, '');
@@ -342,6 +347,7 @@ export function MessageInput({
     handlePaste,
     handleRemoveAttachment,
   } = useMessageInputAttachments({
+    sessionId,
     textareaRef,
     setInputValue: setInputValueFromProgrammaticEdit,
     t,

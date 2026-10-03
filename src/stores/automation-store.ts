@@ -1,3 +1,5 @@
+import { automationActivationSchema } from '@/lib/automation/activation-contracts';
+import { createAutomationDraftPublisher } from './automation-draft-veto';
 import type { z } from 'zod';
 import { v4 as uuid } from 'uuid';
 import { createStore } from 'zustand/vanilla';
@@ -12,6 +14,7 @@ export type AutomationScope = { sessionId: string } | { worktreeId: string };
 export type AutomationHttp = typeof fetch;
 type Page<T> = { items: T[]; nextCursor: string | null };
 interface AutomationStore {
+  watchDraftVeto: () => () => void;
   items: AutomationSummaryV2[];
   details: Record<string, ControlResultV2>;
   preview: AutorunPreview | null;
@@ -46,6 +49,8 @@ interface AutomationStore {
 
 /** Target-scoped HTTP state. Only B updates the independent runtime ownership projection. */
 export function createAutomationStore(scope: AutomationScope, http: AutomationHttp = fetch) {
+  const draftPublisher = 'sessionId' in scope ? createAutomationDraftPublisher(scope.sessionId, http) : null;
+  let mutationSerial = 0;
   let listRequest = 0;
   let previewRequest = 0;
   let lastPreviewInput: z.input<typeof autorunPreviewInputSchema> = {};
@@ -66,19 +71,29 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
   const errorCode = (error: unknown) => error instanceof Error && /^[A-Z_]+$/.test(error.message)
     ? error.message : 'NETWORK_ERROR';
   return createStore<AutomationStore>((set, get) => {
-    async function mutate(url: string, method: string, body?: unknown, key?: string) {
+    async function mutate(url: string, method: string, body?: unknown, key?: string, activate = false) {
+      const serial = ++mutationSerial;
       set({ busy: get().busy + 1, error: null });
       for (const [id, serial] of detailRequests) detailRequests.set(id, serial + 1);
       ++listRequest; // Invalidate pre-mutation reads.
       try {
+        if (activate) {
+          await draftPublisher?.flush();
+          if (serial !== mutationSerial) return false; // Pause/delete supersedes unsent registration.
+        }
         const response = await http(url, { method, headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
         const data = await response.json();
         if (!response.ok) throw new Error(data?.error?.code ?? 'INVALID_RESPONSE');
-        set({ lastControl: { status: response.status, body: data } });
+        const parsed = decodeAutomation(data.automation);
+        if (!parsed.success) throw new Error('INVALID_RESPONSE');
+        const activation = data.activation == null ? data.activation : automationActivationSchema.parse(data.activation);
+        const receipt: ControlResultV2 = { ...data, automation: parsed.data, activation };
+        if (serial === mutationSerial) set({ lastControl: { status: response.status, body: receipt }, details: { ...get().details, [parsed.data.id]: receipt }, previewRejection: null });
         await get().refresh(); // Replayed creates may contain historical ownership/revisions.
         return true;
       } catch (error) {
         const code = errorCode(error);
+        if (serial !== mutationSerial) { await get().refresh(); return false; }
         if (code === 'INPUT_BOUNDARY_UNPROVEN' && 'sessionId' in scope) {
           get().invalidateAutorunPreview();
           set({ error: null, previewRejection: code });
@@ -89,6 +104,7 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
       } finally { set({ busy: get().busy - 1 }); }
     }
     return {
+      watchDraftVeto: () => draftPublisher?.watch() ?? (() => {}),
       items: [], details: {}, decisions: {}, newDecisionCount: {}, decisionDetails: {}, preview: null, previewLoading: false, previewError: null, previewRejection: null, view: { selectedId: null, tab: 'overview', setup: false }, drafts: {}, runs: {}, lastControl: null, loading: true, error: null, busy: 0,
       inspect: async (id) => {
         const serial = (detailRequests.get(id) ?? 0) + 1;
@@ -98,7 +114,7 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
           const parsed = decodeAutomation(data.automation);
           if (!parsed.success || parsed.data.id !== id) throw new Error('INVALID_RESPONSE');
           if (serial !== detailRequests.get(id)) return null;
-          const result = { ...data, automation: parsed.data };
+          const result = { ...data, automation: parsed.data, activation: data.activation == null ? data.activation : automationActivationSchema.parse(data.activation) };
           set({ details: { ...get().details, [id]: result } });
           return result;
         }
@@ -229,13 +245,13 @@ export function createAutomationStore(scope: AutomationScope, http: AutomationHt
         const body = JSON.stringify(input);
         const key = keys.get(body) ?? uuid(); // uuid supports HTTP without crypto.randomUUID.
         keys.set(body, key);
-        const saved = await mutate('/api/automations', 'POST', input, key);
+        const saved = await mutate('/api/automations', 'POST', input, key, input.enabled);
         if (saved) keys.delete(body);
         return saved;
       },
       enable: (rule) => {
         lastPreviewInput = 'mode' in rule && rule.mode === 'autorun' ? { supervisor: rule.autorun.supervisor } : {};
-        return mutate(`${path(rule.id)}/state`, 'POST', { action: 'enable', expectedRevision: rule.revision });
+        return mutate(`${path(rule.id)}/state`, 'POST', { action: 'enable', expectedRevision: rule.revision }, undefined, true);
       },
       pause: (id) => mutate(`${path(id)}/state`, 'POST', { action: 'pause' }),
       remove: (id) => mutate(path(id), 'DELETE'),
@@ -273,11 +289,12 @@ export function getAutomationStore(ownerId: string, scope: AutomationScope) {
 export function subscribeAutomationScope(ownerId: string, scope: AutomationScope) {
   const entry = getAutomationStore(ownerId, scope);
   if (entry.subscribers++ === 0) {
+    const stopDraft = entry.store.getState().watchDraftVeto();
     const refresh = () => void entry.store.getState().refresh();
     refresh();
     const timer = setInterval(refresh, 5000);
     window.addEventListener('focus', refresh);
-    entry.stop = () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
+    entry.stop = () => { stopDraft(); clearInterval(timer); window.removeEventListener('focus', refresh); };
   }
   return () => { if (--entry.subscribers === 0) { entry.stop?.(); entry.stop = undefined; } };
 }

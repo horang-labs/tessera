@@ -1,5 +1,6 @@
 'use client';
 import { useSessionInputOwnership } from '@/hooks/use-session-input-ownership';
+import { createAutomationDraftSource } from '@/stores/automation-draft-veto';
 import { useChatStore } from '@/stores/chat-store';
 
 import {
@@ -10,6 +11,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  useMemo,
   type ChangeEvent,
   type DragEvent,
 } from 'react';
@@ -119,6 +121,8 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
     store.setDraftInput(sessionId, typeof next === 'function' ? next(store.getDraftInput(sessionId)) : next);
   }, [sessionId]);
   const [dragDepth, setDragDepth] = useState(0);
+  const uploadDraftSource = useMemo(() => createAutomationDraftSource(sessionId, 'terminal-uploads'), [sessionId]);
+  useEffect(() => uploadDraftSource.connect(), [uploadDraftSource]);
   const [pendingImageUploads, setPendingImageUploads] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -208,18 +212,20 @@ export const TerminalChatComposer = memo(forwardRef<TerminalChatComposerHandle, 
 
   const attachImages = useCallback(async (imageFiles: File[]) => {
     if (imageFiles.length === 0) return;
+    const releaseVeto = uploadDraftSource.hold();
     setPendingImageUploads((count) => count + imageFiles.length);
     try {
       insertPaths(await Promise.all(imageFiles.map(uploadTerminalClipboardFile)));
     } catch {
       toast.error(t('chat.terminalInputBar.imageAttachFailed'));
     } finally {
+      releaseVeto();
       setPendingImageUploads((count) => Math.max(0, count - imageFiles.length));
       requestAnimationFrame(() => {
         if (!isPhoneViewport()) textareaRef.current?.focus();
       });
     }
-  }, [insertPaths, t]);
+  }, [insertPaths, t, uploadDraftSource]);
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     // Match the desktop PTY clipboard policy: when a clipboard exposes both,

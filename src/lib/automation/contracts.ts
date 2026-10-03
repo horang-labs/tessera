@@ -58,6 +58,7 @@ export type InputOwnership = {
   automationId: string | null; runId: string | null; reason: string | null;
 };
 export type ControlResult = {
+  activation?: import('./activation-contracts').AutomationActivation | null;
   automation: Automation;
   inputOwnership: InputOwnership | null; // null for create-session rule
   inFlightRunId: string | null;          // own dispatch, not the provider's whole turn

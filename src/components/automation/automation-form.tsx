@@ -81,7 +81,7 @@ export function AutomationForm({ scope, previous, onSave, onCancel, defaultName,
   }}>
     <AutomationViewport footerNote={footerNote} footer={<>
 
-      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationPrimaryButton} type="submit" disabled={saving || (submitBlocked && !previous) || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.saveChanges' : wake ? 'automation.start' : 'automation.startSchedule')}</button>
+      <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationPrimaryButton} type="submit" disabled={saving || (submitBlocked && !previous) || (!wake && !selectionSupported)}>{t(replacing ? 'automation.replace' : previous ? 'automation.saveChanges' : wake ? 'automation.startHeartbeat' : 'automation.startSchedule')}</button>
       {!previous && !replacing && <button {...telemetryClickAttributes('automation.form.save','automation')} className={automationButton} type="submit" value="later" disabled={saving || (!wake && !selectionSupported)}>{t('automation.save')}</button>}
       <button {...telemetryClickAttributes('automation.form.cancel','automation')} className={automationButton} type="button" onClick={onCancel}>{t('automation.cancel')}</button>
 

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createAutomationDraftSource } from '@/stores/automation-draft-veto';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import { useNotificationStore } from '@/stores/notification-store';
 import {
@@ -51,6 +52,7 @@ export interface FileAttachment {
 export type AttachmentItem = ImageAttachment | FileAttachment;
 
 interface UseMessageInputAttachmentsOptions {
+  sessionId: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   setInputValue: React.Dispatch<React.SetStateAction<string>>;
   t: TranslateFn;
@@ -117,11 +119,22 @@ function revokeAttachmentPreviews(attachments: AttachmentItem[]) {
 }
 
 export function useMessageInputAttachments({
+  sessionId,
   textareaRef,
   setInputValue,
   t,
 }: UseMessageInputAttachmentsOptions) {
+  const draftSource = useMemo(() => createAutomationDraftSource(sessionId, 'attachments'), [sessionId]);
+  useEffect(() => draftSource.connect(), [draftSource]);
+  const previousDraftSource = useRef(draftSource);
+  useEffect(() => {
+    // The existing Session switch explicitly discards this composer's attachments.
+    if (previousDraftSource.current !== draftSource) previousDraftSource.current.setHasDraft(false);
+    previousDraftSource.current = draftSource;
+  }, [draftSource]);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  // Reconcile the actual local collection on remount; outstanding reads/uploads keep their holds.
+  useEffect(() => { draftSource.setHasDraft(attachments.length > 0); }, [draftSource, attachments]);
   const attachmentCounterRef = useRef(0);
   const attachmentsRef = useRef<AttachmentItem[]>([]);
 
@@ -144,10 +157,12 @@ export function useMessageInputAttachments({
       return;
     }
 
+    const releaseVeto = draftSource.hold();
     const reader = new FileReader();
     reader.onload = (loadEvent) => {
       const dataUrl = loadEvent.target?.result as string | null;
       if (!dataUrl) {
+        releaseVeto();
         return;
       }
 
@@ -161,10 +176,12 @@ export function useMessageInputAttachments({
         previewUrl,
       };
 
+      draftSource.setHasDraft(true);
       setAttachments((currentAttachments) => {
         const imageCount = currentAttachments.filter((attachment) => attachment.kind === 'image').length;
         if (imageCount >= MAX_IMAGES) {
           URL.revokeObjectURL(previewUrl);
+          draftSource.setHasDraft(currentAttachments.length > 0);
           return currentAttachments;
         }
 
@@ -176,14 +193,17 @@ export function useMessageInputAttachments({
         setInputValue,
         createImageAttachmentPlaceholder(newAttachment.id),
       );
+      releaseVeto();
     };
 
+    reader.onabort = releaseVeto;
     reader.onerror = () => {
+      releaseVeto();
       useNotificationStore.getState().showToast(t('validation.imageReadFailed'), 'error');
     };
 
     reader.readAsDataURL(file);
-  }, [setInputValue, t, textareaRef]);
+  }, [draftSource, setInputValue, t, textareaRef]);
 
   const handleUploadedFileAttachment = useCallback(async (file: File) => {
     if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -194,6 +214,7 @@ export function useMessageInputAttachments({
       return;
     }
 
+    const releaseVeto = draftSource.hold();
     try {
       const result = await uploadFileToServer(file);
       const newAttachment: FileAttachment = {
@@ -203,6 +224,7 @@ export function useMessageInputAttachments({
         serverPath: result.path,
       };
 
+      draftSource.setHasDraft(true);
       setAttachments((currentAttachments) => [...currentAttachments, newAttachment]);
       insertPlaceholderAtCursor(
         textareaRef,
@@ -214,8 +236,8 @@ export function useMessageInputAttachments({
         t('validation.fileUploadFailed', { fileName: file.name }),
         'error',
       );
-    }
-  }, [setInputValue, t, textareaRef]);
+    } finally { releaseVeto(); }
+  }, [draftSource, setInputValue, t, textareaRef]);
 
   const processSelectedFiles = useCallback(async (files: File[]) => {
     let nextImageCount = attachmentsRef.current.filter((attachment) => attachment.kind === 'image').length;
@@ -301,7 +323,9 @@ export function useMessageInputAttachments({
         revokeAttachmentPreview(targetAttachment);
       }
 
-      return currentAttachments.filter((attachment) => attachment.id !== id);
+      const remaining = currentAttachments.filter((attachment) => attachment.id !== id);
+      draftSource.setHasDraft(remaining.length > 0);
+      return remaining;
     });
 
     setInputValue((currentValue) =>
@@ -309,7 +333,7 @@ export function useMessageInputAttachments({
         .split(createImageAttachmentPlaceholder(id)).join('')
         .split(createFileAttachmentPlaceholder(id)).join(''),
     );
-  }, [setInputValue]);
+  }, [draftSource, setInputValue]);
 
   /**
    * Drop every attachment the composer is holding.
@@ -319,11 +343,12 @@ export function useMessageInputAttachments({
    * for the draft text, since only they know whether it is being cleared too.
    */
   const clearAttachments = useCallback(() => {
+    draftSource.setHasDraft(false);
     setAttachments((currentAttachments) => {
       revokeAttachmentPreviews(currentAttachments);
       return [];
     });
-  }, []);
+  }, [draftSource]);
 
   return {
     attachments,

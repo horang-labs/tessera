@@ -1,5 +1,6 @@
 'use client';
 
+import { activationStatusKey } from './automation-activation';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
@@ -66,7 +67,7 @@ export function AutomationSessionControls({ sessionId, provider }: { sessionId: 
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const current = automationId ? details[automationId]?.automation : undefined;
   const reviewLimits = current ? automationNeedsLimitReview(current, now) : rule?.state === 'exhausted' || rule?.state === 'expired';
-  const stateLabel = rule ? t(`automation.state_${rule.state}`) : ownership.automationId ? t(`automation.${ownership.mode}`) : null;
+  const stateLabel = rule ? t(activationStatusKey(rule.state, details[rule.id]?.activation)) : ownership.automationId ? t(`automation.${ownership.mode}`) : null;
   return <div className="flex shrink-0 items-center gap-1" role="group" aria-label={t('automation.toolbar')} data-testid="automation-session-controls">
     <Entry scope={scope} store={store} currentId={automationId ?? undefined} attention={Boolean(rule?.attention)} paused={rule?.state === 'paused'} reviewLimits={reviewLimits} toolbarState={stateLabel} supported={provider === 'claude-code' || provider === 'codex'} />
     <AutomationPauseAction compact rule={rule} ownership={ownership} surface="chat_header" onPause={id => void store.getState().pause(id)} />

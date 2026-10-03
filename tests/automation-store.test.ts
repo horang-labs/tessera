@@ -21,6 +21,7 @@ test('pause accepts draining and never grants input from an HTTP response', asyn
 test('a stale enable is not retried and refreshes the current revision with a visible conflict', async () => {
   let enables = 0;
   const store = createAutomationStore({ sessionId: 'session-1' }, async (_url, init) => {
+    if (String(_url).endsWith('/automation-input')) return Response.json({ ok: true });
     if (init?.method === 'POST') {
       enables++;
       assert.deepEqual(JSON.parse(String(init.body)), { action: 'enable', expectedRevision: 1 });
@@ -147,6 +148,7 @@ test('reviewing spent limits keeps lifetime counters and saves disabled before a
     const saved={...previous,state:'disabled' as const,revision:2,limits:{...previous.limits,maxDispatches:9}};
     const writes:{method:string;body:Record<string,unknown>}[]=[];
     const store=createAutomationStore(schedule ? {worktreeId:'wt-1'} : {sessionId:'session-1'},async(_url,init)=>{
+      if(String(_url).endsWith('/automation-input')) return Response.json({ok:true});
       if(init?.method) {writes.push({method:init.method,body:JSON.parse(String(init.body))});return Response.json({automation:saved,inputOwnership:null,inFlightRunId:null});}
       return Response.json({items:[saved],nextCursor:null});
     });

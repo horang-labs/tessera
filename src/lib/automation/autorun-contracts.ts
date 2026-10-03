@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { automationActivationSchema, nativeApprovalRequestSchema } from './activation-contracts';
 import { isTerminalNamedKey } from '../terminal/session-control-input';
 import { automationInputSchema, validateAutomationInput, sessionSelectionSnapshotSchema,
   type AutomationValidationContext, type InputOwnership, type AutomationRun } from './contracts';
@@ -84,6 +85,9 @@ export const objectiveSchema = z.discriminatedUnion('kind', [
     sources: z.array(humanInstructionSourceSchema).min(1).max(100) }).strict(),
 ]);
 export type AutorunObjective = z.infer<typeof objectiveSchema>;
+export const supervisorApprovalPacketSchema = z.object({ version: z.literal(1), kind: z.literal('approval'), objective: objectiveSchema,
+  constraints: z.array(text(16_384)).max(100), criteria: criteriaSchema, request: nativeApprovalRequestSchema }).strict();
+
 export const autorunConfigSchema = z.object({
   ...autorunInputConfigSchema.innerType().shape, objective: objectiveSchema,
   criterionOrigin: z.enum(['verified-human', 'explicit', 'system-objective']),
@@ -361,6 +365,7 @@ export const autorunReadinessSchema = z.discriminatedUnion('kind', [
 ]);
 export type AutorunReadiness = z.infer<typeof autorunReadinessSchema>;
 export const autorunPreviewSchema = z.object({
+  activation: automationActivationSchema.nullable().optional(),
   version: z.literal(1), previewId: id, sessionId: id, goalRevision: count, objective: objectiveSchema.nullable(),
   newHumanInstructions: z.array(humanInstructionSourceSchema).max(100), constraints: z.array(text(16_384)).max(100),
   criteria: criteriaSchema, criterionOrigin: z.enum(['verified-human', 'explicit', 'system-objective']),
@@ -487,7 +492,7 @@ export const automationSummaryV2Schema = z.object({
 export type AutomationSummaryV2 = z.infer<typeof automationSummaryV2Schema>;
 export const automationPageV2Schema = z.object({ items: z.array(automationSummaryV2Schema).max(100), nextCursor: id.nullable() }).strict();
 export type AutomationPageV2 = z.infer<typeof automationPageV2Schema>;
-export type ControlResultV2 = { automation: AutomationV2; inputOwnership: InputOwnership | null; inFlightRunId: string | null };
+export type ControlResultV2 = { automation: AutomationV2; inputOwnership: InputOwnership | null; inFlightRunId: string | null; activation?: import('./activation-contracts').AutomationActivation | null };
 export type ControlResponseV2 = { status: 200 | 202; body: ControlResultV2 };
 /** A run still records host delivery only; null links legacy Heartbeat/Schedule runs. */
 export type AutomationRunV2 = AutomationRun & { decisionId: string | null };

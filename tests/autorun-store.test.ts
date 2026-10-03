@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createAutomationStore } from '../src/stores/automation-store';
 import { autorunPreviewFixture, autorunInput, boundary, contextSnapshot } from './fixtures/autorun-contracts';
 
-test('a slow preview cannot replace newer readiness, and consumed idle stays unavailable to start', async () => {
+test('a slow preview cannot replace newer readiness, and consumed idle readiness remains accurately displayed', async () => {
   let release!: (r: Response) => void;
   const initial = autorunPreviewFixture();
   const selected = { ...initial.recommendedSupervisor, model: 'gpt-6-astra', reasoningEffort: 'xhigh' };
@@ -65,6 +65,7 @@ test('a rejected boundary invalidates ready state and supersedes an in-flight ch
   let freshReply!: (r: Response) => void;
   let previews = 0;
   const store = createAutomationStore({ sessionId: 'session-1' }, async (url, init) => {
+    if (String(url).endsWith('/automation-input')) return Response.json({ ok: true });
     if (String(url).endsWith('autorun-preview')) {
       previews++;
       if (previews === 1) return Response.json(autorunPreviewFixture());

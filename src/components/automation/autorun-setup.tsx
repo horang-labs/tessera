@@ -3,15 +3,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import { useI18n } from '@/lib/i18n';
-import { getAutorunSetupDefaults, sameSupervisorSelection, validateAutomationInputV2, type AutorunPreview, type AutorunInput, type SupervisorSelection, type AutomationV2 } from '@/lib/automation/autorun-contracts';
+import { getAutorunSetupDefaults, supervisorSelectionSchema, sameSupervisorSelection, validateAutomationInputV2, type AutorunPreview, type AutorunInput, type SupervisorSelection, type AutomationV2 } from '@/lib/automation/autorun-contracts';
 import type { AutomationStoreApi } from '@/stores/automation-store';
 import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telemetry/ui-click';
 import { automationButton, automationPrimaryButton } from './ownership-actions';
 import { localDateInput } from './automation-form';
 import { useSettingsStore } from '@/stores/settings-store';
 import { SavedSelection } from './automation-history';
+import { AutomationPreflight } from './automation-preflight';
 import { SupervisorPicker } from './supervisor-picker';
-import { AutomationPreflight, AutomationReadinessRecovery } from './automation-preflight';
 import { AutomationField, AutomationSettingRow, AutomationViewport, automationField, automationNumberField, automationDisclosure, revealAutomationField } from './automation-layout';
 
 export function AutorunPreviewView({ preview, objectiveOverride, objectiveEdited = Boolean(objectiveOverride.trim()), readOnly = false, onObjective, objectiveSnapshot }: {
@@ -33,15 +33,36 @@ export function AutorunPreviewView({ preview, objectiveOverride, objectiveEdited
   </section>;
 }
 
-export function autorunCanStart(preview: AutorunPreview, selection: SupervisorSelection | null, objective: string, expiresAt: number, now: number) {
-  return preview.supervisorCheck?.status === 'available' && selection !== null && preview.supervisorCheck.selection !== null && sameSupervisorSelection(preview.supervisorCheck.selection, selection)
-    && ['completed', 'running'].includes(preview.readiness.kind) && Boolean(objective.trim() || preview?.objective)
-    && selection !== null && preview.supervisorOptions.some(option => option.available && sameSupervisorSelection(option.selection, selection))
-    && preview.remaining.dispatches > 0 && preview.remaining.analyses > 0 && expiresAt > now;
+/** Enable intent validates configuration; inference capability is rechecked by the runtime. */
+export function autorunCanStart(preview: AutorunPreview | null, selection: SupervisorSelection | null, objective: string, expiresAt: number, now: number) {
+  return supervisorSelectionSchema.safeParse(selection).success && Boolean(objective.trim() || preview?.objective?.text.trim()) && expiresAt > now;
 }
 
-export function AutorunSetup({ preview, store, previous, intent = 'start', onDone, onOpenSession, defaultName, intro, footnote, onDraftObjective, requestErrorNotice }: {
-  preview: AutorunPreview | null; store: AutomationStoreApi; previous?: AutomationV2;
+/** Public setup submit path: configuration is complete before any native preview arrives. */
+export async function submitAutorunSetup({ fields, supervisor, objective, preview, sessionId, intent, previous, name, criterion, saveLater, store }: {
+  fields: FormData; supervisor: SupervisorSelection; objective: string; preview: AutorunPreview | null;
+  sessionId: string; intent: 'start' | 'resume' | 'edit' | 'replace'; previous?: AutomationV2;
+  name: string; criterion: string; saveLater: boolean; store: AutomationStoreApi;
+}) {
+  const old = previous?.mode === 'autorun' ? previous : undefined;
+  const lines = (field: string) => String(fields.get(field) ?? '').split('\n').map(s => s.trim()).filter(Boolean);
+  const criterionLines = lines('criteria');
+  if (!objective.trim() && !preview?.objective) return { invalid: true, success: false };
+  const input: AutorunInput = { version: 2, mode: 'autorun', name: String(fields.get('name') ?? old?.name ?? name), enabled: intent !== 'edit' && !saveLater,
+    target: { kind: 'wake-session', sessionId }, trigger: { kind: 'turn-complete', delayMs: Number(fields.get('delay')) * 1000 },
+    limits: { maxDispatches: Number(fields.get('max')), expiresAt: new Date(String(fields.get('expiry'))).getTime() },
+    autorun: { objective: objective.trim() ? { kind: 'explicit', text: objective } : { kind: 'preview', previewId: preview!.previewId, goalRevision: preview!.goalRevision },
+      constraints: lines('constraints'), criteria: criterionLines.length ? criterionLines.map((text, i) => ({ id: `criterion-${i+1}`, text })) : old?.autorun.criteria ?? preview?.criteria ?? [{ id: 'goal', text: criterion }],
+      supervisor, maxAnalyses: Number(fields.get('analyses')), analysisTimeoutMs: Number(fields.get('timeout')) * 1000 } };
+  const valid = validateAutomationInputV2(input, { now: Date.now() });
+  if (!valid.success || (input.enabled && !autorunCanStart(preview, supervisor, objective, input.limits.expiresAt, Date.now()))) return { invalid: true, success: false };
+  if (intent === 'replace' && previous && !await store.getState().remove(previous.id)) return { invalid: false, success: false };
+  const success = await store.getState().save(input, intent === 'edit' ? old : undefined);
+  return { invalid: false, success, id: success ? store.getState().lastControl?.body.automation.id : undefined };
+}
+
+export function AutorunSetup({ preview, store, previous, intent = 'start', onDone, onOpenSession, defaultName, intro, footnote, requestErrorNotice, sessionId }: {
+  sessionId?: string; preview: AutorunPreview | null; store: AutomationStoreApi; previous?: AutomationV2;
   requestErrorNotice?: ReactNode; onDraftObjective?: (text: string) => void; intro?: ReactNode; footnote?: ReactNode; defaultName?: string; intent?: 'start' | 'resume' | 'edit' | 'replace'; onDone: (id: string) => void; onOpenSession: () => void;
 }) {
   const { t } = useI18n();
@@ -49,6 +70,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const [defaults] = useState(() => getAutorunSetupDefaults(Date.now()));
   const settings = useSettingsStore(state => state.settings);
+  const targetSessionId = sessionId ?? preview?.sessionId ?? (previous?.target.kind === 'wake-session' ? previous.target.sessionId : null);
   const old = previous?.mode === 'autorun' ? previous : undefined;
   const draftKey = old ? `${old.id}:${intent}` : 'autorun:new';
   const draftFields = (store.getState().drafts[`${draftKey}:fields`] ?? {}) as Record<string, string>;
@@ -79,9 +101,10 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
   const [invalid, setInvalid] = useState(false);
   const [fieldsSummary, setFieldsSummary] = useState(draftFields);
   const [expiresAt, setExpiresAt] = useState(draftFields.expiry ? new Date(draftFields.expiry).getTime() : old?.limits.expiresAt ?? draft?.limits?.expiresAt ?? defaults.expiresAt);
-  const confirmedSelection = !previewLoading && !previewError && preview && supervisor && preview.supervisorCheck?.status === 'available' && preview.supervisorCheck.selection && sameSupervisorSelection(supervisor, preview.supervisorCheck.selection) && preview.supervisorOptions.some(option => option.available && sameSupervisorSelection(option.selection, supervisor)) ? supervisor : null;
-  const supervisorBlocked = preview?.readiness.kind === 'unavailable' && preview.readiness.code === 'SUPERVISOR_UNSUPPORTED' && preview.supervisorCheck.status === 'unavailable';
-  const ready = Boolean(confirmedSelection && (!objectiveEdited || override.trim()) && autorunCanStart(preview!, confirmedSelection, override, expiresAt, now));
+  const configuredSelectionResult = supervisorSelectionSchema.safeParse(supervisor);
+  const configuredSupervisor = configuredSelectionResult.success ? configuredSelectionResult.data : null;
+  const ready = Boolean(targetSessionId && configuredSupervisor && (!objectiveEdited || override.trim()) && autorunCanStart(preview, configuredSupervisor, override, expiresAt, now)
+    && (!old || (old.dispatchCount < old.limits.maxDispatches && old.analysisCount < old.autorun.maxAnalyses)));
   const retry = () => void store.getState().previewAutorun(supervisor ? { supervisor } : {});
   const changeSupervisor = (value: Partial<SupervisorSelection>) => {
     setSupervisorEdited(true);
@@ -102,39 +125,21 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
     store.setState(state => ({ drafts: { ...state.drafts, [`${draftKey}:fields`]: fields } }));
   }} onSubmit={async event => {
     event.preventDefault();
-    if (!preview || !confirmedSelection || (objectiveEdited && !override.trim())) { setInvalid(true); return; }
+    if (!targetSessionId || !configuredSupervisor || (!override.trim() && !preview?.objective) || (objectiveEdited && !override.trim())) { setInvalid(true); return; }
     const fields = new FormData(event.currentTarget);
-    const lines = (name: string) => String(fields.get(name) ?? '').split('\n').map(s => s.trim()).filter(Boolean);
-    const constraints = lines('constraints');
-    const criterionLines = lines('criteria');
-    const input: AutorunInput = { version: 2, mode: 'autorun', name: String(fields.get('name') ?? old?.name ?? defaultName ?? t('automation.continueWork')), enabled: intent !== 'edit' && (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') !== 'yes',
-      target: { kind: 'wake-session', sessionId: preview.sessionId }, trigger: { kind: 'turn-complete', delayMs: Number(fields.get('delay')) * 1000 },
-      limits: { maxDispatches: Number(fields.get('max')), expiresAt: new Date(String(fields.get('expiry'))).getTime() },
-      autorun: { objective: override.trim() ? { kind: 'explicit', text: override } : { kind: 'preview', previewId: preview.previewId, goalRevision: preview.goalRevision },
-        constraints, criteria: criterionLines.length ? criterionLines.map((text, i) => ({ id: `criterion-${i+1}`, text })) : (preview?.criteria ?? []),
-        supervisor: confirmedSelection, maxAnalyses: Number(fields.get('analyses')), analysisTimeoutMs: Number(fields.get('timeout')) * 1000 } };
-    store.setState(state => ({ drafts: { ...state.drafts, [draftKey]: input } }));
-    const valid = validateAutomationInputV2(input, { now: Date.now() });
-    if (!valid.success || (input.enabled && !autorunCanStart(preview!, confirmedSelection, override, input.limits.expiresAt, Date.now()))) { setInvalid(true); return; }
     setSaving(true); setInvalid(false);
     try {
-      if (intent === 'replace' && previous && !await store.getState().remove(previous.id)) return;
-      if (await store.getState().save(input, intent === 'edit' ? old : undefined)) {
-        const id = store.getState().lastControl?.body.automation.id;
-        if (id) onDone(id);
-      }
+      const result = await submitAutorunSetup({ fields, supervisor: configuredSupervisor, objective: override, preview, sessionId: targetSessionId,
+        intent, previous, name: defaultName ?? t('automation.continueWork'), criterion: t('automation.criterionDefault'),
+        saveLater: (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'yes', store });
+      setInvalid(result.invalid);
+      if (result.success && result.id) onDone(result.id);
     } finally { setSaving(false); }
   }}>
-    <AutomationViewport footerNote={!previewLoading && !previewError && requestErrorNotice ? requestErrorNotice : <>
-      <AutomationPreflight loading={previewLoading} error={previewError} onRetry={retry} />
-      {!previewLoading && !previewError && !ready && (expiresAt <= now || (old && (old.dispatchCount >= old.limits.maxDispatches || old.analysisCount >= old.autorun.maxAnalyses))) ? <p>{t('automation.reasonLimit')}</p>
-        : !previewLoading && !previewError && preview && !supervisorBlocked && ['idle','unavailable'].includes(preview.readiness.kind) ? <AutomationReadinessRecovery preview={preview} resume={intent === 'resume'} onOpenSession={onOpenSession} objective={objectiveEdited ? override : preview.objective?.text} onDraftObjective={onDraftObjective} />
-        : !previewLoading && !previewError && !confirmedSelection ? <div className="grid justify-items-start gap-2"><p>{t(supervisor ? preview?.supervisorCheck.reason === 'selection' ? 'automation.selectionUnsupported' : 'automation.supervisorSetupFailed' : 'automation.chooseSupervisor')}</p>{supervisor && <button type="button" className={automationButton} {...telemetryClickAttributes('automation.autorun.supervisor', 'automation')} onClick={event => { if (preview?.supervisorCheck.reason === 'selection') event.currentTarget.form?.querySelector<HTMLSelectElement>('[name="supervisorModel"]')?.focus(); else { const details = event.currentTarget.form?.querySelector<HTMLDetailsElement>('[data-supervisor-details]'); if (details) { details.open = true; details.querySelector('summary')?.focus(); } } }}>{t(preview?.supervisorCheck.reason === 'selection' ? 'automation.changeSelection' : 'automation.technicalDetails')}</button>}</div>
-        : !previewLoading && !previewError && objectiveEdited && !override.trim() ? <p>{t('automation.goalMissing')}</p> : null}
-    </>} footer={<>
+    <AutomationViewport footerNote={requestErrorNotice ?? (!ready ? <p>{t(!configuredSupervisor ? 'automation.chooseSupervisor' : !override.trim() && !objectiveSnapshot ? 'automation.goalMissing' : 'automation.reasonLimit')}</p> : null)} footer={<>
 
-      <button {...telemetryClickAttributes('automation.autorun.start', 'automation')} className={automationPrimaryButton} type="submit" disabled={saving || !confirmedSelection || (objectiveEdited && !override.trim()) || (intent !== 'edit' && !ready)}>{t(intent === 'resume' ? 'automation.resume' : intent === 'edit' ? 'automation.saveChanges' : intent === 'replace' ? 'automation.replace' : 'automation.start')}</button>
-      {intent === 'start' && <button {...telemetryClickAttributes('automation.form.save', 'automation')} className={automationButton} type="submit" name="saveLater" value="yes" disabled={saving || !confirmedSelection}>{t('automation.save')}</button>}
+      <button {...telemetryClickAttributes('automation.autorun.start', 'automation')} className={automationPrimaryButton} type="submit" disabled={saving || !configuredSupervisor || (objectiveEdited && !override.trim()) || (intent !== 'edit' && !ready)}>{t(intent === 'resume' ? 'automation.resume' : intent === 'edit' ? 'automation.saveChanges' : intent === 'replace' ? 'automation.replace' : 'automation.start')}</button>
+      {intent === 'start' && <button {...telemetryClickAttributes('automation.form.save', 'automation')} className={automationButton} type="submit" name="saveLater" value="yes" disabled={saving || !configuredSupervisor}>{t('automation.save')}</button>}
 
     </>}>
     {intro}
@@ -157,9 +162,11 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
         <AutomationField className="border-t border-(--divider) pt-3" label={t('automation.name')}><input className={automationField} {...telemetryIgnoreAttributes('non_action')} name="name" defaultValue={draftFields.name ?? draft?.name ?? old?.name ?? defaultName ?? t('automation.continueWork')} required maxLength={120} /></AutomationField>
       </div>
     </details>
-    {(preview || previewRejection) && <details data-supervisor-details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')} className="cursor-pointer rounded focus-visible:ring-2 focus-visible:ring-(--accent)">{t('automation.technicalDetails')}</summary><div className="mt-2 grid gap-2">
+    {(preview || previewRejection || previewLoading || previewError) && <details data-supervisor-details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics', 'automation')} className="cursor-pointer rounded focus-visible:ring-2 focus-visible:ring-(--accent)">{t('automation.technicalDetails')}</summary><div className="mt-2 grid gap-2">
+      <AutomationPreflight loading={previewLoading} error={previewError} onRetry={retry} />
+      {preview?.supervisorCheck.status === 'unavailable' && <p>{t(preview.supervisorCheck.reason === 'selection' ? 'automation.selectionUnsupported' : 'automation.supervisorSetupFailed')}</p>}
       {preview && <SavedSelection selection={preview.workerSelection} />}{preview?.readiness.kind === 'unavailable' && <p>{preview.readiness.code} · {preview.readiness.reason}</p>}{preview?.readiness.kind === 'idle' && <p>{preview.readiness.reason}</p>}{previewRejection && <p>{previewRejection}</p>}
-      {!previewLoading && <button type="button" className={`${automationButton} justify-self-start`} {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} onClick={retry}>{t('automation.checkAgain')}</button>}
+      {!previewLoading && !previewError && <button type="button" className={`${automationButton} justify-self-start`} {...telemetryClickAttributes('automation.autorun.refresh', 'automation')} onClick={retry}>{t('automation.checkAgain')}</button>}
     </div></details>}
     {intent === 'replace' && <p>{t('automation.replaceHelp')}</p>}
     {invalid && <p role="alert">{t('automation.invalid')}</p>}
