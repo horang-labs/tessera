@@ -117,7 +117,7 @@ test('edited Heartbeat summary uses the same restored values as its fields',asyn
   assert.match(html,/name="delay"[^>]*value="45"/);assert.match(html,/name="max"[^>]*value="3"/);
 });
 
-test('Heartbeat replacement button matches its guarded submit through pending, ready and failed delete', async () => {
+test('Heartbeat replacement registers intent during checks and retains the old rule if deletion fails', async () => {
   const { heartbeatSetupSubmission } = await import('../src/components/automation/automation-manager');
   const { AutomationForm } = await import('../src/components/automation/automation-form');
   const { createAutomationStore } = await import('../src/stores/automation-store');
@@ -134,6 +134,7 @@ test('Heartbeat replacement button matches its guarded submit through pending, r
   let rejectDelete = true;
   const writes: { method: string; body: unknown }[] = [];
   const store = createAutomationStore({ sessionId: 'session-1' }, async (_url, init) => {
+    if (String(_url).endsWith('/automation-input')) return Response.json({ ok: true });
     if (init?.method && init.method !== 'GET') {
       writes.push({ method: init.method, body: JSON.parse(String(init.body ?? '{}')) });
       if (init.method === 'DELETE' && rejectDelete) return Response.json({ error: { code: 'REVISION_CONFLICT' } }, { status: 409 });
@@ -147,26 +148,23 @@ test('Heartbeat replacement button matches its guarded submit through pending, r
   const actions = () => heartbeatSetupSubmission(store, 'replace', 'session-1', old, id => done.push(id));
   const button = () => renderToStaticMarkup(createElement(AutomationForm, { scope: { sessionId: 'session-1' }, replacing: true, ...actions(), onCancel() {} })).match(/<button[^>]*type="submit"[^>]*>/)?.[0] ?? '';
   const enabledInput = { ...wakeInput(), enabled: true };
-  assert.match(button(), /disabled=""/, 'Pending replacement must visibly block the same action as its handler');
-  assert.equal(await actions().onSave(enabledInput), false);
-  assert.deepEqual(writes, []);
-  store.setState({ previewLoading: false, previewError: 'PREVIEW_TIMEOUT' });
-  assert.match(button(), /disabled=""/);
-  assert.equal(await actions().onSave(enabledInput), false);
-  assert.deepEqual(writes, []);
-  store.setState({ previewError: null });
-  assert.doesNotMatch(button(), /disabled=""/);
+  assert.doesNotMatch(button(), /disabled=""/, 'Native checks do not prevent intent registration');
   assert.equal(await actions().onSave(enabledInput), false);
   assert.equal(retained.state, 'paused');
   assert.deepEqual(writes.map(item => item.method), ['DELETE']);
+  store.setState({ previewLoading: false, previewError: 'PREVIEW_TIMEOUT' });
+  assert.doesNotMatch(button(), /disabled=""/);
+  assert.equal(await actions().onSave(enabledInput), false);
+  assert.equal(retained.state, 'paused');
+  assert.deepEqual(writes.map(item => item.method), ['DELETE', 'DELETE']);
   rejectDelete = false;
   assert.equal(await actions().onSave(enabledInput), true);
-  assert.deepEqual(writes.map(item => item.method), ['DELETE', 'DELETE', 'POST']);
+  assert.deepEqual(writes.map(item => item.method), ['DELETE', 'DELETE', 'DELETE', 'POST']);
   assert.deepEqual(writes.at(-1)?.body, enabledInput);
   assert.deepEqual(done, ['new-heartbeat']);
 });
 
-test('Autorun shows one request error at its footer after pending setup settles', async () => {
+test('Autorun keeps actual request recovery separate from nonblocking preview checks', async () => {
   const { AutorunSetup } = await import('../src/components/automation/autorun-setup');
   const { AutomationError } = await import('../src/components/automation/automation-error');
   const { createAutomationStore } = await import('../src/stores/automation-store');
@@ -178,18 +176,10 @@ test('Autorun shows one request error at its footer after pending setup settles'
     store.setState({ preview, previewLoading, previewError });
     const html = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: { ...store, getInitialState: store.getState }, requestErrorNotice: notice, onDone() {}, onOpenSession() {} }));
     const footer = html.match(/<footer[^>]*>(.*?)<\/footer>/)?.[1] ?? '';
-    if (previewLoading) {
-      assert.match(footer, /aria-busy="true"/);
-      assert.doesNotMatch(footer, /CONTEXT_UNAVAILABLE|role="alert"/);
-    } else if (previewError) {
-      assert.doesNotMatch(footer, /CONTEXT_UNAVAILABLE/);
-      assert.match(footer, />Check again<\/button>/);
-      assert.equal((footer.match(/role="alert"/g) ?? []).length, 1);
-    } else {
-      assert.match(footer, /CONTEXT_UNAVAILABLE/);
-      assert.equal((footer.match(/role="alert"/g) ?? []).length, 1);
-      assert.equal((footer.match(/>Open Session<\/button>/g) ?? []).length, 1);
-      assert.doesNotMatch(footer, /aria-busy="true"/);
-    }
+    assert.match(footer, /CONTEXT_UNAVAILABLE/);
+    assert.equal((footer.match(/role="alert"/g) ?? []).length, 1);
+    assert.equal((footer.match(/>Open Session<\/button>/g) ?? []).length, 1);
+    assert.doesNotMatch(footer, /aria-busy="true"/);
+
   }
 });

@@ -77,6 +77,7 @@ import {
 } from '@/lib/chat/composer-arrow-scroll';
 import { toast } from '@/stores/notification-store';
 import { useVoiceInput } from '@/hooks/use-voice-input';
+import { createAutomationDraftSource } from '@/stores/automation-draft-veto';
 import { useMessageInputAttachments } from '@/hooks/use-message-input-attachments';
 import { dropAttachmentPlaceholders } from '@/lib/chat/attachment-content';
 import { useElectronPlatform } from '@/hooks/use-electron-platform';
@@ -342,10 +343,19 @@ export function MessageInput({
     handlePaste,
     handleRemoveAttachment,
   } = useMessageInputAttachments({
+    sessionId,
     textareaRef,
     setInputValue: setInputValueFromProgrammaticEdit,
     t,
   });
+  const localDraftSource = useMemo(() => createAutomationDraftSource(sessionId), [sessionId]);
+  const previousDraftSource = useRef(localDraftSource);
+  useEffect(() => {
+    // Switching Session explicitly moves this GUI-only surface; retained text was saved above.
+    if (previousDraftSource.current !== localDraftSource) previousDraftSource.current.setHasDraft(false);
+    previousDraftSource.current = localDraftSource;
+    localDraftSource.setHasDraft(inputValue.length > 0 || hasSessionRefs);
+  }, [localDraftSource, inputValue, hasSessionRefs]);
   const MAX_ROWS = 5;
 
   useEffect(() => {

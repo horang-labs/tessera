@@ -3,36 +3,34 @@ import { telemetryClickAttributes, telemetryIgnoreAttributes } from '@/lib/telem
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from 'zustand';
-import { AutomationPreflight, AutomationReadinessRecovery } from './automation-preflight';
 import type { Automation, AutomationInput } from '@/lib/automation/contracts';
 import type { AutomationV2 } from '@/lib/automation/autorun-contracts';
 import type { AutomationScope, AutomationStoreApi } from '@/stores/automation-store';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { AutomationActivationStatus } from './automation-activation';
 import { AutomationForm, localDue } from './automation-form';
 import { AutomationHistory, SavedSelection } from './automation-history';
 import { AutomationError } from './automation-error';
 import { AutomationReason, automationReasonKey } from './automation-reason';
 import { useAutomationOwnership } from './use-automation';
 import { automationButton } from './ownership-actions';
-import { ContinuationResume, heartbeatCanResume, AutomationPauseAction, AutomationResumeAction, automationNeedsLimitReview } from './continuation-resume';
+import { ContinuationResume, AutomationPauseAction, AutomationResumeAction, automationNeedsLimitReview } from './continuation-resume';
 import { AutorunSetup } from './autorun-setup';
 import { AutorunHistory, AutorunEvidence } from './autorun-history';
 import { useAutomationContext } from './automation-context';
-import { AutomationViewport, AutomationFacts, AutomationTime, automationDisclosure, automationNotice } from './automation-layout';
+import { AutomationViewport, AutomationFacts, AutomationTime, automationDisclosure } from './automation-layout';
 
 const selectedAutomationButton = cn(automationButton, 'border-(--accent) bg-(--accent)/10 text-(--accent) font-semibold');
 
 type SetupIntent = 'start' | 'resume' | 'edit' | 'replace';
 /** Keep the rendered Heartbeat action and its guarded control path together. */
-export function heartbeatSetupSubmission(store: AutomationStoreApi, intent: SetupIntent, sessionId: string, rule: AutomationV2 | undefined, onDone: (id: string) => void) {
-  const { preview, previewLoading, previewError, previewRejection } = store.getState();
+export function heartbeatSetupSubmission(store: AutomationStoreApi, intent: SetupIntent, _sessionId: string, rule: AutomationV2 | undefined, onDone: (id: string) => void) {
   return {
-    submitBlocked: Boolean(intent !== 'edit' && sessionId && (intent === 'replace' || previewRejection) && !heartbeatCanResume(preview, previewLoading, previewError)),
+    submitBlocked: store.getState().busy > 0,
     onSave: async (input: AutomationInput, previous?: Automation) => {
       if (intent === 'replace' && rule) {
-        if (!heartbeatCanResume(preview, previewLoading, previewError)) { store.setState({ error: 'INPUT_BOUNDARY_UNPROVEN' }); return false; }
         if (!await store.getState().remove(rule.id)) return false;
       }
       const success = await store.getState().save(input, previous);
@@ -48,7 +46,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
 }) {
   const { t } = useI18n();
   const state = useStore(store);
-  const { items, loading, error, busy, runs, details, decisions, decisionDetails, preview, previewLoading, previewError, view } = state;
+  const { items, loading, error, busy, runs, details, decisions, decisionDetails, preview, previewLoading, view } = state;
   const sessionId = 'sessionId' in scope ? scope.sessionId : '';
   const context = useAutomationContext(scope);
   const ownership = useAutomationOwnership(sessionId);
@@ -163,9 +161,9 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
       {items.some(item => item.state === 'deleted') && <button {...telemetryClickAttributes('automation.manager.include_deleted', 'automation')} className={automationButton} type="button" onClick={() => { setIncludeDeleted(true); returnToList(); }}>{t('automation.deleted')}</button>}
       {!supported ? <p className="px-4">{t('automation.unsupported')}</p> : <>
         {intent === 'resume' && rule ? <ContinuationResume requestErrorNotice={requestErrorNotice} preview={preview} loading={previewLoading} rule={rule} store={store} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} onEdit={() => void setup('edit', rule)} /> : sessionId && method === 'autorun' ? <>
-          {<AutorunSetup requestErrorNotice={requestErrorNotice} key={`${view.selectedId}:${intent}`} preview={preview} store={store} previous={intent === 'replace' ? rule : previewPrevious} intent={intent} intro={setupIntro} footnote={setupFootnote} defaultName={`${context.title} · Autorun`} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} />}
+          {<AutorunSetup sessionId={sessionId} requestErrorNotice={requestErrorNotice} key={`${view.selectedId}:${intent}`} preview={preview} store={store} previous={intent === 'replace' ? rule : previewPrevious} intent={intent} intro={setupIntro} footnote={setupFootnote} defaultName={`${context.title} · Autorun`} onDone={done} onOpenSession={() => onOpenSession(sessionId)} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId, text) : undefined} />}
         </> : <>
-          <AutomationForm {...heartbeatSetupSubmission(store, intent, sessionId, rule, done)} footerNote={(previewLoading || previewError) && requestErrorNotice ? <AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} /> : requestErrorNotice ?? (sessionId && (intent === 'replace' || state.previewRejection) ? <><AutomationPreflight loading={previewLoading} error={previewError} onRetry={() => void store.getState().recheckAutorunPreview()} />{!previewLoading && !previewError && <AutomationReadinessRecovery preview={preview} method="heartbeat" onOpenSession={() => onOpenSession(sessionId)} objective={String((state.drafts[fixedDraftKey] as Record<string,string> | undefined)?.prompt ?? '')} onDraftObjective={ownership.mode === 'human' ? text => onOpenSession(sessionId,text) : undefined} />}</> : undefined)} intro={setupIntro} footnote={<>{setupFootnote}{sessionId && state.previewRejection && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics','automation')} className="cursor-pointer">{t('automation.technicalDetails')}</summary><p>{state.previewRejection}</p>{preview && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && <p>{preview.readiness.reason}</p>}</details>}</>} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
+          <AutomationForm {...heartbeatSetupSubmission(store, intent, sessionId, rule, done)} footerNote={requestErrorNotice} intro={setupIntro} footnote={<>{setupFootnote}{sessionId && state.previewRejection && <details className="text-xs text-(--text-secondary)"><summary {...telemetryClickAttributes('automation.diagnostics','automation')} className="cursor-pointer">{t('automation.technicalDetails')}</summary><p>{state.previewRejection}</p>{preview && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && <p>{preview.readiness.reason}</p>}</details>}</>} key={`${view.selectedId}:${intent}`} scope={scope} previous={intent === 'edit' && rule?.mode !== 'autorun' ? rule : undefined}
             defaultName={`${context.title} · ${sessionId ? 'Heartbeat' : t('automation.schedule')}`} replacing={intent === 'replace'} draft={state.drafts[fixedDraftKey]} onDraft={draft => store.setState(s => ({ drafts: { ...s.drafts, [fixedDraftKey]: draft } }))}
             onCancel={() => updateView({ setup: false })} />
         </>}
@@ -174,14 +172,14 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
       {requestErrorNotice}
       {evidenceId ? decisionDetails[evidenceId] ? <AutorunEvidence detail={decisionDetails[evidenceId]} onOpenSession={onOpenSession} /> : <p>{t('automation.loading')}</p> : <>
         <h3 className="text-base font-semibold break-words">{rule.name}</h3><p className="text-xs text-(--text-muted)">{t(rule.mode === 'autorun' ? 'automation.continueWork' : rule.mode === 'heartbeat' ? 'automation.heartbeat' : 'automation.schedule')}</p>
-        <p className={automationNotice} role="status">{t(`automation.state_${rule.state}`)}{rule.mode === 'autorun' && ` · ${t(`automation.phase_${rule.autorunStatus}`)}`}</p>
+        <AutomationActivationStatus state={rule.state} mode={rule.mode} activation={details[rule.id]?.activation} onOpenSession={() => onOpenSession(sessionId)} />
         <AutomationReason reason={rule.pauseReason} />
         {rule.mode === 'autorun' && rule.attention && <p className="whitespace-pre-wrap">{rule.attention.summary}</p>}
         <AutomationFacts items={[{ label: t('automation.instructionAttempts'), value: `${rule.dispatchCount}/${rule.limits.maxDispatches}` }, ...(rule.mode === 'autorun' ? [{ label: t('automation.analysisAttempts'), value: `${rule.analysisCount}/${rule.autorun.maxAnalyses}` }] : []), { label: t('automation.expiry'), value: <AutomationTime at={rule.limits.expiresAt} /> }]} />
         {timing && <p>{timing}</p>}
         <div className="flex flex-wrap gap-2">
           {rule.state !== 'deleted' && <>
-            {rule.state !== 'enabled' && <AutomationResumeAction reviewLimits={reviewLimits} disabled={busy > 0 || Boolean(sessionId && ownership.mode !== 'human')} onReviewLimits={() => void pauseAndEdit(rule, 'edit')} onResume={() => { if (sessionId) void setup('resume', rule); else void store.getState().enable(rule); }} />}
+            {rule.state !== 'enabled' && <AutomationResumeAction reviewLimits={reviewLimits} disabled={busy > 0 || Boolean(reviewLimits && sessionId && ownership.mode !== 'human')} onReviewLimits={() => void pauseAndEdit(rule, 'edit')} onResume={() => { if (sessionId) void setup('resume', rule); else void store.getState().enable(rule); }} />}
             <button {...telemetryClickAttributes('automation.delete', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(true)}>{t('automation.delete')}</button>
             {deleteConfirm && <div role="alert"><p>{t('automation.deleteConfirm')}</p><button {...telemetryClickAttributes('automation.delete.confirm', 'automation')} className={automationButton} onClick={() => void deleteRule(rule)}>{t('automation.confirmDelete')}</button><button {...telemetryClickAttributes('automation.delete.cancel', 'automation')} className={automationButton} onClick={() => setDeleteConfirm(false)}>{t('automation.cancel')}</button></div>}
             <details className={automationDisclosure}><summary {...telemetryClickAttributes('automation.manager.options', 'automation')}>{t('automation.manage')}</summary>

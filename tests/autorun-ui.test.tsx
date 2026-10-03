@@ -16,7 +16,7 @@ test('setup separates missing objective from unsafe completed context and idle h
   }
 });
 
-test('accepted first running turn can start without completed context; override cannot bypass unsafe or consumed readiness', async () => {
+test('valid activation intent is independent of pending native readiness and exact attestation', async () => {
   const { autorunCanStart } = await import('../src/components/automation/autorun-setup');
   const { hookSubmissionFixture, boundary } = await import('./fixtures/autorun-contracts');
   const base = autorunPreviewFixture();
@@ -26,9 +26,9 @@ test('accepted first running turn can start without completed context; override 
   assert.equal(autorunCanStart(running, running.recommendedSupervisor, '', base.defaults.expiresAt, boundary.completedAt), false);
   for (const readiness of [{ kind: 'idle', reason: 'consumed-boundary' }, { kind: 'unavailable', code: 'CONTEXT_UNAVAILABLE', reason: 'malformed' }] as const) {
     const blocked = autorunPreviewSchema.parse({ ...base, readiness });
-    assert.equal(autorunCanStart(blocked, blocked.recommendedSupervisor, 'Explicit objective', base.defaults.expiresAt, boundary.completedAt), false);
+    assert.equal(autorunCanStart(blocked, blocked.recommendedSupervisor, 'Explicit objective', base.defaults.expiresAt, boundary.completedAt), true);
   }
-  assert.equal(autorunCanStart(running, { ...running.recommendedSupervisor!, model: 'unproven' }, 'Goal', base.defaults.expiresAt, boundary.completedAt), false);
+  assert.equal(autorunCanStart(running, { ...running.recommendedSupervisor!, model: 'unproven' }, 'Goal', base.defaults.expiresAt, boundary.completedAt), true);
 });
 
 test('new setup prefers the exact available worker selection, while an unavailable saved supervisor is retained for correction', async () => {
@@ -39,7 +39,7 @@ test('new setup prefers the exact available worker selection, while an unavailab
   assert.deepEqual(chooseAutorunSupervisor(base), base.recommendedSupervisor);
 });
 
-test('Heartbeat Resume is available when only Autorun supervisor/context is unavailable, but consumed idle remains blocked', async () => {
+test('Heartbeat Resume registers intent for idle or unavailable native readiness', async () => {
   const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
   const { createAutomationStore } = await import('../src/stores/automation-store');
   const { applySessionInputOwnership } = await import('../src/lib/automation/client-state');
@@ -56,7 +56,7 @@ test('Heartbeat Resume is available when only Autorun supervisor/context is unav
     const html = renderToStaticMarkup(createElement(ContinuationResume, { preview, loading: false, rule: rule.data, store, onDone:()=>{}, onOpenSession:()=>{}, onEdit:()=>{} }));
     const button = html.match(/<button[^>]*>Resume<\/button>/)?.[0];
     assert.ok(button);
-    assert.equal( /\sdisabled(?:=|>)/.test(button), readiness.kind === 'idle' || readiness.reason === 'unsafe-runtime');
+    assert.equal( /\sdisabled(?:=|>)/.test(button), false);
   }
 });
 
@@ -77,7 +77,7 @@ test('attention without a protocol reason still shows the owner decision blocker
 });
 
 
-test('Heartbeat cannot resume without a checked runtime preview', async () => {
+test('Heartbeat can register Resume without a runtime preview', async () => {
   const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
   const { createAutomationStore } = await import('../src/stores/automation-store');
   const { automationFixture } = await import('./fixtures/automation');
@@ -85,7 +85,7 @@ test('Heartbeat cannot resume without a checked runtime preview', async () => {
   const rule = decodeAutomation({ ...automationFixture(), state: 'paused' });
   assert.ok(rule.success); rule.data.limits.expiresAt = Date.now()+3600000;
   const html = renderToStaticMarkup(createElement(ContinuationResume, {preview:null,loading:false,rule:rule.data,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
-  assert.match(html.match(/<button[^>]*>Resume<\/button>/)?.[0] ?? '', /\sdisabled(?:=|\s|>)/);
+  assert.doesNotMatch(html.match(/<button[^>]*>Resume<\/button>/)?.[0] ?? '', /\sdisabled(?:=|\s|>)/);
 });
 
 
@@ -236,8 +236,8 @@ test('Resume keeps the saved verified objective and source visible alongside fre
     assert.match(html, /From verified conversation/);
     assert.doesNotMatch(html, /name="objective"/);
     assert.match(html, /New human instruction remains visible\./);
-    assert.match(html, /Send a new worker instruction before resuming/);
-    assert.match(html, /<button[^>]*disabled=""[^>]*>Resume<\/button>/);
+    assert.doesNotMatch(html, /Send a new worker instruction before resuming/);
+    assert.doesNotMatch(html, /<button[^>]*disabled=""[^>]*>Resume<\/button>/);
     assert.doesNotMatch(html, /Different fresh preview goal\./);
   }
 });
@@ -267,7 +267,7 @@ test('preflight distinguishes checking setup from execution and offers retry onl
   assert.equal(renderToStaticMarkup(createElement(AutomationPreflight, { loading: false, error: null, onRetry: () => {} })), '');
 });
 
-test('supervisor discovery offers real model/effort choices but never authorizes Start or replaces an unavailable saved tuple', async () => {
+test('supervisor choices register exact intent without replacing unavailable saved tuples or attesting capability', async () => {
   const { SupervisorControls } = await import('../src/components/automation/supervisor-picker');
   const { AutorunSetup, autorunCanStart } = await import('../src/components/automation/autorun-setup');
   const { createAutomationStore } = await import('../src/stores/automation-store');
@@ -279,22 +279,14 @@ test('supervisor discovery offers real model/effort choices but never authorizes
   const html = renderToStaticMarkup(createElement(SupervisorControls, { catalog: {providerId:'codex',displayName:'Codex',supportsReasoningEffort:true,runtimeEffortChange:true,permissionMappings:[],modeOptions:[],accessOptions:[],planLocksAccess:false,modelOptions:[{value:'gpt-6-astra',label:'GPT-6-Astra',isDefault:false,supportedReasoningEfforts:['low','high','xhigh'].map(value=>({value,label:value,description:''})),serviceTiers:[{value:'priority',label:'Fast',description:''}]}]}, value: selected, onChange: () => {} }));
   assert.match(html, /<option value="gpt-6-astra" selected="">GPT-6-Astra/);
   for (const value of ['low','high','xhigh','fast']) assert.ok(html.includes(`value="${value}"`));
-  assert.equal(autorunCanStart(preview, selected, 'Goal', preview.defaults.expiresAt, boundary.completedAt), false);
+  assert.equal(autorunCanStart(preview, selected, 'Goal', preview.defaults.expiresAt, boundary.completedAt), true);
   const setup = renderToStaticMarkup(createElement(AutorunSetup, { preview, store: createAutomationStore({sessionId:'session-1'}), onDone:()=>{}, onOpenSession:()=>{} }));
   assert.match(setup, /value="xhigh" selected/); assert.match(setup, /This model could not be verified/);
-  assert.match(setup, /<button[^>]*disabled=""[^>]*>Start continuation<\/button>/);
+  assert.doesNotMatch(setup, /<button[^>]*disabled=""[^>]*>Start Autorun<\/button>/);
   const missing = renderToStaticMarkup(createElement(SupervisorControls, { catalog: null, value: selected, onChange:()=>{} }));
   assert.match(missing, /value="gpt-6-astra" selected/); assert.match(missing, /value="xhigh" selected/);
   const stale = autorunPreviewSchema.parse({ ...preview, supervisorCheck: { selection: autorunPreviewFixture().recommendedSupervisor, status:'available', reason:null }, supervisorOptions: autorunPreviewFixture().supervisorOptions });
-  assert.equal(autorunCanStart(stale, selected, 'Goal', preview.defaults.expiresAt, boundary.completedAt), false);
-});
-
-test('Heartbeat replacement cannot use a retained readiness preview after its fresh check fails', async () => {
-  const { heartbeatCanResume } = await import('../src/components/automation/continuation-resume');
-  const preview = autorunPreviewSchema.parse(autorunPreviewFixture());
-  assert.equal(heartbeatCanResume(preview, false, 'PREVIEW_TIMEOUT'), false);
-  assert.equal(heartbeatCanResume(preview, false, 'NETWORK_ERROR'), false);
-  assert.equal(heartbeatCanResume(preview, false, null), true);
+  assert.equal(autorunCanStart(stale, selected, 'Goal', preview.defaults.expiresAt, boundary.completedAt), true);
 });
 
 test('selected supervisor failure identifies the selector, while worker context failure retains its Session recovery', async () => {
@@ -321,7 +313,7 @@ test('selected supervisor failure identifies the selector, while worker context 
 
   const context = autorunPreviewSchema.parse({...preview,readiness:{kind:'unavailable',code:'CONTEXT_UNAVAILABLE',reason:'unsafe-runtime'}});
   const blocked = renderToStaticMarkup(createElement(AutorunSetup, {preview:context,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{}}));
-  assert.match(blocked,/Latest worker context unavailable/);assert.match(blocked,/>Open Session<\/button>/);
+  assert.match(blocked,/CONTEXT_UNAVAILABLE/);assert.doesNotMatch(blocked,/Send a new worker instruction/);
 });
 
 test('setup remains editable before readiness arrives without granting Start or Save', async () => {
@@ -332,7 +324,7 @@ test('setup remains editable before readiness arrives without granting Start or 
   const html = renderToStaticMarkup(createElement(AutorunSetup,{preview:null,store,onDone:()=>{},onOpenSession:()=>{}}));
   assert.match(html, /name="objective"[^>]*required/);
   assert.match(html, /name="supervisorModel"/);
-  assert.match(html, /<button[^>]*disabled=""[^>]*>Start continuation<\/button>/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Start Autorun<\/button>/);
   assert.doesNotMatch(html.match(/<textarea[^>]*name="objective"[^>]*>/)?.[0] ?? '', /\sdisabled(?:=|\s|>)/);
 });
 
