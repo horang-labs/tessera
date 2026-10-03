@@ -24,13 +24,14 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
   const ownership = useAutomationOwnership(rule.target.kind === 'wake-session' ? rule.target.sessionId : '');
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(timer); }, []);
+  const supervisorBlocked = preview?.readiness.kind === 'unavailable' && preview.readiness.code === 'SUPERVISOR_UNSUPPORTED' && preview.supervisorCheck.status === 'unavailable';
   const counts = rule.dispatchCount < rule.limits.maxDispatches && rule.limits.expiresAt > now;
   const reviewLimits = automationNeedsLimitReview(rule, now);
   const ready = !loading && !previewError && counts && ownership.mode === 'human' && (rule.mode !== 'autorun'
-    ? heartbeatCanResume(preview, loading)
+    ? heartbeatCanResume(preview, loading, previewError)
     : Boolean(preview && rule.analysisCount < rule.autorun.maxAnalyses && autorunCanStart(preview, rule.autorun.supervisor,
       rule.autorun.objective.kind === 'explicit' ? rule.autorun.objective.text : '', rule.limits.expiresAt, now)));
-  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={<><AutomationPreflight loading={loading} error={previewError} onRetry={retry} />{!loading && !previewError && preview?.readiness.kind === 'idle' && <div className="flex flex-wrap items-center gap-2"><p>{t('automation.idleFresh')}</p><button type="button" {...telemetryClickAttributes('automation.history.open_session','automation')} className={automationButton} onClick={onOpenSession}>{t('automation.writeInstruction')}</button></div>}{!loading && !previewError && rule.mode === 'autorun' && preview?.readiness.kind === 'unavailable' && <div className="flex flex-wrap items-center gap-2"><p>{t('automation.contextMissing')}</p><button type="button" className={automationButton} {...telemetryClickAttributes('automation.history.open_session','automation')} onClick={onOpenSession}>{t('automation.openSession')}</button></div>}{!loading && !previewError && rule.mode === 'autorun' && preview && ['running','completed'].includes(preview.readiness.kind) && (preview.supervisorCheck.status !== 'available' || !preview.supervisorCheck.selection || !sameSupervisorSelection(preview.supervisorCheck.selection, rule.autorun.supervisor)) && <p>{t('automation.supervisorUnavailable')}</p>}</>} footer={<>
+  return <section className="flex min-h-0 flex-1 flex-col overflow-hidden"><AutomationViewport footerNote={<><AutomationPreflight loading={loading} error={previewError} onRetry={retry} />{!loading && !previewError && preview?.readiness.kind === 'idle' && <div className="flex flex-wrap items-center gap-2"><p>{t('automation.idleFresh')}</p><button type="button" {...telemetryClickAttributes('automation.history.open_session','automation')} className={automationButton} onClick={onOpenSession}>{t('automation.writeInstruction')}</button></div>}{!loading && !previewError && rule.mode === 'autorun' && preview?.readiness.kind === 'unavailable' && !supervisorBlocked && <div className="flex flex-wrap items-center gap-2"><p>{t('automation.contextMissing')}</p><button type="button" className={automationButton} {...telemetryClickAttributes('automation.history.open_session','automation')} onClick={onOpenSession}>{t('automation.openSession')}</button></div>}{!loading && !previewError && rule.mode === 'autorun' && preview && (supervisorBlocked || ['running','completed'].includes(preview.readiness.kind)) && (preview.supervisorCheck.status !== 'available' || !preview.supervisorCheck.selection || !sameSupervisorSelection(preview.supervisorCheck.selection, rule.autorun.supervisor)) && <p>{t('automation.supervisorUnavailable')}</p>}</>} footer={<>
     <AutomationResumeAction reviewLimits={reviewLimits} disabled={store.getState().busy > 0 || (reviewLimits ? ownership.mode !== 'human' : !ready)} onReviewLimits={onEdit} onResume={async () => { if (await store.getState().enable(rule)) onDone(rule.id); }} />
     {!reviewLimits && <button {...telemetryClickAttributes('automation.manager.edit', 'automation')} className={automationButton} type="button" onClick={onEdit}>{t('automation.edit')}</button>}
   </>}>
@@ -45,8 +46,8 @@ export function ContinuationResume({ preview, loading, rule, store, onDone, onOp
 }
 
 /** Autorun-only context/capability failures defer to base Heartbeat server admission. */
-export function heartbeatCanResume(preview: AutorunPreview | null, loading: boolean) {
-  if (loading || !preview || preview.readiness.kind === 'idle') return false;
+export function heartbeatCanResume(preview: AutorunPreview | null, loading: boolean, error?: string | null) {
+  if (loading || error || !preview || preview.readiness.kind === 'idle') return false;
   return preview.readiness.kind !== 'unavailable' || !['unsafe-runtime', 'binding-mismatch'].includes(preview.readiness.reason);
 }
 

@@ -135,7 +135,7 @@ export function AutomationManager({ scope, store, onClose, onOpenSession, suppor
             defaultName={`${context.title} · ${sessionId ? 'Heartbeat' : t('automation.schedule')}`} replacing={intent === 'replace'} draft={state.drafts[fixedDraftKey]} onDraft={draft => store.setState(s => ({ drafts: { ...s.drafts, [fixedDraftKey]: draft } }))}
             onSave={async (input, previous) => {
               if (intent === 'replace' && rule) {
-                if (!heartbeatCanResume(preview, previewLoading)) { store.setState({ error: 'INPUT_BOUNDARY_UNPROVEN' }); return false; }
+                if (!heartbeatCanResume(preview, previewLoading, previewError)) { store.setState({ error: 'INPUT_BOUNDARY_UNPROVEN' }); return false; }
                 if (!await store.getState().remove(rule.id)) return false;
               }
               const success = await store.getState().save(input, previous);

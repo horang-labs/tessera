@@ -290,3 +290,38 @@ test('supervisor discovery offers real model/effort choices but never authorizes
   const stale = autorunPreviewSchema.parse({ ...preview, supervisorCheck: { selection: autorunPreviewFixture().recommendedSupervisor, status:'available', reason:null }, supervisorOptions: autorunPreviewFixture().supervisorOptions });
   assert.equal(autorunCanStart(stale, selected, 'Goal', preview.defaults.expiresAt, boundary.completedAt), false);
 });
+
+test('Heartbeat replacement cannot use a retained readiness preview after its fresh check fails', async () => {
+  const { heartbeatCanResume } = await import('../src/components/automation/continuation-resume');
+  const preview = autorunPreviewSchema.parse(autorunPreviewFixture());
+  assert.equal(heartbeatCanResume(preview, false, 'PREVIEW_TIMEOUT'), false);
+  assert.equal(heartbeatCanResume(preview, false, 'NETWORK_ERROR'), false);
+  assert.equal(heartbeatCanResume(preview, false, null), true);
+});
+
+test('selected supervisor failure identifies the selector, while worker context failure retains its Session recovery', async () => {
+  const { AutorunSetup } = await import('../src/components/automation/autorun-setup');
+  const { createAutomationStore } = await import('../src/stores/automation-store');
+  const base = autorunPreviewFixture();
+  const preview = autorunPreviewSchema.parse({ ...base, supervisorOptions: [], recommendedSupervisor: null,
+    supervisorCheck: { selection: base.recommendedSupervisor, status: 'unavailable', reason: 'selection' },
+    readiness: { kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason: 'unsupported-version' } });
+  const html = renderToStaticMarkup(createElement(AutorunSetup, {preview,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{}}));
+  assert.match(html, /This supervisor is unavailable/);
+  assert.doesNotMatch(html, /Latest worker context unavailable/);
+  const { ContinuationResume } = await import('../src/components/automation/continuation-resume');
+  const { decodeAutomation } = await import('../src/lib/automation/autorun-contracts');
+  const { autorunInput } = await import('./fixtures/autorun-contracts');
+  const { automationFixture } = await import('./fixtures/automation');
+  const { enabled: _enabled, ...input } = autorunInput(); void _enabled;
+  const { prompt: _prompt, ...saved } = automationFixture(); void _prompt;
+  const rule = decodeAutomation({ ...saved, ...input, state:'paused', analysisCount:0,latestDecisionId:null,autorunStatus:'paused',attention:null,
+    autorun:{...input.autorun,objective:base.objective,criterionOrigin:'system-objective'} });
+  assert.ok(rule.success);
+  const resume = renderToStaticMarkup(createElement(ContinuationResume,{preview,loading:false,rule:rule.data,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{},onEdit:()=>{}}));
+  assert.match(resume,/This supervisor is unavailable/); assert.doesNotMatch(resume,/Latest worker context unavailable/);
+
+  const context = autorunPreviewSchema.parse({...preview,readiness:{kind:'unavailable',code:'CONTEXT_UNAVAILABLE',reason:'unsafe-runtime'}});
+  const blocked = renderToStaticMarkup(createElement(AutorunSetup, {preview:context,store:createAutomationStore({sessionId:'session-1'}),onDone:()=>{},onOpenSession:()=>{}}));
+  assert.match(blocked,/Latest worker context unavailable/);assert.match(blocked,/>Open Session<\/button>/);
+});

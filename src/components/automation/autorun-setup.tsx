@@ -61,6 +61,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
   const [fieldsSummary, setFieldsSummary] = useState(draftFields);
   const [expiresAt, setExpiresAt] = useState(draftFields.expiry ? new Date(draftFields.expiry).getTime() : old?.limits.expiresAt ?? draft?.limits?.expiresAt ?? preview.defaults.expiresAt);
   const confirmedSelection = !previewLoading && !previewError && supervisor && preview.supervisorCheck?.status === 'available' && preview.supervisorCheck.selection && sameSupervisorSelection(supervisor, preview.supervisorCheck.selection) && preview.supervisorOptions.some(option => option.available && sameSupervisorSelection(option.selection, supervisor)) ? supervisor : null;
+  const supervisorBlocked = preview.readiness.kind === 'unavailable' && preview.readiness.code === 'SUPERVISOR_UNSUPPORTED' && preview.supervisorCheck.status === 'unavailable';
   const ready = Boolean(confirmedSelection && (!objectiveEdited || override.trim()) && autorunCanStart(preview, confirmedSelection, override, expiresAt, now));
   const retry = () => void store.getState().previewAutorun(supervisor ? { supervisor } : {});
   const changeSupervisor = (value: Partial<SupervisorSelection>) => {
@@ -105,7 +106,7 @@ export function AutorunSetup({ preview, store, previous, intent = 'start', onDon
   }}>
     <AutomationViewport footerNote={<>
       <AutomationPreflight loading={previewLoading} error={previewError} onRetry={retry} />
-      {!previewLoading && !previewError && !ready && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') ? <div className="flex flex-wrap items-center gap-2"><p>{t(preview.readiness.kind === 'idle' ? 'automation.idleFresh' : 'automation.contextMissing')}</p><button type="button" className={automationButton} {...telemetryClickAttributes('automation.history.open_session', 'automation')} onClick={onOpenSession}>{t(preview.readiness.kind === 'idle' ? 'automation.writeInstruction' : 'automation.openSession')}</button></div>
+      {!previewLoading && !previewError && !ready && (preview.readiness.kind === 'idle' || preview.readiness.kind === 'unavailable') && !supervisorBlocked ? <div className="flex flex-wrap items-center gap-2"><p>{t(preview.readiness.kind === 'idle' ? 'automation.idleFresh' : 'automation.contextMissing')}</p><button type="button" className={automationButton} {...telemetryClickAttributes('automation.history.open_session', 'automation')} onClick={onOpenSession}>{t(preview.readiness.kind === 'idle' ? 'automation.writeInstruction' : 'automation.openSession')}</button></div>
         : !previewLoading && !previewError && !confirmedSelection ? <p>{t(supervisor ? 'automation.supervisorUnavailable' : 'automation.chooseSupervisor')}</p> : !previewLoading && !previewError && (expiresAt <= now || preview.remaining.dispatches <= 0 || preview.remaining.analyses <= 0) ? <p>{t('automation.reasonLimit')}</p> : null}
     </>} footer={<>
 
