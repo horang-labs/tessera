@@ -49,7 +49,7 @@ async function createFixtureRuntime(f: ReturnType<typeof fixture>, ownerUserId: 
   f.service.deps.inspect = async () => ({ selection: worker, canonicalWorktreeId: null, assertCurrent() {} });
   f.service.deps.provider = () => provider;
   const engine = new AutomationEngine(f.service, 'autorun-instance');
-  const runtime = createAutomationRuntime({ manager, authority: () => engine, readSelection: async () => worker, autorunProvider: () => provider });
+  const runtime = createAutomationRuntime({ manager, now: f.service.deps.now, authority: () => engine, readSelection: async () => worker, autorunProvider: () => provider });
   f.service.deps.runtime = () => runtime;
   f.service.deps.owner = async () => ({ userId: ownerUserId, agentEnvironment: 'wsl' });
   await manager.create({ userId: ownerUserId, sessionId: 'session-1', terminalId: 'terminal-1', connectionId: 'panel', surfaceId: 'normal',
@@ -65,7 +65,8 @@ async function createFixtureRuntime(f: ReturnType<typeof fixture>, ownerUserId: 
     runtime.autorun!.recordHookEvidence({ kind: 'submission', userId: ownerUserId, agentEnvironment: 'wsl', sessionId: 'session-1', terminalId: 'terminal-1', observedAt: time, evidence: submission });
     return evidence;
   }
-  function complete(evidence: ReturnType<typeof submit>) {
+  function complete(evidence: ReturnType<typeof submit>, observedAfter = time) {
+    time = Math.max(time, observedAfter);
     runtime.autorun!.recordHookEvidence({ kind: 'completion', userId: ownerUserId, agentEnvironment: 'wsl', sessionId: 'session-1', terminalId: 'terminal-1', observedAt: ++time,
       evidence: { ...evidence, dedupKey: `stop-${time}`, completionHookId: `stop-${time}` } });
     manager.automation.hook(ownerUserId, 'session-1', 'Stop', 'completed', ++time, false, 'successful-lead-stop');

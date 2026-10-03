@@ -1,3 +1,4 @@
+import { newActivation } from './activation-state';
 import { isDeepStrictEqual } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { AutomationService, fail, type ListOptions } from './service';
@@ -13,7 +14,9 @@ type Owner = { userId: string; agentEnvironment: 'native' | 'wsl' };
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export class AutorunService {
   reconcileAnalyses:(owner:string,session:string)=>Promise<void> = async()=>{};
-  hasQuarantine(owner:string,session:string) { return this.repo.decisions().some(d=>d.active && d.identity.userId===owner && d.identity.expectedBoundary.sessionId===session); }
+  hasQuarantine(owner:string,session:string) { return this.repo.decisions().some(d=>d.active && d.identity.userId===owner && d.identity.expectedBoundary.sessionId===session) ||
+    this.repo.all().some(v => v.automation.ownerUserId === owner && v.automation.target.kind === 'wake-session' && v.automation.target.sessionId === session &&
+      v.activation?.approvals.some(d => d.quiescent !== true)); }
   private assertSettled(owner:string,session:string) {if(this.hasQuarantine(owner,session))fail('UNRESOLVED_RUN');}
   cancelAnalysis: (id: string) => void = () => {};
   private previews = new Map<string, { owner: string; preview: AutorunPreview; at: number; humanSourceIds: string[] }>();
@@ -98,7 +101,7 @@ export class AutorunService {
     const recommended=options[0]?.selection.serviceTier!=='fast'?options[0]:undefined;
     if(this.hasQuarantine(userId,sessionId))readiness={kind:'unavailable',code:'ANALYSIS_STALE',reason:'unsafe-runtime'};
     if (selected && !options.length) readiness = { kind: 'unavailable', code: 'SUPERVISOR_UNSUPPORTED', reason: 'unsupported-version' };
-    const preview = autorunPreviewSchema.parse({ version: 1, previewId: randomUUID(), sessionId, goalRevision, objective,
+    const preview = autorunPreviewSchema.parse({ activation: this.repo.get(previous?.id ?? '')?.activation?.projection ?? null, version: 1, previewId: randomUUID(), sessionId, goalRevision, objective,
       newHumanInstructions, constraints: input.constraints ?? previous?.autorun.constraints ?? [],
       criteria: input.criteria ?? previous?.autorun.criteria ?? [{ id: 'goal', text: 'Supervisor judgment against the saved objective.' }],
       criterionOrigin: input.criteria ? 'explicit' : previous?.autorun.criterionOrigin ?? 'system-objective',
@@ -116,17 +119,26 @@ export class AutorunService {
     if (input.autorun.objective.kind === 'preview' && (!reference || reference.owner !== userId || reference.preview.sessionId !== input.target.sessionId ||
       reference.at < this.now-300_000 || reference.preview.goalRevision !== input.autorun.objective.goalRevision)) fail('ANALYSIS_STALE');
     if(input.enabled){await this.reconcileAnalyses(userId,input.target.sessionId);this.assertSettled(userId,input.target.sessionId);}
+    if (input.autorun.objective.kind === 'explicit') {
+      const owner = await this.service.authorize(userId);
+      const inspection = await this.service.deps.inspect(userId, input.target, owner.agentEnvironment);
+      inspection.assertCurrent();
+      const objective = { kind: 'explicit' as const, text: input.autorun.objective.text,
+        revision: (saved?.autorun.objective.revision ?? 0) + 1 };
+      const config = autorunConfigSchema.parse({ ...input.autorun, objective,
+        criterionOrigin: saved?.autorun.criterionOrigin ?? 'explicit' });
+      return { preview: null, selection: inspection.selection, config, humanSourceIds: [] as string[] };
+    }
     const preview = await this.preview(userId, input.target.sessionId, {
-      ...(input.autorun.objective.kind === 'explicit' ? { objectiveOverride: input.autorun.objective.text } : reference?.preview.objective?.kind === 'explicit' ? { objectiveOverride: reference.preview.objective.text } : {}),
+      ...(reference?.preview.objective?.kind === 'explicit' ? { objectiveOverride: reference.preview.objective.text } : {}),
       constraints: input.autorun.constraints, criteria: input.autorun.criteria, supervisor: input.autorun.supervisor, includeSupervisorDiscovery: false,
     }, saved);
     if (reference && digest(preview.objective) !== digest(reference.preview.objective)) fail('ANALYSIS_STALE');
     if (!preview.objective) fail('OBJECTIVE_REQUIRED');
-    if (input.enabled && preview.readiness.kind === 'unavailable') fail(preview.readiness.code);
-    if (input.enabled && preview.readiness.kind === 'idle') fail('INPUT_BOUNDARY_UNPROVEN');
+
     if (!preview.supervisorOptions.some(o => sameSupervisorSelection(o.selection, input.autorun.supervisor))) fail('SUPERVISOR_UNSUPPORTED');
     const config = autorunConfigSchema.parse({ ...input.autorun, objective: preview.objective, criterionOrigin: reference?.preview.criterionOrigin ?? preview.criterionOrigin });
-    return { preview, config, humanSourceIds: this.previews.get(preview.previewId)!.humanSourceIds };
+    return { preview, selection: preview.workerSelection, config, humanSourceIds: this.previews.get(preview.previewId)!.humanSourceIds };
   }
   async create(userId: string, key: string, input: AutorunInput, owner: Owner): Promise<DurableControlResult> {
     if (!key || key.length>128) fail('INVALID_AUTOMATION');
@@ -138,23 +150,24 @@ export class AutorunService {
       return existing?.response;
     };
     const old = replay(); if (old) return old;
-    const { preview, config, humanSourceIds } = await this.prepare(userId, input);
+    const { preview, selection, config, humanSourceIds } = await this.prepare(userId, input);
     const { enabled, autorun: _config, ...base } = input; void _config;
     const a: AutorunAutomation = { ...base, autorun: config, id: randomUUID(), revision: 1, state: enabled ? 'enabled' : 'disabled', pauseReason: null,
-      ownerUserId: userId, agentEnvironment: owner.agentEnvironment, savedSelection: preview.workerSelection,
+      ownerUserId: userId, agentEnvironment: owner.agentEnvironment, savedSelection: selection,
       nextDueAt: null, dispatchCount: 0, analysisCount: 0, latestDecisionId: null, autorunStatus: 'waiting', attention: null,
       createdAt: this.now, updatedAt: this.now, deletedAt: null };
     const commit = (evidence: ArmEvidence | null = null, ownership: DurableControlResult['inputOwnership'] = null) => this.repo.transaction(() => {
       if (replay()) fail('IDEMPOTENCY_CONFLICT');
       if (this.repo.all().length>=100) fail('INVALID_AUTOMATION');
-      this.service.checkWakeAvailable(a); this.assertAdmission(a, preview, evidence);
+      this.service.checkWakeAvailable(a);
+      if (a.limits.expiresAt <= this.now) fail('INVALID_AUTOMATION');
+      if (preview && evidence) this.assertAdmission(a, preview, evidence);
       if (evidence?.kind === 'completed') a.nextDueAt = this.now+a.trigger.delayMs;
-      this.repo.save({ automation: a, evidence, ownership, humanSourceIds });
+      this.repo.save({ automation: a, evidence, ownership: ownership ?? this.service.deps.runtime()?.ownership(userId, a.target.sessionId) ?? null, humanSourceIds, activation: newActivation() });
       this.repo.remember(userId, key, hash, this.service.detail(userId, a.id), this.now);
     });
     try {
-      if (enabled) await this.service.runtime().arm({ userId, sessionId: a.target.sessionId, automationId: a.id, selection: a.savedSelection }, commit);
-      else commit();
+      commit();
     } catch (error) { const concurrent = replay(); if (concurrent) return concurrent; throw error; }
     this.service.notify(a); return this.service.detail(userId, a.id);
   }
@@ -191,20 +204,15 @@ export class AutorunService {
     if (a.analysisCount>=a.autorun.maxAnalyses) fail('ANALYSIS_LIMIT');
     if (a.dispatchCount>=a.limits.maxDispatches) fail('INVALID_AUTOMATION');
     await this.reconcileAnalyses(userId,a.target.sessionId);this.assertSettled(userId,a.target.sessionId);
-    // Build current human provenance again; retain explicit authored override, require conflicts to be resolved in Edit.
-    const preview = await this.preview(userId,a.target.sessionId, { supervisor:a.autorun.supervisor, includeSupervisorDiscovery:false }, a);
-    if (!preview.objective) fail('OBJECTIVE_REQUIRED');
-    if (preview.readiness.kind === 'idle') fail('INPUT_BOUNDARY_UNPROVEN');
-    if (preview.readiness.kind === 'unavailable') fail(preview.readiness.code);
-    if (!preview.supervisorOptions.some(o => sameSupervisorSelection(o.selection,a.autorun.supervisor))) fail('SUPERVISOR_UNSUPPORTED');
-    if (!sameSessionSelection(a.savedSelection,preview.workerSelection) || a.limits.expiresAt<=this.now) fail('ANALYSIS_STALE');
-    await this.service.runtime().arm({ userId, sessionId: a.target.sessionId, automationId:id, selection:a.savedSelection }, (e,o) => this.repo.transaction(() => {
+    const inspection = await this.service.deps.inspect(userId, a.target, owner.agentEnvironment);
+    if (!sameSessionSelection(a.savedSelection, inspection.selection) || a.limits.expiresAt <= this.now) fail('ANALYSIS_STALE');
+    this.repo.transaction(() => {
       const current = this.service.editable(userId,id,revision); if (!isAutorun(current.automation)) fail('INVALID_AUTOMATION');
-      this.service.checkWakeAvailable({ ...current.automation,state:'enabled' }); this.assertAdmission(current.automation,preview,e);
-      Object.assign(current.automation,{ revision:revision+1,state:'enabled',pauseReason:null,autorunStatus:'waiting',updatedAt:this.now,
-        nextDueAt:e.kind==='completed'?this.now+a.trigger.delayMs:null,autorun:{...a.autorun,objective:preview.objective} });
-      current.evidence=e;current.ownership=o;current.humanSourceIds=this.previews.get(preview.previewId)!.humanSourceIds;this.repo.save(current);
-    }));
+      inspection.assertCurrent(); this.service.checkWakeAvailable({ ...current.automation, state: 'enabled' });
+      Object.assign(current.automation, { revision: revision+1, state: 'enabled', pauseReason: null, autorunStatus: 'waiting', updatedAt: this.now, nextDueAt: null });
+      current.evidence = null; current.ownership = this.service.deps.runtime()?.ownership(userId,a.target.sessionId) ?? null;
+      current.activation = newActivation(); this.repo.save(current);
+    });
     const body=this.service.detail(userId,id);this.service.notify(body.automation);return {status:200,body};
   }
   inhibit(id: string, reason: string) {

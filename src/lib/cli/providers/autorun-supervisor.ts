@@ -1,3 +1,4 @@
+import type { SupervisorApprovalRequest, SupervisorApprovalResult } from '@/lib/automation/activation-contracts';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { SettingsManager } from '@/lib/settings/manager';
@@ -9,10 +10,10 @@ import { getClaudeModelOptions } from '@/lib/model-config/remote-config';
 import type { ProviderModelOption } from '../provider-session-option-types';
 import { adaptSupervisorModel, nativeModelCandidate, selectionMetadataHash } from './supervisor-model-policy';
 import { isRunningInWsl, execCli } from '../cli-exec';
-import { AUTORUN_BOUNDS, SUPERVISOR_ISOLATION_PROFILES, SUPERVISOR_PROOF_POLICY, sameSupervisorCapability, supervisorPacketSchema,
+import { AUTORUN_BOUNDS, SUPERVISOR_ISOLATION_PROFILES, SUPERVISOR_PROOF_POLICY, sameSupervisorCapability, supervisorPacketSchema, supervisorApprovalPacketSchema,
   type SupervisorCapabilityResult, type SupervisorResult, type SupervisorSelection, type SupervisorDiscovery } from '@/lib/automation/autorun-contracts';
 import type { SupervisorCapabilityRequest, SupervisorDecisionRequest } from './session-types';
-import { parseSupervisorResult, supervisorFailure } from '@/lib/automation/supervisor';
+import { parseSupervisorResult, parseSupervisorApprovalResult, supervisorFailure } from '@/lib/automation/supervisor';
 import { AUTORUN_GROUP_WRAPPER, runOwnedSupervisor, SupervisorProcessUncertain } from './autorun-process';
 import controls from './codex/autorun-controls.json';
 
@@ -103,7 +104,7 @@ async function recoverUncertain(request: WorkspaceRequest, home: string) {
 export function codexSupervisorControls(guestRoot: string, selection: SupervisorSelection): string[] {
   return [...controls.map(s => s.replace('<scratch>', guestRoot)), '-c', 'model_reasoning_effort='+JSON.stringify(selection.reasoningEffort), '-c', 'service_tier='+JSON.stringify(selection.serviceTier)];
 }
-export function supervisorArgs(request: SupervisorDecisionRequest, workspace: SupervisorWorkspace): string[] {
+export function supervisorArgs(request: SupervisorDecisionRequest | SupervisorApprovalRequest, workspace: SupervisorWorkspace): string[] {
   const s = request.selection;
   if (s.provider === 'claude-code') return ['-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--model', s.model,
     '--effort', s.reasoningEffort, '--safe-mode', '--restricted', '--tools', '', '--disable-slash-commands', '--permission-prompts', 'none',
@@ -263,19 +264,24 @@ export async function checkSupervisorCapability(request: SupervisorCapabilityReq
   catch { return unsupported('isolation'); }
   finally { await workspace?.cleanup(); }
 }
-export async function generateSupervisorDecision(request: SupervisorDecisionRequest, deps = defaultSupervisorDependencies): Promise<SupervisorResult> {
+async function generateSupervisorOutput(request: SupervisorDecisionRequest | SupervisorApprovalRequest, deps = defaultSupervisorDependencies): Promise<SupervisorResult | SupervisorApprovalResult> {
+  const approval = 'kind' in request.packet && request.packet.kind === 'approval';
+  const failure = (args: Parameters<typeof supervisorFailure>[0], kind: Parameters<typeof supervisorFailure>[1]): SupervisorResult | SupervisorApprovalResult => {
+    const result = supervisorFailure(args, kind);
+    return approval ? { kind: 'unavailable', reason: result.code, invocationId: request.invocationId, settlement: result.settlement } : result;
+  };
   const base = { invocationId: request.invocationId, quiescent: true, exitCode: null };
-  if (request.signal.aborted) return supervisorFailure(base, 'cancelled');
-  if (request.deadlineAt <= Date.now()) return supervisorFailure(base, 'timeout');
+  if (request.signal.aborted) return failure(base, 'cancelled');
+  if (request.deadlineAt <= Date.now()) return failure(base, 'timeout');
   const stdin = request.trustedInstructions + '\n\n<worker-evidence-json>\n' + JSON.stringify(request.packet) + '\n</worker-evidence-json>';
-  if (!supervisorPacketSchema.safeParse(request.packet).success || Buffer.byteLength(stdin) > AUTORUN_BOUNDS.packetBytes) return supervisorFailure(base, 'invalid-output');
+  if (!(approval ? supervisorApprovalPacketSchema : supervisorPacketSchema).safeParse(request.packet).success || Buffer.byteLength(stdin) > AUTORUN_BOUNDS.packetBytes) return failure(base, 'invalid-output');
   let workspace: SupervisorWorkspace | undefined, quiescent = true;
-  const finish = async (result: SupervisorResult) => {
+  const finish = async (result: SupervisorResult | SupervisorApprovalResult) => {
     if (workspace?.recovery) {
       const observation = await closeSupervisorInvocation(workspace.recovery);
       if (observation.kind !== 'quiescent') {
         quiescent = false; await retainUncertain(request, workspace);
-        return supervisorFailure({ ...base, quiescent: false }, 'provider-error');
+        return failure({ ...base, quiescent: false }, 'provider-error');
       }
     }
     return result;
@@ -283,23 +289,31 @@ export async function generateSupervisorDecision(request: SupervisorDecisionRequ
   try {
     workspace = await deps.prepare(request);
     const capability = await attest(request, workspace, deps);
-    if (request.signal.aborted) return await finish(supervisorFailure(base, 'cancelled'));
-    if (request.deadlineAt <= Date.now()) return await finish(supervisorFailure(base, 'timeout'));
-    if (capability.kind === 'available' && (!request.capability || !sameSupervisorCapability(capability.capability,request.capability))) return await finish(supervisorFailure(base,'unsupported'));
-    if (capability.kind !== 'available') return await finish(supervisorFailure(base, 'unsupported'));
+    if (request.signal.aborted) return await finish(failure(base, 'cancelled'));
+    if (request.deadlineAt <= Date.now()) return await finish(failure(base, 'timeout'));
+    if (capability.kind === 'available' && (!request.capability || !sameSupervisorCapability(capability.capability,request.capability))) return await finish(failure(base,'unsupported'));
+    if (capability.kind !== 'available') return await finish(failure(base, 'unsupported'));
     await fs.rm(workspace.root + '/settled.json', { force: true });
     await fs.writeFile(workspace.root + '/schema.json', JSON.stringify(request.outputSchema), { mode: 0o600 });
     await fs.writeFile(workspace.root + '/launch.json', JSON.stringify({ command: workspace.command, args: supervisorArgs(request, workspace), environment: workspace.environment, deadlineAt: request.deadlineAt }), { mode: 0o600 });
     const result = await runOwnedSupervisor({ ...request, ...workspace, stdin });
     quiescent = result.quiescent;
     if (!quiescent) await retainUncertain(request, workspace);
-    return await finish(parseSupervisorResult({ ...result, selection: request.selection, capability: capability.capability, cliVersion: capability.capability.cliVersion, invocationId: request.invocationId, packet: request.packet }));
+    const output = { ...result, selection: request.selection, capability: capability.capability, cliVersion: capability.capability.cliVersion, invocationId: request.invocationId };
+    return await finish(approval ? parseSupervisorApprovalResult(output) : parseSupervisorResult({ ...output, packet: (request as SupervisorDecisionRequest).packet }));
   } catch (error) {
     if (error instanceof SupervisorProcessUncertain) {
       quiescent = false;
       if (workspace) await retainUncertain(request, workspace);
     }
-    return await finish(supervisorFailure({ ...base, quiescent }, 'provider-error'));
+    return await finish(failure({ ...base, quiescent }, 'provider-error'));
   }
   finally { if (quiescent) await workspace?.cleanup(); }
+}
+
+export async function generateSupervisorDecision(request: SupervisorDecisionRequest, deps = defaultSupervisorDependencies): Promise<SupervisorResult> {
+  return await generateSupervisorOutput(request, deps) as SupervisorResult;
+}
+export async function generateSupervisorApprovalDecision(request: SupervisorApprovalRequest, deps = defaultSupervisorDependencies): Promise<SupervisorApprovalResult> {
+  return await generateSupervisorOutput(request, deps) as SupervisorApprovalResult;
 }

@@ -1,3 +1,4 @@
+import { automationDraftVetoSchema } from '@/lib/automation/activation-contracts';
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { requireAuthenticatedUserId } from '@/lib/auth/api-auth';
@@ -18,7 +19,7 @@ const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 }).strict().refine(v => !v.sessionId || !v.worktreeId);
 const historyQuery = z.object({ cursor: z.string().min(1).optional(), limit: z.coerce.number().int().min(1).max(100).optional() }).strict();
-type Operation = { action: 'list' | 'create' | 'detail' | 'edit' | 'state' | 'delete' | 'runs' | 'resolve' | 'ownership' | 'preview' | 'decisions' | 'decision'; id?: string; runId?: string; decisionId?: string };
+type Operation = { action: 'list' | 'create' | 'detail' | 'edit' | 'state' | 'delete' | 'runs' | 'resolve' | 'ownership' | 'preview' | 'decisions' | 'decision' | 'draft-veto'; id?: string; runId?: string; decisionId?: string };
 async function body<T>(request: NextRequest, schema: z.ZodType<T>): Promise<T> {
   let value: unknown;
   try { value = await request.json(); } catch { fail('INVALID_AUTOMATION', 'A JSON body is required.'); }
@@ -76,6 +77,7 @@ export async function handleAutomationRequest(request: NextRequest, operation: O
         return NextResponse.json(service.autorun.decisions(auth.userId,id,value.data));
       }
       case 'decision': return NextResponse.json(service.autorun.decision(auth.userId,id,operation.decisionId??''));
+      case 'draft-veto': return NextResponse.json(await service.setDraftVeto(auth.userId, id, await body(request, automationDraftVetoSchema)));
       case 'ownership': return NextResponse.json(await service.sessionOwnership(auth.userId, id));
     }
   } catch (error) {

@@ -1,3 +1,5 @@
+import { getNativeAutomationInteraction } from './native-interaction';
+import { nativeInteractionSchema } from './activation-contracts';
 import { prepareAutomationOrigin } from './autorun-origin';
 import { createAutorunRuntime } from './autorun-runtime';
 import { automationServiceTier } from './service-tier';
@@ -18,6 +20,7 @@ function selectionForTarget(target: Target, saved: SessionSelectionSnapshot): Se
 
 export function createAutomationRuntime(options: {
   manager: TerminalManager;
+  now?: () => number;
   autorunProvider?: (provider: string) => AutorunProviderPort | null;
   authority?: () => AutomationAuthority | null;
   createSession?: (sessionId: string, target: Extract<Target, { kind: 'create-session' }>) => void;
@@ -33,7 +36,31 @@ export function createAutomationRuntime(options: {
   const resumedRuns = new Set<string>();
   const recoveries = new Map<string, Promise<import('./runtime-port').RecoveryResult>>();
   const attempts = new Map<string, Promise<DispatchResult>>();
+  const nativeControllers = new Map<string, Set<AbortController>>();
   return {
+    activation: {
+      async observe(scope) {
+        const port = getNativeAutomationInteraction(manager);
+        if (!port) return { kind: 'unavailable', reason: 'native-interaction-adapter-missing' };
+        if (manager.automation.hasDraft(scope.userId, scope.sessionId)) return { kind: 'unknown', reason: 'human-draft' };
+        const parsed = nativeInteractionSchema.safeParse(await port.observe(scope));
+        if (!parsed.success) return { kind: 'unknown', reason: 'native-interaction-invalid' };
+        const observation = parsed.data;
+        const identity = observation.kind === 'approval' ? observation.request.identity : 'identity' in observation ? observation.identity : null;
+        if (identity) {
+          try { manager.automation.assertNativeIdentity(identity); }
+          catch { return { kind: 'unknown', reason: 'native-identity-changed' }; }
+        }
+        return observation;
+      },
+      assertCurrent(expected) {
+        const port = getNativeAutomationInteraction(manager);
+        if (!port) throw new AutomationInputError('RUNTIME_ADAPTER_UNAVAILABLE', 'Native interaction adapter is unavailable.');
+        manager.automation.assertNativeIdentity(expected.identity);
+        port.assertCurrent(expected);
+      },
+      setDraftVeto(scope, veto) { manager.automation.setDraftVeto(scope.userId, scope.sessionId, veto); },
+    },
     autorun: createAutorunRuntime({ ...options, provider: options.autorunProvider }),
     ownership: (userId, sessionId) => manager.automation.ownership(userId, sessionId),
     async arm(args, commit) {
@@ -44,7 +71,10 @@ export function createAutomationRuntime(options: {
       options.verifySelection?.(args.userId, args.sessionId, selection);
       return manager.automation.arm(args.userId, args.sessionId, args.automationId, selection.provider, commit);
     },
-    drain: (args) => manager.automation.drain(args.userId, args.sessionId, args.automationId),
+    drain: (args) => {
+      for (const controller of nativeControllers.get(args.automationId) ?? []) controller.abort();
+      return manager.automation.drain(args.userId, args.sessionId, args.automationId);
+    },
     releaseRecovery: (args, commit) => manager.automation.release(args.userId, args.sessionId, args.runId, commit),
     dispatch(args) {
       const prior = attempts.get(args.runId);
@@ -84,6 +114,61 @@ export function createAutomationRuntime(options: {
           try { port.recordOutcome(args.runId, result); }
           catch { result = { kind: 'unknown', reason: 'OUTCOME_UNRECORDED', sessionId }; }
           if (result.kind === 'unknown' && sessionId) manager.automation.recover(spec.ownerUserId, sessionId, spec.run.automationId, args.runId);
+          return result;
+        }
+        if (spec.action) {
+          const action = spec.action, expected = action.expected, identity = expected.identity, sessionId = spec.target.sessionId;
+          const native = getNativeAutomationInteraction(manager);
+          if (!native) return { kind: 'deferred', reason: 'NATIVE_INTERACTION_UNAVAILABLE', retryAt: Date.now() + 30_000 };
+          const saved = await options.readSelection(spec.ownerUserId, spec.target.sessionId);
+          if (!sameSessionSelection(saved, spec.run.effectiveSelection)) return { kind: 'failed', reason: 'UNSUPPORTED_SELECTION' };
+          const controller = new AbortController();
+          const controllers = nativeControllers.get(spec.run.automationId) ?? new Set<AbortController>();
+          controllers.add(controller); nativeControllers.set(spec.run.automationId, controllers);
+          const timer = setTimeout(() => controller.abort(), Math.max(1, spec.run.deadlineAt - (options.now ?? Date.now)())); timer.unref();
+          let origin: Awaited<ReturnType<typeof prepareAutomationOrigin>> | undefined;
+          let claimed = false, possibleWrite = false;
+          let result: DispatchResult;
+          try {
+            native.assertCurrent(expected); manager.automation.assertNativeIdentity(identity);
+            if (action.kind === 'bootstrap') origin = await prepareAutomationOrigin({ userId: spec.ownerUserId,
+              sessionId: spec.target.sessionId, agentEnvironment: spec.run.agentEnvironment, runId: spec.run.id,
+              runtime: identity, fresh: identity.providerConversationId === null });
+            native.assertCurrent(expected); manager.automation.assertNativeIdentity(identity);
+            manager.automation.claimNativeAction(identity, spec.run.automationId, spec.run.id); claimed = true;
+            const permit = port.beginAttempt(args.runId, args.leaseEpoch, args.expectedRevision);
+            const writeFence: import('./activation-contracts').NativeWriteFence = (phase, write) => {
+              if (controller.signal.aborted) throw Error('Native action cancelled');
+              native.assertCurrent(expected);
+              manager.automation.verifyNativeAction(identity, spec.run.automationId, spec.run.id);
+              options.verifySelection?.(spec.ownerUserId, sessionId, saved);
+              possibleWrite = true;
+              port.withWriteFence(permit, phase, () => {
+                native.assertCurrent(expected);
+                manager.automation.verifyNativeAction(identity, spec.run.automationId, spec.run.id);
+                write(); if (phase === 'complete') origin?.submitted();
+              });
+            };
+            const delivery = action.kind === 'bootstrap'
+              ? native.submitPrompt({ expected: action.expected, prompt: spec.prompt, submissionId: spec.run.id, writeFence, signal: controller.signal })
+              : native.respondApproval({ expected: action.expected, optionId: action.optionId, writeFence, signal: controller.signal });
+            result = await Promise.race([delivery, new Promise<never>((_, reject) => {
+              if (controller.signal.aborted) reject(Error('Native action cancelled'));
+              else controller.signal.addEventListener('abort', () => reject(Error('Native acknowledgement cancelled')), { once: true });
+            })]);
+            if (origin) await origin.flush();
+          } catch {
+            result = possibleWrite ? { kind: 'unknown', reason: 'NATIVE_ACTION_UNKNOWN', sessionId: spec.target.sessionId }
+              : { kind: 'cancelled', reason: 'NATIVE_ACTION_STALE' };
+            if (origin && !possibleWrite) await origin.cancelled().catch(() => {});
+          }
+          try { port.recordOutcome(spec.run.id, result); }
+          catch { result = { kind: 'unknown', reason: 'OUTCOME_UNRECORDED', sessionId }; }
+          finally {
+            clearTimeout(timer); controllers.delete(controller);
+            if (!controllers.size) nativeControllers.delete(spec.run.automationId);
+            if (claimed) manager.automation.finish(spec.ownerUserId, sessionId, result.kind === 'unknown');
+          }
           return result;
         }
         const { sessionId } = spec.target;

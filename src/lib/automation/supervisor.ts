@@ -1,5 +1,6 @@
+import { supervisorApprovalDecisionSchema, type SupervisorApprovalResult } from './activation-contracts';
 import { AUTORUN_BOUNDS, validateSupervisorFinalResult, type SupervisorSelection, type SupervisorResult,
-  type SupervisorCapability, type SupervisorFailureKind } from './autorun-contracts';
+  supervisorFinalResultSchema, sameSupervisorCapability, sameSupervisorSelection, type SupervisorCapability, type SupervisorFailureKind } from './autorun-contracts';
 
 export type SupervisorProcessOutput = {
   selection: SupervisorSelection; capability?: SupervisorCapability; cliVersion: string; invocationId: string;
@@ -20,7 +21,8 @@ interface StreamEvent {
   error?: { code?: string; type?: string }; code?: string;
 }
 /** Partial messages are never decisions. This pure seam is also used after real owned-process settlement. */
-export function parseSupervisorResult(args: SupervisorProcessOutput): SupervisorResult {
+type Envelope = Omit<Extract<SupervisorResult, { kind: 'ok' }>, 'decision'> & { decision: unknown };
+export function parseSupervisorEnvelope(args: Omit<SupervisorProcessOutput, 'packet'>): Envelope | Exclude<SupervisorResult, { kind: 'ok' }> {
   const fail = (kind: SupervisorFailureKind) => supervisorFailure(args, kind);
   if (!args.quiescent) return fail('provider-error');
   if (args.cancelled) return fail('cancelled');
@@ -68,8 +70,27 @@ export function parseSupervisorResult(args: SupervisorProcessOutput): Supervisor
     try { decision = JSON.parse(messages[0].item!.text!); } catch { return fail('invalid-output'); }
     finality = { provider: 'codex', event: 'turn.completed', structuredDecisionCount: 1, executableReceipts: 0 };
   }
-  const result = validateSupervisorFinalResult({ kind: 'ok', capability: args.capability, decision, selection: args.selection, cliVersion: args.cliVersion,
-    effectiveSelection, invocationId: args.invocationId, settlement: { exitCode: 0, quiescent: true }, finality },
-  { selection: args.selection, capability: args.capability, criterionIds: args.packet.criteria.map(c => c.id), evidenceIds: args.packet.context.items.map(i => i.id) });
-  return result.success ? result.data : fail('invalid-output');
+  const result = supervisorFinalResultSchema.omit({ decision: true }).safeParse({ kind: 'ok', capability: args.capability, selection: args.selection,
+    cliVersion: args.cliVersion, effectiveSelection, invocationId: args.invocationId, settlement: { exitCode: 0, quiescent: true }, finality });
+  if (!result.success || !args.capability || !sameSupervisorCapability(result.data.capability, args.capability) ||
+    !sameSupervisorSelection(result.data.selection, result.data.capability.selection) || result.data.cliVersion !== result.data.capability.cliVersion)
+    return fail('unsupported');
+  return { ...result.data, decision };
+}
+export function parseSupervisorResult(args: SupervisorProcessOutput): SupervisorResult {
+  const envelope = parseSupervisorEnvelope(args);
+  if (envelope.kind !== 'ok') return envelope;
+  const result = validateSupervisorFinalResult(envelope, { selection: args.selection, capability: args.capability,
+    criterionIds: args.packet.criteria.map(c => c.id), evidenceIds: args.packet.context.items.map(i => i.id) });
+  return result.success ? result.data : supervisorFailure(args, 'invalid-output');
+}
+export function parseSupervisorApprovalResult(args: Omit<SupervisorProcessOutput, 'packet'>): SupervisorApprovalResult {
+  const envelope = parseSupervisorEnvelope(args);
+  const fail = (reason: string): SupervisorApprovalResult => ({ kind: 'unavailable', reason, invocationId: args.invocationId,
+    settlement: { quiescent: args.quiescent, exitCode: args.exitCode } });
+  if (envelope.kind !== 'ok') return fail(envelope.code);
+  const parsed = supervisorApprovalDecisionSchema.safeParse(envelope.decision);
+  if (!parsed.success) return fail('SUPERVISOR_INVALID_OUTPUT');
+  return { kind: 'ok', decision: parsed.data, selection: envelope.selection, capability: envelope.capability,
+    cliVersion: envelope.cliVersion, invocationId: args.invocationId, settlement: envelope.settlement };
 }

@@ -46,7 +46,7 @@ export class AutomationInputGate {
     if (!state || !state.environment || !['codex', 'claude-code'].includes(state.provider)) return null;
     return { identity: { userId, sessionId, agentEnvironment: state.environment, serverInstanceId: this.serverInstanceId,
       terminalId: state.ownership.terminalId!, generation: state.generation, provider: state.provider as 'codex' | 'claude-code',
-      providerConversationId: state.conversationId ?? null, inputRevision: state.revision }, state: state.status, live: state.live, writer: state.writer,
+      providerConversationId: state.conversationId ?? null, inputRevision: state.revision }, state: state.status === 'unobserved' ? 'unknown' : state.status, live: state.live, writer: state.writer,
       backgroundWork: state.backgroundUnknown ? 'unknown' : state.children.size || state.lifecycleChildren ? 'active' : 'clear',
       hasDraft: this.hasDraft(userId, sessionId), ownershipMode: state.ownership.mode, nativeApprovalId: state.nativeApproval?.requestId ?? null };
   }
