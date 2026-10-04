@@ -86,3 +86,17 @@ Stop a live runtime only when the user requests it or the user-approved operatio
 ```
 
 After any non-zero response, read the structured error code and details, consult version-matched help if needed, and avoid speculative recovery that would change existing resources.
+
+## Archive a Session
+
+Archive an exact Session ID when the user requests it or the authorized work includes retiring that Session:
+
+```sh
+"$TESSERA_CLI_COMMAND" session archive "$session_id" --json
+```
+
+Archive stops the Session's backing runtimes and preserves its conversation and Worktree, including when it is the Worktree's last Session. Siblings remain active. `session stop` only stops a runtime; it does not archive the Session.
+
+An archived Session leaves the normal CLI list and cannot be shown, started, read, or prompted through that active Session interface. Repeating archive on the known ID is supported while its parent Worktree remains active; the existing app UI handles restore. A child of an archived Worktree cannot be archived independently.
+
+Have the parent archive a worker after inspecting its result. Self-archive can terminate the invoking runtime before it receives the response. Never archive a pre-existing Session outside the user's authorized scope.

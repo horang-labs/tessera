@@ -208,6 +208,8 @@ test('archiving a chat stops its live PTY runtime', async (t) => {
   });
   t.after(async () => {
     await terminalManager.closeSession(sessionId, 'user-1');
+    await terminalManager.closeSession(sessionId, 'other-user');
+    await terminalManager.closeSession('archive-live-pty-sibling', 'user-1');
   });
 
   await terminalManager.create({
@@ -228,9 +230,25 @@ test('archiving a chat stops its live PTY runtime', async (t) => {
   });
   assert.equal(terminalManager.getActiveSessionIds('user-1').has(sessionId), true);
 
+  for (const [ownedSessionId, userId] of [
+    [sessionId, 'other-user'], ['archive-live-pty-sibling', 'user-1'],
+  ]) {
+    if (ownedSessionId !== sessionId) dbSessions.createSession(ownedSessionId,
+      'project-lifecycle', 'Sibling', 'claude-code', { workDir: dataDir });
+    await terminalManager.create({
+      terminalId: `${ownedSessionId}-${userId}`, userId,
+      connectionId: `${ownedSessionId}-${userId}-connection`,
+      surfaceId: `${ownedSessionId}-${userId}-surface`, cwd: dataDir,
+      sessionId: ownedSessionId, shellKind: 'default', cols: 80, rows: 24,
+      launchSpec: { program: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: dataDir },
+    });
+  }
+
   await archiveSession(sessionId, true, 'user-1');
 
   assert.equal(terminalManager.getActiveSessionIds('user-1').has(sessionId), false);
+  assert.equal(terminalManager.getActiveSessionIds('other-user').has(sessionId), true);
+  assert.equal(terminalManager.getActiveSessionIds('user-1').has('archive-live-pty-sibling'), true);
 });
 
 test('archiving a task stops the live PTY runtimes of its sessions', async (t) => {

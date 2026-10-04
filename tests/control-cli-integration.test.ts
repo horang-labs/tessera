@@ -625,6 +625,48 @@ test('the CLI creates, starts, launches, lists, and shows detached Sessions with
   }
 });
 
+test('the CLI archives an exact Session through its selected runtime', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-archive-'));
+  const project = { id: 'archive-project', decodedPath: '/archive', displayName: 'Archive', visible: true };
+  const worktree: ControlWorktreeRecord = {
+    worktreeId: 'wt_archive', projectId: project.id, title: 'Archive', branch: 'feature/archive',
+    filesystemPath: '/archive/worktree', preparationStatus: 'succeeded', preparationPhase: 'before', sessions: [],
+  };
+  const runtime = await startRuntime(testRoot, 'archive', project, [worktree]);
+  try {
+    const created = await runCli(['session', 'create', '--worktree', worktree.worktreeId,
+      '--provider', 'claude-code', '--json', '--control-descriptor', runtime.descriptor.path]);
+    const sessionId = JSON.parse(created.stdout).data.sessionId;
+    const archived = await runCli(['session', 'archive', sessionId, '--json',
+      '--control-descriptor', runtime.descriptor.path]);
+    assert.equal(archived.code, 0, archived.stdout);
+    assert.deepEqual(JSON.parse(archived.stdout), {
+      ok: true, apiVersion: 1, data: { sessionId, archived: true, worktreeRemoved: false },
+    });
+    assert.equal(archived.stderr, '');
+    const human = await runCli(['session', 'archive', sessionId, '--control-descriptor', runtime.descriptor.path]);
+    assert.equal(human.code, 0);
+    assert.equal(human.stdout, `Archived Session ${sessionId}\n`);
+    assert.deepEqual(runtime.sessionControls, [
+      { sessionId, kind: 'archive' }, { sessionId, kind: 'archive' },
+    ]);
+    for (const args of [[], [sessionId, 'extra'], ['--force'], [' '], [sessionId, '--restore'],
+      [sessionId, '--json', '--json']]) {
+      const result = await runCli(['session', 'archive', ...args, '--json',
+        '--control-descriptor', runtime.descriptor.path]);
+      assert.equal(result.code, 2);
+      assert.equal(JSON.parse(result.stdout).error.code, 'INVALID_USAGE');
+    }
+    assert.equal(runtime.sessionControls.length, 2);
+    const help = await runCli(['session', 'archive', '--help']);
+    assert.equal(help.code, 0);
+    assert.match(help.stdout, /session archive <session-id> \[--json\]/);
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
 test('Session commands reject malformed success DTOs before JSON or human rendering', async () => {
   const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-control-session-dto-'));
   const session = {
@@ -662,6 +704,7 @@ test('Session commands reject malformed success DTOs before JSON or human render
       ['session', 'prompt', 'session-valid-shape', '--text', 'hello'],
       ['session', 'send-keys', 'session-valid-shape', 'enter'],
       ['session', 'stop', 'session-valid-shape'],
+      ['session', 'archive', 'session-valid-shape'],
       [
         'session', 'launch', '--worktree', 'wt_valid_shape', '--provider', 'codex',
         '--no-prompt',
@@ -687,6 +730,28 @@ test('Session commands reject malformed success DTOs before JSON or human render
       human.stderr,
       'error: The selected Tessera runtime returned an invalid response.\n',
     );
+  } finally {
+    await runtime.close();
+    await fs.rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+test('archive projects its receipt and rejects an invalid archive result in human output', async () => {
+  const testRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'tessera-archive-receipt-'));
+  const data = { sessionId: 'archive-target', archived: true, worktreeRemoved: false, providerState: 'private' };
+  const runtime = await startResponseRuntime(testRoot, 'receipt', () => ({ ok: true, apiVersion: 1, data }));
+  try {
+    const args = ['session', 'archive', 'archive-target', '--control-descriptor', runtime.descriptor.path];
+    const json = await runCli([...args, '--json']);
+    assert.equal(json.code, 0);
+    assert.deepEqual(JSON.parse(json.stdout).data, {
+      sessionId: 'archive-target', archived: true, worktreeRemoved: false,
+    });
+    data.worktreeRemoved = true;
+    const human = await runCli(args);
+    assert.equal(human.code, 1);
+    assert.equal(human.stdout, '');
+    assert.equal(human.stderr, 'error: The selected Tessera runtime returned an invalid response.\n');
   } finally {
     await runtime.close();
     await fs.rm(testRoot, { recursive: true, force: true });
@@ -873,6 +938,9 @@ async function startRuntime(
       ),
     },
     sessionMutator: {
+      archive: async (sessionId: string) => {
+        sessionControls.push({ sessionId, kind: 'archive' });
+      },
       create: async (request: {
         worktreeId: string;
         provider: string;
