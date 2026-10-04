@@ -42,7 +42,7 @@ Tessera turns a pile of terminals into a visible workflow. Give each task its ow
 
 Invoke `/tessera-cli` inside a managed Claude Code, Codex, or OpenCode session. A lead agent can create isolated worktrees, launch parallel sessions, wait for results, inspect their output, and send follow-up prompts—while every worker stays visible in Tessera.
 
-Representative operations: `status` · `worktree create` · `session launch` · `session wait` / `session read` · `session prompt`
+Representative operations: `status` · `worktree create` · `session launch` · `session wait` / `session read` · `session prompt` · `session archive`
 
 ![A lead agent creating and coordinating parallel Tessera sessions](docs/assets/readme/tessera-cli-orchestration.gif)
 

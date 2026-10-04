@@ -39,6 +39,7 @@ export type ControlErrorCode =
   | 'INITIAL_PROMPT_TOO_LARGE'
   | 'INPUT_NOT_ACCEPTED'
   | 'SESSION_NOT_FOUND'
+  | 'SESSION_ARCHIVE_CONFLICT'
   | 'SESSION_NOT_FRESH'
   | 'SESSION_RUNTIME_ALREADY_RUNNING'
   | 'SESSION_RUNTIME_NOT_RUNNING'
@@ -117,9 +118,15 @@ export interface ControlSessionRecord {
 
 export type PublicSessionDto = Omit<ControlSessionRecord, 'providerState'>;
 
+export interface PublicArchivedSessionDto {
+  sessionId: string;
+  archived: true;
+  worktreeRemoved: false;
+}
+
 export interface ControlSessionSource {
   list(worktreeId: string): ControlSessionRecord[];
-  get(sessionId: string): ControlSessionRecord | undefined;
+  get(sessionId: string, options?: { includeArchived?: boolean }): ControlSessionRecord | undefined;
 }
 
 export const CONTROL_CODEX_SERVICE_TIERS = ['fast', 'default'] as const;
@@ -151,6 +158,7 @@ export interface ControlSessionLaunchRequest extends ControlSessionCreationReque
 }
 
 export interface ControlSessionMutator {
+  archive(sessionId: string): Promise<void>;
   create(request: ControlSessionCreationRequest): Promise<ControlSessionRecord>;
   start(request: ControlSessionStartRequest): Promise<{ terminalId: string }>;
   removeCreated(sessionId: string): Promise<void>;
@@ -280,6 +288,7 @@ export interface ControlService {
     context: ControlCallerContext,
   ): Promise<{ sessions: PublicSessionDto[] }>;
   showSession(sessionId: string, context: ControlCallerContext): Promise<PublicSessionDto>;
+  archiveSession(sessionId: string, context: ControlCallerContext): Promise<PublicArchivedSessionDto>;
   createSession(
     request: ControlSessionCreationRequest,
     context: ControlCallerContext,
@@ -528,6 +537,13 @@ export function createControlService(options: {
       return toPublicSession(requireSession(support.sessions, sessionId));
     },
 
+    async archiveSession(sessionId) {
+      const support = requireSessionSupport(sessions, sessionMutator);
+      requireSession(support.sessions, sessionId, { includeArchived: true });
+      await support.mutator.archive(sessionId);
+      return { sessionId, archived: true, worktreeRemoved: false };
+    },
+
     async createSession(request) {
       requireWorktree(worktrees, request.worktreeId);
       const support = requireSessionSupport(sessions, sessionMutator);
@@ -688,8 +704,9 @@ function isSessionWaitCondition(value: unknown): value is TerminalSessionWaitCon
 function requireSession(
   sessions: ControlSessionSource,
   sessionId: string,
+  options?: { includeArchived?: boolean },
 ): ControlSessionRecord {
-  const session = sessions.get(sessionId);
+  const session = sessions.get(sessionId, options);
   if (session) return session;
   throw new ControlOperationError(
     'SESSION_NOT_FOUND',

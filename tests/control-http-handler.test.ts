@@ -132,13 +132,65 @@ test('every Control request authenticates and negotiates the exact runtime and v
   }
 });
 
+test('archive authenticates before dispatch and accepts only an empty POST body', async (t) => {
+  const service = createControlService({
+    appVersion: DESCRIPTOR.appVersion, runtimeId: DESCRIPTOR.runtimeId,
+    projects: { list: () => [], get: () => undefined },
+    worktrees: { list: () => [], get: () => undefined },
+  });
+  const archived: string[] = [];
+  t.mock.method(service, 'archiveSession', async (sessionId: string) => {
+    archived.push(sessionId);
+    return { sessionId, archived: true, worktreeRemoved: false };
+  });
+  const telemetry: Array<{ operation: string; result: string }> = [];
+  const handler = createControlHttpHandler({ descriptor: DESCRIPTOR, service,
+    captureTelemetry: (record) => { telemetry.push(record); } });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const route = '/__tessera/control/v1/sessions/archive-target/archive';
+  const headers = { authorization: `Bearer ${TOKEN}`,
+    [CONTROL_RUNTIME_ID_HEADER]: DESCRIPTOR.runtimeId,
+    [CONTROL_API_VERSION_HEADER]: '1', [CONTROL_APP_VERSION_HEADER]: DESCRIPTOR.appVersion };
+  try {
+    for (const [override, code] of [
+      [{ authorization: '' }, 'UNAUTHORIZED'],
+      [{ authorization: 'Bearer wrong' }, 'UNAUTHORIZED'],
+      [{ [CONTROL_RUNTIME_ID_HEADER]: 'neighbor' }, 'INSTANCE_UNAVAILABLE'],
+      [{ [CONTROL_API_VERSION_HEADER]: '2' }, 'CONTROL_VERSION_MISMATCH'],
+    ] as const) {
+      const result = await getJson(origin, route, { ...headers, ...override }, 'POST', '{}');
+      assert.equal(result.body.error.code, code);
+    }
+    for (const [requestPath, method, body] of [
+      [route, 'GET', undefined], [route, 'POST', '{'],
+      [route, 'POST', '{"archived":false}'], [route, 'POST', '{"force":true}'],
+      [route, 'POST', '{"":false}'],
+      ['/__tessera/control/v1/sessions/%20/archive', 'POST', '{}'],
+      ['/__tessera/control/v1/sessions/%ZZ/archive', 'POST', '{}'],
+    ] as const) {
+      const result = await getJson(origin, requestPath, headers, method, body);
+      assert.equal(result.status, 400);
+      assert.equal(result.body.error.code, 'INVALID_USAGE');
+    }
+    assert.deepEqual(archived, []);
+    const valid = await getJson(origin, route, headers, 'POST', '{}');
+    assert.equal(valid.status, 200);
+    assert.deepEqual(archived, ['archive-target']);
+    assert.deepEqual(telemetry.at(-1), { operation: 'session_archive', result: 'success' });
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
 function getJson(
   origin: string,
   requestPath: string,
   headers: Record<string, string>,
+  method = 'GET',
+  requestBody?: string,
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
-    const request = http.get(`${origin}${requestPath}`, { headers }, (response) => {
+    const request = http.request(`${origin}${requestPath}`, { headers, method }, (response) => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', (chunk) => { body += chunk; });
@@ -151,5 +203,6 @@ function getJson(
       });
     });
     request.on('error', reject);
+    request.end(requestBody);
   });
 }

@@ -24,7 +24,6 @@ const SESSION_PROJECTION_SQL = `
   FROM sessions s
   JOIN tasks t ON t.id = s.task_id
   WHERE s.deleted = 0
-    AND s.archived = 0
     AND t.archived = 0
     AND t.worktree_deleted_at IS NULL
 `;
@@ -33,14 +32,16 @@ export function createDatabaseControlSessionSource(): ControlSessionSource {
   return {
     list: (worktreeId) => (getDb().prepare(`
       ${SESSION_PROJECTION_SQL}
+        AND s.archived = 0
         AND t.public_worktree_id = ?
       ORDER BY s.updated_at DESC, s.id ASC
     `).all(worktreeId) as SessionProjectionRow[])
       .filter(isTerminalProjection)
       .map(toRecord),
-    get: (sessionId) => {
+    get: (sessionId, options) => {
       const row = getDb().prepare(`
         ${SESSION_PROJECTION_SQL}
+          ${options?.includeArchived ? '' : 'AND s.archived = 0'}
           AND s.id = ?
       `).get(sessionId) as SessionProjectionRow | undefined;
       return row && isTerminalProjection(row) ? toRecord(row) : undefined;
