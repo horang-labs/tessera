@@ -167,8 +167,8 @@ test('archive authenticates before dispatch and accepts only an empty POST body'
       [route, 'GET', undefined], [route, 'POST', '{'],
       [route, 'POST', '{"archived":false}'], [route, 'POST', '{"force":true}'],
       [route, 'POST', '{"":false}'],
-      [route.replace('archive-target', '%20'), 'POST', '{}'],
-      [route.replace('archive-target', '%ZZ'), 'POST', '{}'],
+      ['/__tessera/control/v1/sessions/%20/archive', 'POST', '{}'],
+      ['/__tessera/control/v1/sessions/%ZZ/archive', 'POST', '{}'],
     ] as const) {
       const result = await getJson(origin, requestPath, headers, method, body);
       assert.equal(result.status, 400);
