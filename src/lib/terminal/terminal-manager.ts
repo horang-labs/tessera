@@ -765,6 +765,7 @@ export class TerminalManager {
         args: shell.args,
         cwd: shell.cwd,
         displayCwd: shell.displayCwd,
+        env: shell.env,
       }, 'Terminal shell resolved');
       traceTerminalStage('spawn:before', { terminalId: options.terminalId });
       logger.debug({ terminalId: options.terminalId }, 'Terminal spawning PTY');
@@ -784,6 +785,8 @@ export class TerminalManager {
             }
           : {}),
         ...(launchEnv ?? {}),
+        // Last: the resolved args only work with these values in place.
+        ...(shell.env ?? {}),
       };
       const terminalEnv = buildTerminalEnv(
         process.env,
