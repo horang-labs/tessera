@@ -36,6 +36,16 @@ test('packaged replay starts in isolation and missing dependencies or WASM fail 
       await asar.createPackage(source, archive);
       await verifyImageReplayRuntime(archive);
     });
+    await t.test('a symlinked temporary directory preserves the packaged dependency boundary', async () => {
+      const alias = path.join(directory, 'temp-alias');
+      const real = path.join(directory, 'temp-real');
+      await fs.mkdir(real);
+      await fs.symlink(real, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      const originalTmpdir = os.tmpdir;
+      os.tmpdir = () => alias;
+      try { await verifyImageReplayRuntime(source); }
+      finally { os.tmpdir = originalTmpdir; }
+    });
     for (const relative of ['node_modules/quickjs-emscripten', 'node_modules/quickjs-emscripten-core',
       'runtime/image-reference-replay-worker.cjs', 'runtime/image-record-reader.cjs', 'runtime/replay-state-codec.cjs',
       'node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm']) {
