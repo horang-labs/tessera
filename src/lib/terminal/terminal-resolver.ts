@@ -12,6 +12,7 @@ import type {
   TerminalShellKind,
 } from './types';
 import { buildPosixOpenCodeOverlayActivation } from '@/lib/cli/providers/opencode/config-overlay';
+import { buildPosixScriptInvocation } from './posix-script-shell';
 
 export function resolveTerminalCwd(candidate?: string | null): string {
   const requestedCwd = candidate?.trim();
@@ -421,18 +422,22 @@ export function resolveTerminalShell(options: {
   const { command, loginArgs } = resolvePosixTerminalShellCommand(env, platform);
 
   if (launch) {
+    // fish/nushell은 이 POSIX 본문을 못 읽는다 — buildPosixScriptInvocation이
+    // 사용자 셸로 환경만 만들고 본문은 /bin/sh에 넘긴다(#520).
+    const invocation = buildPosixScriptInvocation(
+      command,
+      loginArgs,
+      // CODEX_HOME 재단언은 buildWslTerminalScript의 inner와 같은 이유 —
+      // macOS -l 셸도 .zprofile이 CODEX_HOME을 덮으면 오버레이가 무시된다.
+      'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
+      + buildPosixOpenCodeOverlayActivation()
+      + `exec ${buildPosixCommand(launch.program, launch.args)}`,
+    );
     return {
       command,
-      args: [
-        ...loginArgs,
-        '-c',
-        // CODEX_HOME 재단언은 buildWslTerminalScript의 inner와 같은 이유 —
-        // macOS -l 셸도 .zprofile이 CODEX_HOME을 덮으면 오버레이가 무시된다.
-        'if [ -n "${TESSERA_CODEX_HOME:-}" ]; then CODEX_HOME="$TESSERA_CODEX_HOME"; export CODEX_HOME; fi; '
-        + buildPosixOpenCodeOverlayActivation()
-        + `exec ${buildPosixCommand(launch.program, launch.args)}`,
-      ],
+      args: invocation.args,
       cwd,
+      ...(invocation.env ? { env: invocation.env } : {}),
     };
   }
 

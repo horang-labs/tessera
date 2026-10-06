@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import logger from '@/lib/logger';
 import type { AgentEnvironment } from '@/lib/settings/types';
+import { buildPosixScriptInvocation } from './posix-script-shell';
 import { TERMINAL_PROVIDER_COMMANDS } from './provider-launch';
 import { resolvePosixTerminalShellCommand } from './terminal-resolver';
 
@@ -14,7 +15,8 @@ import { resolvePosixTerminalShellCommand } from './terminal-resolver';
  * 안 된 CLI는 PTY에서 TUI가 직접 로그인 화면을 띄워 준다).
  *
  * 프로브 셸은 PTY 실행이 쓰는 셸과 동일 — 감지 PATH와 실행 PATH가 항상 일치한다:
- *  - posix: resolvePosixTerminalShellCommand (macOS/Linux 서버)
+ *  - posix: resolvePosixTerminalShellCommand (macOS/Linux 서버). fish처럼 POSIX
+ *    문법을 못 읽는 셸은 buildPosixScriptInvocation이 /bin/sh로 스크립트를 넘긴다.
  *  - win32 native: `where` (Windows PATH)
  *  - win32 + agentEnvironment 'wsl': wsl.exe 게스트 로그인 셸 `command -v`
  *    (buildWslTerminalScript의 셸 해석 체인과 동일한 3단계 + `-l -i -c`)
@@ -146,12 +148,17 @@ async function probeWithLoginShell(
   entries: Array<[string, string]>,
 ): Promise<TerminalProviderDetection[]> {
   const { command: shell, loginArgs } = resolvePosixTerminalShellCommand();
-  const { outcome, stdout } = await runProbe(
+  const invocation = buildPosixScriptInvocation(shell, loginArgs, buildCommandProbeScript(entries));
+  const { outcome, stdout, exitCode, stderrTail } = await runProbe(
     shell,
-    [...loginArgs, '-c', buildCommandProbeScript(entries)],
+    invocation.args,
     DETECT_TIMEOUT_MS,
+    invocation.env,
   );
-  if (outcome !== 'success') throw new Error(`terminal login-shell probe failed (${outcome})`);
+  if (outcome !== 'success') {
+    logger.warn({ shell, outcome, exitCode, stderrTail }, 'terminal login-shell probe failed');
+    throw new Error(`terminal login-shell probe failed (${outcome})`);
+  }
   return parseCommandProbeOutput(entries, stdout);
 }
 
@@ -207,24 +214,34 @@ async function probeWithWhere(
   );
 }
 
+// Enough to carry a shell's parse error; rc chatter beyond it is noise.
+const PROBE_STDERR_TAIL_BYTES = 2048;
+
 function runProbe(
   command: string,
   args: string[],
   timeoutMs: number,
+  extraEnv?: Record<string, string>,
 ): Promise<{
   outcome: 'success' | 'exit' | 'error' | 'timeout';
   stdout: string;
+  exitCode: number | null;
+  stderrTail: string;
 }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+    });
     let stdout = '';
+    let stderrTail = '';
     let settled = false;
 
-    const finish = (outcome: 'success' | 'exit' | 'error' | 'timeout') => {
+    const finish = (outcome: 'success' | 'exit' | 'error' | 'timeout', exitCode: number | null = null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ outcome, stdout });
+      resolve({ outcome, stdout, exitCode, stderrTail });
     };
 
     const timer = setTimeout(() => {
@@ -235,7 +252,12 @@ function runProbe(
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
     });
+    // Drained even when unused so a chatty rc cannot fill the pipe and stall
+    // the shell; only the tail is kept to explain a failure.
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderrTail = (stderrTail + chunk.toString('utf8')).slice(-PROBE_STDERR_TAIL_BYTES);
+    });
     child.on('error', () => finish('error'));
-    child.on('close', (code) => finish(code === 0 ? 'success' : 'exit'));
+    child.on('close', (code) => finish(code === 0 ? 'success' : 'exit', code));
   });
 }

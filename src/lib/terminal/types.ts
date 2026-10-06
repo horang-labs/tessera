@@ -115,6 +115,8 @@ export interface TerminalResolvedShell {
   args: string[];
   cwd: string;
   displayCwd?: string;
+  /** Environment the shell needs for its args to work, e.g. a POSIX script handed past fish. */
+  env?: Record<string, string>;
 }
 
 export type TerminalCwdResolution =
