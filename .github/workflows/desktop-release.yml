@@ -263,6 +263,7 @@ jobs:
           dpkg-deb --contents "$deb" | grep -F '/usr/share/applications/tessera.desktop'
 
       - name: Build Arch Linux package
+        timeout-minutes: 15
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
