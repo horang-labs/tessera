@@ -1,0 +1,2 @@
+time="2026-10-06T19:17:47+09:00" level=warning msg="\"/\" is not a shared mount, this could cause issues or missing mounts with rootless containers"
+Error: statfs /tmp/claude-1000/-home-work--tessera-worktrees-from-elec-tessera-dev-feature-1004-bm/dae3b58d-d4ba-482c-880f-0d630084bb59/scratchpad/archtest: no such file or directory

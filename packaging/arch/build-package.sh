@@ -83,7 +83,7 @@ smoke_pid=$!
 ready=false
 for _ in $(seq 1 90); do
   # Require a renderer too, so the check covers the window and not only the forked server.
-  if curl --silent --output /dev/null "http://127.0.0.1:${app_port}/" \
+  if curl --silent --max-time 5 --output /dev/null "http://127.0.0.1:${app_port}/" \
     && pgrep -u builder -f -- '--type=renderer' >/dev/null; then
     ready=true
     break
@@ -91,7 +91,8 @@ for _ in $(seq 1 90); do
   kill -0 "$smoke_pid" 2>/dev/null || break
   sleep 2
 done
-pkill -u builder -f /opt/ || true
+# Kill everything the launch started (xvfb-run, Xvfb, the app) so waiting on it cannot hang.
+pkill -KILL -u builder || true
 wait "$smoke_pid" 2>/dev/null || true
 if [[ "$ready" != true ]]; then
   tail -n 80 "$smoke_log" >&2
