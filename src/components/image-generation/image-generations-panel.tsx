@@ -232,7 +232,8 @@ function ImageGenerationGallery({ traces, onOpenImage }: {
                     <ResultHeroMedia key={trace.result?.url ?? "pending"} result={trace.result} status={trace.status} onOpenImage={onOpenImage} layout="thumbnail" />
                     {view === "cards" && trace.status !== "completed" ? <span className="pointer-events-none absolute left-1 top-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{t(`imagePanel.status.${trace.status}`)}</span> : null}
                   </div>
-                  <button type="button" onClick={() => setSelectedId(trace.id)} aria-label={t("imagePanel.openDetails", { name: title })} className={cn("min-w-0 text-left hover:bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--accent)", view === "cards" ? "block w-full p-2" : "flex-1 rounded p-1")}>
+                  <div className={cn("min-w-0", view === "list" && "flex-1")}>
+                  <button type="button" onClick={() => setSelectedId(trace.id)} aria-label={t("imagePanel.openDetails", { name: title })} className={cn("min-w-0 text-left hover:bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-(--accent)", view === "cards" ? "block w-full p-2" : "block w-full rounded p-1")}>
                     <span className="block truncate text-[11px] font-medium text-(--text-primary)" title={title}>{title}</span>
                     <span className="mt-0.5 block truncate text-[10px] text-(--text-muted)" title={trace.revisedPrompt ?? trace.prompt}>{trace.revisedPrompt ?? trace.prompt}</span>
                     <span className="mt-1 flex items-center gap-1.5 text-[9px] text-(--text-muted)">
@@ -240,6 +241,8 @@ function ImageGenerationGallery({ traces, onOpenImage }: {
                       {!Number.isNaN(date.getTime()) ? <time dateTime={trace.timestamp} className="truncate">{dateFormatter.format(date)}</time> : null}
                     </span>
                   </button>
+                  {trace.inputs.length > 0 ? <GalleryInputStrip inputs={trace.inputs} className={view === "cards" ? "px-2 pb-2" : "px-1 pb-0.5"} onOpenImage={onOpenImage} /> : null}
+                  </div>
                 </article>
               );
             })}
@@ -247,6 +250,38 @@ function ImageGenerationGallery({ traces, onOpenImage }: {
         )}
       </div>
       {selected ? <div className="min-h-0 flex-1 overflow-y-auto p-2" data-testid="image-gallery-details"><ImageGenerationTraceCard key={selected.id} trace={selected} onOpenImage={onOpenImage} /></div> : null}
+    </div>
+  );
+}
+
+function GalleryInputStrip({ inputs, className, onOpenImage }: {
+  inputs: PublicImageGenerationTrace["inputs"];
+  className?: string;
+  onOpenImage: (image: LightboxImage) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className={cn("flex min-w-0 items-center gap-1 overflow-x-auto", className)} data-testid="image-gallery-inputs" aria-label={t("imagePanel.inputs")}>
+      {inputs.map((input, index) => (
+        <button
+          {...telemetryClickAttributes("image_generation.input.open", "right_panel")}
+          key={`${input.url}-${index}`}
+          type="button"
+          draggable={Boolean(input.path)}
+          className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-(--chat-header-border) bg-(--sidebar-hover) focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-(--accent)"
+          onDragStart={(event) => {
+            if (!input.path || !setPathInsertDragData(event.dataTransfer, [input.path])) {
+              event.preventDefault();
+            }
+          }}
+          onDragEnd={clearPathInsertDragData}
+          onClick={() => onOpenImage({ src: input.url, alt: t("imagePanel.inputNumber", { number: index + 1 }) })}
+          aria-label={t("imagePanel.openInput", { number: index + 1 })}
+          title={t("imagePanel.inputNumber", { number: index + 1 })}
+        >
+          <img src={input.url} draggable={false} alt="" loading="lazy" className="h-full w-full object-cover" />
+        </button>
+      ))}
     </div>
   );
 }
