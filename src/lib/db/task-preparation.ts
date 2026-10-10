@@ -62,6 +62,8 @@ export interface TaskPreparationContext {
   branchName: string | null;
   /** The parent-owned checkout, with a temporary child fallback for legacy data. */
   worktreePath: string | null;
+  /** What the worktree was cut from; absent on tasks older than its column. */
+  startPoint: string | null;
 }
 
 /** Read everything a re-run needs to start the same preparation again. */
@@ -72,6 +74,7 @@ export function getTaskPreparationContext(taskId: string): TaskPreparationContex
       tasks.id AS id,
       tasks.project_id AS project_id,
       tasks.worktree_branch AS worktree_branch,
+      tasks.start_point AS start_point,
       ${PARENT_FIRST_WORKTREE_PATH_SQL} AS work_dir
     FROM tasks
     WHERE tasks.id = ?
@@ -79,6 +82,7 @@ export function getTaskPreparationContext(taskId: string): TaskPreparationContex
     id: string;
     project_id: string;
     worktree_branch: string | null;
+    start_point: string | null;
     work_dir: string | null;
   } | undefined;
 
@@ -88,6 +92,7 @@ export function getTaskPreparationContext(taskId: string): TaskPreparationContex
     projectDir: row.project_id,
     branchName: row.worktree_branch,
     worktreePath: row.work_dir,
+    startPoint: row.start_point,
   };
 }
 

@@ -429,7 +429,7 @@ export const ko: I18nMessages = {
       loadFailed: '준비 스크립트를 불러오지 못했습니다.',
       variablesLabel: '사용 가능한 변수',
       variables: {
-        projectDir: '원본 체크아웃',
+        projectDir: '원본 체크아웃 — 다른 워크트리의 브랜치에서 만들면 그 워크트리',
         worktreeDir: '새 워크트리 — 작업 디렉터리이기도 함',
         branchName: '체크아웃한 브랜치',
       },
