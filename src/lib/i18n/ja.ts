@@ -429,7 +429,7 @@ export const ja: I18nMessages = {
       loadFailed: '準備スクリプトを読み込めませんでした。',
       variablesLabel: '使用できる変数',
       variables: {
-        projectDir: '元のチェックアウト',
+        projectDir: '元のチェックアウト — 別のワークツリーのブランチから作成した場合はそのワークツリー',
         worktreeDir: '新しいワークツリー — 作業ディレクトリでもある',
         branchName: 'チェックアウトしたブランチ',
       },

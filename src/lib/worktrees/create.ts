@@ -102,6 +102,29 @@ async function checkoutExistingBranch(options: {
   return { createdBranch: true };
 }
 
+/**
+ * The checkout a new worktree was cut from, when that is another worktree.
+ *
+ * Branching off a local branch that a worktree has checked out means starting
+ * from that worktree, so its ignored files (`.env`, local config) are the ones
+ * preparation should copy, not the project checkout's. Any other start point —
+ * HEAD, a remote-tracking ref, a commit — names no checkout and answers null.
+ * So does the new worktree's own branch: checking out an existing branch makes
+ * the new worktree its holder, and it cannot be its own source.
+ *
+ * The path comes back in Git's spelling, i.e. the agent environment's.
+ */
+export async function findWorktreeHoldingStartPoint(
+  projectDir: string,
+  startPoint: string | null | undefined,
+  newBranchName: string,
+  runGit: GitRunner,
+): Promise<string | null> {
+  const branch = startPoint?.trim().replace(/^refs\/heads\//, '');
+  if (!branch || branch === 'HEAD' || branch === newBranchName) return null;
+  return findWorktreeHoldingBranch(projectDir, branch, runGit);
+}
+
 async function findWorktreeHoldingBranch(
   projectDir: string,
   branchName: string,

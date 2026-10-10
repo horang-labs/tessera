@@ -429,7 +429,7 @@ export const en: I18nMessages = {
       loadFailed: 'Could not load the preparation script.',
       variablesLabel: 'Available variables',
       variables: {
-        projectDir: 'Original checkout',
+        projectDir: 'Original checkout — or the worktree whose branch it was cut from',
         worktreeDir: 'New worktree — also the working directory',
         branchName: 'Branch checked out',
       },

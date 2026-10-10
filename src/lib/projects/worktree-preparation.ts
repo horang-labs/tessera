@@ -33,6 +33,9 @@ import { SettingsManager } from '@/lib/settings/manager';
 import { terminalManager } from '@/lib/terminal/shared-terminal-manager';
 import { broadcastTaskMutation } from '@/lib/ws/mutation-broadcast';
 import { createGitRunner, type GitRunner } from '@/lib/worktrees/git-runner';
+import { findWorktreeHoldingStartPoint } from '@/lib/worktrees/create';
+import { resolveAgentReportedPath } from '@/lib/filesystem/path-environment';
+import type { AgentEnvironment } from '@/lib/settings/types';
 import {
   buildPreparationExecutionSpec,
   type PreparationExecutionSpec,
@@ -102,6 +105,7 @@ export async function startWorktreePreparation(
     const settings = await SettingsManager.load(request.userId);
     const runGit = createGitRunner(settings.agentEnvironment);
     const runnerScriptDir = await resolveRunnerScriptDir(request.worktreePath, runGit);
+    const sourceDir = await resolvePreparationSourceDir(request, settings.agentEnvironment, runGit);
 
     const buildSpec = (phase: PreparationPhase): PreparationExecutionSpec | null =>
       buildPreparationExecutionSpec({
@@ -110,7 +114,7 @@ export async function startWorktreePreparation(
           phase,
         ),
         phase,
-        projectDir: request.projectDir,
+        projectDir: sourceDir,
         worktreePath: request.worktreePath,
         branchName: request.branchName,
         agentEnvironment: settings.agentEnvironment,
@@ -293,6 +297,41 @@ export async function rerunWorktreePreparation(
     worktreePath: context.worktreePath,
     branchName: context.branchName,
   });
+}
+
+/**
+ * The checkout `$TESSERA_PROJECT_DIR` names: the worktree this one was cut
+ * from when it was cut from another worktree's branch, the project checkout
+ * otherwise.
+ *
+ * The start point is read back from the task rather than passed in, so a rerun
+ * resolves the same source as the first run did. Failing to ask Git is not a
+ * reason to fail preparation; the project checkout is what every run used
+ * before this existed.
+ */
+async function resolvePreparationSourceDir(
+  request: WorktreePreparationRequest,
+  agentEnvironment: AgentEnvironment,
+  runGit: GitRunner,
+): Promise<string> {
+  const startPoint = getTaskPreparationContext(request.taskId)?.startPoint;
+  try {
+    const holder = await findWorktreeHoldingStartPoint(
+      request.projectDir,
+      startPoint,
+      request.branchName,
+      runGit,
+    );
+    return holder
+      ? await resolveAgentReportedPath(holder, agentEnvironment)
+      : request.projectDir;
+  } catch (error) {
+    logger.warn(
+      { error, startPoint, taskId: request.taskId },
+      'Could not resolve the worktree a preparation was cut from; using the project checkout',
+    );
+    return request.projectDir;
+  }
 }
 
 /**

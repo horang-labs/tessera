@@ -429,7 +429,7 @@ export const zh: I18nMessages = {
       loadFailed: '无法加载准备脚本。',
       variablesLabel: '可用变量',
       variables: {
-        projectDir: '原始检出目录',
+        projectDir: '原始检出目录 — 若从其他工作树的分支创建，则为该工作树',
         worktreeDir: '新工作树 — 同时是工作目录',
         branchName: '检出的分支',
       },
