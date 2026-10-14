@@ -58,6 +58,7 @@ import {
 } from '@/lib/tasks/project-task-projection-loading';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { cn } from '@/lib/utils';
+import { SEGMENTED_CONTROL_SELECTED } from '@/components/ui/segmented-control';
 import { PHONE_TOUCH_TARGET_HEIGHT } from '@/lib/ui/touch-target';
 import { ProjectWorktreeRow } from '@/components/worktree/project-worktree-row';
 import { ProjectBranchFilter } from '@/components/worktree/project-branch-filter';
@@ -182,7 +183,7 @@ function ProjectListContextHeader({
       <div className="flex min-w-0 items-center gap-2">
         <div
           className={cn(
-            'grid h-6 min-w-0 flex-1 grid-cols-2 rounded-md border border-(--divider) bg-(--sidebar-bg) p-px',
+            'grid h-6 min-w-0 flex-1 grid-cols-2 rounded-md border border-(--divider) bg-(--sidebar-bg) p-0.5',
             // Its two buttons are 44px tall at Phone viewport, which a fixed
             // 24px row would clip; the bar follows them instead (#259).
             'max-sm:h-auto',
@@ -200,8 +201,8 @@ function ProjectListContextHeader({
               'min-w-0 rounded px-1.5 text-[0.6875rem] font-medium leading-none transition-colors',
               PHONE_TOUCH_TARGET_HEIGHT,
               !isRunningFilterActive
-                ? 'bg-(--sidebar-hover) text-(--sidebar-text-active)'
-                : 'text-(--text-muted) hover:text-(--sidebar-text-active)',
+                ? SEGMENTED_CONTROL_SELECTED
+                : 'text-(--text-muted) hover:text-(--text-secondary)',
             )}
             data-testid="sidebar-all-filter"
           >
@@ -216,7 +217,7 @@ function ProjectListContextHeader({
               'flex min-w-0 items-center justify-center gap-1 rounded px-1.5 text-[0.6875rem] font-medium leading-none transition-colors',
               PHONE_TOUCH_TARGET_HEIGHT,
               isRunningFilterActive
-                ? 'bg-[color-mix(in_srgb,var(--success)_13%,var(--sidebar-hover))] text-(--sidebar-text-active)'
+                ? SEGMENTED_CONTROL_SELECTED
                 : 'text-(--text-muted) hover:bg-[color-mix(in_srgb,var(--success)_7%,transparent)] hover:text-(--sidebar-text-active)',
             )}
             data-testid="sidebar-running-filter"
