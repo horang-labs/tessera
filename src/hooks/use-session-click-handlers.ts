@@ -6,6 +6,7 @@ import { useTabStore } from '@/stores/tab-store';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { getSessionSelectionId } from '@/lib/constants/special-sessions';
 import { activateSessionPanel } from '@/lib/session/focus-session-panel';
+import { getRenderedSessionRangeIds } from '@/lib/session/rendered-session-range';
 import { resolveSessionTabOpenMode } from '@/lib/terminal/terminal-preview-policy';
 import { stepAsidePhoneSidebar } from '@/lib/viewport/phone-overlay-step-aside';
 import type { UnifiedSession } from '@/types/chat';
@@ -79,7 +80,10 @@ export function useSessionClickHandlers(options?: {
       // BRANCH A2 — Shift+click: range select from active session
       if (event && event.shiftKey) {
         const selStore = useSelectionStore.getState();
-        const oids = orderedIdsOverride ?? orderedIds ?? [];
+        // Rows on screen win over the data-derived order, which can include
+        // hidden rows or order them differently from what the user sees.
+        const oids = getRenderedSessionRangeIds(event.target)
+          ?? orderedIdsOverride ?? orderedIds ?? [];
         // Use active session as anchor when no prior Ctrl+Click anchor exists
         if (!selStore.lastClickedId) {
           const activeId = getSessionSelectionId(useSessionStore.getState().activeSessionId);

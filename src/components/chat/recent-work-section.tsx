@@ -71,7 +71,7 @@ export const RecentWorkSection = memo(function RecentWorkSection({
   if (items.length === 0) return null;
 
   return (
-    <div className="mb-2" data-testid="recent-work-section">
+    <div className="mb-2" data-testid="recent-work-section" data-session-range-scope="recent-work">
       <CollectionGroup
         {...groupProps}
         collection={null}
