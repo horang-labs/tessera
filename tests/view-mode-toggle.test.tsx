@@ -11,7 +11,7 @@ test('the selected List or Board mode uses a neutral raised surface, not the acc
     onToggle: () => undefined,
     labelMode: 'short',
   }));
-  assert.match(list, /data-testid="view-mode-list"[^>]*bg-\(--sidebar-active\)[^>]*text-\(--text-primary\)/);
+  assert.match(list, /data-testid="view-mode-list"[^>]*bg-\[color-mix\(in_srgb,var\(--text-primary\)_16%,var\(--input-bg\)\)\][^>]*text-\(--text-primary\)/);
   assert.match(list, /data-testid="view-mode-board"[^>]*text-\(--text-muted\)/);
   assert.doesNotMatch(list, /bg-\(--accent\)/);
 
@@ -20,5 +20,5 @@ test('the selected List or Board mode uses a neutral raised surface, not the acc
     onToggle: () => undefined,
     labelMode: 'short',
   }));
-  assert.match(board, /data-testid="view-mode-board"[^>]*bg-\(--sidebar-active\)[^>]*text-\(--text-primary\)/);
+  assert.match(board, /data-testid="view-mode-board"[^>]*bg-\[color-mix\(in_srgb,var\(--text-primary\)_16%,var\(--input-bg\)\)\][^>]*text-\(--text-primary\)/);
 });

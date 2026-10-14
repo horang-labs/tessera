@@ -54,8 +54,8 @@ export const ViewModeToggle = memo(function ViewModeToggle({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
             shouldShowText ? 'min-w-[3.625rem] px-2' : 'w-6 px-1',
             viewMode === 'list'
-              ? 'bg-(--sidebar-active) text-(--text-primary) shadow-sm shadow-black/25'
-              : 'text-(--text-muted) hover:text-(--text-primary)',
+              ? 'bg-[color-mix(in_srgb,var(--text-primary)_16%,var(--input-bg))] text-(--text-primary) shadow-sm shadow-black/30 ring-1 ring-inset ring-[color-mix(in_srgb,var(--text-primary)_14%,transparent)]'
+              : 'text-(--text-muted) hover:text-(--text-secondary)',
           )}
         >
           <List size={14} strokeWidth={2.2} />
@@ -77,8 +77,8 @@ export const ViewModeToggle = memo(function ViewModeToggle({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
             shouldShowText ? 'min-w-[3.625rem] px-2' : 'w-6 px-1',
             viewMode === 'board'
-              ? 'bg-(--sidebar-active) text-(--text-primary) shadow-sm shadow-black/25'
-              : 'text-(--text-muted) hover:text-(--text-primary)',
+              ? 'bg-[color-mix(in_srgb,var(--text-primary)_16%,var(--input-bg))] text-(--text-primary) shadow-sm shadow-black/30 ring-1 ring-inset ring-[color-mix(in_srgb,var(--text-primary)_14%,transparent)]'
+              : 'text-(--text-muted) hover:text-(--text-secondary)',
           )}
         >
           <Columns3 size={14} strokeWidth={2.2} />
