@@ -3,6 +3,7 @@
 import { memo } from 'react';
 import { Columns3, List } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SEGMENTED_CONTROL_SELECTED } from '@/components/ui/segmented-control';
 import { useI18n } from '@/lib/i18n';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import type { ViewMode } from '@/stores/board-store';
@@ -54,7 +55,7 @@ export const ViewModeToggle = memo(function ViewModeToggle({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
             shouldShowText ? 'min-w-[3.625rem] px-2' : 'w-6 px-1',
             viewMode === 'list'
-              ? 'bg-[color-mix(in_srgb,var(--text-primary)_16%,var(--input-bg))] text-(--text-primary) shadow-sm shadow-black/30 ring-1 ring-inset ring-[color-mix(in_srgb,var(--text-primary)_14%,transparent)]'
+              ? SEGMENTED_CONTROL_SELECTED
               : 'text-(--text-muted) hover:text-(--text-secondary)',
           )}
         >
@@ -77,7 +78,7 @@ export const ViewModeToggle = memo(function ViewModeToggle({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--accent)/35',
             shouldShowText ? 'min-w-[3.625rem] px-2' : 'w-6 px-1',
             viewMode === 'board'
-              ? 'bg-[color-mix(in_srgb,var(--text-primary)_16%,var(--input-bg))] text-(--text-primary) shadow-sm shadow-black/30 ring-1 ring-inset ring-[color-mix(in_srgb,var(--text-primary)_14%,transparent)]'
+              ? SEGMENTED_CONTROL_SELECTED
               : 'text-(--text-muted) hover:text-(--text-secondary)',
           )}
         >
