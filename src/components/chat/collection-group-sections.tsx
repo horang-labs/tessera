@@ -6,6 +6,7 @@ import type React from 'react';
 import {
   Archive,
   Check,
+  ChevronRight,
   CircleStop,
   ExternalLink,
   FolderGit2,
@@ -74,10 +75,13 @@ import {
 } from '@/hooks/use-session-processing';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import {
+  SIDEBAR_TREE_CHEVRON,
+  SIDEBAR_TREE_CHILD_INDENT,
+  SIDEBAR_TREE_INDENT_GUIDE,
   SIDEBAR_TREE_LEADING_SLOT,
   SIDEBAR_TREE_ROW_GUTTER,
-  SIDEBAR_TREE_WORKTREE_CHILD_BRANCH,
-  SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
+  SIDEBAR_TREE_ROW_SPACING,
+  SIDEBAR_TREE_TWISTIE_SLOT,
 } from './sidebar-tree-layout';
 import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
@@ -629,7 +633,9 @@ function SubSessionRow({
   return (
     <div
       className={cn(
-        'group/sub relative my-px flex items-center gap-1.5 rounded px-2 py-1 text-[0.75rem] transition-colors duration-150',
+        'group/sub relative flex items-center rounded-md text-[0.8125rem] leading-snug transition-colors duration-150',
+        SIDEBAR_TREE_ROW_GUTTER,
+        SIDEBAR_TREE_ROW_SPACING,
         isRenaming ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
         reorder?.draggingSessionId === sess.id && 'opacity-40',
         isSelected
@@ -682,18 +688,9 @@ function SubSessionRow({
           )}
         />
       )}
-      <div className={cn(
-        'absolute top-1/2 h-px w-[10px] bg-(--divider)',
-        SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
-      )} />
-      {isActive && (
-        <div className={cn(
-          'absolute top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)',
-          SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
-        )} />
-      )}
+      <span aria-hidden className={SIDEBAR_TREE_TWISTIE_SLOT} />
       {showProviderIcons ? (
-        <span className="relative flex shrink-0 items-center">
+        <span className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
           <ProviderLogoMark
             providerId={sess.provider}
             className={COLLECTION_PROVIDER_MARK_CLASS}
@@ -711,14 +708,14 @@ function SubSessionRow({
           />
         </span>
       ) : (
-        <span className="relative flex w-1.5 shrink-0 items-center">
+        <span className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
           <ItemStatusIndicator
             isProcessing={isProcessing}
             isAwaitingUser={isAwaitingUser}
             hasUnread={hasUnread}
             isRunning={runtimePresentation.showRunning}
             sessionKind={liveSession?.kind ?? sess.kind}
-            placement="leading"
+            placement="inline"
             surface="sidebar"
           />
         </span>
@@ -732,7 +729,7 @@ function SubSessionRow({
           onValueChange={setRenameValue}
           onConfirm={confirmRename}
           onCancel={cancelRename}
-          className="min-w-0 flex-1 border-b border-(--accent) bg-transparent text-[0.75rem] text-(--sidebar-text-active) outline-none"
+          className="min-w-0 flex-1 border-b border-(--accent) bg-transparent text-[0.8125rem] text-(--sidebar-text-active) outline-none"
         />
       ) : (
         <span className="min-w-0 flex-1 truncate">{sess.title}</span>
@@ -857,7 +854,10 @@ export function TaskItemRow({
   const [providerMenuAnchor, setProviderMenuAnchor] = useState<DOMRect | null>(null);
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const density = getLinkedWorktreeDensity(task.sessions);
-  const isExpanded = density === 'expanded';
+  const isCollapsed = useBoardStore((state) => state.collapsedTasks[task.id] ?? false);
+  const toggleTaskCollapse = useBoardStore((state) => state.toggleTaskCollapse);
+  const isExpandable = density === 'expanded';
+  const isExpanded = isExpandable && !isCollapsed;
   const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.id, task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
   const activeTabId = useTabStore((state) => state.activeTabId);
@@ -1094,8 +1094,9 @@ export function TaskItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/task relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150 max-sm:pr-14',
+          'group/task relative flex select-none items-center rounded-md transition-all duration-150 max-sm:pr-14',
           SIDEBAR_TREE_ROW_GUTTER,
+          SIDEBAR_TREE_ROW_SPACING,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1127,6 +1128,25 @@ export function TaskItemRow({
         aria-current={isTaskActive ? 'true' : undefined}
         data-testid={`collection-task-${task.id}`}
       >
+        <span className={SIDEBAR_TREE_TWISTIE_SLOT}>
+          {isExpandable && (
+            <button
+              {...telemetryClickAttributes('collection.task.toggle_collapse', 'workspace_list')}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleTaskCollapse(task.id);
+              }}
+              onDoubleClick={(event) => event.stopPropagation()}
+              className="flex h-3.5 w-3.5 items-center justify-center rounded-sm hover:bg-(--sidebar-hover)"
+              aria-expanded={isExpanded}
+              aria-label={isExpanded ? 'Collapse sessions' : 'Expand sessions'}
+              data-testid={`collection-task-twistie-${task.id}`}
+            >
+              <ChevronRight className={cn(SIDEBAR_TREE_CHEVRON, isExpanded && 'rotate-90')} />
+            </button>
+          )}
+        </span>
         {/* Pending, preparation, and ready states share one slot so the title stays put. */}
         <span className={SIDEBAR_TREE_LEADING_SLOT}>
           {hasPreparationBadge ? (
@@ -1184,7 +1204,7 @@ export function TaskItemRow({
           ) : (
             <span
               className={cn(
-                'block truncate text-[0.8125rem] font-medium leading-snug text-(--sidebar-text-active)',
+                'block truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 (isGeneratingTitle || isPending) && 'title-generating'
               )}
               style={
@@ -1221,7 +1241,7 @@ export function TaskItemRow({
             // on touch is unreliable and, when it fires from a tap, races the
             // row's own onClick that opens the session. Stop/archive drop into
             // the kebab menu on phone (see max-sm:hidden below).
-            'absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
+            'absolute inset-y-0 right-0 flex items-center justify-end rounded-r-md pr-1.5 transition-opacity duration-150',
             hasVisibleRuntimeSession ? 'w-28' : 'w-24',
             'max-sm:opacity-100 max-sm:pointer-events-auto',
             isHovered && !isRenaming
@@ -1231,7 +1251,7 @@ export function TaskItemRow({
         >
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 w-full rounded-r-lg max-sm:hidden"
+            className="absolute inset-y-0 right-0 w-full rounded-r-md max-sm:hidden"
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">
@@ -1300,7 +1320,7 @@ export function TaskItemRow({
 
       {isExpanded && (
         <div
-          className={cn('relative', SIDEBAR_TREE_WORKTREE_CHILD_BRANCH)}
+          className={cn('relative space-y-px', SIDEBAR_TREE_CHILD_INDENT)}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes(COLLECTION_ITEM_DND_MIME)) return;
 
@@ -1315,7 +1335,7 @@ export function TaskItemRow({
             }
           }}
         >
-          <div className="absolute bottom-2 left-0 top-0 w-px bg-(--divider)" />
+          <div aria-hidden className={SIDEBAR_TREE_INDENT_GUIDE} />
           {visibleSessions.map((session) => (
             <SubSessionRow
               key={session.id}
@@ -1342,7 +1362,7 @@ export function TaskItemRow({
                 event.stopPropagation();
                 toggle();
               }}
-              className="w-full px-2 py-1 text-left text-[0.6875rem] text-(--text-muted) hover:text-(--sidebar-text-active)"
+              className="w-full py-1 pl-7 pr-2 text-left text-[0.6875rem] text-(--text-muted) hover:text-(--sidebar-text-active)"
               data-testid={`collection-task-show-more-${task.id}`}
             >
               {revealed ? t('task.showLess') : t('task.showMore', { count: hiddenCount })}
@@ -1494,8 +1514,9 @@ export function ChatItemRow({
           resetArchiveConfirm();
         }}
         className={cn(
-          'group/chat relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-all duration-150 max-sm:pr-10',
+          'group/chat relative flex select-none items-center rounded-md transition-all duration-150 max-sm:pr-10',
           SIDEBAR_TREE_ROW_GUTTER,
+          SIDEBAR_TREE_ROW_SPACING,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
@@ -1527,6 +1548,7 @@ export function ChatItemRow({
         data-item-id={session.id}
         data-testid={`collection-chat-${session.id}`}
       >
+        <span aria-hidden className={SIDEBAR_TREE_TWISTIE_SLOT} />
         <span className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
           {showProviderIcons ? (
             <ProviderLogoMark
@@ -1575,7 +1597,7 @@ export function ChatItemRow({
           ) : (
             <span
               className={cn(
-                'block truncate text-[0.8125rem] font-medium leading-snug text-(--sidebar-text-active)',
+                'block truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 isGeneratingTitle && 'title-generating'
               )}
               style={
@@ -1620,7 +1642,7 @@ export function ChatItemRow({
 
         <div
           className={cn(
-            'absolute inset-y-0 right-0 flex items-start justify-end rounded-r-lg pr-1.5 pt-1.5 transition-opacity duration-150',
+            'absolute inset-y-0 right-0 flex items-center justify-end rounded-r-md pr-1.5 transition-opacity duration-150',
             runtimePresentation.canStop ? 'sm:w-28' : 'sm:w-24',
             'max-sm:w-10 max-sm:opacity-100 max-sm:pointer-events-auto',
             isHovered && !isRenaming
@@ -1630,7 +1652,7 @@ export function ChatItemRow({
         >
           <div
             aria-hidden
-            className="absolute inset-y-0 right-0 w-full rounded-r-lg max-sm:hidden"
+            className="absolute inset-y-0 right-0 w-full rounded-r-md max-sm:hidden"
             style={hoverActionFadeStyle}
           />
           <div className="relative flex pointer-events-auto items-center gap-0.5">

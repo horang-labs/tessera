@@ -172,14 +172,14 @@ export function ProjectStrip({
             PHONE_TOUCH_TARGET,
             'max-sm:!w-8 max-sm:!h-8 max-sm:!min-w-0 max-sm:!min-h-0',
             isAllMode
-              ? 'text-(--accent)'
+              ? 'text-(--sidebar-text-active)'
               : 'text-(--text-muted) hover:text-(--sidebar-text-active)',
             isPopoutActive && 'opacity-40 cursor-not-allowed hover:text-(--text-muted)',
           )}
           data-testid="project-strip-all"
         >
           {isAllMode && !isPopoutActive && (
-            <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r bg-(--accent)" />
+            <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r bg-(--sidebar-text-active)" />
           )}
           <Home className="w-5 h-5 max-sm:w-3.5 max-sm:h-3.5" />
         </button>
@@ -241,7 +241,7 @@ export function ProjectStrip({
                   data-testid={`project-strip-${p.encodedDir}`}
                 >
                   {isSelected && (
-                    <div className="absolute -left-1.5 top-1 bottom-1 w-0.5 rounded-r bg-(--accent)" />
+                    <div className="absolute -left-1.5 top-1 bottom-1 w-0.5 rounded-r bg-(--sidebar-text-active)" />
                   )}
                   {letter}
                   {runningCount > 0 && (

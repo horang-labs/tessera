@@ -454,6 +454,7 @@ export const TELEMETRY_UI_CONTROLS = [
   'collection.move.open',
   'collection.move.select',
   'collection.subsessions.toggle',
+  'collection.task.toggle_collapse',
   'creation.sheet.close',
   'creation.collection.input',
   'creation.task.title_input',
