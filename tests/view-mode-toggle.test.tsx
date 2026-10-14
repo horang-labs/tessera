@@ -5,19 +5,20 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { ViewModeToggle } from '@/components/tab/view-mode-toggle';
 
-test('the selected List or Board mode uses the accent surface for clear contrast', () => {
+test('the selected List or Board mode uses a neutral raised surface, not the accent fill', () => {
   const list = renderToStaticMarkup(createElement(ViewModeToggle, {
     viewMode: 'list',
     onToggle: () => undefined,
     labelMode: 'short',
   }));
-  assert.match(list, /data-testid="view-mode-list"[^>]*bg-\(--accent\)[^>]*text-white/);
-  assert.match(list, /data-testid="view-mode-board"[^>]*text-\(--text-secondary\)/);
+  assert.match(list, /data-testid="view-mode-list"[^>]*bg-\(--sidebar-active\)[^>]*text-\(--text-primary\)/);
+  assert.match(list, /data-testid="view-mode-board"[^>]*text-\(--text-muted\)/);
+  assert.doesNotMatch(list, /bg-\(--accent\)/);
 
   const board = renderToStaticMarkup(createElement(ViewModeToggle, {
     viewMode: 'board',
     onToggle: () => undefined,
     labelMode: 'short',
   }));
-  assert.match(board, /data-testid="view-mode-board"[^>]*bg-\(--accent\)[^>]*text-white/);
+  assert.match(board, /data-testid="view-mode-board"[^>]*bg-\(--sidebar-active\)[^>]*text-\(--text-primary\)/);
 });

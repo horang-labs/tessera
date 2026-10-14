@@ -50,9 +50,13 @@ import type { AgentExecutionMode } from '@/lib/session/agent-execution-mode';
 import { buildTaskChildSession } from '@/lib/session/task-child-session';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 import {
+  SIDEBAR_TREE_CHEVRON,
   SIDEBAR_TREE_CHILD_INDENT,
+  SIDEBAR_TREE_INDENT_GUIDE,
   SIDEBAR_TREE_LEADING_SLOT,
   SIDEBAR_TREE_ROW_GUTTER,
+  SIDEBAR_TREE_ROW_SPACING,
+  SIDEBAR_TREE_TWISTIE_SLOT,
 } from './sidebar-tree-layout';
 
 async function createSessionInTask(
@@ -558,32 +562,28 @@ export const CollectionGroup = memo(function CollectionGroup({
           }
           onDragEnd={!disableDnd && !isUncategorized ? onGroupDragEnd : undefined}
           className={cn(
-            'group/collection relative flex select-none items-center gap-2 rounded-lg py-1.5 transition-colors duration-150',
+            'group/collection relative flex select-none items-center rounded-md transition-colors duration-150',
             SIDEBAR_TREE_ROW_GUTTER,
+            SIDEBAR_TREE_ROW_SPACING,
             !isEmpty && 'cursor-pointer',
             !disableDnd && !isUncategorized && 'cursor-grab active:cursor-grabbing',
             'hover:bg-(--sidebar-hover)/60',
-            !isCollapsed && 'bg-(--sidebar-hover)/30',
             isUncategorized && 'opacity-70',
             isDragOver && !isGroupDragOver && 'bg-[color-mix(in_srgb,var(--accent)_12%,transparent)]',
           )}
           onClick={isEmpty ? undefined : onToggleCollapse}
           data-testid={`collection-header-${collectionId}`}
         >
-          <div className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
-            {isEmpty ? (
-              <Tag className="absolute inset-0 h-3.5 w-3.5 text-(--text-muted)" />
-            ) : (
-              <>
-                <Tag className="absolute inset-0 h-3.5 w-3.5 text-(--text-muted) transition-opacity duration-150 group-hover/collection:opacity-0" />
-                <ChevronRight
-                  className={cn(
-                    'absolute inset-0 h-3.5 w-3.5 text-(--text-muted) opacity-0 transition-all duration-150 group-hover/collection:opacity-100',
-                    !isCollapsed && 'rotate-90',
-                  )}
-                />
-              </>
+          <span className={SIDEBAR_TREE_TWISTIE_SLOT} aria-hidden>
+            {!isEmpty && (
+              <ChevronRight
+                className={cn(SIDEBAR_TREE_CHEVRON, !isCollapsed && 'rotate-90')}
+                data-testid={`collection-twistie-${collectionId}`}
+              />
             )}
+          </span>
+          <div className={cn('relative', SIDEBAR_TREE_LEADING_SLOT)}>
+            <Tag className="h-3.5 w-3.5 text-(--text-muted)" />
             {collectionIndicatorStatus && isCollapsed && (
               <span data-testid={`collection-status-indicator-${collectionId}`}>
                 <ItemStatusIndicator
@@ -678,8 +678,9 @@ export const CollectionGroup = memo(function CollectionGroup({
 
       {!isCollapsed && (
         <div
-          className={cn('space-y-0.5', !hideHeader && SIDEBAR_TREE_CHILD_INDENT)}
+          className={cn('relative space-y-px', !hideHeader && SIDEBAR_TREE_CHILD_INDENT)}
         >
+          {!hideHeader && totalItems > 0 && <div aria-hidden className={SIDEBAR_TREE_INDENT_GUIDE} />}
           {orderedItems ? (
             orderedItems.map((item) => {
               if (item.type === 'task') {
@@ -695,7 +696,7 @@ export const CollectionGroup = memo(function CollectionGroup({
               {tasks.map((task) => renderTaskRow(task))}
 
               {chats.length > 0 && (
-                <div className="relative space-y-0.5">
+                <div className="relative space-y-px">
                   {tasks.length > 0 && (
                     <div className="pointer-events-none absolute -top-px left-4 right-4 h-px bg-(--divider) opacity-20" />
                   )}

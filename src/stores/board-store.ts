@@ -78,6 +78,10 @@ interface BoardState {
   toggleCollectionCollapse: (colId: string) => void;
   setCollectionCollapsed: (colId: string, collapsed: boolean) => void;
 
+  // Worktree task collapse state (List sidebar tree). Tasks default expanded.
+  collapsedTasks: Record<string, boolean>;
+  toggleTaskCollapse: (taskId: string) => void;
+
   // All Projects sidebar section expansion state (defaults collapsed on app start)
   allProjectsExpandedSections: Record<string, boolean>;
   toggleAllProjectsSection: (projectId: string) => void;
@@ -149,6 +153,7 @@ interface BoardState {
 const VIEW_MODE_KEY = 'ccw:viewMode';
 const PROJECT_VIEW_MODES_KEY = 'ccw:projectViewModes';
 const COLLAPSED_COLLECTIONS_KEY = 'ccw:collapsedCollections';
+const COLLAPSED_TASKS_KEY = 'ccw:collapsedTasks';
 const SELECTED_PROJECT_DIR_KEY = 'ccw:selectedProjectDir';
 const ALL_PROJECTS_EXPANDED_SECTIONS_KEY = 'ccw:allProjectsExpandedSections';
 const LIST_RUNNING_FILTER_KEY = 'ccw:listRunningFilterActive';
@@ -469,6 +474,16 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       };
       saveCollapsedCollections(collapsedCollections);
       return { collapsedCollections };
+    }),
+
+  collapsedTasks: loadBooleanRecord(COLLAPSED_TASKS_KEY),
+  toggleTaskCollapse: (taskId) =>
+    set((state) => {
+      const collapsedTasks = { ...state.collapsedTasks };
+      if (collapsedTasks[taskId]) delete collapsedTasks[taskId];
+      else collapsedTasks[taskId] = true;
+      saveBooleanRecord(COLLAPSED_TASKS_KEY, collapsedTasks);
+      return { collapsedTasks };
     }),
 
   allProjectsExpandedSections: loadBooleanRecord(ALL_PROJECTS_EXPANDED_SECTIONS_KEY),

@@ -62,7 +62,7 @@ test('collection list rows switch between default type icons and provider marks'
 
   assert.match(
     collectionSource,
-    /<ProviderLogoMark\s+providerId=\{sess\.provider\}[\s\S]*data-testid=\{`collection-subsession-agent-icon-\$\{sess\.id\}`\}[\s\S]*placement="corner"[\s\S]*\) : \([\s\S]*placement="leading"/,
+    /<ProviderLogoMark\s+providerId=\{sess\.provider\}[\s\S]*data-testid=\{`collection-subsession-agent-icon-\$\{sess\.id\}`\}[\s\S]*placement="corner"[\s\S]*\) : \([\s\S]*placement="inline"/,
   );
 });
 

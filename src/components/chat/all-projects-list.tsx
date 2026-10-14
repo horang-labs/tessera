@@ -327,7 +327,9 @@ function AllProjectSection({
       )}
 
       {isExpanded && (
-        <div className="ml-2">
+        <div className="relative ml-2">
+          {/* Indent guide under the project chevron (h-3 at pl-0: center 6px, minus ml-2). */}
+          <div aria-hidden className="pointer-events-none absolute inset-y-0 -left-0.5 w-px bg-(--divider)" />
           {project.projectWorktree ? (
             <>
               <CompactProjectWorktreeRow
