@@ -770,6 +770,7 @@ export function Sidebar() {
       <ScrollArea
         className="min-h-0 flex-1 px-1 py-2 [scrollbar-gutter:stable]"
         data-testid="sidebar-scroll-area"
+        data-session-range-scope="sidebar"
       >
         {!isInitialized ? (
           <SidebarLoadingState label={t('common.loading')} />

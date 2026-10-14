@@ -670,6 +670,7 @@ function SubSessionRow({
         onContextMenu?.(event, 'chat', sess.id, collectionId, true);
       }}
       data-session-id={sess.id}
+      data-session-range-id={sess.id}
       data-testid={`collection-subsession-${sess.id}`}
       data-drop-position={dropPosition ?? undefined}
     >
@@ -1118,6 +1119,9 @@ export function TaskItemRow({
           onContextMenu(event, 'task', task.id, task.collectionId ?? null);
         }}
         data-session-id={task.sessions[0]?.id}
+        // Only a composite row stands for its Session; an expanded header
+        // selects the Worktree and its Sessions are the rows below it.
+        data-session-range-id={density === 'composite' ? primarySessionId : undefined}
         data-worktree-id={task.worktreeId}
         data-linked-worktree-density={density}
         aria-current={isTaskActive ? 'true' : undefined}
@@ -1519,6 +1523,7 @@ export function ChatItemRow({
           onContextMenu(event, 'chat', session.id, session.collectionId ?? null);
         }}
         data-session-id={session.id}
+        data-session-range-id={session.id}
         data-item-id={session.id}
         data-testid={`collection-chat-${session.id}`}
       >
