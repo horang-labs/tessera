@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as dbSessions from '@/lib/db/sessions';
 import { getDb } from '@/lib/db/database';
+import { sessionOrchestrator } from '@/lib/session/session-orchestrator';
 import { archiveSession } from '@/lib/session/session-archive';
 import { getTaskProjectViewIds } from '@/lib/projects/project-view-projection';
 import {
@@ -39,7 +40,7 @@ export function createDatabaseControlSessionMutator(options: {
   return {
     async archive(sessionId) {
       const userId = await requireUserId();
-      // Archive is the only Control operation that can address an archived
+      // Lifecycle operations can address an archived
       // child. Recheck after resolving the user, before entering the lifecycle.
       const session = source.get(sessionId, { includeArchived: true });
       const row = dbSessions.getSession(sessionId);
@@ -65,6 +66,35 @@ export function createDatabaseControlSessionMutator(options: {
       broadcastSessionMutation(userId, {
         kind: 'updated', projectId: session.projectId, sessionId,
         taskId: row.task_id ?? undefined, archived: true, affectedProjectIds,
+      });
+    },
+
+    async delete(sessionId) {
+      const userId = await requireUserId();
+      const session = source.get(sessionId, { includeArchived: true });
+      const row = dbSessions.getSession(sessionId);
+      if (!session || !row) {
+        throw new ControlOperationError('SESSION_NOT_FOUND', 'The requested Session does not exist.', 404, { sessionId });
+      }
+      const affectedProjectIds = row.task_id ? getTaskProjectViewIds(row.task_id) : [session.projectId];
+      try {
+        await sessionOrchestrator.deleteSession(userId, sessionId);
+      } catch (error) {
+        if (isSessionOperationConflictError(error) || isTerminalHandoffConflictError(error)) {
+          throw new ControlOperationError('SESSION_DELETE_CONFLICT', error.message, 409, {
+            sessionId, reason: error.code,
+          });
+        }
+        if (error instanceof Error && (error.message === 'Session not found'
+          || error.message === 'Sessions of an archived task must be handled through their task')) {
+          throw new ControlOperationError('SESSION_NOT_FOUND', 'The requested Session does not exist.', 404, { sessionId });
+        }
+        logger.error({ sessionId, error }, 'Control Session delete failed');
+        throw new ControlOperationError('INSTANCE_UNAVAILABLE', 'The Session could not be deleted.', 500, { sessionId });
+      }
+      broadcastSessionMutation(userId, {
+        kind: 'deleted', projectId: session.projectId, sessionId,
+        taskId: row.task_id ?? undefined, affectedProjectIds,
       });
     },
 

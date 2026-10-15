@@ -4,6 +4,7 @@
  * High-level server-side session lifecycle coordinator.
  */
 
+import { terminalManager } from '../terminal/shared-terminal-manager';
 import { ProcessManager } from '../cli/process-manager';
 import * as dbSessions from '../db/sessions';
 import {
@@ -159,11 +160,14 @@ export class SessionOrchestrator {
    */
   async deleteSession(userId: string, sessionId: string): Promise<void> {
     return withExclusiveTesseraSessionOperation(sessionId, async () => {
+      terminalManager.preventSessionOpen(sessionId, userId);
       try {
         const session = dbSessions.getSession(sessionId);
         if (!session) {
           throw new Error('Session not found');
         }
+
+        await terminalManager.closeSession(sessionId, userId);
 
         // Kill process if running
         const activeProcesses = this.processManager.getUserProcesses(userId);
@@ -200,6 +204,8 @@ export class SessionOrchestrator {
           }, 'Failed to delete session');
 
         throw err;
+      } finally {
+        terminalManager.allowSessionOpen(sessionId, userId);
       }
     });
   }

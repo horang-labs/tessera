@@ -348,12 +348,40 @@ test('Control archive preserves history, siblings and the last child Worktree th
       && !error.message.includes('private'));
   assert.equal(sessions.getSession('archive-codex')?.archived, 0);
   assert.equal(mutations.length, beforeFailure);
+  await assert.rejects(service.deleteSession('archive-codex', context), { code: 'INSTANCE_UNAVAILABLE' });
+  assert.equal(sessions.getSession('archive-codex')?.deleted, 0);
+  assert.equal(mutations.length, beforeFailure);
   native.setCodexThreadControlRequestExecutorForTests(async () => {
     throw new native.CodexThreadControlError('no rollout found for thread id thread-control-archive', -32000);
   });
   await service.archiveSession('archive-codex', context);
   assert.equal(sessions.getSession('archive-codex')?.archived, 1);
-  assert.deepEqual(nativeCalls, ['thread/archive']);
+  assert.deepEqual(nativeCalls, ['thread/archive', 'thread/delete']);
+  // Deletion addresses individually archived children while preserving siblings and files.
+  await assert.rejects(missingUser.delete('archive-a'), { code: 'INSTANCE_UNAVAILABLE' });
+  assert.equal(locks.beginExclusiveTesseraSessionOperation('archive-a'), true);
+  const closesBeforeDeleteConflict = closes.length;
+  try {
+    await assert.rejects(service.deleteSession('archive-a', context), { code: 'SESSION_DELETE_CONFLICT' });
+  } finally { locks.endExclusiveTesseraSessionOperation('archive-a'); }
+  assert.equal(closes.length, closesBeforeDeleteConflict);
+  assert.deepEqual(await service.deleteSession('archive-a', context), {
+    sessionId: 'archive-a', deleted: true, worktreeRemoved: false,
+  });
+  assert.equal(source.get('archive-a', { includeArchived: true }), undefined);
+  assert.equal(fs.existsSync(historyPath), false);
+  assert.ok(sessions.getSession('archive-b'));
+  assert.equal(tasks.getTask(taskId)?.archived, false);
+  assert.equal(fs.readFileSync(path.join(worktreePath, 'keep.txt'), 'utf8'), 'keep my files');
+  assert.ok(mutations.some((item) => item.kind === 'deleted' && item.sessionId === 'archive-a'));
+  await assert.rejects(service.deleteSession('archive-a', context), { code: 'SESSION_NOT_FOUND' });
+  sessions.createSession('delete-active', projectId, 'Delete active', 'claude-code', {
+    taskId, providerState: JSON.stringify({ kind: 'terminal' }),
+  });
+  await service.deleteSession('delete-active', context);
+  assert.equal(source.get('delete-active'), undefined);
+  assert.ok(closes.includes('pty:delete-active'));
+  assert.ok(closes.includes('pty:archive-a'));
   tasks.setTaskArchived(taskId, true);
   await assert.rejects(service.archiveSession('archive-a', context), { code: 'SESSION_NOT_FOUND' });
   tasks.setTaskArchived(taskId, false);

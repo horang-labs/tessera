@@ -40,6 +40,7 @@ export type ControlErrorCode =
   | 'INPUT_NOT_ACCEPTED'
   | 'SESSION_NOT_FOUND'
   | 'SESSION_ARCHIVE_CONFLICT'
+  | 'SESSION_DELETE_CONFLICT'
   | 'SESSION_NOT_FRESH'
   | 'SESSION_RUNTIME_ALREADY_RUNNING'
   | 'SESSION_RUNTIME_NOT_RUNNING'
@@ -118,6 +119,12 @@ export interface ControlSessionRecord {
 
 export type PublicSessionDto = Omit<ControlSessionRecord, 'providerState'>;
 
+export interface PublicDeletedSessionDto {
+  sessionId: string;
+  deleted: true;
+  worktreeRemoved: false;
+}
+
 export interface PublicArchivedSessionDto {
   sessionId: string;
   archived: true;
@@ -158,6 +165,7 @@ export interface ControlSessionLaunchRequest extends ControlSessionCreationReque
 }
 
 export interface ControlSessionMutator {
+  delete(sessionId: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   create(request: ControlSessionCreationRequest): Promise<ControlSessionRecord>;
   start(request: ControlSessionStartRequest): Promise<{ terminalId: string }>;
@@ -288,6 +296,7 @@ export interface ControlService {
     context: ControlCallerContext,
   ): Promise<{ sessions: PublicSessionDto[] }>;
   showSession(sessionId: string, context: ControlCallerContext): Promise<PublicSessionDto>;
+  deleteSession(sessionId: string, context: ControlCallerContext): Promise<PublicDeletedSessionDto>;
   archiveSession(sessionId: string, context: ControlCallerContext): Promise<PublicArchivedSessionDto>;
   createSession(
     request: ControlSessionCreationRequest,
@@ -542,6 +551,13 @@ export function createControlService(options: {
       requireSession(support.sessions, sessionId, { includeArchived: true });
       await support.mutator.archive(sessionId);
       return { sessionId, archived: true, worktreeRemoved: false };
+    },
+
+    async deleteSession(sessionId) {
+      const support = requireSessionSupport(sessions, sessionMutator);
+      requireSession(support.sessions, sessionId, { includeArchived: true });
+      await support.mutator.delete(sessionId);
+      return { sessionId, deleted: true, worktreeRemoved: false };
     },
 
     async createSession(request) {

@@ -100,3 +100,18 @@ Archive stops the Session's backing runtimes and preserves its conversation and 
 An archived Session leaves the normal CLI list and cannot be shown, started, read, or prompted through that active Session interface. Repeating archive on the known ID is supported while its parent Worktree remains active; the existing app UI handles restore. A child of an archived Worktree cannot be archived independently.
 
 Have the parent archive a worker after inspecting its result. Self-archive can terminate the invoking runtime before it receives the response. Never archive a pre-existing Session outside the user's authorized scope.
+
+## Delete a Session
+
+When the user requests deleting a Session, use its exact observed ID:
+
+```sh
+"$TESSERA_CLI_COMMAND" session delete "$session_id" --json
+```
+
+Delete stops the runtime and removes the Session and its conversation history using the
+app's deletion lifecycle. The Worktree, its files, and sibling Sessions remain. An active
+or individually archived Session can be deleted while its parent Worktree is active.
+A deleted or unknown ID returns `SESSION_NOT_FOUND`; deletion cannot be undone.
+Only delete existing Sessions within the user's explicitly authorized scope. Prefer having
+the parent delete a worker: deleting the invoking Session can stop it before a response arrives.
