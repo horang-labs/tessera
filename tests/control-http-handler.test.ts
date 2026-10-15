@@ -206,3 +206,52 @@ function getJson(
     request.end(requestBody);
   });
 }
+test('delete authenticates before dispatch and accepts only an empty POST body', async (t) => {
+  const service = createControlService({
+    appVersion: DESCRIPTOR.appVersion, runtimeId: DESCRIPTOR.runtimeId,
+    projects: { list: () => [], get: () => undefined },
+    worktrees: { list: () => [], get: () => undefined },
+  });
+  const deleted: string[] = [];
+  t.mock.method(service, 'deleteSession', async (sessionId: string) => {
+    deleted.push(sessionId);
+    return { sessionId, deleted: true, worktreeRemoved: false };
+  });
+  const telemetry: Array<{ operation: string; result: string }> = [];
+  const handler = createControlHttpHandler({ descriptor: DESCRIPTOR, service,
+    captureTelemetry: (record) => { telemetry.push(record); } });
+  const server = http.createServer((req, res) => { void handler(req, res); });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const route = '/__tessera/control/v1/sessions/delete-target/delete';
+  const headers = { authorization: `Bearer ${TOKEN}`,
+    [CONTROL_RUNTIME_ID_HEADER]: DESCRIPTOR.runtimeId,
+    [CONTROL_API_VERSION_HEADER]: '1', [CONTROL_APP_VERSION_HEADER]: DESCRIPTOR.appVersion };
+  try {
+    for (const [override, code] of [
+      [{ authorization: '' }, 'UNAUTHORIZED'],
+      [{ authorization: 'Bearer wrong' }, 'UNAUTHORIZED'],
+      [{ [CONTROL_RUNTIME_ID_HEADER]: 'neighbor' }, 'INSTANCE_UNAVAILABLE'],
+      [{ [CONTROL_API_VERSION_HEADER]: '2' }, 'CONTROL_VERSION_MISMATCH'],
+    ] as const) {
+      const result = await getJson(origin, route, { ...headers, ...override }, 'POST', '{}');
+      assert.equal(result.body.error.code, code);
+    }
+    for (const [requestPath, method, body] of [
+      [route, 'GET', undefined], [route, 'POST', '{'],
+      [route, 'POST', '{"deleted":false}'], [route, 'POST', '{"force":true}'],
+      [route, 'POST', '{"":false}'],
+      ['/__tessera/control/v1/sessions/%20/delete', 'POST', '{}'],
+      ['/__tessera/control/v1/sessions/%ZZ/delete', 'POST', '{}'],
+    ] as const) {
+      const result = await getJson(origin, requestPath, headers, method, body);
+      assert.equal(result.status, 400);
+      assert.equal(result.body.error.code, 'INVALID_USAGE');
+    }
+    assert.deepEqual(deleted, []);
+    const valid = await getJson(origin, route, headers, 'POST', '{}');
+    assert.equal(valid.status, 200);
+    assert.deepEqual(deleted, ['delete-target']);
+    assert.deepEqual(telemetry.at(-1), { operation: 'session_delete', result: 'success' });
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});

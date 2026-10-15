@@ -39,7 +39,8 @@ export type ControlTelemetryOperation =
   | 'session_prompt'
   | 'session_send_keys'
   | 'session_stop'
-  | 'session_archive';
+  | 'session_archive'
+  | 'session_delete';
 
 export interface ControlTelemetryRecord {
   operation: ControlTelemetryOperation;
@@ -284,6 +285,22 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      const sessionDeleteMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/delete$`),
+      );
+      if (sessionDeleteMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionDeleteMatch[1], 'Session');
+        if (!sessionId.trim() || sessionId.startsWith('-')) {
+          throw new ControlOperationError('INVALID_USAGE', 'A Session ID is required.', 400);
+        }
+        if (Object.keys(await readJsonObject(request)).length !== 0) {
+          throw new ControlOperationError('INVALID_USAGE', 'Session delete does not accept fields.', 400);
+        }
+        writeSuccess(response, await service.deleteSession(sessionId, context));
+        return true;
+      }
+
       const sessionShowMatch = pathname.match(
         new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)$`),
       );
@@ -365,7 +382,7 @@ export function classifyControlTelemetryOperation(
   ) return 'session_list';
 
   const sessionOperation = new RegExp(
-    `^${CONTROL_ROUTE_PREFIX}/sessions/[^/]+/(start|read|wait|prompt|keys|stop|archive)$`,
+    `^${CONTROL_ROUTE_PREFIX}/sessions/[^/]+/(start|read|wait|prompt|keys|stop|archive|delete)$`,
   ).exec(pathname)?.[1];
   if (sessionOperation) {
     const expectedMethod = sessionOperation === 'read' ? 'GET' : 'POST';
@@ -378,6 +395,7 @@ export function classifyControlTelemetryOperation(
       keys: 'session_send_keys',
       stop: 'session_stop',
       archive: 'session_archive',
+      delete: 'session_delete',
     }[sessionOperation] as ControlTelemetryOperation;
   }
 

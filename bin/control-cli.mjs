@@ -159,6 +159,7 @@ export function controlUsage() {
   tessera session send-keys <session-id> <enter|escape|ctrl-c|up|down|left|right>... [--json]
   tessera session stop <session-id> [--json]
   tessera session archive <session-id> [--json]
+  tessera session delete <session-id> [--json]
 
 Runtime selection:
   --control-descriptor PATH  Select one exact local Tessera runtime.
@@ -230,6 +231,18 @@ function parseControlInvocation(argv, env) {
       descriptorPath,
       kind: 'session-archive',
       requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(sessionId)}/archive`,
+      requestBody: {},
+    };
+  }
+  if (commandArgs[0] === 'session' && commandArgs[1] === 'delete') {
+    const sessionId = commandArgs[2];
+    if (commandArgs.length !== 3 || !sessionId?.trim() || sessionId.startsWith('-')) {
+      throw new Error('Session delete requires exactly one Session ID.');
+    }
+    return {
+      descriptorPath,
+      kind: 'session-delete',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(sessionId)}/delete`,
       requestBody: {},
     };
   }
@@ -1110,6 +1123,11 @@ function validateSuccessData(kind, data) {
       || data.archived !== true || data.worktreeRemoved !== false) return INVALID_SUCCESS_DATA;
     return { sessionId: data.sessionId, archived: true, worktreeRemoved: false };
   }
+  if (kind === 'session-delete') {
+    if (!isRecord(data) || !isNonEmptyString(data.sessionId)
+      || data.deleted !== true || data.worktreeRemoved !== false) return INVALID_SUCCESS_DATA;
+    return { sessionId: data.sessionId, deleted: true, worktreeRemoved: false };
+  }
   if (kind === 'session-list') {
     if (!isRecord(data) || !Array.isArray(data.sessions)) return INVALID_SUCCESS_DATA;
     const sessions = data.sessions.map(parsePublicSessionDto);
@@ -1222,6 +1240,10 @@ function writeEnvelope(json, envelope, exitCode, kind) {
 function writeHumanSuccess(kind, data) {
   if (kind === 'session-archive') {
     process.stdout.write(`Archived Session ${data.sessionId}\n`);
+    return;
+  }
+  if (kind === 'session-delete') {
+    process.stdout.write(`Deleted Session ${data.sessionId}\n`);
     return;
   }
   if (kind === 'status') {

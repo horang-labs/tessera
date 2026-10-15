@@ -44,6 +44,7 @@ function createFixture() {
   let failNextStart: ControlOperationError | null = null;
 
   const mutator: ControlSessionMutator = {
+    delete: async () => {},
     archive: async (sessionId) => { controls.push({ kind: 'archive', value: sessionId }); },
     create: async ({ worktreeId, provider, title, model, reasoningEffort, serviceTier }) => {
       const record: ControlSessionRecord = {
