@@ -1792,6 +1792,7 @@ export const ko: I18nMessages = {
     status: {
       active: '진행 중',
       paused: '일시정지',
+      stalled: '멈춤 — /goal resume로 재개',
       blocked: '막힘',
       usage_limited: '사용량 한도 도달',
       budget_limited: '토큰 예산 소진',

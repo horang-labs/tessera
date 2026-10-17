@@ -15,14 +15,17 @@
 export type TerminalGoalProvider = 'claude-code' | 'codex';
 
 /**
- * `active` and `paused` are live goals. `blocked`, `usage_limited` and
- * `budget_limited` are Codex's own stop reasons. `complete` and `failed` are
- * terminal; Claude reports `failed` when its evaluator judges the condition
- * impossible.
+ * `active`, `paused` and `stalled` are live goals. `stalled` is Codex's own
+ * "Goal stalled": the goal is still active but its turn ended in an error or
+ * an interrupt, so the CLI waits for `/goal resume`. `blocked`, `usage_limited`
+ * and `budget_limited` are Codex's own stop reasons. `complete` and `failed`
+ * are terminal; Claude reports `failed` when its evaluator judges the
+ * condition impossible.
  */
 export type TerminalGoalStatus =
   | 'active'
   | 'paused'
+  | 'stalled'
   | 'blocked'
   | 'usage_limited'
   | 'budget_limited'
@@ -47,7 +50,7 @@ export interface TerminalGoalSnapshot {
   tokenBudget?: number;
 }
 
-const LIVE_STATUSES: ReadonlySet<TerminalGoalStatus> = new Set(['active', 'paused']);
+const LIVE_STATUSES: ReadonlySet<TerminalGoalStatus> = new Set(['active', 'paused', 'stalled']);
 
 /** Whether the goal still steers the session (as opposed to having ended). */
 export function isLiveTerminalGoal(goal: TerminalGoalSnapshot | null | undefined): boolean {

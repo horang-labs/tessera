@@ -1785,6 +1785,7 @@ export const zh: I18nMessages = {
     status: {
       active: '进行中',
       paused: '已暂停',
+      stalled: '已停滞 — 用 /goal resume 继续',
       blocked: '受阻',
       usage_limited: '已达用量上限',
       budget_limited: '已达 Token 预算',

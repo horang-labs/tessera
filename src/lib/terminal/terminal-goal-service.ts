@@ -40,6 +40,24 @@ function markGoalTurnRunning(target: TerminalGoalTarget): void {
   }
 }
 
+/** A stalled goal's turn ended without a Stop hook; close it like one. */
+function completeStalledGoalTurn(target: TerminalGoalTarget): void {
+  if (terminalManager.getSessionStateForSession(target.sessionId, target.userId)?.status !== 'running') {
+    return;
+  }
+  const message = {
+    type: 'session_state',
+    sessionId: target.sessionId,
+    terminalId: target.terminalId,
+    status: 'completed',
+    hookEvent: 'GoalStalled',
+    stateAt: Date.now(),
+  } as const;
+  if (terminalManager.recordSessionState(message, target.userId)) {
+    sendTerminalUserMessage(target.userId, message);
+  }
+}
+
 function createTracker(): TerminalGoalTracker {
   return new TerminalGoalTracker({
     resolveTranscriptFile: async (target) => {
@@ -65,6 +83,7 @@ function createTracker(): TerminalGoalTracker {
       });
     },
     onGoalStarted: markGoalTurnRunning,
+    onGoalStalled: completeStalledGoalTurn,
   });
 }
 

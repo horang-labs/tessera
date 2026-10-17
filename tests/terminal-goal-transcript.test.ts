@@ -295,3 +295,47 @@ test('tracker drops a session whose runtime ended and clears its goal', async ()
     tracker.dispose();
   }
 });
+
+test('tracker hides a goal that already ended in the replayed history', async () => {
+  const filePath = tempTranscript();
+  const { tracker, target, published } = makeTracker(filePath);
+  try {
+    const at = '2026-01-01T00:00:00.000Z';
+    fs.appendFileSync(filePath, `${claudeGoal({ met: false, sentinel: true, condition: 'old' }, at)}\n`);
+    fs.appendFileSync(filePath, `${claudeGoal({ met: true, condition: 'old', reason: 'ok', iterations: 1 }, at)}\n`);
+    await tracker.observe(target);
+    assert.deepEqual(published, []);
+  } finally {
+    tracker.dispose();
+  }
+});
+
+test('Codex: an errored or aborted turn stalls an active goal until resume', () => {
+  const set = codexGoalEvent({
+    objective: 'o', status: 'active', tokensUsed: 0, timeUsedSeconds: 0, createdAt: 1792247004, updatedAt: 1792247004,
+  }, '2026-10-17T14:23:24.504Z');
+  const errored = JSON.stringify({
+    timestamp: '2026-10-17T14:23:25.345Z',
+    type: 'event_msg',
+    payload: { type: 'task_complete', turn_id: 't1', last_agent_message: null, error: { message: '400' } },
+  });
+  const clean = JSON.stringify({
+    timestamp: '2026-10-17T14:23:25.345Z',
+    type: 'event_msg',
+    payload: { type: 'task_complete', turn_id: 't1', last_agent_message: 'ok' },
+  });
+  const aborted = JSON.stringify({
+    timestamp: '2026-10-17T14:23:26.000Z',
+    type: 'event_msg',
+    payload: { type: 'turn_aborted', turn_id: 't1', reason: 'interrupted' },
+  });
+  const resumed = codexGoalEvent({
+    objective: 'o', status: 'active', tokensUsed: 0, timeUsedSeconds: 1, createdAt: 1792247004, updatedAt: 1792247030,
+  }, '2026-10-17T14:23:50.000Z');
+
+  assert.equal(fold(reduceCodexGoalTranscriptLine, [set, clean])?.status, 'active', 'a clean turn keeps going');
+  assert.equal(fold(reduceCodexGoalTranscriptLine, [set, errored])?.status, 'stalled');
+  assert.equal(fold(reduceCodexGoalTranscriptLine, [set, aborted])?.status, 'stalled');
+  assert.equal(fold(reduceCodexGoalTranscriptLine, [set, errored, resumed])?.status, 'active');
+  assert.equal(reduceCodexGoalTranscriptLine(null, errored), undefined, 'no goal, nothing to stall');
+});

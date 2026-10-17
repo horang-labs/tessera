@@ -51,6 +51,11 @@ export interface TerminalGoalTrackerDeps {
    * without a UserPromptSubmit, so this is the only "turn started" signal.
    */
   onGoalStarted?(target: TerminalGoalTarget, goal: TerminalGoalSnapshot): void;
+  /**
+   * An active goal stalled: its turn ended in an error or interrupt, and the
+   * CLI fired no Stop for it. Called only when no Stop is already deferred.
+   */
+  onGoalStalled?(target: TerminalGoalTarget, goal: TerminalGoalSnapshot): void;
 }
 
 export interface CompletionHoldHandlers {
@@ -78,6 +83,8 @@ interface TrackedGoal {
   dirty: boolean;
   pollTimer?: ReturnType<typeof setTimeout>;
   hold?: CompletionHold;
+  /** When a hook last asked for a read. */
+  observedAt: number;
 }
 
 const READ_CHUNK_BYTES = 1024 * 1024;
@@ -86,6 +93,13 @@ const NEWLINE = 0x0a;
 export const GOAL_POLL_MS = 2_500;
 /** Catches `/goal` typed at an idle prompt before the turn's first hook. */
 export const GOAL_IDLE_POLL_MS = 4_000;
+/**
+ * Right after a hook the CLI is usually still writing: Claude records the goal
+ * a moment after UserPromptSubmit fires. Look again soon instead of waiting
+ * for the next idle poll.
+ */
+export const GOAL_ACTIVITY_POLL_MS = 600;
+const GOAL_ACTIVITY_WINDOW_MS = 5_000;
 /** A goal record older than this on first sight is history, not a new start. */
 export const GOAL_START_RECENCY_MS = 30_000;
 /** Faster while a Stop waits for Claude's evaluator verdict. */
@@ -117,6 +131,7 @@ export class TerminalGoalTracker {
         published: false,
         refreshing: null,
         dirty: false,
+        observedAt: Date.now(),
       };
       this.tracked.set(key, entry);
     } else {
@@ -137,6 +152,7 @@ export class TerminalGoalTracker {
       } else if (pathChanged && target.transcriptPath) {
         entry.filePath = null;
       }
+      entry.observedAt = Date.now();
     }
     return this.refresh(entry);
   }
@@ -259,6 +275,7 @@ export class TerminalGoalTracker {
     }
     if (size === entry.offset) return;
 
+    const replaying = entry.offset === 0;
     const handle = await fsp.open(entry.filePath, 'r');
     let goal = entry.goal;
     try {
@@ -292,6 +309,9 @@ export class TerminalGoalTracker {
     } finally {
       await handle.close();
     }
+    // A resumed conversation replays its whole history. A goal that already
+    // ended there is old news — the CLI itself only restores a live one.
+    if (replaying && goal && !isLiveTerminalGoal(goal)) goal = null;
     this.setGoal(entry, goal);
   }
 
@@ -309,6 +329,11 @@ export class TerminalGoalTracker {
       && Date.now() - goal.updatedAt <= GOAL_START_RECENCY_MS
     ) {
       this.deps.onGoalStarted?.(entry.target, goal);
+    }
+    // A deferred Stop is released by evaluateHold; without one, the stall is
+    // the only sign the turn ended.
+    if (goal?.status === 'stalled' && isActiveTerminalGoal(previous) && !entry.hold) {
+      this.deps.onGoalStalled?.(entry.target, goal);
     }
   }
 
@@ -353,9 +378,11 @@ export class TerminalGoalTracker {
     }
     const delay = entry.hold
       ? GOAL_HOLD_POLL_MS
-      : isLiveTerminalGoal(entry.goal)
-        ? GOAL_POLL_MS
-        : GOAL_IDLE_POLL_MS;
+      : Date.now() - entry.observedAt < GOAL_ACTIVITY_WINDOW_MS
+        ? GOAL_ACTIVITY_POLL_MS
+        : isLiveTerminalGoal(entry.goal)
+          ? GOAL_POLL_MS
+          : GOAL_IDLE_POLL_MS;
     entry.pollTimer = setTimeout(() => {
       entry.pollTimer = undefined;
       if (this.tracked.get(this.keyFor(entry)) !== entry) return;

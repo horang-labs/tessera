@@ -1768,6 +1768,7 @@ export interface I18nMessages {
     status: {
       active: string;
       paused: string;
+      stalled: string;
       blocked: string;
       usage_limited: string;
       budget_limited: string;

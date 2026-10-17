@@ -1788,6 +1788,7 @@ export const en: I18nMessages = {
     status: {
       active: 'In progress',
       paused: 'Paused',
+      stalled: 'Stalled — /goal resume',
       blocked: 'Blocked',
       usage_limited: 'Usage limit reached',
       budget_limited: 'Token budget reached',
@@ -1797,7 +1798,7 @@ export const en: I18nMessages = {
     objective: 'Objective',
     lastReason: 'Latest check',
     elapsed: 'Elapsed',
-    iterations: '{{count}} checks',
+    iterations: 'Checks: {{count}}',
     tokens: '{{value}} tokens',
     tokensOfBudget: '{{used}} / {{budget}} tokens',
     expand: 'Show goal details',

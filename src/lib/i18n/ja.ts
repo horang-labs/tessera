@@ -1785,6 +1785,7 @@ export const ja: I18nMessages = {
     status: {
       active: '進行中',
       paused: '一時停止',
+      stalled: '停止 — /goal resume で再開',
       blocked: 'ブロック中',
       usage_limited: '使用量上限に到達',
       budget_limited: 'トークン予算に到達',

@@ -13,6 +13,9 @@ import type { TerminalGoalSnapshot, TerminalGoalStatus } from '@/types/terminal-
  */
 
 const GOAL_EVENT_MARKER = '"thread_goal_updated"';
+/** Turn endings: an errored or aborted turn leaves an active goal stalled. */
+const TURN_COMPLETE_MARKER = '"task_complete"';
+const TURN_ABORTED_MARKER = '"turn_aborted"';
 const GOAL_CLEARED_MARKER = 'User cleared the goal.';
 /** A goal object serialized inside a tool output string. */
 const GOAL_TOOL_OUTPUT_MARKER = '\\"goal\\":{';
@@ -117,6 +120,7 @@ export function reduceCodexGoalTranscriptLine(
     !line.includes(GOAL_EVENT_MARKER)
     && !line.includes(GOAL_CLEARED_MARKER)
     && !line.includes(GOAL_TOOL_OUTPUT_MARKER)
+    && !(current && (line.includes(TURN_COMPLETE_MARKER) || line.includes(TURN_ABORTED_MARKER)))
   ) {
     return undefined;
   }
@@ -133,6 +137,20 @@ export function reduceCodexGoalTranscriptLine(
 
   if (entry.type === 'event_msg' && payload.type === 'thread_goal_updated') {
     return snapshotFromGoal(payload.goal, at);
+  }
+
+  // Codex continues an active goal after a clean turn, but not after one that
+  // failed or was interrupted: its TUI then reports "Goal stalled", and no
+  // Stop hook marks the end of that turn.
+  if (
+    entry.type === 'event_msg'
+    && current?.status === 'active'
+    && (
+      payload.type === 'turn_aborted'
+      || (payload.type === 'task_complete' && payload.error != null)
+    )
+  ) {
+    return { ...current, status: 'stalled', updatedAt: at };
   }
 
   if (entry.type !== 'response_item') return undefined;

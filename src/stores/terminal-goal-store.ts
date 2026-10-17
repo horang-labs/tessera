@@ -45,7 +45,7 @@ export const selectTerminalGoalIndicator = (sessionId: string) =>
   (state: TerminalGoalStore): TerminalGoalIndicator => {
     const status = state.bySessionId[sessionId]?.status;
     if (status === 'active') return 'active';
-    if (status === 'paused') return 'paused';
+    if (status === 'paused' || status === 'stalled') return 'paused';
     return null;
   };
 
@@ -54,7 +54,7 @@ export const selectVisibleTerminalGoal = (sessionId: string) =>
   (state: TerminalGoalStore): TerminalGoalSnapshot | null => {
     const goal = state.bySessionId[sessionId];
     if (!goal) return null;
-    const ended = goal.status !== 'active' && goal.status !== 'paused';
+    const ended = goal.status === 'complete' || goal.status === 'failed';
     if (ended && state.dismissedSetAt[sessionId] === goal.setAt) return null;
     return goal;
   };

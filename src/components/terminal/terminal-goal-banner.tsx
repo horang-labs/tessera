@@ -9,6 +9,7 @@ import {
   OctagonPause,
   Pause,
   Timer,
+  TriangleAlert,
   X,
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
@@ -29,6 +30,7 @@ type Tone = 'goal' | 'warning' | 'success' | 'error';
 const STATUS_TONE: Record<TerminalGoalStatus, Tone> = {
   active: 'goal',
   paused: 'warning',
+  stalled: 'warning',
   blocked: 'warning',
   usage_limited: 'warning',
   budget_limited: 'warning',
@@ -99,6 +101,8 @@ function GoalStatusGlyph({ status }: { status: TerminalGoalStatus }) {
       return <Pause aria-hidden="true" className={className} style={style} />;
     case 'blocked':
       return <OctagonPause aria-hidden="true" className={className} style={style} />;
+    case 'stalled':
+      return <TriangleAlert aria-hidden="true" className={className} style={style} />;
     default:
       return <Gauge aria-hidden="true" className={className} style={style} />;
   }
