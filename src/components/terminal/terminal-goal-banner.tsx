@@ -55,10 +55,17 @@ function formatElapsed(totalSeconds: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-const compactNumber = new Intl.NumberFormat(undefined, {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
+const compactFormatters = new Map<string, Intl.NumberFormat>();
+
+/** Token counts follow the app language, not the OS locale ("5.9K", not "5.9천"). */
+function formatCompact(value: number, language: string): string {
+  let formatter = compactFormatters.get(language);
+  if (!formatter) {
+    formatter = new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 });
+    compactFormatters.set(language, formatter);
+  }
+  return formatter.format(value);
+}
 
 /**
  * Seconds spent on the goal. Codex reports time used up to `updatedAt` and
@@ -126,7 +133,7 @@ function TerminalGoalStrip({
   sessionId: string;
   goal: TerminalGoalSnapshot;
 }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const detailsId = useId();
   const [expanded, setExpanded] = useState(false);
   const dismiss = useTerminalGoalStore((state) => state.dismiss);
@@ -144,10 +151,10 @@ function TerminalGoalStrip({
     ? null
     : goal.tokenBudget
       ? t('terminalGoal.tokensOfBudget', {
-          used: compactNumber.format(goal.tokensUsed),
-          budget: compactNumber.format(goal.tokenBudget),
+          used: formatCompact(goal.tokensUsed, language),
+          budget: formatCompact(goal.tokenBudget, language),
         })
-      : t('terminalGoal.tokens', { value: compactNumber.format(goal.tokensUsed) });
+      : t('terminalGoal.tokens', { value: formatCompact(goal.tokensUsed, language) });
   const iterationsLabel = goal.provider === 'claude-code' && goal.iterations
     ? t('terminalGoal.iterations', { count: goal.iterations })
     : null;
