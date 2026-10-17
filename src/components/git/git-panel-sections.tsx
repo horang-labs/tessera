@@ -5,6 +5,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   List,
   ListTree,
   Cloud,
@@ -12,6 +13,7 @@ import {
   Copy,
   ExternalLink,
   FileText,
+  Folder,
   FolderOpen,
   GitCompare,
   GitCommitHorizontal,
@@ -19,14 +21,13 @@ import {
   LoaderCircle,
   Undo2,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip } from "@/components/ui/tooltip";
 import { GitRevertConfirmDialog } from "@/components/git/git-revert-confirm-dialog";
 import {
   WorkspaceFileIcon, WorkspaceFileName, WorkspaceTreeBranchGuide,
-  WorkspaceTreeDirectoryButton, WorkspaceTreeFileButton,
   workspaceTreeFileRowClassName, workspaceTreePadding,
 } from "@/components/workspace/workspace-tree-row";
 import { WorkspaceTreeExpansionControls } from "@/components/workspace/workspace-tree-expansion-controls";
@@ -70,6 +71,10 @@ import {
   FILE_STATE_META,
 } from "./git-panel-shared";
 import {
+  expandCommitSelectionItems,
+  nextCommitInclusion,
+  resolveCommitSelectionRange,
+  resolveCommitTreeKeyTarget,
   useCommitFileSelection,
 } from "./git-commit-selection";
 
@@ -167,6 +172,29 @@ function GitSummaryCopyButton({
       </Button>
     </Tooltip>
   );
+}
+
+/*
+ * The commit tree follows the JetBrains commit view: indent, disclosure slot,
+ * checkbox, icon, name. Files reserve the disclosure slot so every checkbox at
+ * one depth sits in one column, and a child's checkbox steps in under its
+ * folder's.
+ */
+const COMMIT_TREE_CHECKBOX_OFFSET = 18;
+const COMMIT_TREE_CONTENT_OFFSET = 38;
+
+const commitCheckboxClassName = "absolute top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50";
+
+function CommitFolderCheckbox({
+  checked,
+  mixed,
+  ...props
+}: Omit<React.ComponentProps<"input">, "type" | "ref"> & { mixed: boolean }) {
+  // `indeterminate` is a DOM property; set it on every render that changes it.
+  const ref = useCallback((node: HTMLInputElement | null) => {
+    if (node) node.indeterminate = mixed;
+  }, [mixed]);
+  return <input {...props} ref={ref} type="checkbox" checked={checked} />;
 }
 
 function FileBadge({ file }: { file: GitChangedFile }) {
@@ -843,7 +871,13 @@ export function GitPanelContentSection({
     if (filesView === "list") return files.map((file) => ({ kind: "file", path: file.path, name: file.path, depth: 0, file }));
     return buildChangedFileRows(files, folderState.target === commit.selectionKey ? folderState.collapsed : new Set());
   }, [data?.changedFiles, filesView, folderState, commit.selectionKey]);
-  const visibleFiles = useMemo(() => fileRows.flatMap((row) => row.kind === "file" ? [row.file] : []), [fileRows]);
+  const selectionItems = useMemo(
+    () => fileRows.map((row) => ({ path: row.path, filePaths: row.kind === "folder" ? row.filePaths : undefined })),
+    [fileRows],
+  );
+  const rowPaths = useMemo(() => fileRows.map((row) => row.path), [fileRows]);
+  const isFolderExpanded = (path: string) =>
+    !(folderState.target === commit.selectionKey && folderState.collapsed.has(path));
   function toggleFolder(path: string) {
     setFolderState((previous) => {
       const collapsed = new Set(previous.target === commit.selectionKey ? previous.collapsed : []);
@@ -854,11 +888,122 @@ export function GitPanelContentSection({
   }
   const { selectAllCheckboxRef, setFileSelected } = useCommitFileSelection({
     allSelected: allCommitFilesSelected,
-    files: visibleFiles,
+    files: selectionItems,
     onSetSelected: commit.onSetSelected,
     someSelected: someCommitFilesSelected,
     targetKey: commit.selectionKey,
   });
+
+  // Row selection, distinct from commit inclusion (the checkboxes), as in the
+  // JetBrains commit view: pick rows with click / Shift / Ctrl, then Space or
+  // any one selected checkbox includes or excludes the lot. Rows hidden by a
+  // collapse drop out; with no live selection the diff file stands in.
+  const [treeSelection, setTreeSelection] = useState<{
+    target: string | null;
+    rows: readonly string[];
+    anchor: string | null;
+    lead: string | null;
+  }>({ target: null, rows: [], anchor: null, lead: null });
+  const [treeFocused, setTreeFocused] = useState(false);
+  const liveTreeSelection = treeSelection.target === commit.selectionKey ? treeSelection : null;
+  const selectedRows = useMemo(() => {
+    const visible = new Set(rowPaths);
+    const rows = (liveTreeSelection?.rows ?? []).filter((path) => visible.has(path));
+    if (rows.length > 0) return rows;
+    return selectedPath && visible.has(selectedPath) ? [selectedPath] : [];
+  }, [liveTreeSelection, rowPaths, selectedPath]);
+  const selectedRowSet = useMemo(() => new Set(selectedRows), [selectedRows]);
+  const leadPath = liveTreeSelection?.lead && rowPaths.includes(liveTreeSelection.lead)
+    ? liveTreeSelection.lead
+    : selectedRows[0] ?? null;
+  const leadIndex = leadPath ? rowPaths.indexOf(leadPath) : -1;
+  const [scrollIndex, setScrollIndex] = useState<number | null>(null);
+
+  function selectTreeRow(path: string, mode: "replace" | "range" | "toggle") {
+    const anchor = liveTreeSelection?.anchor && rowPaths.includes(liveTreeSelection.anchor)
+      ? liveTreeSelection.anchor
+      : leadPath;
+    let rows: readonly string[];
+    let nextAnchor = path;
+    if (mode === "range" && anchor) {
+      rows = resolveCommitSelectionRange(rowPaths, anchor, path, true).paths;
+      nextAnchor = anchor;
+    } else if (mode === "toggle") {
+      rows = selectedRowSet.has(path)
+        ? selectedRows.filter((row) => row !== path)
+        : [...selectedRows, path];
+    } else {
+      rows = [path];
+    }
+    setTreeSelection({ target: commit.selectionKey, rows, anchor: nextAnchor, lead: path });
+    const row = fileRows.find((candidate) => candidate.path === path);
+    if (row?.kind === "file") setSelectedPath(path);
+  }
+
+  function clickSelectionMode(event: React.MouseEvent): "replace" | "range" | "toggle" {
+    if (event.shiftKey) return "range";
+    return event.metaKey || event.ctrlKey ? "toggle" : "replace";
+  }
+
+  function toggleSelectedInclusion() {
+    if (primary.pendingVerb !== null) return;
+    const files = expandCommitSelectionItems(selectionItems, selectedRows);
+    if (files.length === 0) return;
+    commit.onSetSelected(files, nextCommitInclusion(files, commit.isSelected));
+  }
+
+  function handleTreeKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.altKey) return;
+    // A clicked checkbox or row button keeps focus; hand it back to the tree so
+    // the lead ring, not a stray control ring, shows where the keys go.
+    // Row actions (open diff, copy path) stay ordinary tab stops with their own keys.
+    if (event.target !== event.currentTarget) {
+      if ((event.target as HTMLElement).tabIndex !== -1 || event.key === "Tab") return;
+      event.currentTarget.focus({ preventScroll: true });
+    }
+    const modifier = event.metaKey || event.ctrlKey;
+    if (event.key === " " && !modifier) {
+      event.preventDefault();
+      toggleSelectedInclusion();
+      return;
+    }
+    if (modifier && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      if (rowPaths.length === 0) return;
+      setTreeSelection({ target: commit.selectionKey, rows: rowPaths, anchor: rowPaths[0], lead: leadPath ?? rowPaths[0] });
+      return;
+    }
+    if (event.key === "Escape" && selectedRows.length > 1 && leadPath) {
+      event.preventDefault();
+      setTreeSelection({ target: commit.selectionKey, rows: [leadPath], anchor: leadPath, lead: leadPath });
+      return;
+    }
+    if (event.key === "Enter" && leadIndex >= 0) {
+      event.preventDefault();
+      const row = fileRows[leadIndex];
+      if (row.kind === "folder") toggleFolder(row.path);
+      else onOpenDiffFile(row.file);
+      return;
+    }
+    if (modifier) return;
+    const target = resolveCommitTreeKeyTarget(fileRows, leadIndex, event.key, isFolderExpanded);
+    if (!target) return;
+    event.preventDefault();
+    if (target.kind === "toggle") {
+      toggleFolder(target.path);
+      return;
+    }
+    const extend = event.shiftKey && (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "Home" || event.key === "End");
+    selectTreeRow(rowPaths[target.index], extend ? "range" : "replace");
+    setScrollIndex(target.index);
+  }
+
+  // Space on a focused button or checkbox would otherwise activate it on keyup.
+  function handleTreeKeyUp(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === " " && (event.target as HTMLElement).tabIndex === -1) event.preventDefault();
+  }
+
+  const leadRingClassName = "outline outline-1 -outline-offset-1 outline-(--accent)";
 
   const contentBody = (
     <>
@@ -908,7 +1053,7 @@ export function GitPanelContentSection({
             ) : (
               <>
                 <div className="flex items-center justify-between gap-2 pl-1.5 pr-1">
-                  <label className="flex min-w-0 items-center gap-2 text-[11px] font-medium text-(--text-secondary)">
+                  <label className="flex min-w-0 shrink-0 items-center gap-2 whitespace-nowrap text-[11px] font-medium text-(--text-secondary)">
                     <input
                       ref={selectAllCheckboxRef}
                       type="checkbox"
@@ -959,27 +1104,76 @@ export function GitPanelContentSection({
                       ? "gitPanel.revert.nothingSelected"
                       : "gitPanel.revert.selectAction")}
                     data-testid="git-revert-selected"
-                    className="gap-1 text-[11px] text-(--text-muted) hover:text-(--text-primary) disabled:opacity-50"
+                    aria-label={revert.pending
+                      ? t("gitPanel.revert.selectActionPending")
+                      : t("gitPanel.revert.selectAction")}
+                    className="h-6 w-6 shrink-0 p-0 text-(--text-muted) hover:text-(--text-primary) disabled:opacity-50"
                   >
-                    <Undo2 className="h-3.5 w-3.5" />
-                    <span className="hidden min-[420px]:inline">
-                      {revert.pending
-                        ? t("gitPanel.revert.selectActionPending")
-                        : t("gitPanel.revert.selectAction")}
-                    </span>
+                    {revert.pending
+                      ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                      : <Undo2 className="h-3.5 w-3.5" />}
                   </Button>
                 </div>
-                <GitChangedFileList rows={fileRows} scrollable={!phoneScrollableContent}>
+                <GitChangedFileList
+                  rows={fileRows}
+                  scrollable={!phoneScrollableContent}
+                  activeIndex={scrollIndex}
+                  treeProps={{
+                    role: "tree",
+                    "aria-multiselectable": true,
+                    "aria-label": t("gitPanel.commit.changedFiles"),
+                    tabIndex: 0,
+                    onKeyDown: handleTreeKeyDown,
+                    onKeyUp: handleTreeKeyUp,
+                    onFocus: () => setTreeFocused(true),
+                    onBlur: (event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setTreeFocused(false);
+                    },
+                    "data-testid": "git-changed-file-tree",
+                  }}
+                >
                     {(row) => {
                       if (row.kind === "folder") {
                         const expanded = !(folderState.target === commit.selectionKey && folderState.collapsed.has(row.path));
+                        const selectedCount = row.filePaths.reduce((count, path) => count + (commit.isSelected(path) ? 1 : 0), 0);
+                        const allSelected = selectedCount === row.filePaths.length;
+                        const padding = workspaceTreePadding(row.depth);
+                        const FolderIcon = expanded ? FolderOpen : Folder;
+                        const rowSelected = selectedRowSet.has(row.path);
                         return (
-                          <div key={`folder:${row.path}`} className="group relative flex min-w-0 items-center hover:bg-(--sidebar-hover)">
+                          <div
+                            key={`folder:${row.path}`}
+                            role="treeitem"
+                            aria-level={row.depth + 1}
+                            aria-expanded={expanded}
+                            aria-selected={rowSelected}
+                            className={cn(
+                              "group relative flex h-7 min-w-0 items-center border-l-2",
+                              rowSelected ? "border-l-(--accent) bg-(--accent)/10" : "border-l-transparent hover:bg-(--sidebar-hover)",
+                              treeFocused && row.path === leadPath && leadRingClassName,
+                            )}
+                          >
                             {Array.from({ length: row.depth }, (_, depth) => <WorkspaceTreeBranchGuide key={depth} depth={depth} />)}
-                            <WorkspaceTreeDirectoryButton
-                              name={row.name}
-                              depth={row.depth}
-                              expanded={expanded}
+                            <CommitFolderCheckbox
+                              checked={allSelected}
+                              mixed={selectedCount > 0 && !allSelected}
+                              disabled={primary.pendingVerb !== null}
+                              tabIndex={-1}
+                              onChange={(event) => setFileSelected(
+                                row.path,
+                                !allSelected,
+                                event.nativeEvent,
+                                rowSelected ? selectedRows : undefined,
+                              )}
+                              {...telemetryClickAttributes("git.commit_folder.toggle", "git_panel")}
+                              aria-label={t("gitPanel.commit.includeFolder", { path: row.path })}
+                              data-testid={`git-commit-folder-checkbox-${row.path}`}
+                              className={commitCheckboxClassName}
+                              style={{ left: padding + COMMIT_TREE_CHECKBOX_OFFSET }}
+                            />
+                            <button
+                              type="button"
+                              aria-expanded={expanded}
                               title={row.path}
                               data-testid={`git-panel-folder-${row.path}`}
                               draggable={Boolean(data.worktreePath)}
@@ -988,18 +1182,42 @@ export function GitPanelContentSection({
                                 if (absolutePath) setPathInsertDragData(event.dataTransfer, [absolutePath]);
                               }}
                               onDragEnd={clearPathInsertDragData}
-                              onClick={() => toggleFolder(row.path)}
-                            />
+                              tabIndex={-1}
+                              onClick={(event) => {
+                                const mode = clickSelectionMode(event);
+                                selectTreeRow(row.path, mode);
+                                if (mode === "replace") toggleFolder(row.path);
+                              }}
+                              className="relative flex h-7 min-w-0 flex-1 items-center gap-1.5 pr-2 text-left text-(--text-primary) focus-visible:outline-1 focus-visible:outline-(--accent) focus-visible:-outline-offset-1"
+                              style={{ paddingLeft: padding + COMMIT_TREE_CONTENT_OFFSET }}
+                            >
+                              <ChevronRight
+                                aria-hidden="true"
+                                className={cn("absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-(--text-muted) transition-transform", expanded && "rotate-90")}
+                                style={{ left: padding }}
+                              />
+                              <FolderIcon className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
+                              <span className="min-w-0 flex-1 truncate text-[13px] leading-5">{row.name}</span>
+                              <span className="shrink-0 font-mono text-[10px] tabular-nums text-(--text-muted)">
+                                {selectedCount > 0 && !allSelected ? `${selectedCount}/${row.filePaths.length}` : row.filePaths.length}
+                              </span>
+                            </button>
                           </div>
                         );
                       }
                       const file = row.file;
-                      const isSelected = file.path === selectedPath;
+                      const isSelected = selectedRowSet.has(file.path);
                       const canOpenReadOnly = file.state !== "deleted";
                       const absolutePath = toAbsoluteWorkspacePath(data.worktreePath, file.path);
                       const agentPath = toAbsoluteWorkspacePath(data.agentWorktreePath ?? data.worktreePath, file.path);
                       return (
-                        <div key={file.path} className="relative">
+                        <div
+                          key={file.path}
+                          role="treeitem"
+                          aria-level={row.depth + 1}
+                          aria-selected={isSelected}
+                          className={cn("relative", treeFocused && file.path === leadPath && leadRingClassName)}
+                        >
                           {Array.from({ length: row.depth }, (_, depth) => <WorkspaceTreeBranchGuide key={depth} depth={depth} />)}
                           <div
                             draggable={Boolean(absolutePath)}
@@ -1032,11 +1250,13 @@ export function GitPanelContentSection({
                                 // locks with the rest of the form (§7) rather
                                 // than only while a commit is what is running.
                                 disabled={primary.pendingVerb !== null}
+                                tabIndex={-1}
                                 onChange={(event) => {
                                   setFileSelected(
                                     file.path,
                                     event.currentTarget.checked,
                                     event.nativeEvent,
+                                    isSelected ? selectedRows : undefined,
                                   );
                                 }}
                                 {...telemetryClickAttributes("git.commit_file.toggle", "git_panel")}
@@ -1044,14 +1264,19 @@ export function GitPanelContentSection({
                                   path: file.path,
                                 })}
                                 data-testid={`git-commit-file-checkbox-${file.path}`}
-                                className="absolute top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 cursor-pointer accent-(--accent) disabled:cursor-not-allowed disabled:opacity-50"
-                                style={{ left: workspaceTreePadding(row.depth) }}
+                                className={commitCheckboxClassName}
+                                style={{ left: workspaceTreePadding(row.depth) + (filesView === "tree" ? COMMIT_TREE_CHECKBOX_OFFSET : 0) }}
                               />
-                              <WorkspaceTreeFileButton
-                                depth={row.depth}
+                              <button
+                                type="button"
+                                className="flex h-7 w-full min-w-0 items-center gap-1.5 pr-2 text-left transition-colors focus-visible:outline-1 focus-visible:outline-(--accent) focus-visible:-outline-offset-1"
+                                style={{ paddingLeft: workspaceTreePadding(row.depth) + (filesView === "tree" ? COMMIT_TREE_CONTENT_OFFSET : 20) }}
                                 title={file.path}
+                                tabIndex={-1}
                                 onClick={(event) => {
-                                  setSelectedPath(file.path);
+                                  const mode = clickSelectionMode(event);
+                                  selectTreeRow(file.path, mode);
+                                  if (mode !== "replace") return;
                                   if (event.detail === 0 || shouldOpenOnRowClick(event.detail)) onOpenDiffFile(file);
                                 }}
                                 {...telemetryClickAttributes("git.file.diff_open", "git_panel")}
@@ -1071,7 +1296,7 @@ export function GitPanelContentSection({
                                 <span className="opacity-0 sm:opacity-100 transition-opacity group-hover/git-file-row:opacity-0">
                                   <FileDiffStats stats={file.diffStats} />
                                 </span>
-                              </WorkspaceTreeFileButton>
+                              </button>
                             </div>
                             {/* Below the Phone viewport step the actions are simply present:
                                 `hover:` compiles to `@media (hover: hover)`, so on a phone no
