@@ -13,7 +13,7 @@ export type WorktreeCreationSource =
 
 export class WorktreeCreationError extends Error {
   constructor(
-    readonly code: 'branch_not_found' | 'branch_already_checked_out',
+    readonly code: 'branch_not_found' | 'branch_already_checked_out' | 'no_commits',
     message: string,
     readonly branchName?: string,
     readonly holderWorktreePath?: string,
@@ -46,6 +46,7 @@ export async function createGitWorktree(options: {
     });
   }
 
+  await assertHasStartPoint(projectDir, source.baseRef, runGit);
   const gitBaseRef = await resolveGitBaseRef(projectDir, source.baseRef, runGit);
 
   await runGit(buildBranchOffArgs(projectDir, worktreePath, branchName, gitBaseRef));
@@ -147,6 +148,44 @@ async function findWorktreeHoldingBranch(
   }
 
   return null;
+}
+
+/**
+ * A repository with no commits has nothing to branch from. Git would silently
+ * switch to `--orphan`, which is rejected next to `--no-track`, and even a
+ * successful orphan branch would later share no history with the project's
+ * first commit, so it could never be diffed against or merged into it.
+ *
+ * A start point that does not resolve while HEAD does is a bad ref, not an
+ * empty repository; Git's own message for that is accurate, so it is left to it.
+ */
+async function assertHasStartPoint(
+  projectDir: string,
+  baseRef: string | null,
+  runGit: GitRunner,
+): Promise<void> {
+  if (await commitExists(projectDir, baseRef ?? 'HEAD', runGit)) return;
+  if (baseRef && await commitExists(projectDir, 'HEAD', runGit)) return;
+  throw new WorktreeCreationError(
+    'no_commits',
+    'This repository has no commits yet, so a Worktree cannot be created from it. Make the first commit, then try again.',
+  );
+}
+
+async function commitExists(
+  projectDir: string,
+  rev: string,
+  runGit: GitRunner,
+): Promise<boolean> {
+  try {
+    await runGit([
+      '-C', projectDir, 'rev-parse', '--verify', '--quiet', '--end-of-options',
+      `${rev}^{commit}`,
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function refExists(

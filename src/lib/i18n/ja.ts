@@ -1075,6 +1075,7 @@ export const ja: I18nMessages = {
     sessionRefPreparing: 'セッション参照を準備中です。少し待ってから再試行してください。',
     sessionRefUnavailable: '失敗したセッション参照を再試行するか削除してください。',
     unknownError: '不明なエラーが発生しました。',
+    title: 'エラー',
   },
   app: {
     title: 'Tessera',

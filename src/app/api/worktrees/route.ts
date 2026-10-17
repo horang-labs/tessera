@@ -301,6 +301,12 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
+    if (err instanceof WorktreeCreationError && err.code === 'no_commits') {
+      return NextResponse.json(
+        { code: 'PROJECT_HAS_NO_COMMITS', error: err.message },
+        { status: 422 },
+      );
+    }
     if (
       err instanceof WorktreeCreationError
       && err.code === 'branch_already_checked_out'

@@ -1075,6 +1075,7 @@ export const en: I18nMessages = {
     sessionRefPreparing: 'Session reference is still preparing. Try again shortly.',
     sessionRefUnavailable: 'Retry the failed session reference or remove it.',
     unknownError: 'An unknown error occurred.',
+    title: 'Error',
   },
   app: {
     title: 'Tessera',

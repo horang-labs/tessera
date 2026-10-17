@@ -1057,6 +1057,7 @@ export interface I18nMessages {
     sessionRefPreparing: string;
     sessionRefUnavailable: string;
     unknownError: string;
+    title: string;
   };
   app: {
     title: string;
