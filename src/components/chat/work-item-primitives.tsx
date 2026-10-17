@@ -31,7 +31,10 @@ export function getWorktreeIconClass(status: WorkflowStatus): string {
   }
 }
 
+export type ItemGoalIndicator = 'active' | 'paused' | null;
+
 export function ItemStatusIndicator({
+  goal = null,
   hasUnread,
   isAwaitingUser,
   isProcessing,
@@ -41,6 +44,8 @@ export function ItemStatusIndicator({
   size = 'default',
   surface,
 }: {
+  /** A PTY `/goal` in play: replaces the green working spinner with the goal target. */
+  goal?: ItemGoalIndicator;
   hasUnread: boolean;
   isAwaitingUser?: boolean;
   isProcessing: boolean;
@@ -52,7 +57,7 @@ export function ItemStatusIndicator({
   size?: ItemStatusSize;
   surface: ItemSurface;
 }) {
-  if (!isProcessing && !isAwaitingUser && !hasUnread && !isRunning) {
+  if (!isProcessing && !isAwaitingUser && !hasUnread && !isRunning && !goal) {
     return null;
   }
 
@@ -66,13 +71,8 @@ export function ItemStatusIndicator({
         ? 'ring-1 ring-(--board-card-bg)'
         : 'ring-1 ring-(--sidebar-bg)';
 
-  const status = isAwaitingUser
-    ? 'awaiting-user'
-    : isProcessing && (sessionKind === 'terminal' || !hasUnread)
-      ? 'processing'
-      : hasUnread
-        ? 'unread'
-        : 'running';
+  const showsProcessing = isProcessing && (sessionKind === 'terminal' || !hasUnread);
+  const status = resolveItemStatus({ goal, hasUnread, isAwaitingUser, showsProcessing });
 
   const statusProps = {
     'data-testid': 'item-status-indicator',
@@ -93,7 +93,22 @@ export function ItemStatusIndicator({
     );
   }
 
-  const showsProcessing = isProcessing && (sessionKind === 'terminal' || !hasUnread);
+  if (status === 'goal-processing' || status === 'goal') {
+    return (
+      <span
+        {...statusProps}
+        data-goal={goal ?? undefined}
+        className={cn(
+          getPlacementClassName(placement, status === 'goal-processing', isEnlarged),
+          ringClass,
+          isEnlarged ? 'h-[0.8125rem] w-[0.8125rem]' : 'h-[8px] w-[8px]',
+          status === 'goal-processing'
+            ? 'goal-orbit'
+            : cn('goal-target', goal === 'paused' && 'goal-target-paused'),
+        )}
+      />
+    );
+  }
 
   if (showsProcessing) {
     return (
@@ -363,6 +378,37 @@ export function OverflowMenuButton({
       <MoreHorizontal className="h-3.5 w-3.5" />
     </button>
   );
+}
+
+type ItemStatus =
+  | 'awaiting-user'
+  | 'goal-processing'
+  | 'processing'
+  | 'unread'
+  | 'goal'
+  | 'running';
+
+/**
+ * Dot priority. A working goal outranks the plain working spinner (it is the
+ * same turn, said more precisely); an idle goal sits below unread so a finished
+ * turn still asks to be read.
+ */
+export function resolveItemStatus({
+  goal,
+  hasUnread,
+  isAwaitingUser,
+  showsProcessing,
+}: {
+  goal: ItemGoalIndicator;
+  hasUnread: boolean;
+  isAwaitingUser?: boolean;
+  showsProcessing: boolean;
+}): ItemStatus {
+  if (isAwaitingUser) return 'awaiting-user';
+  if (showsProcessing) return goal === 'active' ? 'goal-processing' : 'processing';
+  if (hasUnread) return 'unread';
+  if (goal) return 'goal';
+  return 'running';
 }
 
 function getPlacementClassName(

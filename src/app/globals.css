@@ -162,6 +162,8 @@
   --success: #059669;
   --error: #dc2626;
   --warning: #d97706;
+  /* PTY session pursuing a /goal — distinct from the green "working" spinner */
+  --goal: #7c3aed;
 
   /* Message Types */
   --msg-user-bg: #eef3f6;
@@ -313,6 +315,7 @@
   --success: #34d399;
   --error: #f87171;
   --warning: #fbbf24;
+  --goal: #a78bfa;
 
   /* Message Types */
   --msg-user-bg: #232323;
@@ -829,6 +832,75 @@ body {
 
 .attention-dot-blink {
   animation: attention-dot-blink 720ms ease-in-out infinite;
+}
+
+/* ============================================
+   Goal indicator — a PTY session working toward a /goal.
+   A target: solid core with an orbiting arc while the CLI works,
+   a still ring while the goal waits (paused / between turns).
+   The core is radially symmetric, so rotating the whole dot
+   only moves the arc.
+   ============================================ */
+.goal-orbit,
+.goal-target {
+  border-radius: 9999px;
+  background: radial-gradient(circle, var(--goal) 0 30%, transparent 34%);
+}
+
+.goal-orbit {
+  border: 1.5px solid color-mix(in srgb, var(--goal) 28%, transparent);
+  border-top-color: var(--goal);
+  border-right-color: var(--goal);
+  animation: goal-orbit 1.1s linear infinite;
+}
+
+.goal-target {
+  border: 1.5px solid var(--goal);
+  animation: goal-target-pulse 2.4s ease-out infinite;
+}
+
+.goal-target-paused {
+  opacity: 0.7;
+  animation: none;
+}
+
+@keyframes goal-orbit {
+  to { transform: rotate(360deg); }
+}
+
+/* A slow highlight sweeping the goal strip while the CLI works on it. */
+.goal-banner-sheen {
+  pointer-events: none;
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--goal) 85%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: goal-banner-sheen 2.8s ease-in-out infinite;
+}
+
+@keyframes goal-banner-sheen {
+  0% { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
+}
+
+@keyframes goal-target-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--goal) 45%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 5px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goal-orbit,
+  .goal-target,
+  .goal-banner-sheen {
+    animation: none;
+  }
 }
 
 

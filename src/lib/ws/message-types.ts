@@ -1,4 +1,5 @@
 import type { ToolCallKind } from '@/types/tool-call-kind';
+import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
 import type { AgentContextEvent } from '@/types/agent-context';
 import type { CanonicalToolResultValue } from '@/types/tool-result';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
@@ -310,6 +311,17 @@ export type AppServerMessage =
        * 같은 완료가 다시 도착해도 알림이 중복 발화하지 않게 한다.
        */
       stateAt?: number;
+    }
+  | {
+      /**
+       * The `/goal` a PTY session is pursuing, decoded server-side from the
+       * provider transcript. `null` means no goal (never set, cleared, or the
+       * runtime ended). Replayed to each new connection like `session_state`.
+       */
+      type: 'terminal_goal';
+      sessionId: string;
+      terminalId: string;
+      goal: TerminalGoalSnapshot | null;
     }
   | {
       /**

@@ -38,14 +38,78 @@ import {
   shouldIgnoreForeignCodexHookIdentity,
 } from './providers/codex/terminal-hook-identity';
 import { shouldIgnoreForeignClaudeHookIdentity } from './providers/claude-code/terminal-hook-identity';
+import {
+  reopenTerminalHookTurn,
+  supportsTerminalGoal,
+  terminalGoalTracker,
+} from '@/lib/terminal/terminal-goal-service';
+import type { TerminalGoalTarget } from '@/lib/terminal/terminal-goal-tracker';
+import type { PaneTokenEntry } from '@/lib/terminal/pane-token-registry';
+import { isActiveTerminalGoal } from '@/types/terminal-goal';
 
 const MAX_BODY_BYTES = 1_000_000;
+/**
+ * How long a Stop waits for the goal tracker to read the transcript tail. The
+ * CLI blocks on the hook's curl, so this stays well under its 2s max-time; the
+ * read is incremental and normally finishes in milliseconds.
+ */
+const GOAL_STOP_READ_TIMEOUT_MS = 800;
 
 // 터미널 세션 자동 타이틀을 세션당 1회만 발화하기 위한 가드(서버 프로세스 수명).
 // has_custom_title 체크와 이중으로 재생성을 막는다.
 const terminalAutoTitleTriggered = new Set<string>();
 
 export type TerminalSessionStatus = 'running' | 'completed' | 'input_required' | 'idle';
+
+type MappedHookStatus = {
+  status: TerminalSessionStatus;
+  preview?: string;
+  hasWorkingSubagents?: boolean;
+};
+
+/** Records and broadcasts one hook-derived state for a live pane. */
+function publishSessionState(
+  entry: PaneTokenEntry,
+  sessionId: string,
+  event: string,
+  mapped: MappedHookStatus,
+): void {
+  const message = {
+    type: 'session_state',
+    sessionId,
+    terminalId: entry.terminalId,
+    status: mapped.status,
+    hookEvent: event,
+    ...(mapped.hasWorkingSubagents ? { hasWorkingSubagents: true } : {}),
+    // 이 상태 발생시각. recordSessionState가 저장해 replay 때 같은 값을 실으므로
+    // 클라의 알림 dedup 키가 재연결/재전송에도 안정적으로 같은 완료를 가리킨다.
+    stateAt: Date.now(),
+    ...(mapped.preview ? { preview: mapped.preview } : {}),
+  } as const;
+  // 죽었거나 미소유인 pane의 늦은 curl은 브로드캐스트하지 않는다 — 이미
+  // runtime 종료로 idle 처리된 세션에 유령 running을 그리게 된다. 클라이언트
+  // 재연결 replay에도 없는 상태라 한 번 그려지면 스스로 꺼질 길이 없다.
+  if (terminalManager.recordSessionState(message, entry.userId)) {
+    wsServer.sendToUser(entry.userId, message);
+  }
+}
+
+function resolveGoalProviderSessionId(
+  sessionId: string,
+  observedProviderSessionId: string | undefined,
+): string {
+  if (observedProviderSessionId) return observedProviderSessionId;
+  const bound = getTerminalProviderSessionForTesseraSession(sessionId)?.provider_session_id;
+  if (bound) return bound;
+  const session = getSession(sessionId);
+  return session ? readPersistedTerminalProviderSessionId(session) ?? '' : '';
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref?.();
+  });
+}
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -325,11 +389,69 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       if (observation.ignored) return send(204);
       sessionId = observation.sessionId;
     }
-    const mapped = isCodex
+    // `/goal` lives only in the transcript; every lead hook is a cue to read
+    // what the CLI appended. Collaboration children write their own rollout.
+    const goalProviderSessionId = sessionId
+      && supportsTerminalGoal(entry.providerId)
+      && (!isCodex || codexOrigin === 'lead')
+      ? resolveGoalProviderSessionId(sessionId, providerIdentity?.providerSessionId)
+      : '';
+    const goalTarget: TerminalGoalTarget | null = sessionId && goalProviderSessionId
+      ? {
+          sessionId,
+          terminalId: entry.terminalId,
+          userId: entry.userId,
+          providerId: entry.providerId,
+          providerSessionId: goalProviderSessionId,
+          transcriptPath: readString(payload.transcript_path) || readString(payload.transcriptPath) || null,
+        }
+      : null;
+    const goalRead = goalTarget ? terminalGoalTracker.observe(goalTarget) : null;
+    if (goalTarget && (event === 'UserPromptSubmit' || (isCodex && event === 'PreToolUse'))) {
+      // A new prompt — or, for Codex, whose hooks are delivered in order, any
+      // new tool call — means the work went on past a deferred Stop.
+      terminalGoalTracker.noteActivity(entry.userId, goalTarget.sessionId);
+    }
+
+    let mapped: MappedHookStatus | null = isCodex
       ? mapCodexEventToStatus(entry.terminalId, event, payload, codexOrigin)
       : isOpenCode
         ? mapEventToStatus(event, payload)
         : mapClaudeEventToStatus(entry.terminalId, event, payload);
+    if (
+      !mapped
+      && goalTarget
+      && isCodex
+      && (event === 'PreToolUse' || event === 'PostToolUse')
+      && isActiveTerminalGoal(terminalGoalTracker.getGoal(entry.userId, goalTarget.sessionId))
+    ) {
+      // A goal continuation turn starts without UserPromptSubmit, so the Stop
+      // tombstone would swallow its whole activity.
+      reopenTerminalHookTurn(entry.providerId, entry.terminalId);
+      mapped = mapCodexEventToStatus(entry.terminalId, event, payload, codexOrigin);
+    }
+    const turnCompleted = mapped?.status === 'completed';
+    if (goalTarget && goalRead && event === 'Stop' && mapped?.status === 'completed') {
+      // While a goal is active the CLI may keep going after this Stop: Claude's
+      // evaluator runs beside this hook, Codex starts a continuation turn.
+      await Promise.race([goalRead, delay(GOAL_STOP_READ_TIMEOUT_MS)]);
+      const baseline = terminalManager.getSessionStateForSession(goalTarget.sessionId, entry.userId);
+      const deferred = mapped;
+      const goalSessionId = goalTarget.sessionId;
+      const held = terminalGoalTracker.holdCompletion(entry.userId, goalSessionId, {
+        release: () => {
+          // Something newer (interrupt, runtime exit, new prompt) already
+          // replaced the state this Stop would have closed.
+          if (terminalManager.getSessionStateForSession(goalSessionId, entry.userId) !== baseline) return;
+          publishSessionState(entry, goalSessionId, event, deferred);
+        },
+        onContinue: () => reopenTerminalHookTurn(entry.providerId, entry.terminalId),
+      });
+      if (held) {
+        logger.debug({ sessionId: goalSessionId, terminalId: entry.terminalId }, 'Stop deferred while goal is active');
+        mapped = null;
+      }
+    }
     if (event === 'SessionStart' && sessionId && (!isCodex || codexOrigin === 'lead')) {
       if (isCodex) {
         // codex rollout id를 provider_state에 캡처(resume용) + launched 마커 + kind.
@@ -364,7 +486,7 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
     }
     // 실제 턴 완료 시 선택적 AI 제목과 Git 상태를 확정한다. Claude는 lead Stop 뒤에도
     // background child가 실행될 수 있으므로 mapped 상태를 완료 경계로 사용한다.
-    if (mapped?.status === 'completed' && sessionId) {
+    if (turnCompleted && sessionId) {
       refreshSessionDiffStateInBackground(sessionId, entry.userId, 'terminal lifecycle completion');
       maybeAutoGenerateProtocolTitle({
         autoTitleTriggered: terminalAutoTitleTriggered,
@@ -374,26 +496,7 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
       });
     }
     if (mapped && sessionId) {
-      const message = {
-        type: 'session_state',
-        sessionId,
-        terminalId: entry.terminalId,
-        status: mapped.status,
-        hookEvent: event,
-        ...('hasWorkingSubagents' in mapped && mapped.hasWorkingSubagents
-          ? { hasWorkingSubagents: true }
-          : {}),
-        // 이 상태 발생시각. recordSessionState가 저장해 replay 때 같은 값을 실으므로
-        // 클라의 알림 dedup 키가 재연결/재전송에도 안정적으로 같은 완료를 가리킨다.
-        stateAt: Date.now(),
-        ...(mapped.preview ? { preview: mapped.preview } : {}),
-      } as const;
-      // 죽었거나 미소유인 pane의 늦은 curl은 브로드캐스트하지 않는다 — 이미
-      // runtime 종료로 idle 처리된 세션에 유령 running을 그리게 된다. 클라이언트
-      // 재연결 replay에도 없는 상태라 한 번 그려지면 스스로 꺼질 길이 없다.
-      if (terminalManager.recordSessionState(message, entry.userId)) {
-        wsServer.sendToUser(entry.userId, message);
-      }
+      publishSessionState(entry, sessionId, event, mapped);
     }
   } catch (err) {
     logger.debug({ err }, 'Terminal hook parse/dispatch skipped (fail-open)');

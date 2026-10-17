@@ -3,6 +3,7 @@ import type { SessionHistoryEvent } from '@/lib/session-replay-types';
 import type { ProviderRuntimeControls } from '@/lib/session/session-control-types';
 import type { ProviderRateLimitsSnapshot } from '@/lib/status-display/types';
 import type { ContentBlock } from '@/lib/ws/message-types';
+import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
 import type { CliEnvironment } from '../cli-exec';
 import type { ParsedMessage } from './message-types';
 import type {
@@ -211,6 +212,27 @@ export interface CliProvider {
     transcriptPath?: string | null;
     userId?: string;
   }): Promise<string | null>;
+
+  /**
+   * The transcript file backing a PTY session, as a path this server can open.
+   * Same resolution as `readTerminalTranscriptEvents` — including the bridge
+   * translation — so callers that tail the file read what the chat view reads.
+   */
+  resolveTerminalTranscriptFile?(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<string | null>;
+
+  /**
+   * Folds one transcript line into the PTY session's `/goal` state. Pure.
+   * Returns `undefined` when the line is unrelated, `null` when it clears the
+   * goal, and the next snapshot otherwise.
+   */
+  reduceTerminalGoalTranscriptLine?(
+    current: TerminalGoalSnapshot | null,
+    line: string,
+  ): TerminalGoalSnapshot | null | undefined;
 
   /**
    * Classifies a provider hook that may belong to a non-active fork child.

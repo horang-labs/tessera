@@ -73,6 +73,7 @@ import {
   useIsSessionProcessing,
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
+import { useTerminalGoalIndicator } from '@/hooks/use-terminal-goal-indicator';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import {
   SIDEBAR_TREE_CHEVRON,
@@ -579,6 +580,7 @@ function SubSessionRow({
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
+  const goalIndicator = useTerminalGoalIndicator(sess.id);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
   const liveSession = useProjectViewSession(sess.id, task.projectViewId);
   const runtimePresentation = resolveSessionRuntimePresentation({
@@ -705,6 +707,7 @@ function SubSessionRow({
             sessionKind={liveSession?.kind ?? sess.kind}
             placement="corner"
             surface="sidebar"
+            goal={goalIndicator}
           />
         </span>
       ) : (
@@ -717,6 +720,7 @@ function SubSessionRow({
             sessionKind={liveSession?.kind ?? sess.kind}
             placement="inline"
             surface="sidebar"
+            goal={goalIndicator}
           />
         </span>
       )}
@@ -911,6 +915,7 @@ export function TaskItemRow({
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
+    terminalGoal,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
   const hasCanonicalUnreadSession = useAnyProjectViewSessionUnread(
@@ -1064,6 +1069,7 @@ export function TaskItemRow({
             sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
             placement="corner"
             surface="sidebar"
+            goal={terminalGoal}
           />
         )}
         {task.worktreeMissing && (
@@ -1171,6 +1177,7 @@ export function TaskItemRow({
                 sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                 placement="corner"
                 surface="sidebar"
+                goal={terminalGoal}
               />
             </span>
           ) : task.worktreeId || task.worktreeBranch ? (
@@ -1185,6 +1192,7 @@ export function TaskItemRow({
                 sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                 placement="inline"
                 surface="sidebar"
+                goal={terminalGoal}
               />
             </span>
           ) : null}
@@ -1432,6 +1440,7 @@ export function ChatItemRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
+  const goalIndicator = useTerminalGoalIndicator(session.id);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
@@ -1580,6 +1589,7 @@ export function ChatItemRow({
             sessionKind={liveSession?.kind ?? session.kind}
             placement="corner"
             surface="sidebar"
+            goal={goalIndicator}
           />
         </span>
 

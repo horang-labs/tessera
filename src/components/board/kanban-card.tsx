@@ -54,6 +54,7 @@ import {
   useIsSessionProcessing,
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
+import { useTerminalGoalIndicator } from '@/hooks/use-terminal-goal-indicator';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
@@ -175,6 +176,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
+  const goalIndicator = useTerminalGoalIndicator(session.id);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
@@ -371,6 +373,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                   sessionKind={session.kind}
                   placement="corner"
                   surface="board"
+                  goal={goalIndicator}
                 />
               </span>
             )}
@@ -405,6 +408,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                   sessionKind={session.kind}
                   placement="corner"
                   surface="board"
+                  goal={goalIndicator}
                 />
               )}
             </span>
@@ -682,6 +686,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
+    terminalGoal,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
   // task에 활성 세션이 하나라도 있으면 unread를 통째로 억제하던 `!isActive` 가드를
@@ -951,6 +956,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="corner"
                   surface="board"
+                  goal={terminalGoal}
                 />
               </span>
             ) : !task.worktreeBranch && hasTaskStatus ? (
@@ -963,6 +969,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                   sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                   placement="inline"
                   surface="board"
+                  goal={terminalGoal}
                 />
               </span>
             ) : null}
@@ -1014,6 +1021,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                     sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                     placement="corner"
                     surface="board"
+                    goal={terminalGoal}
                   />
                 )}
               </span>
@@ -1276,6 +1284,7 @@ function KanbanSubSessionItem({
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
+  const goalIndicator = useTerminalGoalIndicator(session.id);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const liveSession = useProjectViewSession(session.id);
@@ -1424,6 +1433,7 @@ function KanbanSubSessionItem({
               sessionKind={liveSession?.kind ?? session.kind}
               placement="corner"
               surface="board"
+              goal={goalIndicator}
             />
           </span>
         ) : (
@@ -1436,6 +1446,7 @@ function KanbanSubSessionItem({
               sessionKind={liveSession?.kind ?? session.kind}
               placement="leading"
               surface="board"
+              goal={goalIndicator}
             />
           </span>
         )}

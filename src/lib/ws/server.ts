@@ -20,6 +20,7 @@ import { sessionHistory } from '../session-history';
 import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast';
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
 import { bindTerminalRuntimeSender, terminalManager } from '../terminal/shared-terminal-manager';
+import { terminalGoalTracker } from '../terminal/terminal-goal-service';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import { getGeneratingTitleSessionIds } from './title-generation-state';
 import {
@@ -489,6 +490,14 @@ export class WebSocketServer {
     // completed/input-required badges without duplicating other windows.
     for (const message of terminalManager.getSessionStatesForUser(userId)) {
       this.sendToConnection(ws, userId, message);
+    }
+    for (const { target, goal } of terminalGoalTracker.getGoalsForUser(userId)) {
+      this.sendToConnection(ws, userId, {
+        type: 'terminal_goal',
+        sessionId: target.sessionId,
+        terminalId: target.terminalId,
+        goal,
+      });
     }
 
     // Send cached rate limit data to new connection

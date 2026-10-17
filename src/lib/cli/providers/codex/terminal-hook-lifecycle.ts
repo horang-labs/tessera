@@ -142,6 +142,15 @@ export class CodexHookLifecycleTracker {
 
     return null;
   }
+
+  /**
+   * Starts a turn Codex began on its own: `/goal` set or resumed, or a goal
+   * continuation. Those turns never emit UserPromptSubmit, so without this the
+   * tombstone drops every hook of the turn.
+   */
+  reopenTurn(terminalId: string): void {
+    this.terminals.set(terminalId, { turnEnded: false });
+  }
 }
 
 const terminalHookLifecycle = new CodexHookLifecycleTracker();
@@ -161,4 +170,8 @@ export function mapCodexHookLifecycle(
   origin: CodexHookOrigin,
 ): { status: CodexHookLifecycleStatus } | null {
   return terminalHookLifecycle.apply(terminalId, event, origin);
+}
+
+export function reopenCodexHookTurn(terminalId: string): void {
+  terminalHookLifecycle.reopenTurn(terminalId);
 }

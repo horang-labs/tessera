@@ -61,6 +61,7 @@ import {
   fingerprintTranscriptFile,
   resolveClaudeTranscriptPath,
 } from './transcript-path';
+import { reduceClaudeGoalTranscriptLine } from './goal-transcript';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -149,6 +150,21 @@ export class ClaudeCodeAdapter implements CliProvider {
   resolveBackgroundTerminalSessionFork = resolveClaudeBackgroundTerminalSessionFork;
 
   isTerminalConversationHeldInBackground = isClaudeSessionInBackgroundJob;
+
+  reduceTerminalGoalTranscriptLine = reduceClaudeGoalTranscriptLine;
+
+  /** The transcript file backing this PTY session (see CliProvider). */
+  async resolveTerminalTranscriptFile(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<string | null> {
+    return resolveClaudeTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
+    });
+  }
 
   /** Identity of the transcript file backing this session (see CliProvider). */
   async readTerminalTranscriptFingerprint(options: {
