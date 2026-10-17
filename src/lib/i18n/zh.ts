@@ -1075,6 +1075,7 @@ export const zh: I18nMessages = {
     sessionRefPreparing: '会话引用仍在准备中，请稍后重试。',
     sessionRefUnavailable: '请重试失败的会话引用，或将其移除。',
     unknownError: '发生了未知错误。',
+    title: '错误',
   },
   app: {
     title: 'Tessera',

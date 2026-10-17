@@ -186,6 +186,14 @@ export function createDatabaseControlWorktreeCreator(options: {
             { branch: source.mode === 'checkout-branch' ? source.branch : branchName },
           );
         }
+        if (error instanceof WorktreeCreationError && error.code === 'no_commits') {
+          throw new ControlWorktreeCreationError(
+            'WORKTREE_CREATE_FAILED',
+            error.message,
+            422,
+            { branch: branchName, startPoint: request.startPoint },
+          );
+        }
         if (
           error instanceof WorktreeCreationError
           && error.code === 'branch_already_checked_out'

@@ -1082,6 +1082,7 @@ export const ko: I18nMessages = {
     sessionRefPreparing: '세션 참조를 준비 중입니다. 잠시 후 다시 시도하세요.',
     sessionRefUnavailable: '실패한 세션 참조를 재시도하거나 제거하세요.',
     unknownError: '알 수 없는 오류가 발생했습니다.',
+    title: '오류',
   },
   app: {
     title: 'Tessera',
