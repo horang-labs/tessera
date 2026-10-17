@@ -1154,6 +1154,7 @@ export interface I18nMessages {
       worktreeFallback: string;
       selectionSummary: string;
       includeFile: string;
+      includeFolder: string;
       selectAll: string;
       deselectAll: string;
       button: string;

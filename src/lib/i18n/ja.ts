@@ -1172,6 +1172,7 @@ export const ja: I18nMessages = {
       worktreeFallback: 'アクティブなワークツリー',
       selectionSummary: '{{files}} 件選択',
       includeFile: '{{path}} をコミットに含める',
+      includeFolder: '{{path}} の変更ファイルをすべてコミットに含める',
       selectAll: 'すべて選択',
       deselectAll: 'すべて選択解除',
       button: 'コミット',
