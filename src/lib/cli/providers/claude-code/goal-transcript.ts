@@ -15,6 +15,8 @@ import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
 
 /** Cheap prefilter so a multi-megabyte transcript is not JSON-parsed line by line. */
 export const CLAUDE_GOAL_LINE_MARKER = '"goal_status"';
+/** Every line this reader acts on contains one of these (see CliProvider). */
+export const CLAUDE_GOAL_LINE_MARKERS: readonly string[] = [CLAUDE_GOAL_LINE_MARKER];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);

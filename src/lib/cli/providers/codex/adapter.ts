@@ -47,7 +47,7 @@ import {
 } from './transcript-decoder';
 import { fingerprintTranscriptFile } from '../claude-code/transcript-path';
 import { resolveCodexTranscriptPath } from './transcript-path';
-import { reduceCodexGoalTranscriptLine } from './goal-transcript';
+import { CODEX_GOAL_LINE_MARKERS, reduceCodexGoalTranscriptLine } from './goal-transcript';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
@@ -294,6 +294,8 @@ export class CodexAdapter implements CliProvider {
   createTerminalSessionObserver = createCodexTerminalSessionObserver;
 
   detectTerminalConversationReset = codexScreenShowsConversationReset;
+
+  terminalGoalLineMarkers = CODEX_GOAL_LINE_MARKERS;
 
   reduceTerminalGoalTranscriptLine = reduceCodexGoalTranscriptLine;
 

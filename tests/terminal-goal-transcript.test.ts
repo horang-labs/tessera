@@ -5,7 +5,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { reduceClaudeGoalTranscriptLine } from '@/lib/cli/providers/claude-code/goal-transcript';
 import { reduceCodexGoalTranscriptLine } from '@/lib/cli/providers/codex/goal-transcript';
-import { TerminalGoalTracker, type TerminalGoalTarget } from '@/lib/terminal/terminal-goal-tracker';
+import {
+  GOAL_INITIAL_REPLAY_BYTES,
+  TerminalGoalTracker,
+  type TerminalGoalTarget,
+} from '@/lib/terminal/terminal-goal-tracker';
+import { CLAUDE_GOAL_LINE_MARKERS } from '@/lib/cli/providers/claude-code/goal-transcript';
 import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
 
 // Line shapes below are copied from real transcripts (Claude Code 2.1.284,
@@ -181,6 +186,7 @@ function makeTracker(filePath: string, live = { value: true }) {
   const started: TerminalGoalSnapshot[] = [];
   const tracker = new TerminalGoalTracker({
     resolveTranscriptFile: async () => filePath,
+    lineMarkers: () => CLAUDE_GOAL_LINE_MARKERS,
     reduceLine: (_provider, current, line) => reduceClaudeGoalTranscriptLine(current, line),
     isLive: () => live.value,
     publish: (_target, goal) => published.push(goal),
@@ -338,4 +344,42 @@ test('Codex: an errored or aborted turn stalls an active goal until resume', () 
   assert.equal(fold(reduceCodexGoalTranscriptLine, [set, aborted])?.status, 'stalled');
   assert.equal(fold(reduceCodexGoalTranscriptLine, [set, errored, resumed])?.status, 'active');
   assert.equal(reduceCodexGoalTranscriptLine(null, errored), undefined, 'no goal, nothing to stall');
+});
+
+test('first read replays only the transcript tail, starting on a line boundary', async () => {
+  const filePath = tempTranscript();
+  const { tracker, target, published } = makeTracker(filePath);
+  try {
+    const now = new Date().toISOString();
+    // A goal set before the replay window is not seen…
+    fs.appendFileSync(filePath, `${claudeGoal({ met: false, sentinel: true, condition: 'old' }, now)}\n`);
+    // …followed by more history than the window holds, in non-ASCII so the
+    // window boundary lands inside a multi-byte character.
+    const filler = `${JSON.stringify({ type: 'user', message: { content: '한글'.repeat(2000) } })}\n`;
+    const fillerLines = Math.ceil(GOAL_INITIAL_REPLAY_BYTES / Buffer.byteLength(filler)) + 1;
+    fs.appendFileSync(filePath, filler.repeat(fillerLines));
+    fs.appendFileSync(filePath, `${claudeGoal({ met: false, sentinel: true, condition: 'recent ✨' }, now)}\n`);
+    await tracker.observe(target);
+    assert.equal(published.length, 1);
+    assert.equal(published[0]?.objective, 'recent ✨');
+  } finally {
+    tracker.dispose();
+  }
+});
+
+test('an evaluation inside the window revives a goal set before it', async () => {
+  const filePath = tempTranscript();
+  const { tracker, target, published } = makeTracker(filePath);
+  try {
+    const now = new Date().toISOString();
+    fs.appendFileSync(filePath, `${claudeGoal({ met: false, sentinel: true, condition: 'long goal' }, now)}\n`);
+    const filler = `${JSON.stringify({ type: 'user', message: { content: 'x'.repeat(4000) } })}\n`;
+    fs.appendFileSync(filePath, filler.repeat(Math.ceil(GOAL_INITIAL_REPLAY_BYTES / filler.length) + 1));
+    fs.appendFileSync(filePath, `${claudeGoal({ met: false, condition: 'long goal', reason: 'not yet' }, now)}\n`);
+    await tracker.observe(target);
+    assert.equal(published[0]?.objective, 'long goal');
+    assert.equal(published[0]?.status, 'active');
+  } finally {
+    tracker.dispose();
+  }
 });

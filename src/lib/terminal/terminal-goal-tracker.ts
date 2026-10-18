@@ -38,6 +38,11 @@ export interface TerminalGoalTarget {
 
 export interface TerminalGoalTrackerDeps {
   resolveTranscriptFile(target: TerminalGoalTarget): Promise<string | null>;
+  /**
+   * Substrings every goal line contains. Lines without one are never decoded,
+   * which keeps a gigabyte transcript off the event loop. Absent: decode all.
+   */
+  lineMarkers?(providerId: string): readonly string[] | undefined;
   reduceLine(
     providerId: string,
     current: TerminalGoalSnapshot | null,
@@ -75,6 +80,8 @@ interface TrackedGoal {
   filePath: string | null;
   /** Byte offset just past the last complete line consumed. */
   offset: number;
+  /** Whether the history before `offset` has been replayed once. */
+  replayed: boolean;
   goal: TerminalGoalSnapshot | null;
   /** Whether subscribers currently hold a non-null goal for this session. */
   published: boolean;
@@ -88,6 +95,14 @@ interface TrackedGoal {
 }
 
 const READ_CHUNK_BYTES = 1024 * 1024;
+/**
+ * How much history the first read replays, from the end of the transcript.
+ * Long sessions reach gigabytes, and a full replay over the WSL bridge took
+ * seconds per file while stalling the event loop for every terminal. A goal
+ * set further back is still picked up by its next record (Claude writes one
+ * per evaluation; Codex on pause, resume, limits and completion).
+ */
+export const GOAL_INITIAL_REPLAY_BYTES = 16 * 1024 * 1024;
 const NEWLINE = 0x0a;
 /** Catches pause/clear at an idle prompt, which no hook reports. */
 export const GOAL_POLL_MS = 2_500;
@@ -106,6 +121,31 @@ export const GOAL_START_RECENCY_MS = 30_000;
 export const GOAL_HOLD_POLL_MS = 750;
 /** Upper bound on deferring a Stop, in case the verdict never lands. */
 export const GOAL_HOLD_MAX_MS = 120_000;
+
+/**
+ * The lines of `block` (complete lines, no trailing newline) that contain a
+ * marker, in file order. Only those lines are decoded.
+ */
+function goalLines(block: Buffer, markers: Buffer[] | undefined): string[] {
+  if (!markers) return block.toString('utf8').split('\n').filter(Boolean);
+  const starts = new Set<number>();
+  for (const marker of markers) {
+    let from = 0;
+    for (;;) {
+      const hit = block.indexOf(marker, from);
+      if (hit < 0) break;
+      const start = hit === 0 ? 0 : block.lastIndexOf(NEWLINE, hit) + 1;
+      starts.add(start);
+      const end = block.indexOf(NEWLINE, hit);
+      if (end < 0) break;
+      from = end + 1;
+    }
+  }
+  return [...starts].sort((a, b) => a - b).map((start) => {
+    const end = block.indexOf(NEWLINE, start);
+    return block.subarray(start, end < 0 ? block.length : end).toString('utf8');
+  });
+}
 
 function keyOf(userId: string, sessionId: string): string {
   return `${userId}\u0000${sessionId}`;
@@ -127,6 +167,7 @@ export class TerminalGoalTracker {
         target,
         filePath: null,
         offset: 0,
+        replayed: false,
         goal: null,
         published: false,
         refreshing: null,
@@ -257,6 +298,7 @@ export class TerminalGoalTracker {
     if (!entry.filePath) {
       entry.filePath = await this.deps.resolveTranscriptFile(entry.target);
       entry.offset = 0;
+      entry.replayed = false;
       if (!entry.filePath) return;
     }
 
@@ -269,13 +311,24 @@ export class TerminalGoalTracker {
       return;
     }
     if (size < entry.offset) {
-      // Rewritten in place (compaction/rewrite): replay from the start.
+      // Rewritten in place (compaction/rewrite): replay again.
       entry.offset = 0;
+      entry.replayed = false;
       this.setGoal(entry, null);
     }
+    const replaying = !entry.replayed;
+    // The first look replays only the tail; it starts mid-line, so the bytes
+    // up to the first newline are skipped.
+    let skipPartialLine = false;
+    if (replaying && size - entry.offset > GOAL_INITIAL_REPLAY_BYTES) {
+      entry.offset = size - GOAL_INITIAL_REPLAY_BYTES;
+      skipPartialLine = true;
+    }
+    entry.replayed = true;
     if (size === entry.offset) return;
 
-    const replaying = entry.offset === 0;
+    const markers = this.deps.lineMarkers?.(entry.target.providerId)
+      ?.map((marker) => Buffer.from(marker, 'utf8'));
     const handle = await fsp.open(entry.filePath, 'r');
     let goal = entry.goal;
     try {
@@ -287,9 +340,18 @@ export class TerminalGoalTracker {
         const { bytesRead } = await handle.read(chunk, 0, length, position);
         if (bytesRead <= 0) break;
         position += bytesRead;
-        const data = pending.length
+        let data = pending.length
           ? Buffer.concat([pending, chunk.subarray(0, bytesRead)])
           : chunk.subarray(0, bytesRead);
+        if (skipPartialLine) {
+          const firstNewline = data.indexOf(NEWLINE);
+          if (firstNewline < 0) {
+            pending = Buffer.alloc(0);
+            continue;
+          }
+          data = data.subarray(firstNewline + 1);
+          skipPartialLine = false;
+        }
         const lastNewline = data.lastIndexOf(NEWLINE);
         if (lastNewline < 0) {
           pending = data;
@@ -297,8 +359,7 @@ export class TerminalGoalTracker {
         }
         // Split on bytes, not characters: a chunk boundary can fall inside a
         // multi-byte character, and only whole lines are decoded.
-        for (const line of data.subarray(0, lastNewline).toString('utf8').split('\n')) {
-          if (!line) continue;
+        for (const line of goalLines(data.subarray(0, lastNewline), markers)) {
           const next = this.deps.reduceLine(entry.target.providerId, goal, line);
           if (next !== undefined) goal = next;
         }
@@ -309,8 +370,8 @@ export class TerminalGoalTracker {
     } finally {
       await handle.close();
     }
-    // A resumed conversation replays its whole history. A goal that already
-    // ended there is old news — the CLI itself only restores a live one.
+    // A resumed conversation replays its history. A goal that already ended
+    // there is old news — the CLI itself only restores a live one.
     if (replaying && goal && !isLiveTerminalGoal(goal)) goal = null;
     this.setGoal(entry, goal);
   }

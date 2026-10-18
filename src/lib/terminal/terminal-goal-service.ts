@@ -68,6 +68,9 @@ function createTracker(): TerminalGoalTracker {
         userId: target.userId,
       }) ?? null;
     },
+    lineMarkers: (providerId) => cliProviderRegistry
+      .getProvider(providerId)
+      .terminalGoalLineMarkers,
     reduceLine: (providerId, current, line) => cliProviderRegistry
       .getProvider(providerId)
       .reduceTerminalGoalTranscriptLine?.(current, line),

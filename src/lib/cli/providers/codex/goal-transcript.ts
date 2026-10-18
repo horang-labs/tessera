@@ -19,6 +19,14 @@ const TURN_ABORTED_MARKER = '"turn_aborted"';
 const GOAL_CLEARED_MARKER = 'User cleared the goal.';
 /** A goal object serialized inside a tool output string. */
 const GOAL_TOOL_OUTPUT_MARKER = '\\"goal\\":{';
+/** Every line this reader acts on contains one of these (see CliProvider). */
+export const CODEX_GOAL_LINE_MARKERS: readonly string[] = [
+  GOAL_EVENT_MARKER,
+  GOAL_CLEARED_MARKER,
+  GOAL_TOOL_OUTPUT_MARKER,
+  TURN_COMPLETE_MARKER,
+  TURN_ABORTED_MARKER,
+];
 
 const STATUSES: ReadonlySet<string> = new Set<TerminalGoalStatus>([
   'active',

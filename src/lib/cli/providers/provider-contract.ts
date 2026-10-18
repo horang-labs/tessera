@@ -229,6 +229,13 @@ export interface CliProvider {
    * Returns `undefined` when the line is unrelated, `null` when it clears the
    * goal, and the next snapshot otherwise.
    */
+  /**
+   * Substrings every line `reduceTerminalGoalTranscriptLine` acts on contains.
+   * Lets the reader find candidate lines in raw bytes instead of decoding the
+   * whole transcript — sessions reach gigabytes.
+   */
+  terminalGoalLineMarkers?: readonly string[];
+
   reduceTerminalGoalTranscriptLine?(
     current: TerminalGoalSnapshot | null,
     line: string,

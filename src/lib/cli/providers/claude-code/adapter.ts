@@ -61,7 +61,7 @@ import {
   fingerprintTranscriptFile,
   resolveClaudeTranscriptPath,
 } from './transcript-path';
-import { reduceClaudeGoalTranscriptLine } from './goal-transcript';
+import { CLAUDE_GOAL_LINE_MARKERS, reduceClaudeGoalTranscriptLine } from './goal-transcript';
 
 const CLI_TIMEOUT_MS = 120_000;
 const STATUS_CHECK_TIMEOUT_MS = 5_000;
@@ -150,6 +150,8 @@ export class ClaudeCodeAdapter implements CliProvider {
   resolveBackgroundTerminalSessionFork = resolveClaudeBackgroundTerminalSessionFork;
 
   isTerminalConversationHeldInBackground = isClaudeSessionInBackgroundJob;
+
+  terminalGoalLineMarkers = CLAUDE_GOAL_LINE_MARKERS;
 
   reduceTerminalGoalTranscriptLine = reduceClaudeGoalTranscriptLine;
 
