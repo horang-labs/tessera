@@ -1,4 +1,8 @@
-import type { TerminalGoalSnapshot, TerminalGoalStatus } from '@/types/terminal-goal';
+import {
+  isLiveTerminalGoal,
+  type TerminalGoalSnapshot,
+  type TerminalGoalStatus,
+} from '@/types/terminal-goal';
 
 /**
  * Codex keeps the authoritative goal in `$CODEX_HOME/goals_1.sqlite`, but that
@@ -6,8 +10,9 @@ import type { TerminalGoalSnapshot, TerminalGoalStatus } from '@/types/terminal-
  * bridge. The rollout carries the same lifecycle (CLI 0.162):
  *
  * - `event_msg` / `thread_goal_updated` — set, pause, resume, budget/usage limits.
- * - `update_goal` tool output (`{"goal":{...}}`) — the model marking it complete.
- *   That transition is not echoed as a `thread_goal_updated` event.
+ * - the `update_goal` call — the model marking it complete. That transition is
+ *   not echoed as a `thread_goal_updated` event, and the call's output carries
+ *   the goal (`{"goal":{...}}`) only when the model printed the result.
  * - a user `<codex_internal_context source="user_goal">` message containing
  *   `User cleared the goal.` — `/goal clear`, which has no event either.
  */
@@ -19,11 +24,14 @@ const TURN_ABORTED_MARKER = '"turn_aborted"';
 const GOAL_CLEARED_MARKER = 'User cleared the goal.';
 /** A goal object serialized inside a tool output string. */
 const GOAL_TOOL_OUTPUT_MARKER = '\\"goal\\":{';
+/** The model's own completion call, in a code-mode script or as a function call. */
+const GOAL_TOOL_CALL_MARKER = 'update_goal';
 /** Every line this reader acts on contains one of these (see CliProvider). */
 export const CODEX_GOAL_LINE_MARKERS: readonly string[] = [
   GOAL_EVENT_MARKER,
   GOAL_CLEARED_MARKER,
   GOAL_TOOL_OUTPUT_MARKER,
+  GOAL_TOOL_CALL_MARKER,
   TURN_COMPLETE_MARKER,
   TURN_ABORTED_MARKER,
 ];
@@ -107,6 +115,26 @@ function goalFromToolOutput(output: unknown, at: number): TerminalGoalSnapshot |
   return undefined;
 }
 
+/** `tools.update_goal({status:"complete"})` in an exec script. */
+const SCRIPT_COMPLETE_CALL = /\bupdate_goal\s*\(\s*\{[^}]*\bstatus\s*:\s*["']complete["']/;
+
+/** Whether this tool call is the model marking the goal complete. */
+function isGoalCompleteCall(payload: Record<string, unknown>): boolean {
+  if (payload.type === 'custom_tool_call') {
+    return typeof payload.input === 'string' && SCRIPT_COMPLETE_CALL.test(payload.input);
+  }
+  if (payload.type === 'function_call' && payload.name === 'update_goal') {
+    if (typeof payload.arguments !== 'string') return false;
+    try {
+      const args = JSON.parse(payload.arguments) as unknown;
+      return isRecord(args) && args.status === 'complete';
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 function isGoalClearedMessage(payload: Record<string, unknown>): boolean {
   if (payload.type !== 'message' || payload.role !== 'user') return false;
   return textParts(payload.content).some((text) => (
@@ -128,6 +156,7 @@ export function reduceCodexGoalTranscriptLine(
     !line.includes(GOAL_EVENT_MARKER)
     && !line.includes(GOAL_CLEARED_MARKER)
     && !line.includes(GOAL_TOOL_OUTPUT_MARKER)
+    && !(current && line.includes(GOAL_TOOL_CALL_MARKER))
     && !(current && (line.includes(TURN_COMPLETE_MARKER) || line.includes(TURN_ABORTED_MARKER)))
   ) {
     return undefined;
@@ -164,6 +193,21 @@ export function reduceCodexGoalTranscriptLine(
   if (entry.type !== 'response_item') return undefined;
 
   if (isGoalClearedMessage(payload)) return null;
+
+  // The output of this call may say nothing (the model did not print it), so
+  // the call itself is the completion. A printed result refines the totals.
+  if (current && isLiveTerminalGoal(current) && isGoalCompleteCall(payload)) {
+    // Codex counts time while the goal is active; the token total is not
+    // reported, and the last one is from an earlier event.
+    const { tokensUsed: _staleTokens, ...rest } = current;
+    const activeSince = current.status === 'active' ? Math.max(0, (at - current.updatedAt) / 1000) : 0;
+    return {
+      ...rest,
+      status: 'complete',
+      updatedAt: at,
+      elapsedSeconds: Math.round((current.elapsedSeconds ?? 0) + activeSince),
+    };
+  }
 
   if (payload.type === 'custom_tool_call_output' || payload.type === 'function_call_output') {
     const snapshot = goalFromToolOutput(payload.output, at);
