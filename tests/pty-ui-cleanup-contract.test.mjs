@@ -22,7 +22,10 @@ test('right panel keeps read-only Git surfaces and removes Tools and mutation ac
   assert.match(read('src/lib/telemetry/client.ts'), /allowedGitTabs = new Set\(\['git', 'files', 'scripts', 'memory'\]\)/);
 });
 
-test('Goal is absent from UI, transport, persistence, and Codex provider integration', () => {
+// Guards the removed GUI-mode Codex Goal integration (app-server `thread/goal`,
+// SessionGoalControl, the GUI `/goal` command). The PTY goal display reads the
+// CLI's own transcript instead (terminal-goal-*), and is not covered here.
+test('GUI-mode Codex Goal integration stays removed from UI, transport, persistence, and the provider', () => {
   const sources = [
     'src/components/chat/header.tsx',
     'src/components/chat/message-input.tsx',
@@ -42,7 +45,7 @@ test('Goal is absent from UI, transport, persistence, and Codex provider integra
     'src/types/chat.ts',
   ].map(read).join('\n');
 
-  assert.doesNotMatch(sources, /SessionGoal|session_goal|thread\/goal|SessionGoalControl|CODEX_GOAL/);
+  assert.doesNotMatch(sources, /SessionGoal|session_goal|thread\/goal|SessionGoalControl|CODEX_GOAL_(?:COMMAND|BUILTIN|MAX)/);
   assert.match(read('src/lib/cli/providers/codex/adapter.ts'), /return \['app-server'\];/);
   for (const relativePath of [
     'src/components/chat/session-goal-control.tsx',
