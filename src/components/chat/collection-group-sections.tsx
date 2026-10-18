@@ -1,7 +1,7 @@
 'use client';
 
 import { createPortal } from 'react-dom';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import {
   Archive,
@@ -74,6 +74,7 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { useTerminalGoalIndicator } from '@/hooks/use-terminal-goal-indicator';
+import { GoalTitleTicker, useHasActiveGoalObjective } from './goal-title-ticker';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import {
   SIDEBAR_TREE_CHEVRON,
@@ -581,6 +582,8 @@ function SubSessionRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
   const goalIndicator = useTerminalGoalIndicator(sess.id);
+  const subSessionIds = useMemo(() => [sess.id], [sess.id]);
+  const hasGoalTicker = useHasActiveGoalObjective(subSessionIds);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
   const liveSession = useProjectViewSession(sess.id, task.projectViewId);
   const runtimePresentation = resolveSessionRuntimePresentation({
@@ -736,7 +739,14 @@ function SubSessionRow({
           className="min-w-0 flex-1 border-b border-(--accent) bg-transparent text-[0.8125rem] text-(--sidebar-text-active) outline-none"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate">{sess.title}</span>
+        <>
+          {/* With a goal running the title keeps its own width and the goal
+              text takes whatever room is left. */}
+          <span className={cn('min-w-0 truncate', hasGoalTicker ? 'flex-initial' : 'flex-1')}>
+            {sess.title}
+          </span>
+          {hasGoalTicker && <GoalTitleTicker sessionIds={subSessionIds} variant="inline" />}
+        </>
       )}
 
       {!isRenaming && (
@@ -1210,9 +1220,10 @@ export function TaskItemRow({
               className="w-full border-b border-(--accent) bg-transparent text-[0.8125rem] font-medium text-(--sidebar-text-active) outline-none caret-(--accent)"
             />
           ) : (
+            <span className="flex min-w-0 items-center gap-2">
             <span
               className={cn(
-                'block truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
+                'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 (isGeneratingTitle || isPending) && 'title-generating'
               )}
               style={
@@ -1222,6 +1233,8 @@ export function TaskItemRow({
               }
             >
               {task.title}
+            </span>
+            <GoalTitleTicker sessionIds={taskSessionIds} variant="inline" />
             </span>
           )}
         </div>
@@ -1441,6 +1454,7 @@ export function ChatItemRow({
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const goalIndicator = useTerminalGoalIndicator(session.id);
+  const chatSessionIds = useMemo(() => [session.id], [session.id]);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
@@ -1605,9 +1619,10 @@ export function ChatItemRow({
               className="w-full border-b border-(--accent) bg-transparent text-[0.8125rem] font-medium text-(--sidebar-text-active) outline-none caret-(--accent)"
             />
           ) : (
+            <span className="flex min-w-0 items-center gap-2">
             <span
               className={cn(
-                'block truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
+                'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 isGeneratingTitle && 'title-generating'
               )}
               style={
@@ -1617,6 +1632,8 @@ export function ChatItemRow({
               }
             >
               {session.title}
+            </span>
+            <GoalTitleTicker sessionIds={chatSessionIds} variant="inline" />
             </span>
           )}
         </div>

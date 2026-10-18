@@ -895,11 +895,72 @@ body {
   70%, 100% { box-shadow: 0 0 0 5px transparent; }
 }
 
+/*
+ * Goal ticker — the goal text scrolling beside a session title. The track holds
+ * the text twice and slides by half its width, so the loop has no seam. The
+ * ticker only gets the room the title leaves; with almost none it hides.
+ */
+.goal-ticker {
+  overflow: hidden;
+  white-space: nowrap;
+  container-type: inline-size;
+  font-size: 0.6875rem;
+  color: color-mix(in srgb, var(--goal) 82%, var(--text-muted));
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+.goal-ticker-track {
+  display: inline-flex;
+  width: max-content;
+  animation: goal-ticker var(--goal-ticker-duration, 12s) linear infinite;
+}
+
+.goal-ticker:hover .goal-ticker-track {
+  animation-play-state: paused;
+}
+
+.goal-ticker-item {
+  padding-right: 2.5rem;
+}
+
+.goal-ticker-item::before {
+  content: '';
+  display: inline-block;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  margin-right: 0.3125rem;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  background: radial-gradient(circle, currentColor 0 26%, transparent 32%);
+  vertical-align: -0.0625rem;
+}
+
+@keyframes goal-ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@container (max-width: 2.75rem) {
+  .goal-ticker-track { visibility: hidden; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .goal-orbit,
   .goal-target,
   .goal-banner-sheen {
     animation: none;
+  }
+  .goal-ticker-track {
+    animation: none;
+    width: 100%;
+  }
+  .goal-ticker-item {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .goal-ticker-item + .goal-ticker-item {
+    display: none;
   }
 }
 
