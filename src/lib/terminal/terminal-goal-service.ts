@@ -2,14 +2,10 @@ import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import { reopenClaudeHookTurn } from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
 import { reopenCodexHookTurn } from '@/lib/cli/providers/codex/terminal-hook-lifecycle';
 import { sendTerminalUserMessage, terminalManager } from './shared-terminal-manager';
+import { appendTerminalGoalHistory } from './terminal-goal-history';
 import { TerminalGoalTracker, type TerminalGoalTarget } from './terminal-goal-tracker';
 
-const GOAL_PROVIDERS: ReadonlySet<string> = new Set(['claude-code', 'codex']);
-
-/** Providers whose PTY transcript records `/goal`. */
-export function supportsTerminalGoal(providerId: string): boolean {
-  return GOAL_PROVIDERS.has(providerId);
-}
+export { supportsTerminalGoal } from './terminal-goal-support';
 
 /** Lets a turn the CLI started by itself be tracked like a prompted one. */
 export function reopenTerminalHookTurn(providerId: string, terminalId: string): void {
@@ -87,6 +83,15 @@ function createTracker(): TerminalGoalTracker {
     },
     onGoalStarted: markGoalTurnRunning,
     onGoalStalled: completeStalledGoalTurn,
+    recordEndedGoals: (target, entries) => {
+      const history = appendTerminalGoalHistory(target.sessionId, entries);
+      if (!history) return;
+      sendTerminalUserMessage(target.userId, {
+        type: 'terminal_goal_history',
+        sessionId: target.sessionId,
+        history,
+      });
+    },
   });
 }
 

@@ -1788,5 +1788,16 @@ export interface I18nMessages {
     hintCodex: string;
     indicatorActive: string;
     indicatorPaused: string;
+    history: {
+      title: string;
+      open: string;
+      close: string;
+      ending: {
+        complete: string;
+        failed: string;
+        cleared: string;
+        replaced: string;
+      };
+    };
   };
 }

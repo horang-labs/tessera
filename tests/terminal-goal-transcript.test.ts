@@ -11,7 +11,14 @@ import {
   type TerminalGoalTarget,
 } from '@/lib/terminal/terminal-goal-tracker';
 import { CLAUDE_GOAL_LINE_MARKERS } from '@/lib/cli/providers/claude-code/goal-transcript';
-import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
+import {
+  TERMINAL_GOAL_HISTORY_LIMIT,
+  mergeTerminalGoalHistory,
+  parseTerminalGoalHistory,
+  terminalGoalEnding,
+  type TerminalGoalHistoryEntry,
+  type TerminalGoalSnapshot,
+} from '@/types/terminal-goal';
 
 // Line shapes below are copied from real transcripts (Claude Code 2.1.284,
 // Codex 0.162.1), trimmed to the fields the readers use.
@@ -431,4 +438,138 @@ test('tracker: a Claude pause releases the deferred Stop, and a prompt resumes t
   } finally {
     tracker.dispose();
   }
+});
+
+function snapshot(overrides: Partial<TerminalGoalSnapshot> = {}): TerminalGoalSnapshot {
+  return {
+    provider: 'claude-code',
+    objective: 'a',
+    status: 'active',
+    setAt: 1_000,
+    updatedAt: 1_000,
+    ...overrides,
+  };
+}
+
+test('history: a goal ends once — achieved, impossible, cleared or replaced', () => {
+  const live = snapshot();
+  assert.equal(terminalGoalEnding(null, live), null, 'setting a goal ends nothing');
+  assert.equal(terminalGoalEnding(live, { ...live, iterations: 1, updatedAt: 2_000 }), null);
+  assert.equal(terminalGoalEnding(live, { ...live, status: 'paused' }), null, 'a pause is not an end');
+  assert.equal(terminalGoalEnding(live, { ...live, status: 'complete' }), 'complete');
+  assert.equal(terminalGoalEnding(live, { ...live, status: 'failed' }), 'failed');
+  assert.equal(terminalGoalEnding(live, null), 'cleared');
+  assert.equal(terminalGoalEnding({ ...live, status: 'paused' }, null), 'cleared');
+  assert.equal(terminalGoalEnding(live, snapshot({ objective: 'b', setAt: 3_000 })), 'replaced');
+  assert.equal(terminalGoalEnding(live, snapshot({ setAt: 3_000 })), 'replaced', 'the same text set again is a new goal');
+  const achieved = { ...live, status: 'complete' as const };
+  assert.equal(terminalGoalEnding(achieved, null), null, 'an achieved goal was already recorded');
+  assert.equal(terminalGoalEnding(achieved, snapshot({ objective: 'b', setAt: 3_000 })), null);
+});
+
+test('history: merge deduplicates replays, keeps newest first, and caps the list', () => {
+  const entry = (i: number): TerminalGoalHistoryEntry => ({
+    provider: 'codex', objective: `goal ${i}`, ending: 'complete', setAt: i * 10, endedAt: i * 10 + 5,
+  });
+  const first = mergeTerminalGoalHistory([], [entry(1), entry(2)]);
+  assert.deepEqual(first?.map((e) => e.objective), ['goal 2', 'goal 1']);
+  assert.equal(mergeTerminalGoalHistory(first!, [entry(1)]), null, 'a replayed end is not recorded twice');
+
+  const many = Array.from({ length: TERMINAL_GOAL_HISTORY_LIMIT + 3 }, (_, i) => entry(i + 1));
+  const capped = mergeTerminalGoalHistory([], many)!;
+  assert.equal(capped.length, TERMINAL_GOAL_HISTORY_LIMIT);
+  assert.equal(capped[0]?.objective, `goal ${TERMINAL_GOAL_HISTORY_LIMIT + 3}`);
+  assert.equal(mergeTerminalGoalHistory(capped, [entry(0)]), null, 'older than everything kept');
+
+  assert.deepEqual(parseTerminalGoalHistory([entry(1), { objective: 'x' }, null, 'bad']), [entry(1)]);
+  assert.deepEqual(parseTerminalGoalHistory('not a list'), []);
+});
+
+test('tracker reports ended goals with the time they ended', async () => {
+  const filePath = tempTranscript();
+  const recorded: TerminalGoalHistoryEntry[][] = [];
+  const tracker = new TerminalGoalTracker({
+    resolveTranscriptFile: async () => filePath,
+    lineMarkers: () => CLAUDE_GOAL_LINE_MARKERS,
+    reduceLine: (_provider, current, line) => reduceClaudeGoalTranscriptLine(current, line),
+    isLive: () => true,
+    publish: () => {},
+    recordEndedGoals: (_target, entries) => recorded.push(entries),
+  });
+  const target: TerminalGoalTarget = {
+    sessionId: 's1', terminalId: 'term-1', userId: 'u1', providerId: 'claude-code', providerSessionId: 'p1', transcriptPath: null,
+  };
+  try {
+    const t0 = Date.now() - 60_000;
+    const at = (offset: number) => new Date(t0 + offset).toISOString();
+    fs.appendFileSync(filePath, [
+      claudeGoal({ met: false, sentinel: true, condition: 'first' }, at(0)),
+      claudeGoal({ met: false, condition: 'first', reason: 'not yet' }, at(1_000)),
+      claudeGoal({ met: false, sentinel: true, condition: 'second' }, at(2_000)),
+    ].join('\n') + '\n');
+    await tracker.observe(target);
+    assert.equal(recorded.length, 1);
+    assert.deepEqual(recorded[0]?.map((e) => [e.objective, e.ending, e.endedAt, e.iterations]), [
+      ['first', 'replaced', t0 + 2_000, 1],
+    ]);
+
+    fs.appendFileSync(filePath, `${claudeGoal({ met: true, sentinel: true, condition: 'second' }, at(5_000))}\n`);
+    await tracker.observe(target);
+    assert.deepEqual(recorded[1]?.map((e) => [e.objective, e.ending, e.endedAt]), [
+      ['second', 'cleared', t0 + 5_000],
+    ]);
+
+    fs.appendFileSync(filePath, [
+      claudeGoal({ met: false, sentinel: true, condition: 'third' }, at(6_000)),
+      claudeGoal({ met: true, condition: 'third', reason: 'done', iterations: 2, durationMs: 9_000, tokens: 500 }, at(9_000)),
+    ].join('\n') + '\n');
+    await tracker.observe(target);
+    assert.deepEqual(recorded[2]?.map((e) => [e.objective, e.ending, e.endedAt, e.iterations, e.tokensUsed, e.lastReason]), [
+      ['third', 'complete', t0 + 9_000, 2, 500, 'done'],
+    ]);
+  } finally {
+    tracker.dispose();
+  }
+});
+
+test('Codex: the update_goal call completes the goal even when its output is silent', () => {
+  const objective = 'Reply with only the word hi, then mark this goal complete.';
+  const set = codexGoalEvent({
+    objective, status: 'active', tokensUsed: 0, timeUsedSeconds: 0, createdAt: 1792346040, updatedAt: 1792346040,
+  }, '2026-10-18T17:54:00.644Z');
+  // Codex 0.162: the model did not print the result, so the output has no goal.
+  const call = (input: string) => JSON.stringify({
+    timestamp: '2026-10-18T17:54:03.497Z',
+    type: 'response_item',
+    payload: { type: 'custom_tool_call', status: 'completed', call_id: 'c1', name: 'exec', input },
+  });
+  const silentOutput = JSON.stringify({
+    timestamp: '2026-10-18T17:54:04.662Z',
+    type: 'response_item',
+    payload: { type: 'custom_tool_call_output', call_id: 'c1', output: 'Script completed\nWall time 1.1 seconds\nOutput:\n' },
+  });
+
+  const done = fold(reduceCodexGoalTranscriptLine, [set, call('await tools.update_goal({status:"complete"});\n'), silentOutput]);
+  assert.equal(done?.status, 'complete');
+  assert.equal(done?.updatedAt, Date.parse('2026-10-18T17:54:03.497Z'));
+  assert.equal(done?.elapsedSeconds, 3, 'active from 17:54:00 (createdAt) to the call');
+  assert.equal(done?.tokensUsed, undefined, 'the stale 0 from the set event is not a total');
+  assert.equal(
+    fold(reduceCodexGoalTranscriptLine, [set, call('text(await tools.update_goal({status:"complete"}));\n')])?.status,
+    'complete',
+  );
+  assert.equal(
+    fold(reduceCodexGoalTranscriptLine, [set, call('text(await tools.get_goal());\n')])?.status,
+    'active',
+    'reading the goal is not completing it',
+  );
+
+  const functionCall = JSON.stringify({
+    timestamp: '2026-10-18T17:54:03.497Z',
+    type: 'response_item',
+    payload: { type: 'function_call', name: 'update_goal', arguments: '{"status":"complete"}', call_id: 'c2' },
+  });
+  assert.equal(fold(reduceCodexGoalTranscriptLine, [set, functionCall])?.status, 'complete');
+  assert.equal(fold(reduceCodexGoalTranscriptLine, [call('await tools.update_goal({status:"complete"});')]), null,
+    'no goal seen, nothing to complete');
 });

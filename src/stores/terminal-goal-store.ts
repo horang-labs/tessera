@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
+import type { TerminalGoalHistoryEntry, TerminalGoalSnapshot } from '@/types/terminal-goal';
 
 /**
  * `/goal` state of PTY sessions, pushed by the server's transcript tracker.
@@ -10,14 +10,21 @@ interface TerminalGoalStore {
   bySessionId: Record<string, TerminalGoalSnapshot>;
   /** Ended goals the user closed, keyed by session → the goal's `setAt`. */
   dismissedSetAt: Record<string, number>;
+  /**
+   * Ended goals per session, once loaded or pushed. Kept when the runtime
+   * stops: the history is about the session, not the running CLI.
+   */
+  historyBySessionId: Record<string, TerminalGoalHistoryEntry[]>;
   applyGoal: (sessionId: string, goal: TerminalGoalSnapshot | null) => void;
   dismiss: (sessionId: string, setAt: number) => void;
   clearSession: (sessionId: string) => void;
+  setHistory: (sessionId: string, history: TerminalGoalHistoryEntry[]) => void;
 }
 
 export const useTerminalGoalStore = create<TerminalGoalStore>((set) => ({
   bySessionId: {},
   dismissedSetAt: {},
+  historyBySessionId: {},
   applyGoal: (sessionId, goal) => set((prev) => {
     if (!goal) {
       if (!(sessionId in prev.bySessionId)) return prev;
@@ -36,6 +43,9 @@ export const useTerminalGoalStore = create<TerminalGoalStore>((set) => ({
     delete next[sessionId];
     return { bySessionId: next };
   }),
+  setHistory: (sessionId, history) => set((prev) => ({
+    historyBySessionId: { ...prev.historyBySessionId, [sessionId]: history },
+  })),
 }));
 
 export type TerminalGoalIndicator = 'active' | 'paused' | null;

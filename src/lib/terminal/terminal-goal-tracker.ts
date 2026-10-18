@@ -1,9 +1,12 @@
 import fsp from 'node:fs/promises';
 import logger from '@/lib/logger';
 import {
+  buildTerminalGoalHistoryEntry,
   isActiveTerminalGoal,
   isLiveTerminalGoal,
   sameTerminalGoal,
+  terminalGoalEnding,
+  type TerminalGoalHistoryEntry,
   type TerminalGoalSnapshot,
 } from '@/types/terminal-goal';
 
@@ -61,6 +64,12 @@ export interface TerminalGoalTrackerDeps {
    * CLI fired no Stop for it. Called only when no Stop is already deferred.
    */
   onGoalStalled?(target: TerminalGoalTarget, goal: TerminalGoalSnapshot): void;
+  /**
+   * Goals the transcript just showed ending (achieved, impossible, cleared or
+   * replaced by another), oldest first. A replay reports the ends it covers
+   * again, so the receiver must deduplicate.
+   */
+  recordEndedGoals?(target: TerminalGoalTarget, entries: TerminalGoalHistoryEntry[]): void;
 }
 
 export interface CompletionHoldHandlers {
@@ -145,6 +154,23 @@ function goalLines(block: Buffer, markers: Buffer[] | undefined): string[] {
     const end = block.indexOf(NEWLINE, start);
     return block.subarray(start, end < 0 ? block.length : end).toString('utf8');
   });
+}
+
+/** When a transcript line was written, for a clear that carries no snapshot. */
+function lineTimestamp(line: string, fallback: number): number {
+  try {
+    const parsed = JSON.parse(line) as { timestamp?: unknown };
+    const at = typeof parsed.timestamp === 'string' ? Date.parse(parsed.timestamp) : NaN;
+    return Number.isFinite(at) ? at : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function endedAtOf(next: TerminalGoalSnapshot | null, line: string): number {
+  if (!next) return lineTimestamp(line, Date.now());
+  // Replaced: when the next goal was set. Achieved/impossible: its verdict.
+  return next.status === 'complete' || next.status === 'failed' ? next.updatedAt : next.setAt;
 }
 
 function keyOf(userId: string, sessionId: string): string {
@@ -344,6 +370,7 @@ export class TerminalGoalTracker {
     const handle = await fsp.open(entry.filePath, 'r');
     const startGoal = entry.goal;
     let goal = startGoal;
+    const ended: TerminalGoalHistoryEntry[] = [];
     try {
       let position = entry.offset;
       let pending: Buffer = Buffer.alloc(0);
@@ -374,7 +401,12 @@ export class TerminalGoalTracker {
         // multi-byte character, and only whole lines are decoded.
         for (const line of goalLines(data.subarray(0, lastNewline), markers)) {
           const next = this.deps.reduceLine(entry.target.providerId, goal, line);
-          if (next !== undefined) goal = next;
+          if (next === undefined) continue;
+          const ending = terminalGoalEnding(goal, next);
+          if (goal && ending) {
+            ended.push(buildTerminalGoalHistoryEntry(goal, next, ending, endedAtOf(next, line)));
+          }
+          goal = next;
         }
         pending = data.subarray(lastNewline + 1);
       }
@@ -383,6 +415,7 @@ export class TerminalGoalTracker {
     } finally {
       await handle.close();
     }
+    if (ended.length) this.deps.recordEndedGoals?.(entry.target, ended);
     // A resumed conversation replays its history. A goal that already ended
     // there is old news — the CLI itself only restores a live one.
     if (replaying && goal && !isLiveTerminalGoal(goal)) goal = null;

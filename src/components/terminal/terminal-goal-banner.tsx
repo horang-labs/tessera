@@ -14,8 +14,11 @@ import {
 } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { useTerminalGoalHistory } from '@/hooks/use-terminal-goal-history';
 import { selectVisibleTerminalGoal, useTerminalGoalStore } from '@/stores/terminal-goal-store';
 import type { TerminalGoalSnapshot, TerminalGoalStatus } from '@/types/terminal-goal';
+import { formatCompact, formatElapsed } from './terminal-goal-format';
+import { TerminalGoalHistoryList } from './terminal-goal-history';
 
 /**
  * The `/goal` a PTY session is pursuing, shown as a strip above the terminal.
@@ -44,28 +47,6 @@ const TONE_VAR: Record<Tone, string> = {
   success: 'var(--success)',
   error: 'var(--error)',
 };
-
-function formatElapsed(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  if (seconds < 60) return `${seconds}s`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
-
-const compactFormatters = new Map<string, Intl.NumberFormat>();
-
-/** Token counts follow the app language, not the OS locale ("5.9K", not "5.9천"). */
-function formatCompact(value: number, language: string): string {
-  let formatter = compactFormatters.get(language);
-  if (!formatter) {
-    formatter = new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 });
-    compactFormatters.set(language, formatter);
-  }
-  return formatter.format(value);
-}
 
 /**
  * Seconds spent on the goal. Codex reports time used up to `updatedAt` and
@@ -137,6 +118,11 @@ function TerminalGoalStrip({
   const detailsId = useId();
   const [expanded, setExpanded] = useState(false);
   const dismiss = useTerminalGoalStore((state) => state.dismiss);
+  const allHistory = useTerminalGoalHistory(sessionId, expanded);
+  // An achieved goal is already in the history; the strip shows it above.
+  const history = allHistory.filter((entry) => (
+    entry.setAt !== goal.setAt || entry.provider !== goal.provider
+  ));
   const isActive = goal.status === 'active';
   const ended = goal.status === 'complete' || goal.status === 'failed';
   const now = useNow(isActive);
@@ -293,6 +279,14 @@ function TerminalGoalStrip({
           <p className="mt-2 text-[11px] text-(--text-muted)">
             {goal.provider === 'claude-code' ? t('terminalGoal.hintClaude') : t('terminalGoal.hintCodex')}
           </p>
+          {history.length > 0 && (
+            <>
+              <div className="mt-4 mb-2 border-t border-(--chat-header-border) pt-3 text-[10px] font-semibold uppercase tracking-[0.08em] text-(--text-muted)">
+                {t('terminalGoal.history.title')}
+              </div>
+              <TerminalGoalHistoryList history={history} />
+            </>
+          )}
         </div>
       )}
     </div>

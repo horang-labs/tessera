@@ -1805,5 +1805,16 @@ export const zh: I18nMessages = {
     hintCodex: 'Codex 会一直工作，直到将目标标记为完成。',
     indicatorActive: '正在朝目标工作',
     indicatorPaused: '目标已暂停',
+    history: {
+      title: '之前的目标',
+      open: '目标历史',
+      close: '关闭目标历史',
+      ending: {
+        complete: '已达成',
+        failed: '无法达成',
+        cleared: '已清除',
+        replaced: '已被新目标替换',
+      },
+    },
   },
 };

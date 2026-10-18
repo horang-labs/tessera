@@ -251,6 +251,10 @@ export function handleIncomingServerMessage({
       useTerminalGoalStore.getState().applyGoal(msg.sessionId, msg.goal);
       return { wasReconnect };
 
+    case 'terminal_goal_history':
+      useTerminalGoalStore.getState().setHistory(msg.sessionId, msg.history);
+      return { wasReconnect };
+
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
       useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, msg.running);

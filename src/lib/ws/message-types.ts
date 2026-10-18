@@ -1,5 +1,5 @@
 import type { ToolCallKind } from '@/types/tool-call-kind';
-import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
+import type { TerminalGoalHistoryEntry, TerminalGoalSnapshot } from '@/types/terminal-goal';
 import type { AgentContextEvent } from '@/types/agent-context';
 import type { CanonicalToolResultValue } from '@/types/tool-result';
 import type { ToolDisplayMetadata } from '@/types/tool-display';
@@ -322,6 +322,15 @@ export type AppServerMessage =
       sessionId: string;
       terminalId: string;
       goal: TerminalGoalSnapshot | null;
+    }
+  | {
+      /**
+       * A PTY session's ended goals changed (one just ended). Live-only: a
+       * client loads the stored history over HTTP when it first shows it.
+       */
+      type: 'terminal_goal_history';
+      sessionId: string;
+      history: TerminalGoalHistoryEntry[];
     }
   | {
       /**
