@@ -237,6 +237,18 @@ export class TerminalGoalTracker {
     if (entry) this.continueHold(entry);
   }
 
+  /**
+   * A user prompt resumes a goal Claude paused ("send a message to continue").
+   * Claude writes no record for the resume, so the prompt itself is the signal.
+   * Codex is different: its paused goal waits for `/goal resume`.
+   */
+  noteUserPrompt(userId: string, sessionId: string): void {
+    const entry = this.tracked.get(keyOf(userId, sessionId));
+    if (!entry?.goal || entry.goal.provider !== 'claude-code' || entry.goal.status !== 'paused') return;
+    this.setGoal(entry, { ...entry.goal, status: 'active', updatedAt: Date.now() });
+    this.schedulePoll(entry);
+  }
+
   isHoldingCompletion(userId: string, sessionId: string): boolean {
     return !!this.tracked.get(keyOf(userId, sessionId))?.hold;
   }
@@ -330,7 +342,8 @@ export class TerminalGoalTracker {
     const markers = this.deps.lineMarkers?.(entry.target.providerId)
       ?.map((marker) => Buffer.from(marker, 'utf8'));
     const handle = await fsp.open(entry.filePath, 'r');
-    let goal = entry.goal;
+    const startGoal = entry.goal;
+    let goal = startGoal;
     try {
       let position = entry.offset;
       let pending: Buffer = Buffer.alloc(0);
@@ -373,6 +386,9 @@ export class TerminalGoalTracker {
     // A resumed conversation replays its history. A goal that already ended
     // there is old news — the CLI itself only restores a live one.
     if (replaying && goal && !isLiveTerminalGoal(goal)) goal = null;
+    // A prompt can resume a paused goal while this read is in flight. If the
+    // transcript said nothing new, keep that newer state.
+    if (goal === startGoal && entry.goal !== startGoal) return;
     this.setGoal(entry, goal);
   }
 

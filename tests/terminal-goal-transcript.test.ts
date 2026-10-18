@@ -383,3 +383,52 @@ test('an evaluation inside the window revives a goal set before it', async () =>
     tracker.dispose();
   }
 });
+
+function claudeSystem(content: string, timestamp: string): string {
+  return JSON.stringify({ parentUuid: 'p', isSidechain: false, type: 'system', subtype: 'informational', content, timestamp });
+}
+
+test('Claude: a "Goal paused" notice pauses the goal and keeps its reason', () => {
+  const set = claudeGoal({ met: false, sentinel: true, condition: '뭐야' }, '2026-10-19T00:00:00.000Z');
+  const notMet = claudeGoal({ met: false, condition: '뭐야', reason: 'open-ended' }, '2026-10-19T00:00:05.000Z');
+  // Verbatim from a real transcript after the Stop-hook block cap (CLI 2.1.284).
+  const paused = claudeSystem(
+    'Goal paused · goal checks kept finding it unmet this turn · send a message to continue',
+    '2026-10-19T00:01:43.000Z',
+  );
+  const goal = fold(reduceClaudeGoalTranscriptLine, [set, notMet, paused]);
+  assert.equal(goal?.status, 'paused');
+  assert.equal(goal?.lastReason, 'goal checks kept finding it unmet this turn');
+  assert.equal(goal?.iterations, 1);
+
+  // The next evaluation means Claude is pursuing it again.
+  const again = claudeGoal({ met: false, condition: '뭐야', reason: 'still open' }, '2026-10-19T00:02:00.000Z');
+  assert.equal(fold(reduceClaudeGoalTranscriptLine, [set, notMet, paused, again])?.status, 'active');
+
+  // Without a goal, the notice means nothing.
+  assert.equal(reduceClaudeGoalTranscriptLine(null, paused), undefined);
+});
+
+test('tracker: a Claude pause releases the deferred Stop, and a prompt resumes the goal', async () => {
+  const filePath = tempTranscript();
+  const { tracker, target, published } = makeTracker(filePath);
+  try {
+    const now = new Date().toISOString();
+    fs.appendFileSync(filePath, `${claudeGoal({ met: false, sentinel: true, condition: 'c' }, now)}\n`);
+    await tracker.observe(target);
+    let released = 0;
+    assert.equal(tracker.holdCompletion('u1', 's1', { release: () => { released += 1; } }), true);
+    fs.appendFileSync(filePath, `${claudeSystem('Goal paused · a hook ended the turn · send a message to continue', now)}\n`);
+    await tracker.observe(target);
+    assert.equal(released, 1, 'the turn really ended');
+    assert.equal(published.at(-1)?.status, 'paused');
+
+    tracker.noteUserPrompt('u1', 's1');
+    assert.equal(published.at(-1)?.status, 'active');
+    // A later read with nothing new must not bring the pause back.
+    await tracker.observe(target);
+    assert.equal(tracker.getGoal('u1', 's1')?.status, 'active');
+  } finally {
+    tracker.dispose();
+  }
+});

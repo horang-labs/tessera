@@ -407,6 +407,9 @@ export async function handleHookRequest(req: IncomingMessage, res: ServerRespons
         }
       : null;
     const goalRead = goalTarget ? terminalGoalTracker.observe(goalTarget) : null;
+    if (goalTarget && event === 'UserPromptSubmit') {
+      terminalGoalTracker.noteUserPrompt(entry.userId, goalTarget.sessionId);
+    }
     if (goalTarget && (event === 'UserPromptSubmit' || (isCodex && event === 'PreToolUse'))) {
       // A new prompt — or, for Codex, whose hooks are delivered in order, any
       // new tool call — means the work went on past a deferred Stop.
