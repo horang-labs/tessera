@@ -153,6 +153,10 @@ async function main() {
     'check_for_update_on_startup = false', 'approval_policy = "never"',
     // The fixture never returns tool calls; no native Windows sandbox setup is needed.
     'sandbox_mode = "danger-full-access"',
+    // A fresh Codex home otherwise downloads marketplace plugins in the
+    // background. This fixture exercises local responses/hooks, not plugins;
+    // remote clones can outlive the PTY and hold Windows cleanup locks.
+    '[features]', 'plugins = false',
     '[model_providers.compat]', 'name = "Compatibility fixture"',
     `base_url = "http://127.0.0.1:${port}/v1"`, 'wire_api = "responses"',
     `[projects.${JSON.stringify(workspace.replaceAll('\\', '/'))}]`, 'trust_level = "trusted"',

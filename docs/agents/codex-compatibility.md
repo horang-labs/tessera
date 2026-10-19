@@ -37,7 +37,9 @@ PowerShell contract, not a cmd command. Claude hooks and WSL POSIX hooks retain 
 Failure is a nonzero exit. `.tmp/codex-compat/` contains terminal output, the last
 screen and metadata including the exact CLI version even when a run fails. Set
 `CODEX_COMPAT_EVIDENCE` to override the output directory. A stale success result is
-removed before each run. The fixture does not execute tools or test real authentication.
+removed before each run. The fixture disables marketplace plugins to avoid unrelated background downloads
+and Windows file locks. It does not execute tools, test plugin installation, or
+test real authentication.
 
 ## Automation
 
