@@ -34,11 +34,36 @@ function compareNodeNames(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
-function finalizeDirectory(node: MutableDirectoryNode): WorkspaceDirectoryNode {
+export type WorkspaceTreeSortMode = "name" | "name-desc" | "type" | "modified";
+
+/** Workspace-relative path -> mtimeMs; entries without one sort as oldest. */
+export type WorkspaceMtimes = Readonly<Record<string, number>>;
+
+function extensionOf(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1) : "";
+}
+
+function fileComparator(sort: WorkspaceTreeSortMode, parentPath: string, mtimes: WorkspaceMtimes) {
+  if (sort === "modified") {
+    const at = (name: string) => mtimes[parentPath ? `${parentPath}/${name}` : name] ?? 0;
+    return (a: string, b: string) => at(b) - at(a) || compareNodeNames(a, b);
+  }
+  if (sort === "name-desc") return (a: string, b: string) => compareNodeNames(b, a);
+  if (sort === "type") {
+    return (a: string, b: string) =>
+      compareNodeNames(extensionOf(a), extensionOf(b)) || compareNodeNames(a, b);
+  }
+  return compareNodeNames;
+}
+
+function finalizeDirectory(node: MutableDirectoryNode, sort: WorkspaceTreeSortMode, mtimes: WorkspaceMtimes): WorkspaceDirectoryNode {
+  // Folders are always listed first and always A-Z; the mode orders files.
   const directories = Array.from(node.directories.values())
-    .map(finalizeDirectory)
+    .map((child) => finalizeDirectory(child, sort, mtimes))
     .sort((a, b) => compareNodeNames(a.name, b.name));
-  const files = [...node.files].sort((a, b) => compareNodeNames(a.name, b.name));
+  const compare = fileComparator(sort, node.path, mtimes);
+  const files = [...node.files].sort((a, b) => compare(a.name, b.name));
   const children: WorkspaceTreeNode[] = [...directories, ...files];
 
   return {
@@ -67,6 +92,8 @@ export function buildWorkspaceFileTree(
   filePaths: string[],
   symlinkPaths: Set<string>,
   directoryPaths: string[],
+  sort: WorkspaceTreeSortMode = "name",
+  mtimes: WorkspaceMtimes = {},
 ): WorkspaceTreeNode[] {
   const root = createMutableDirectory("", "");
 
@@ -92,5 +119,5 @@ export function buildWorkspaceFileTree(
     });
   }
 
-  return finalizeDirectory(root).children;
+  return finalizeDirectory(root, sort, mtimes).children;
 }

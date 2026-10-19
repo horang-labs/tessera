@@ -9,6 +9,6 @@ const source = await readFile(
 
 test('worktree-backed Files rows remain draggable into panel split targets', () => {
   assert.match(source, /setWorkspaceTargetFileDragData/);
-  assert.match(source, /if \(!target\) return;\s*setSelectedPath\(node\.path\);\s*setWorkspaceTargetFileDragData/);
+  assert.match(source, /if \(!target\) return;\s*beginInternalDrag\(node\);\s*treeSelection\.selectContextPath\(node\.path\);\s*setWorkspaceTargetFileDragData/);
   assert.match(source, /draggable=\{Boolean\(target\)\}/);
 });

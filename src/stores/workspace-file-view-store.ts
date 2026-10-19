@@ -2,7 +2,11 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { createUiJsonStorage } from '@/lib/persistence/zustand-ui-storage';
 
+export type WorkspaceFileSortMode = 'name' | 'name-desc' | 'type' | 'modified';
+
 interface WorkspaceFileViewState {
+  sortMode: WorkspaceFileSortMode;
+  setSortMode: (mode: WorkspaceFileSortMode) => void;
   /** Whether dotfiles/dotfolders (e.g. .github, .env, .claude) are shown in the
    * workspace file tree. Build/VCS output dirs stay hidden regardless. */
   showHiddenFiles: boolean;
@@ -19,7 +23,7 @@ interface WorkspaceFileViewState {
 
 type PersistedWorkspaceFileViewState = Pick<
   WorkspaceFileViewState,
-  'showHiddenFiles' | 'expandedPathsByWorkspace' | 'scrollTopByWorkspace'
+  'showHiddenFiles' | 'sortMode' | 'expandedPathsByWorkspace' | 'scrollTopByWorkspace'
 >;
 
 const EMPTY_EXPANDED_PATHS: string[] = [];
@@ -28,6 +32,8 @@ export const useWorkspaceFileViewStore = create<WorkspaceFileViewState>()(
   persist(
     (set) => ({
       showHiddenFiles: false,
+      sortMode: 'name',
+      setSortMode: (sortMode) => set({ sortMode }),
       expandedPathsByWorkspace: {},
       scrollTopByWorkspace: {},
       setScrollTop: (workspaceKey, scrollTop) =>
@@ -82,6 +88,7 @@ export const useWorkspaceFileViewStore = create<WorkspaceFileViewState>()(
       storage: createUiJsonStorage<PersistedWorkspaceFileViewState>(),
       partialize: (state) => ({
         showHiddenFiles: state.showHiddenFiles,
+        sortMode: state.sortMode,
         expandedPathsByWorkspace: state.expandedPathsByWorkspace,
         scrollTopByWorkspace: state.scrollTopByWorkspace,
       }),

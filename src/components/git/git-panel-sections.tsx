@@ -31,7 +31,7 @@ import {
   workspaceTreeFileRowClassName, workspaceTreePadding,
 } from "@/components/workspace/workspace-tree-row";
 import { WorkspaceTreeExpansionControls } from "@/components/workspace/workspace-tree-expansion-controls";
-import { shouldOpenOnRowClick } from "@/components/workspace/workspace-inline-input-state";
+import { clickPointerType, shouldOpenOnRowClick } from "@/components/workspace/workspace-inline-input-state";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import { clearPathInsertDragData, setPathInsertDragData, setWorkspaceTargetFileDragData } from "@/lib/dnd/panel-session-drag";
 import type { WorkspaceTarget } from "@/types/worktree";
@@ -1277,7 +1277,8 @@ export function GitPanelContentSection({
                                   const mode = clickSelectionMode(event);
                                   selectTreeRow(file.path, mode);
                                   if (mode !== "replace") return;
-                                  if (event.detail === 0 || shouldOpenOnRowClick(event.detail)) onOpenDiffFile(file);
+                                  // A mouse click only selects; double-click (below) opens the diff.
+                                  if (shouldOpenOnRowClick(event.detail, clickPointerType(event))) onOpenDiffFile(file);
                                 }}
                                 {...telemetryClickAttributes("git.file.diff_open", "git_panel")}
                                 onDoubleClick={() => {

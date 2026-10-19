@@ -11,6 +11,7 @@ import {
   createWorkspaceFile,
   saveWorkspaceFile,
 } from '@/lib/workspace-files/workspace-file-write';
+import { trashWorkspaceEntry } from '@/lib/workspace-files/workspace-file-trash';
 import {
   deleteWorkspaceEntry,
   renameWorkspaceEntry,
@@ -167,6 +168,15 @@ export async function DELETE(
     const resolved = await authenticateAndResolveRoot(request, id);
     if ('response' in resolved) return resolved.response;
     const searchParams = request.nextUrl.searchParams;
+    if (searchParams.get('trash') === '1') {
+      const trashed = await trashWorkspaceEntry(resolved.root, { path: searchParams.get('path') ?? '' });
+      return NextResponse.json({
+        worktreeId: id,
+        path: trashed.relativePath,
+        kind: trashed.kind,
+        deleted: true,
+      });
+    }
     const deleted = await deleteWorkspaceEntry(resolved.root, {
       baseMtimeMs: parseOptionalMtime(searchParams.get('baseMtimeMs')),
       path: searchParams.get('path') ?? '',

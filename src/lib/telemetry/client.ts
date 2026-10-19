@@ -329,7 +329,7 @@ const allowedWorkspaceMoveKinds = new Set([
 const allowedSessionKinds = new Set(['chat', 'terminal']);
 const allowedReadiness = new Set(['ready', 'limited']);
 const allowedExecutionModes = new Set(['gui', 'pty']);
-const allowedFileActions = new Set(['create', 'save', 'rename', 'delete']);
+const allowedFileActions = new Set(['create', 'save', 'rename', 'delete', 'move', 'copy', 'upload']);
 const allowedEntryKinds = new Set(['file', 'directory']);
 
 let telemetryContext: TelemetryRuntimeContext | null = null;

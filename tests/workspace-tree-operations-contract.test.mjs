@@ -81,10 +81,11 @@ test('the menu creates where the click was, and the background creates at the ro
 });
 
 test('the delete confirmation states what is lost', () => {
-  // Permanent, recursive for a folder, and explicit that a draft goes with the
-  // file — there is no Trash and no undo behind any of it.
+  // Permanent where the OS has no trash for the workspace (WSL), recursive for
+  // a folder, and explicit that a draft goes with the file.
   assert.match(deleteDialogSource, /Everything inside this folder is deleted too/);
   assert.match(deleteDialogSource, /does not go to the Trash and cannot be undone/);
+  assert.match(deleteDialogSource, /data-testid="workspace-delete-permanent"/);
   assert.match(deleteDialogSource, /Unsaved edits in the selected items will be discarded/);
   assert.match(deleteDialogSource, /entries\.some\(\(entry\) => entry\.dirty\)/);
   assert.match(deleteDialogSource, /data-testid="workspace-delete-confirm"/);
@@ -174,11 +175,11 @@ test('an input from another workspace cannot strand this panel', () => {
   assert.match(filePanelSource, /onRename: renameEntry,\s*\n\s*workspaceKey: targetKey,/);
 });
 
-test('a file click previews once and its double-click respects Kanban Peek', () => {
-  // Both clicks reach the row, but only the first is an independent preview.
-  assert.match(fileRowSource, /if \(event\.detail !== 0 && !shouldOpenOnRowClick\(event\.detail\)\) return;/);
+test('a file click only selects, and its double-click opens respecting Kanban Peek', () => {
+  // A mouse click selects; Enter and a touch tap open the preview.
+  assert.match(fileRowSource, /if \(!shouldOpenOnRowClick\(event\.detail, clickPointerType\(event\)\)\) return;/);
   assert.match(fileRowSource, /if \(treeSelection\.selectWithModifiers\(node\.path, event\)\) return;/);
-  assert.match(inlineStateSource, /return clickCount === 1/);
+  assert.match(inlineStateSource, /if \(clickCount === 0\) return true;/);
   assert.match(
     fileRowSource,
     /previewWorkspaceTargetFileTab\(target, 'file', node\.path, \{\s*preferKanbanPeek: true,/,
@@ -228,7 +229,7 @@ test('double-clicking a directory name renames without fighting its toggle', () 
 });
 
 test('the delete confirmation survives the move to inline entry', () => {
-  // Destructive and permanent: this one keeps its explicit acknowledgement.
+  // Destructive: this one keeps its explicit acknowledgement.
   assert.match(filePanelSource, /<WorkspaceDeleteDialog/);
   assert.ok(fs.existsSync(
     new URL('../src/components/workspace/workspace-delete-dialog.tsx', import.meta.url),

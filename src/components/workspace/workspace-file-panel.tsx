@@ -11,9 +11,15 @@ import {
   FolderTree,
   Link2,
   LoaderCircle,
+  RefreshCw,
   Search,
+  ArrowDownAZ,
+  ArrowUpZA,
+  FileType,
+  Clock,
 } from "lucide-react";
 import {
+  type DragEvent,
   type MouseEvent,
   type ReactNode,
   useCallback,
@@ -56,12 +62,17 @@ import {
   openWorkspaceTargetFileTab,
   previewWorkspaceTargetFileTab,
 } from "@/lib/workspace-tabs/open-workspace-tab";
-import { resolveWorkspaceTarget, workspaceTargetKey } from '@/types/worktree';
+import { v4 as uuidv4 } from "uuid";
+import { usePanelStore } from "@/stores/panel-store";
+import { useTabStore } from "@/stores/tab-store";
+import { resolveWorkspaceTarget, workspaceTargetApiPath, workspaceTargetKey } from '@/types/worktree';
 import {
   setWorkspaceDirectoryDragData,
   setWorkspaceTargetFileDragData,
 } from "@/lib/dnd/panel-session-drag";
-import { toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
+import { copyText, toAbsoluteWorkspacePath } from "@/lib/workspace-tabs/file-path-actions";
+import { findWorkspaceTypeAheadMatch, resolveWorkspaceTreeKey } from "@/lib/workspace-files/workspace-tree-keyboard";
+import { hasExternalFileDrag, readDroppedFiles, resolveWorkspaceDrop } from "@/lib/workspace-files/workspace-tree-drop";
 import { WorkspaceFileContextMenu } from "@/components/workspace/workspace-file-context-menu";
 import {
   WorkspaceDeleteDialog,
@@ -71,6 +82,7 @@ import { WorkspaceInlineInputRow } from "@/components/workspace/workspace-inline
 import { useWorkspaceInlineInput } from "@/components/workspace/use-workspace-inline-input";
 import {
   isRapidDirectoryRenameDoubleClick,
+  clickPointerType,
   shouldOpenOnRowClick,
   shouldToggleDirectoryOnClick,
 } from "@/components/workspace/workspace-inline-input-state";
@@ -78,6 +90,9 @@ import { shouldReloadReselectedWorktree } from "@/components/workspace/workspace
 import {
   createWorkspaceDirectoryRequest,
   createWorkspaceFileRequest,
+  fetchWorkspaceTrashLabel,
+  transferWorkspaceEntriesRequest,
+  uploadWorkspaceFilesRequest,
   deleteWorkspaceEntryRequest,
   renameWorkspaceEntryRequest,
 } from "@/lib/workspace-files/workspace-file-mutation-client";
@@ -154,6 +169,33 @@ export function WorkspaceFilePanel({
   const [query, setQuery] = useState("");
   const [deleteRequests, setDeleteRequests] = useState<WorkspaceDeleteRequest[] | null>(null);
   const [contextMenu, setContextMenu] = useState<PathContextMenuState | null>(null);
+  const [clipboard, setClipboard] = useState<{
+    mode: "copy" | "cut";
+    paths: string[];
+    targetKey: string | null;
+  } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [transferStatus, setTransferStatus] = useState<{ busy: string | null; error: string | null }>({
+    busy: null,
+    error: null,
+  });
+  // What this workspace's OS calls its trash; null where there is none (WSL), and then
+  // delete is permanent and the dialog says so.
+  const [trashSupport, setTrashSupport] = useState<{ key: string | null; label: string | null }>({
+    key: null,
+    label: null,
+  });
+  const trashLabel = trashSupport.key === targetKey ? trashSupport.label : null;
+  const [mtimes, setMtimes] = useState<Record<string, number>>({});
+  const internalDragRef = useRef<string[] | null>(null);
+  const dragExpandRef = useRef<{ path: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const typeAheadRef = useRef<{ buffer: string; timer: ReturnType<typeof setTimeout> | null }>({
+    buffer: "",
+    timer: null,
+  });
+  const treeContainerRef = useRef<HTMLDivElement | null>(null);
+  const sortMode = useWorkspaceFileViewStore((state) => state.sortMode);
+  const setSortMode = useWorkspaceFileViewStore((state) => state.setSortMode);
   const showHiddenFiles = useWorkspaceFileViewStore((state) => state.showHiddenFiles);
   const toggleShowHiddenFiles = useWorkspaceFileViewStore((state) => state.toggleShowHiddenFiles);
   const storedExpandedPaths = useWorkspaceFileViewStore(
@@ -361,9 +403,43 @@ export function WorkspaceFilePanel({
   }, [baseDirectories, query, visibleFiles]);
   const symlinkPaths = useMemo(() => new Set(listedSymlinks), [listedSymlinks]);
   const fileTree = useMemo(
-    () => buildWorkspaceFileTree(visibleFiles, symlinkPaths, visibleDirectories),
-    [symlinkPaths, visibleDirectories, visibleFiles],
+    () => buildWorkspaceFileTree(visibleFiles, symlinkPaths, visibleDirectories, sortMode, mtimes),
+    [mtimes, sortMode, symlinkPaths, visibleDirectories, visibleFiles],
   );
+
+  useEffect(function loadModifiedTimes() {
+    if (sortMode !== "modified" || !target) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      // Only folders already loaded: that is every folder the tree can show.
+      const directoriesToRead = ["", ...loadedDirectories.filter(Boolean)];
+      void Promise.all(directoriesToRead.map(async (directory) => {
+        try {
+          const response = await fetch(
+            `${workspaceTargetApiPath(target)}/mtimes?directory=${encodeURIComponent(directory)}`,
+            { cache: "no-store", signal: controller.signal },
+          );
+          if (!response.ok) return {};
+          return ((await response.json()) as { mtimes?: Record<string, number> }).mtimes ?? {};
+        } catch {
+          return {};
+        }
+      })).then((results) => {
+        if (controller.signal.aborted) return;
+        setMtimes((previous) => Object.assign({}, previous, ...results));
+      });
+    }, 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [directories, files, loadedDirectories, sortMode, target]);
+
+  useEffect(function loadTrashSupport() {
+    if (!target || !targetKey) return;
+    let cancelled = false;
+    void fetchWorkspaceTrashLabel(target).then((label) => {
+      if (!cancelled) setTrashSupport({ key: targetKey, label });
+    });
+    return () => { cancelled = true; };
+  }, [target, targetKey]);
 
   const visibleNodes = useMemo(() => visibleWorkspaceTreeNodes(fileTree, expandedPaths, isSearching), [fileTree, expandedPaths, isSearching]);
   const visiblePaths = useMemo(() => visibleNodes.map((node) => node.path), [visibleNodes]);
@@ -499,12 +575,14 @@ export function WorkspaceFilePanel({
     }
   }
 
-  async function deleteEntry(request: WorkspaceDeleteRequest) {
+  async function deleteEntry(request: WorkspaceDeleteRequest, options: { permanent: boolean }) {
     if (!target) return;
     try {
       await deleteWorkspaceEntryRequest(target, request.path, {
         recursive: request.kind === "directory",
+        trash: !options.permanent,
       });
+
       // The tab has to go with the file: leaving it open shows an editable buffer
       // for a path that no longer exists.
       closeWorkspaceFileTabsFor(target, request.path);
@@ -526,6 +604,270 @@ export function WorkspaceFilePanel({
       });
       throw error;
     }
+  }
+
+  // ---- Move / copy / paste / upload -------------------------------------
+
+  function parentOf(path: string): string {
+    return path.split("/").slice(0, -1).join("/");
+  }
+
+  /** The selection a clipboard or drag action works on, with nested entries folded into their folder. */
+  function selectedRootPaths(): string[] {
+    const roots = workspaceSelectionRoots(
+      selectedNodes.map((node) => ({ path: node.path, kind: node.type })),
+    ).map((entry) => entry.path);
+    if (roots.length) return roots;
+    return selectedPath ? [selectedPath] : [];
+  }
+
+  /** A paste lands inside a folder, or beside the file that is selected. */
+  function pasteDestinationFor(node: WorkspaceTreeNode | null): string {
+    return newEntryParentFor(node);
+  }
+
+  /** Rows waiting to be moved by a paste are dimmed, the way a file explorer shows a cut. */
+  function isCutPath(path: string): boolean {
+    return clipboard?.mode === "cut" && clipboard.targetKey === targetKey && clipboard.paths.includes(path);
+  }
+
+  function canPasteHere(): boolean {
+    return Boolean(canMutate && clipboard && clipboard.targetKey === targetKey && clipboard.paths.length);
+  }
+
+  async function runTransfer(
+    operation: "move" | "copy",
+    sources: string[],
+    destination: string,
+  ): Promise<boolean> {
+    if (!target || sources.length === 0) return false;
+    cancelReveal();
+    setTransferStatus({ busy: operation === "move" ? "Moving…" : "Copying…", error: null });
+    try {
+      const result = await transferWorkspaceEntriesRequest(target, operation, sources, destination);
+      if (operation === "move") {
+        for (const entry of result.entries) {
+          if (entry.from !== entry.to) repointWorkspaceFileTabs(target, entry.from, entry.to);
+        }
+      }
+      if (destination) expandPath(destination);
+      const last = result.entries.at(-1);
+      if (last) setSelectedPath(last.to);
+      refreshFiles();
+      setTransferStatus({ busy: null, error: null });
+      void captureTelemetryEvent("workspace_file_action_result", {
+        file_action: operation,
+        entry_kind: last?.kind ?? "file",
+        result: "success",
+      });
+      return true;
+    } catch (error) {
+      setTransferStatus({ busy: null, error: error instanceof Error ? error.message : "The operation failed." });
+      void captureTelemetryEvent("workspace_file_action_result", {
+        file_action: operation,
+        entry_kind: "file",
+        result: "failed",
+      });
+      return false;
+    }
+  }
+
+  function copySelectionToClipboard(mode: "copy" | "cut") {
+    if (!canMutate) return;
+    const paths = selectedRootPaths();
+    if (paths.length) setClipboard({ mode, paths, targetKey });
+  }
+
+  async function pasteClipboard(destination: string) {
+    if (!clipboard || !canPasteHere()) return;
+    const { mode, paths } = clipboard;
+    const ok = await runTransfer(mode === "cut" ? "move" : "copy", paths, destination);
+    if (ok && mode === "cut") setClipboard(null);
+  }
+
+  async function duplicateSelection() {
+    // One request per parent folder: a copy lands in a single destination.
+    const byParent = new Map<string, string[]>();
+    for (const path of selectedRootPaths()) {
+      const parent = parentOf(path);
+      byParent.set(parent, [...(byParent.get(parent) ?? []), path]);
+    }
+    for (const [parent, paths] of byParent) {
+      if (!(await runTransfer("copy", paths, parent))) return;
+    }
+  }
+
+  async function uploadDroppedFiles(
+    dropped: Awaited<ReturnType<typeof readDroppedFiles>>,
+    destination: string,
+  ) {
+    if (!target || dropped.length === 0) return;
+    setTransferStatus({ busy: `Uploading ${dropped.length} file${dropped.length === 1 ? "" : "s"}…`, error: null });
+    try {
+      await uploadWorkspaceFilesRequest(target, destination, dropped);
+      if (destination) expandPath(destination);
+      refreshFiles();
+      setTransferStatus({ busy: null, error: null });
+      void captureTelemetryEvent("workspace_file_action_result", {
+        file_action: "upload",
+        entry_kind: "file",
+        result: "success",
+      });
+    } catch (error) {
+      refreshFiles();
+      setTransferStatus({ busy: null, error: error instanceof Error ? error.message : "The upload failed." });
+      void captureTelemetryEvent("workspace_file_action_result", {
+        file_action: "upload",
+        entry_kind: "file",
+        result: "failed",
+      });
+    }
+  }
+
+  function clearDragState() {
+    internalDragRef.current = null;
+    setDropTarget(null);
+    if (dragExpandRef.current) {
+      clearTimeout(dragExpandRef.current.timer);
+      dragExpandRef.current = null;
+    }
+  }
+
+  function beginInternalDrag(node: WorkspaceTreeNode) {
+    const inSelection = treeSelection.selection.paths.has(node.path) && treeSelection.selection.paths.size > 1;
+    internalDragRef.current = inSelection ? selectedRootPaths() : [node.path];
+  }
+
+  /** Marks a folder (`""` is the root) as a drop target when the drag in flight can land there. */
+  function handleDragOverFolder(event: DragEvent, destination: string) {
+    if (!canMutate) return;
+    const internal = internalDragRef.current;
+    if (internal) {
+      const copying = event.altKey || event.ctrlKey;
+      const verdict = resolveWorkspaceDrop(internal, destination);
+      if (!verdict.allowed && !(copying && !internal.some((s) => destination === s || destination.startsWith(`${s}/`)))) return;
+      event.dataTransfer.dropEffect = copying ? "copy" : "move";
+    } else if (hasExternalFileDrag(event.dataTransfer)) {
+      event.dataTransfer.dropEffect = "copy";
+    } else {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setDropTarget(destination);
+    // Hovering a closed folder opens it, so the drop can reach what is inside.
+    if (destination && !expandedPaths.has(destination) && dragExpandRef.current?.path !== destination) {
+      if (dragExpandRef.current) clearTimeout(dragExpandRef.current.timer);
+      dragExpandRef.current = {
+        path: destination,
+        timer: setTimeout(() => {
+          toggleDirectory(destination);
+          dragExpandRef.current = null;
+        }, 700),
+      };
+    }
+  }
+
+  function handleDropOnFolder(event: DragEvent, destination: string) {
+    if (!canMutate) return;
+    const internal = internalDragRef.current;
+    const external = !internal && hasExternalFileDrag(event.dataTransfer);
+    if (!internal && !external) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const copying = event.altKey || event.ctrlKey;
+    // Entries must be read before the first await: the drop's data is gone after it.
+    const droppedPromise = external ? readDroppedFiles(event.dataTransfer) : null;
+    clearDragState();
+    if (internal) {
+      if (copying) void runTransfer("copy", internal, destination);
+      else void runTransfer("move", resolveWorkspaceDrop(internal, destination).movable, destination);
+    } else if (droppedPromise) {
+      void droppedPromise.then((dropped) => uploadDroppedFiles(dropped, destination));
+    }
+  }
+
+  /** Opens a shell in the folder, beside the panel the user is working in. */
+  function openTerminalIn(directory: string) {
+    const cwd = toAbsoluteWorkspacePath(workDir, directory);
+    if (!cwd) return;
+    const panels = usePanelStore.getState();
+    const tab = panels.tabPanels[panels.activeTabId];
+    if (!tab) return;
+    const terminalPanelId = panels.createTerminalPanelAt(tab.activePanelId, uuidv4(), cwd, "vertical");
+    if (terminalPanelId) {
+      const tabStore = useTabStore.getState();
+      tabStore.pinTab(tabStore.activeTabId);
+    }
+  }
+
+  // ---- Keyboard ----------------------------------------------------------
+
+  function focusTreeRow(path: string) {
+    const rows = treeContainerRef.current?.querySelectorAll<HTMLElement>("[data-tree-path]");
+    for (const row of rows ?? []) {
+      if (row.dataset.treePath === path) {
+        row.focus();
+        row.scrollIntoView({ block: "nearest" });
+        return;
+      }
+    }
+  }
+
+  function handleTreeNavigationKey(event: React.KeyboardEvent): boolean {
+    const active = (event.target as HTMLElement).closest<HTMLElement>("[data-tree-path]");
+    const current = active?.dataset.treePath ?? selectedPath;
+    const rows = visibleNodes.map((node) => ({ path: node.path, type: node.type, name: node.name }));
+
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && event.key !== " ") {
+      const typeAhead = typeAheadRef.current;
+      if (typeAhead.timer) clearTimeout(typeAhead.timer);
+      typeAhead.buffer += event.key;
+      typeAhead.timer = setTimeout(() => { typeAhead.buffer = ""; }, 800);
+      const match = findWorkspaceTypeAheadMatch(rows, current, typeAhead.buffer);
+      if (!match) return false;
+      treeSelection.selectPath(match);
+      focusTreeRow(match);
+      return true;
+    }
+
+    const action = resolveWorkspaceTreeKey({
+      current,
+      expanded: expandedPaths,
+      key: event.key,
+      rows,
+      searching: isSearching,
+      shiftKey: event.shiftKey,
+    });
+    if (!action) return false;
+    if (action.type === "expand") {
+      toggleDirectory(action.path);
+    } else if (action.type === "collapse") {
+      toggleDirectory(action.path);
+    } else {
+      if (action.extend) {
+        treeSelection.selectWithModifiers(action.path, { ctrlKey: false, metaKey: false, shiftKey: true });
+      } else {
+        treeSelection.selectPath(action.path);
+      }
+      focusTreeRow(action.path);
+    }
+    return true;
+  }
+
+  function expandSubfolders(path: string) {
+    const nested = baseDirectories.filter((directory) => directory === path || directory.startsWith(`${path}/`));
+    for (const directory of nested) {
+      expandPath(directory);
+      if (!loadedDirectorySet.has(directory) && !loadingDirectorySet.has(directory)) {
+        void loadDirectory(directory, { silent: true });
+      }
+    }
+  }
+
+  function collapseSubfolders(path: string) {
+    if (!targetKey) return;
+    setExpandedPaths(targetKey, storedExpandedPaths.filter((entry) => !entry.startsWith(`${path}/`)));
   }
 
   function toggleDirectory(path: string) {
@@ -683,7 +1025,16 @@ export function WorkspaceFilePanel({
 
       return (
         <div key={`dir:${node.path}`} className="flex flex-col">
-          <div className={cn("group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)", treeSelection.selection.paths.has(node.path) && "bg-(--accent)/10")}>
+          <div
+            className={cn(
+              "group flex min-w-0 items-center transition-colors hover:bg-(--sidebar-hover)",
+              treeSelection.selection.paths.has(node.path) && "bg-(--accent)/10",
+              dropTarget === node.path && "bg-(--accent)/20 outline outline-1 -outline-offset-1 outline-(--accent)",
+              isCutPath(node.path) && "opacity-50",
+            )}
+            onDragOver={(event) => handleDragOverFolder(event, node.path)}
+            onDrop={(event) => handleDropOnFolder(event, node.path)}
+          >
           <WorkspaceTreeDirectoryButton
             name={node.name}
             decoration={<WorkspaceGitBadge decoration={gitDecorations?.directories.get(node.path) ?? gitDecorations?.files.get(node.path)} directory />}
@@ -713,10 +1064,13 @@ export function WorkspaceFilePanel({
             onContextMenu={(event) => openRowContextMenu(event, node, absolutePath)}
             onDragStart={(event) => {
               cancelReveal();
+              beginInternalDrag(node);
               if (!sessionId) return;
               setWorkspaceDirectoryDragData(event.dataTransfer, sessionId, node.path, absolutePath);
             }}
-            draggable={Boolean(sessionId)}
+            onDragEnd={clearDragState}
+            draggable={Boolean(target)}
+            data-tree-path={node.path}
             title={node.path}
             aria-pressed={treeSelection.selection.paths.has(node.path)}
             data-testid={`workspace-directory-row-${node.path}`}
@@ -737,8 +1091,10 @@ export function WorkspaceFilePanel({
     return (
       <div
         key={`file:${node.path}`}
-        className={workspaceTreeFileRowClassName(isSelected)}
+        className={cn(workspaceTreeFileRowClassName(isSelected), isCutPath(node.path) && "opacity-50")}
         onContextMenu={(event) => openRowContextMenu(event, node, absolutePath)}
+        onDragOver={(event) => handleDragOverFolder(event, parentOf(node.path))}
+        onDrop={(event) => handleDropOnFolder(event, parentOf(node.path))}
       >
         <WorkspaceTreeFileButton
           depth={depth}
@@ -748,10 +1104,9 @@ export function WorkspaceFilePanel({
             cancelReveal();
               if (treeSelection.selectWithModifiers(node.path, event)) return;
             if (!target) return;
-            // A browser double-click also dispatches two click events. The
-            // first click opens the replaceable file-preview tab; its paired
-            // double-click below promotes that preview to a retained tab.
-            if (event.detail !== 0 && !shouldOpenOnRowClick(event.detail)) return;
+            // A mouse click only selects; the double-click below opens the file.
+            // Enter (detail 0) and a touch tap open the replaceable preview tab.
+            if (!shouldOpenOnRowClick(event.detail, clickPointerType(event))) return;
             previewWorkspaceTargetFileTab(target, 'file', node.path, {
               preferKanbanPeek: true,
               projectDir: sessionProjectDir,
@@ -774,10 +1129,13 @@ export function WorkspaceFilePanel({
           onDragStart={(event) => {
             cancelReveal();
             if (!target) return;
+            beginInternalDrag(node);
             treeSelection.selectContextPath(node.path);
             setWorkspaceTargetFileDragData(event.dataTransfer, target, "file", node.path, absolutePath);
           }}
+          onDragEnd={clearDragState}
           draggable={Boolean(target)}
+          data-tree-path={node.path}
           title={node.isSymlink ? `${node.path} (symbolic link)` : node.path}
           aria-pressed={isSelected}
           data-testid={`workspace-file-row-${node.path}`}
@@ -854,6 +1212,30 @@ export function WorkspaceFilePanel({
               data-testid="workspace-new-folder"
             >
               <FolderPlus className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          <Tooltip content="Refresh">
+            <button
+              type="button"
+              {...telemetryClickAttributes("files.refresh", "files_panel")}
+              onClick={() => { setTransferStatus({ busy: null, error: null }); refreshFiles(); }}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              aria-label="Refresh"
+              data-testid="workspace-refresh"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
+          <Tooltip content={`Sort: ${sortMode === "name" ? "name A–Z" : sortMode === "name-desc" ? "name Z–A" : sortMode === "type" ? "file type" : "last modified"}`}>
+            <button
+              type="button"
+              {...telemetryClickAttributes("files.sort", "files_panel")}
+              onClick={() => setSortMode(sortMode === "name" ? "name-desc" : sortMode === "name-desc" ? "type" : sortMode === "type" ? "modified" : "name")}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-(--input-border) text-(--text-muted) transition-colors hover:bg-(--sidebar-hover) hover:text-(--text-primary)"
+              aria-label="Change sort order"
+              data-testid="workspace-sort"
+            >
+              {sortMode === "name" ? <ArrowDownAZ className="h-3.5 w-3.5" /> : sortMode === "name-desc" ? <ArrowUpZA className="h-3.5 w-3.5" /> : sortMode === "type" ? <FileType className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
             </button>
           </Tooltip>
           <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}>
@@ -937,16 +1319,61 @@ export function WorkspaceFilePanel({
                 onClick={requestSelectedDelete} aria-label="Delete selected items" title="Delete selected items"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
           ) : null}
+          {transferStatus.busy ? (
+            <p className="flex items-center gap-1.5 px-3 text-xs text-(--text-secondary)" role="status" data-testid="workspace-transfer-busy">
+              <LoaderCircle className="h-3 w-3 animate-spin" />{transferStatus.busy}
+            </p>
+          ) : null}
+          {transferStatus.error ? (
+            <p className="flex items-start gap-1.5 px-3 text-xs text-(--status-error-text)" role="alert" data-testid="workspace-transfer-error">
+              <span className="min-w-0 flex-1">{transferStatus.error}</span>
+              <button type="button" className="shrink-0 underline" onClick={() => setTransferStatus({ busy: null, error: null })}>Dismiss</button>
+            </p>
+          ) : null}
+          {listedTruncated ? <p className="px-3 text-xs text-(--text-muted)" data-testid="workspace-truncated-notice">The list was truncated, so some files are not shown. Narrow it with search.</p> : null}
           {gitDecorations?.partial ? <p className="px-3 text-xs text-(--text-muted)">Git status is incomplete because the change list was truncated.</p> : null}
           <ScrollArea key={targetKey} ref={scrollRef} className="min-h-0 flex-1" onWheel={cancelReveal} onTouchStart={cancelReveal}>
             {/* The rows stop their own context menu, so this one only ever
                 fires on the empty space past the last row. */}
             <div
-              className="flex min-h-full flex-col"
+              ref={treeContainerRef}
+              className={cn(
+                "flex min-h-full flex-col",
+                dropTarget === "" && "outline outline-1 -outline-offset-1 outline-(--accent)",
+              )}
               onContextMenu={openBackgroundContextMenu}
+              onDragOver={(event) => handleDragOverFolder(event, "")}
+              onDrop={(event) => handleDropOnFolder(event, "")}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null);
+              }}
               data-testid="workspace-file-tree"
               onKeyDown={(event) => {
                 if (inlineInput.input || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+                const modifier = event.ctrlKey || event.metaKey;
+                if (modifier && !event.shiftKey && !event.altKey && ["c", "x", "v"].includes(event.key.toLowerCase())) {
+                  if (!canMutate) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const key = event.key.toLowerCase();
+                  if (key === "v") {
+                    const anchor = selectedNodes.find((node) => node.path === selectedPath) ?? selectedNodes[0] ?? null;
+                    void pasteClipboard(pasteDestinationFor(anchor));
+                  } else {
+                    copySelectionToClipboard(key === "x" ? "cut" : "copy");
+                  }
+                  return;
+                }
+                if (event.key === "Escape" && (clipboard || selectedNodes.length)) {
+                  setClipboard(null);
+                  treeSelection.selectPath(null);
+                  return;
+                }
+                if (!modifier && !event.altKey && handleTreeNavigationKey(event)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  return;
+                }
                 if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
                   event.preventDefault();
                   event.stopPropagation();
@@ -973,6 +1400,9 @@ export function WorkspaceFilePanel({
             count: selectedNodes.length,
             onOpen: selectedFiles.length ? openSelectedFiles : undefined,
             onDelete: requestSelectedDelete,
+            onCut: () => copySelectionToClipboard("cut"),
+            onCopy: () => copySelectionToClipboard("copy"),
+            onCopyRelativePaths: () => copyText(selectedRootPaths().join("\n")),
           } : undefined}
           entryActions={canMutate ? {
             onDelete: contextMenu.node
@@ -983,6 +1413,20 @@ export function WorkspaceFilePanel({
             onRename: contextMenu.node
               ? () => beginRename(contextMenu.node!)
               : undefined,
+            onCut: contextMenu.node ? () => copySelectionToClipboard("cut") : undefined,
+            onCopy: contextMenu.node ? () => copySelectionToClipboard("copy") : undefined,
+            onDuplicate: contextMenu.node ? () => { void duplicateSelection(); } : undefined,
+            onPaste: canPasteHere()
+              ? () => { void pasteClipboard(pasteDestinationFor(contextMenu.node)); }
+              : undefined,
+            onCopyRelativePath: contextMenu.node ? () => copyText(contextMenu.node!.path) : undefined,
+            onOpenTerminal: () => openTerminalIn(newEntryParentFor(contextMenu.node)),
+            onExpandChildren: contextMenu.node?.type === "directory"
+              ? () => expandSubfolders(contextMenu.node!.path)
+              : undefined,
+            onCollapseChildren: contextMenu.node?.type === "directory"
+              ? () => collapseSubfolders(contextMenu.node!.path)
+              : undefined,
           } : undefined}
           onClose={() => setContextMenu(null)}
           position={contextMenu.position}
@@ -990,6 +1434,7 @@ export function WorkspaceFilePanel({
       ) : null}
       <WorkspaceDeleteDialog
         onConfirm={deleteEntry}
+        trashLabel={trashLabel}
         onOpenChange={(next) => {
           if (!next) setDeleteRequests(null);
         }}

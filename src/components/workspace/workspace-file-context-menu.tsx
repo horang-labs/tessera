@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Copy, ExternalLink, FilePlus2, FolderOpen, FolderPlus, PenLine, Trash2 } from "lucide-react";
+import {
+  ChevronsDownUp, ChevronsUpDown, ClipboardPaste, Copy, CopyPlus, ExternalLink, FilePlus2,
+  FolderOpen, FolderPlus, Link2, SquareTerminal, PenLine, Scissors, Trash2,
+} from "lucide-react";
 import { useCloseOnEscape } from "@/hooks/use-close-on-escape";
 import { useMenuNavigation } from "@/hooks/use-menu-navigation";
 import {
@@ -27,6 +30,17 @@ export interface WorkspaceEntryMenuActions {
   onNewFile: () => void;
   onNewFolder: () => void;
   onRename?: () => void;
+  onCut?: () => void;
+  onCopy?: () => void;
+  onDuplicate?: () => void;
+  /** Absent when there is nothing on the clipboard to paste. */
+  onPaste?: () => void;
+  onCopyRelativePath?: () => void;
+  /** Starts a shell in the folder the menu was opened on. */
+  onOpenTerminal?: () => void;
+  /** Folder rows only. */
+  onExpandChildren?: () => void;
+  onCollapseChildren?: () => void;
 }
 
 interface WorkspaceFileContextMenuProps {
@@ -37,6 +51,9 @@ interface WorkspaceFileContextMenuProps {
     count: number;
     onOpen?: () => void;
     onDelete: () => void;
+    onCut?: () => void;
+    onCopy?: () => void;
+    onCopyRelativePaths?: () => void;
   };
   onClose: () => void;
   position: { x: number; y: number };
@@ -57,13 +74,18 @@ export function WorkspaceFileContextMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const hasElectronFileActions = canUseElectronFileActions();
   const revealLabel = getRevealFileLabel(getElectronPlatform());
-  const itemCount = selectionActions ? (selectionActions.onOpen ? 2 : 1) : (hasElectronFileActions ? 3 : 1)
-    + (entryActions ? 2 : 0)
-    + (entryActions?.onRename ? 1 : 0)
-    + (entryActions?.onDelete ? 1 : 0);
-  const separatorCount = selectionActions ? 0 : (hasElectronFileActions ? 1 : 0)
-    + (entryActions ? 1 : 0)
-    + (entryActions?.onRename || entryActions?.onDelete ? 1 : 0);
+  const itemCount = selectionActions
+    ? 1 + (selectionActions.onOpen ? 1 : 0) + (selectionActions.onCut ? 1 : 0)
+      + (selectionActions.onCopy ? 1 : 0) + (selectionActions.onCopyRelativePaths ? 1 : 0)
+    : (hasElectronFileActions ? 2 : 0) + 1
+      + (entryActions
+        ? 2 + [
+          entryActions.onCut, entryActions.onCopy, entryActions.onPaste, entryActions.onDuplicate,
+          entryActions.onCopyRelativePath, entryActions.onOpenTerminal, entryActions.onExpandChildren, entryActions.onCollapseChildren,
+          entryActions.onRename, entryActions.onDelete,
+        ].filter(Boolean).length
+        : 0);
+  const separatorCount = selectionActions ? 1 : 4;
 
   useCloseOnEscape(onClose, { capture: true });
 
@@ -165,6 +187,28 @@ export function WorkspaceFileContextMenu({
               <span>Open selected files</span>
             </button>
           ) : null}
+          {selectionActions.onCut ? (
+            <button type="button" role="menuitem" className={menuItemClassName}
+              onClick={run(selectionActions.onCut)} data-testid="workspace-context-cut-selected">
+              <Scissors className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <span>Cut {selectionActions.count} selected items</span>
+            </button>
+          ) : null}
+          {selectionActions.onCopy ? (
+            <button type="button" role="menuitem" className={menuItemClassName}
+              onClick={run(selectionActions.onCopy)} data-testid="workspace-context-copy-selected">
+              <Copy className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <span>Copy {selectionActions.count} selected items</span>
+            </button>
+          ) : null}
+          {selectionActions.onCopyRelativePaths ? (
+            <button type="button" role="menuitem" className={menuItemClassName}
+              onClick={run(selectionActions.onCopyRelativePaths)} data-testid="workspace-context-copy-relative-paths">
+              <Link2 className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <span>Copy relative paths</span>
+            </button>
+          ) : null}
+          {separator}
           <button type="button" role="menuitem" className={destructiveItemClassName}
             onClick={run(selectionActions.onDelete)} data-testid="workspace-context-delete-selected">
             <Trash2 className="h-3.5 w-3.5 shrink-0" />
@@ -196,6 +240,39 @@ export function WorkspaceFileContextMenu({
             <FolderPlus className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
             <span>New folder</span>
           </button>
+          {separator}
+        </>
+      ) : null}
+      {entryActions && (entryActions.onCut || entryActions.onCopy || entryActions.onPaste || entryActions.onDuplicate) ? (
+        <>
+          {entryActions.onCut ? (
+            <button type="button" role="menuitem" className={menuItemClassName}
+              onClick={run(entryActions.onCut)} data-testid="workspace-context-cut">
+              <Scissors className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <span>Cut</span>
+            </button>
+          ) : null}
+          {entryActions.onCopy ? (
+            <button type="button" role="menuitem" className={menuItemClassName}
+              onClick={run(entryActions.onCopy)} data-testid="workspace-context-copy">
+              <Copy className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <span>Copy</span>
+            </button>
+          ) : null}
+          {entryActions.onPaste ? (
+            <button type="button" role="menuitem" className={menuItemClassName}
+              onClick={run(entryActions.onPaste)} data-testid="workspace-context-paste">
+              <ClipboardPaste className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <span>Paste</span>
+            </button>
+          ) : null}
+          {entryActions.onDuplicate ? (
+            <button type="button" role="menuitem" className={menuItemClassName}
+              onClick={run(entryActions.onDuplicate)} data-testid="workspace-context-duplicate">
+              <CopyPlus className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+              <span>Duplicate</span>
+            </button>
+          ) : null}
           {separator}
         </>
       ) : null}
@@ -235,6 +312,34 @@ export function WorkspaceFileContextMenu({
         <Copy className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
         <span>Copy absolute path</span>
       </button>
+      {entryActions?.onCopyRelativePath ? (
+        <button type="button" role="menuitem" className={menuItemClassName}
+          onClick={run(entryActions.onCopyRelativePath)} data-testid="workspace-context-copy-relative-path">
+          <Link2 className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <span>Copy relative path</span>
+        </button>
+      ) : null}
+      {entryActions?.onOpenTerminal ? (
+        <button type="button" role="menuitem" className={menuItemClassName}
+          onClick={run(entryActions.onOpenTerminal)} data-testid="workspace-context-open-terminal">
+          <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <span>Open in terminal</span>
+        </button>
+      ) : null}
+      {entryActions?.onExpandChildren ? (
+        <button type="button" role="menuitem" className={menuItemClassName}
+          onClick={run(entryActions.onExpandChildren)} data-testid="workspace-context-expand-children">
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <span>Expand all subfolders</span>
+        </button>
+      ) : null}
+      {entryActions?.onCollapseChildren ? (
+        <button type="button" role="menuitem" className={menuItemClassName}
+          onClick={run(entryActions.onCollapseChildren)} data-testid="workspace-context-collapse-children">
+          <ChevronsDownUp className="h-3.5 w-3.5 shrink-0 text-(--text-muted)" />
+          <span>Collapse all subfolders</span>
+        </button>
+      ) : null}
       {entryActions?.onRename || entryActions?.onDelete ? separator : null}
       {entryActions?.onRename ? (
         <button
