@@ -30,8 +30,9 @@ loads real account credentials, and makes no paid model requests. It verifies:
 
 The native Windows check also caught a hook-shell mismatch: Codex can run hooks
 through PowerShell, while the previous hook assumed cmd syntax. Native Codex now
-uses an encoded PowerShell observer command that is safe to invoke from either
-shell. Claude hooks and WSL POSIX hooks retain their own shell contracts.
+decodes its observer script inside that PowerShell process, avoiding a nested
+PowerShell startup and stdin forwarding boundary. This is the native Codex
+PowerShell contract, not a cmd command. Claude hooks and WSL POSIX hooks retain their own shell contracts.
 
 Failure is a nonzero exit. `.tmp/codex-compat/` contains terminal output, the last
 screen and metadata including the exact CLI version even when a run fails. Set

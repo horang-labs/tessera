@@ -41,8 +41,9 @@ function group(command: string): CodexHookGroup[] {
   return [{ hooks: [{ type: 'command', timeout: 10, command }] }];
 }
 
-// Codex runs hooks through its selected shell, including PowerShell on Windows.
-// EncodedCommand keeps cmd/PowerShell syntax out of that outer shell entirely.
+// Native Codex runs hooks through its selected PowerShell. Execute in that
+// process: a nested powershell.exe adds another startup and stdin boundary,
+// which can exhaust the hook deadline on hosted Windows runners.
 // Read payload/identity at execution time; never embed credentials in argv.
 const WINDOWS_CODEX_HOOK = [
   'try {',
@@ -69,7 +70,7 @@ const WINDOWS_CODEX_HOOK = [
 
 export function buildCodexHookSettings(style: HookCommandStyle = 'posix'): CodexHookSettings {
   const command = style === 'windows-cmd'
-    ? `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(WINDOWS_CODEX_HOOK, 'utf16le').toString('base64')}`
+    ? `& ([ScriptBlock]::Create([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${Buffer.from(WINDOWS_CODEX_HOOK, 'utf16le').toString('base64')}'))))`
     : buildHookCommand(style);
   const hooks = {} as CodexHookSettings['hooks'];
   for (const event of Object.keys(CODEX_HOOK_EVENT_LABEL) as CodexHookEventName[]) {
