@@ -23,6 +23,7 @@ import {
 import {
   createGitRunner,
   supportsGitShellBatch,
+  DEFAULT_GIT_TIMEOUT_MS,
   GitCommandError,
 } from "@/lib/worktrees/git-runner";
 import {
@@ -30,6 +31,7 @@ import {
   type GitEnvironmentSource,
 } from "@/lib/git/git-environment";
 import { detectGitConflictOperation } from "@/lib/git/git-conflict-state";
+import { removeStaleGitTempPacks } from "@/lib/git/git-temp-pack-cleanup";
 import { parseGitStatus } from "@/lib/git/git-status";
 import {
   resolveConfiguredUpstream,
@@ -111,13 +113,17 @@ export class GitPanelError extends Error {
  * error type: routes answer from `GitPanelError.status`, so a runner failure is
  * translated here rather than escaping as-is.
  */
-function toGitPanelError(error: unknown, command: string): GitPanelError {
+function toGitPanelError(
+  error: unknown,
+  command: string,
+  timeoutMs = COMMAND_TIMEOUT_MS,
+): GitPanelError {
   if (error instanceof GitPanelError) return error;
   if (error instanceof GitCommandError) {
     if (error.kind === "timeout") {
       return new GitPanelError(
         "command_timeout",
-        `${command} did not respond within ${COMMAND_TIMEOUT_MS / 1000}s and was terminated`,
+        `${command} did not respond within ${timeoutMs / 1000}s and was terminated`,
         504,
         error,
       );
@@ -135,16 +141,17 @@ async function runGitCommand(
   cwd: string,
   agentEnvironment: AgentEnvironment,
   maxOutputBytes = COMMAND_MAX_BUFFER,
+  timeoutMs = COMMAND_TIMEOUT_MS,
 ): Promise<string> {
   const runGit = createGitRunner(agentEnvironment, {
-    timeoutMs: COMMAND_TIMEOUT_MS,
+    timeoutMs,
     maxOutputBytes,
   });
   try {
     const { stdout } = await runGit(args, { cwd });
     return stdout;
   } catch (error) {
-    throw toGitPanelError(error, "git");
+    throw toGitPanelError(error, "git", timeoutMs);
   }
 }
 
@@ -1189,7 +1196,7 @@ export async function fetchGitRemote(
 ): Promise<void> {
   const agentEnvironment = await resolveGitEnvironment(environmentSource);
   await resolveRepoRoot(workDir, agentEnvironment);
-  const [upstream, branch, upstreamConfigRaw] = await Promise.all([
+  const [upstream, branch, upstreamConfigRaw, gitCommonDir] = await Promise.all([
     runOptionalGitCommand(
       ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
       workDir,
@@ -1201,6 +1208,11 @@ export async function fetchGitRemote(
       workDir,
       agentEnvironment,
     ),
+    runOptionalGitCommand(
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      workDir,
+      agentEnvironment,
+    ),
   ]);
   // Same conflation as everywhere else: a branch this clone's refspec does not
   // map has an upstream Git will not name, and fetching `origin` by default
@@ -1209,7 +1221,22 @@ export async function fetchGitRemote(
   const remoteName = getFetchRemoteName(
     upstream ?? resolveConfiguredUpstream(upstreamConfigRaw, branch)?.name ?? null,
   );
-  await runGitCommand(["fetch", "--prune", remoteName], workDir, agentEnvironment);
+  // A fetch that was killed earlier left its partial pack behind, and the next
+  // one downloads the same objects again into a new file — clear the old ones
+  // out first (`git-temp-pack-cleanup.ts`).
+  const trimmedCommonDir = gitCommonDir?.trim();
+  if (trimmedCommonDir) await removeStaleGitTempPacks(trimmedCommonDir, agentEnvironment);
+  // The runner's own generous deadline, not the panel's 10s read budget: a
+  // fetch is as slow as the network and the size of what was pushed, and one
+  // killed mid-transfer is pure loss — it starts over from nothing next time
+  // and leaves its partial pack on disk.
+  await runGitCommand(
+    ["fetch", "--prune", remoteName],
+    workDir,
+    agentEnvironment,
+    COMMAND_MAX_BUFFER,
+    DEFAULT_GIT_TIMEOUT_MS,
+  );
 }
 
 export async function fetchGitPanelData(

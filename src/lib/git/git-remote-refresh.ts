@@ -52,6 +52,28 @@ export const GIT_REMOTE_REFRESH_INTERVAL_MS = (() => {
     : DEFAULT_REMOTE_REFRESH_INTERVAL_MS;
 })();
 
+/**
+ * The longest a repository whose fetches keep failing waits between attempts.
+ * Each consecutive failure doubles the interval up to this. A remote that is
+ * merely unreachable costs nothing to retry, but one that fails mid-transfer
+ * costs a partial download every time, and a credential helper that prompts
+ * would prompt on every attempt — so a fetch that has failed several times in a
+ * row is retried rarely rather than on the healthy schedule.
+ */
+export const GIT_REMOTE_REFRESH_MAX_BACKOFF_MS = 30 * 60_000;
+
+/** The wait before the next attempt after `consecutiveFailures` failures. */
+export function gitRemoteRefreshDelayMs(consecutiveFailures: number): number {
+  if (consecutiveFailures <= 0) return GIT_REMOTE_REFRESH_INTERVAL_MS;
+  // Capped exponent so the multiplication cannot overflow for a remote that has
+  // been failing for days.
+  const factor = 2 ** Math.min(consecutiveFailures, 16);
+  return Math.min(
+    GIT_REMOTE_REFRESH_INTERVAL_MS * factor,
+    Math.max(GIT_REMOTE_REFRESH_MAX_BACKOFF_MS, GIT_REMOTE_REFRESH_INTERVAL_MS),
+  );
+}
+
 export interface GitRemoteRefreshRequest {
   /** Whose panel to recompute once the refs have moved. */
   sessionId: string;
@@ -78,6 +100,8 @@ export interface GitRemoteRefreshDeps {
 interface RefreshState {
   /** When the last attempt *finished*, per set of refs. */
   lastAttemptAt: Map<string, number>;
+  /** Failed attempts since the last fetch that landed, per set of refs. */
+  consecutiveFailures: Map<string, number>;
   inFlight: Map<string, Promise<void>>;
   /** A working directory's Git directory never changes; learn it once. */
   refsKeyByWorkDir: Map<string, string>;
@@ -90,10 +114,13 @@ function getState(): RefreshState {
   if (!g[GLOBAL_KEY]) {
     g[GLOBAL_KEY] = {
       lastAttemptAt: new Map(),
+      consecutiveFailures: new Map(),
       inFlight: new Map(),
       refsKeyByWorkDir: new Map(),
     };
   }
+  // A dev-server hot reload keeps the state an older module created.
+  g[GLOBAL_KEY]!.consecutiveFailures ??= new Map();
   return g[GLOBAL_KEY]!;
 }
 
@@ -165,8 +192,9 @@ const defaultDeps: GitRemoteRefreshDeps = {
  * Never rejects: a remote that cannot be reached is an ordinary state for a
  * panel to be in — no network, no credentials, a remote that has gone away —
  * and it must not turn a panel read into an error. A failed attempt still
- * consumes the interval, so an unreachable remote is retried on the same
- * schedule rather than on every poll.
+ * consumes the interval, so an unreachable remote is retried on a schedule
+ * rather than on every poll — and a schedule that backs off while the failures
+ * continue (`gitRemoteRefreshDelayMs`).
  */
 export async function scheduleGitRemoteRefresh(
   request: GitRemoteRefreshRequest,
@@ -182,7 +210,8 @@ export async function scheduleGitRemoteRefresh(
   const lastAttemptAt = state.lastAttemptAt.get(key);
   if (
     lastAttemptAt !== undefined &&
-    deps.now() - lastAttemptAt < GIT_REMOTE_REFRESH_INTERVAL_MS
+    deps.now() - lastAttemptAt <
+      gitRemoteRefreshDelayMs(state.consecutiveFailures.get(key) ?? 0)
   ) {
     return Promise.resolve();
   }
@@ -190,6 +219,7 @@ export async function scheduleGitRemoteRefresh(
   const attempt = (async () => {
     try {
       await deps.runFetch(workDir, userId);
+      state.consecutiveFailures.delete(key);
       // Only the session that asked. Every other panel on this checkout reads
       // the same refs on its own 5s poll, so what this adds is speed for the
       // one panel a user is looking at — including one whose poll has backed
@@ -197,8 +227,10 @@ export async function scheduleGitRemoteRefresh(
       if (onFetched) onFetched();
       else deps.onFetched(sessionId, userId);
     } catch (error) {
+      const failures = (state.consecutiveFailures.get(key) ?? 0) + 1;
+      state.consecutiveFailures.set(key, failures);
       logger.debug(
-        { error, sessionId, workDir },
+        { error, sessionId, workDir, consecutiveFailures: failures },
         "Background git fetch for the Git panel failed",
       );
     } finally {

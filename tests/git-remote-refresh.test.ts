@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   GIT_REMOTE_REFRESH_INTERVAL_MS,
+  GIT_REMOTE_REFRESH_MAX_BACKOFF_MS,
+  gitRemoteRefreshDelayMs,
   scheduleGitRemoteRefresh,
   type GitRemoteRefreshDeps,
 } from '@/lib/git/git-remote-refresh';
@@ -248,4 +250,52 @@ test('a Git command that hangs while naming the refs neither rejects nor retries
 
   // One attempt, not one per call.
   assert.equal(h.fetched.length, 1);
+});
+
+test('a fetch that keeps failing waits longer each time instead of retrying every interval', async () => {
+  // A fetch killed mid-transfer leaves a partial pack on disk, so a remote that
+  // fails the same way on every attempt must not be retried on the healthy
+  // two-minute schedule forever.
+  const workDir = freshWorkDir();
+  let failing = true;
+  const h = harness({
+    runFetch: async () => {
+      if (failing) throw new Error('git fetch did not respond and was terminated');
+    },
+  });
+  const request = { sessionId: 'session-1', workDir, userId: 'user-1' };
+  let now = 1_000_000;
+
+  await scheduleGitRemoteRefresh(request, h.deps); // failure 1
+  now += GIT_REMOTE_REFRESH_INTERVAL_MS;
+  h.setNow(now);
+  await scheduleGitRemoteRefresh(request, h.deps);
+  assert.equal(h.fetched.length, 1, 'one failure doubles the wait');
+
+  now += GIT_REMOTE_REFRESH_INTERVAL_MS;
+  h.setNow(now);
+  await scheduleGitRemoteRefresh(request, h.deps); // failure 2
+  assert.equal(h.fetched.length, 2);
+
+  now += GIT_REMOTE_REFRESH_INTERVAL_MS * 4 - 1;
+  h.setNow(now);
+  await scheduleGitRemoteRefresh(request, h.deps);
+  assert.equal(h.fetched.length, 2, 'two failures wait four intervals');
+
+  now += 1;
+  h.setNow(now);
+  failing = false;
+  await scheduleGitRemoteRefresh(request, h.deps); // lands
+  assert.equal(h.fetched.length, 3);
+
+  now += GIT_REMOTE_REFRESH_INTERVAL_MS;
+  h.setNow(now);
+  await scheduleGitRemoteRefresh(request, h.deps);
+  assert.equal(h.fetched.length, 4, 'a fetch that landed restores the normal interval');
+});
+
+test('the backoff stops growing at its ceiling', () => {
+  assert.equal(gitRemoteRefreshDelayMs(0), GIT_REMOTE_REFRESH_INTERVAL_MS);
+  assert.equal(gitRemoteRefreshDelayMs(1), GIT_REMOTE_REFRESH_INTERVAL_MS * 2);
+  assert.equal(gitRemoteRefreshDelayMs(1_000), GIT_REMOTE_REFRESH_MAX_BACKOFF_MS);
 });
