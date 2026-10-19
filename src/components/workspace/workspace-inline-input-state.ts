@@ -53,12 +53,21 @@ export function shouldToggleDirectoryOnClick(
 }
 
 /**
- * Whether a click on a file row should open the file. Chromium dispatches two
- * click events before `dblclick`; only the first may create a tab, regardless
- * of whether the pointer was over the rename hotspot.
+ * Whether a click on a file row should open the file.
+ *
+ * A mouse click only selects; opening is the double-click's job (and Enter's,
+ * which the browser reports as a click with `detail === 0`). Touch has no
+ * double-click worth the name — a double-tap is zoom — so a single tap opens.
  */
-export function shouldOpenOnRowClick(clickCount: number): boolean {
-  return clickCount === 1;
+export function shouldOpenOnRowClick(clickCount: number, pointerType?: string | null): boolean {
+  if (clickCount === 0) return true;
+  return pointerType === 'touch' && clickCount === 1;
+}
+
+/** The pointer behind a React click, when the browser reports one. */
+export function clickPointerType(event: { nativeEvent: Event }): string | null {
+  const pointerType = (event.nativeEvent as { pointerType?: unknown }).pointerType;
+  return typeof pointerType === 'string' ? pointerType : null;
 }
 
 /**

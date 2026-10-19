@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DIRECTORY_RENAME_DOUBLE_CLICK_MS,
+  clickPointerType,
   isRapidDirectoryRenameDoubleClick,
   resolveInlineSubmitIntent,
   shouldOpenOnRowClick,
@@ -87,7 +88,19 @@ test("a rename preselects the name without its extension", () => {
   assert.deepEqual(selectBaseNameRange("archive.tar.gz"), [0, 11]);
 });
 
-test("a double-click gesture creates exactly one file tab", () => {
-  assert.equal(shouldOpenOnRowClick(1), true);
-  assert.equal(shouldOpenOnRowClick(2), false);
+test("a mouse click only selects; Enter and a touch tap open", () => {
+  // The double-click handler opens the file, so no mouse click may also open it.
+  assert.equal(shouldOpenOnRowClick(1), false);
+  assert.equal(shouldOpenOnRowClick(1, "mouse"), false);
+  assert.equal(shouldOpenOnRowClick(2, "mouse"), false);
+  // Enter on a focused row is reported as a click with detail 0.
+  assert.equal(shouldOpenOnRowClick(0), true);
+  // A double-tap is zoom, so touch opens on the first tap only.
+  assert.equal(shouldOpenOnRowClick(1, "touch"), true);
+  assert.equal(shouldOpenOnRowClick(2, "touch"), false);
+});
+
+test("the pointer type is read off the native click, and absent when unreported", () => {
+  assert.equal(clickPointerType({ nativeEvent: { pointerType: "touch" } as unknown as Event }), "touch");
+  assert.equal(clickPointerType({ nativeEvent: {} as Event }), null);
 });

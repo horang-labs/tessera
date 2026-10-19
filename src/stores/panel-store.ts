@@ -303,6 +303,23 @@ export const usePanelStore = create<PanelStore>()((set, get) => ({
     return newPanelId;
   },
 
+  createTerminalPanelAt: (panelId, terminalId, cwd, direction = 'vertical') => {
+    const state = get();
+    const tabData = state.tabPanels[state.activeTabId];
+    const activePanel = tabData?.panels[panelId];
+    if (!tabData || !activePanel) return null;
+
+    if (activePanel.sessionId === null && !activePanel.terminalId) {
+      get().assignTerminal(panelId, terminalId, null, cwd);
+      return panelId;
+    }
+
+    const newPanelId = get().splitPanel(panelId, direction, null);
+    if (!newPanelId) return null;
+    get().assignTerminal(newPanelId, terminalId, null, cwd);
+    return newPanelId;
+  },
+
   movePanelNode: (sourcePanelId, targetPanelId, edge) => {
     const state = get();
     const tabData = state.tabPanels[state.activeTabId];

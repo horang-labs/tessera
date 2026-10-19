@@ -121,3 +121,33 @@ export async function readWorkspaceRootFiles(root: string): Promise<WorkspaceRoo
     return { directories: [], files: [], symlinks: [], truncated: false, reason: 'walk-failed', workDir: root };
   }
 }
+
+const MTIME_CHUNK = 64;
+
+/**
+ * Modification times for the immediate children of one folder, keyed by
+ * workspace-relative path. Kept apart from the listing on purpose: a stat per
+ * entry is what makes a 9P-mounted tree slow, so only a sort that needs it pays.
+ */
+export async function readWorkspaceDirectoryMtimes(
+  root: string,
+  requestedDirectory: string,
+): Promise<Record<string, number>> {
+  const listing = await readWorkspaceDirectoryFiles(root, requestedDirectory);
+  if (listing.missing) return {};
+
+  const pathModule = getFilesystemPathModule(root);
+  const entries = [...listing.files, ...listing.directories];
+  const mtimes: Record<string, number> = {};
+  for (let start = 0; start < entries.length; start += MTIME_CHUNK) {
+    await Promise.all(entries.slice(start, start + MTIME_CHUNK).map(async (relativePath) => {
+      try {
+        const stat = await fs.lstat(pathModule.join(root, ...relativePath.split('/')));
+        mtimes[relativePath] = stat.mtimeMs;
+      } catch {
+        // Vanished between the listing and the stat; it just sorts as oldest.
+      }
+    }));
+  }
+  return mtimes;
+}
