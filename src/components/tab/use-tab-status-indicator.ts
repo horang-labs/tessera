@@ -55,8 +55,11 @@ export function useTabStatusIndicator(tab: Tab, isActive: boolean) {
 
   const sessionIdList = panelSessionIds ? panelSessionIds.split(',') : [];
 
-  const { hasProcessingSession: isProcessing, hasTerminalProcessingSession } =
-    useSessionProcessingSummary(sessionIdList);
+  const {
+    hasProcessingSession: isProcessing,
+    hasTerminalProcessingSession,
+    terminalGoal,
+  } = useSessionProcessingSummary(sessionIdList);
 
   const isAwaitingUser = useAnySessionAwaitingUser(sessionIdList);
 
@@ -83,7 +86,7 @@ export function useTabStatusIndicator(tab: Tab, isActive: boolean) {
     statusKind === 'awaiting'
       ? t('status.inputRequired')
       : statusKind === 'processing'
-        ? t('status.processing')
+        ? terminalGoal === 'active' ? t('terminalGoal.indicatorActive') : t('status.processing')
         : statusKind === 'unread'
           ? t('status.unreadNotification')
           : statusKind === 'running'
@@ -98,5 +101,6 @@ export function useTabStatusIndicator(tab: Tab, isActive: boolean) {
     isRunning,
     hasUnread,
     hasTerminalProcessingSession,
+    terminalGoal,
   };
 }

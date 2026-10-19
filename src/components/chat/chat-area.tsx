@@ -25,6 +25,7 @@ import { usePanelStore, selectActiveTab, EMPTY_PANELS, TabIdContext } from "@/st
 import { useTabStore } from "@/stores/tab-store";
 import { useI18n } from "@/lib/i18n";
 import { TerminalPanel } from "@/components/terminal/terminal-panel";
+import { TerminalGoalBanner } from '@/components/terminal/terminal-goal-banner';
 import { getSessionTerminalId } from "@/lib/terminal/terminal-surface-registry";
 import { shouldShowSessionHeader } from "@/lib/terminal/session-header-visibility";
 import { supportsTerminalChatView } from "@/lib/terminal/terminal-chat-view-support";
@@ -328,6 +329,9 @@ export const ChatArea = memo(function ChatArea({
           }}
         />
       )}
+
+      {/* A PTY's /goal cannot be drawn inside the TUI, so it sits above it. */}
+      {isTerminalSession && <TerminalGoalBanner sessionId={sessionId} />}
 
       <div className="relative flex-1 overflow-hidden">
         {isTerminalSession ? (

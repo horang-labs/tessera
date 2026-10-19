@@ -14,6 +14,7 @@ import { useChatStore } from '@/stores/chat-store';
 import { useBoardStore } from '@/stores/board-store';
 import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { useTerminalSessionStore } from '@/stores/terminal-session-store';
+import { useTerminalGoalStore } from '@/stores/terminal-goal-store';
 import { useCommandStore } from '@/stores/command-store';
 import { useGitPanelStore } from '@/stores/git-panel-store';
 import { useNotificationStore } from '@/stores/notification-store';
@@ -127,6 +128,7 @@ export function handleIncomingServerMessage({
     case 'session_closed':
       sessionStore.removeSession(msg.sessionId);
       useTerminalSessionStore.getState().clearSession(msg.sessionId);
+      useTerminalGoalStore.getState().clearSession(msg.sessionId);
       chatStore.clearSession(msg.sessionId);
       useUsageStore.getState().clearUsage(msg.sessionId);
       useCommandStore.getState().clearSession(msg.sessionId);
@@ -245,6 +247,14 @@ export function handleIncomingServerMessage({
       return { wasReconnect };
     }
 
+    case 'terminal_goal':
+      useTerminalGoalStore.getState().applyGoal(msg.sessionId, msg.goal);
+      return { wasReconnect };
+
+    case 'terminal_goal_history':
+      useTerminalGoalStore.getState().setHistory(msg.sessionId, msg.history);
+      return { wasReconnect };
+
     case 'terminal_session_runtime':
       sessionStore.setSessionRunning(msg.sessionId, msg.running);
       useTaskStore.getState().setLinkedSessionRunning(msg.sessionId, msg.running);
@@ -253,6 +263,8 @@ export function handleIncomingServerMessage({
         useTerminalSessionStore.getState().markRuntimeStarted(msg.sessionId);
       } else {
         useTerminalSessionStore.getState().markRuntimeStopped(msg.sessionId);
+        // A goal only steers a live CLI; the server stops tracking it too.
+        useTerminalGoalStore.getState().clearSession(msg.sessionId);
         cancelPendingTerminalReboundsForDestination(msg.sessionId);
         if (!isSessionRestarting(msg.sessionId)) {
           retireStoppedTerminalSessionSurface(msg.sessionId);

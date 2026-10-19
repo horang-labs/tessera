@@ -1765,4 +1765,41 @@ export interface I18nMessages {
       bulkPartial: string;
     };
   };
+  terminalGoal: {
+    label: string;
+    status: {
+      active: string;
+      paused: string;
+      stalled: string;
+      blocked: string;
+      usage_limited: string;
+      budget_limited: string;
+      complete: string;
+      failed: string;
+    };
+    objective: string;
+    lastReason: string;
+    elapsed: string;
+    iterations: string;
+    tokens: string;
+    tokensOfBudget: string;
+    expand: string;
+    collapse: string;
+    dismiss: string;
+    hintClaude: string;
+    hintCodex: string;
+    indicatorActive: string;
+    indicatorPaused: string;
+    history: {
+      title: string;
+      open: string;
+      close: string;
+      ending: {
+        complete: string;
+        failed: string;
+        cleared: string;
+        replaced: string;
+      };
+    };
+  };
 }

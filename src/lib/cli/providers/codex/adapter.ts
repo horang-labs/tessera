@@ -47,6 +47,7 @@ import {
 } from './transcript-decoder';
 import { fingerprintTranscriptFile } from '../claude-code/transcript-path';
 import { resolveCodexTranscriptPath } from './transcript-path';
+import { CODEX_GOAL_LINE_MARKERS, reduceCodexGoalTranscriptLine } from './goal-transcript';
 import type { ContentBlock } from '@/lib/ws/message-types';
 import type { AgentEnvironment } from '@/lib/settings/types';
 import type {
@@ -293,6 +294,23 @@ export class CodexAdapter implements CliProvider {
   createTerminalSessionObserver = createCodexTerminalSessionObserver;
 
   detectTerminalConversationReset = codexScreenShowsConversationReset;
+
+  terminalGoalLineMarkers = CODEX_GOAL_LINE_MARKERS;
+
+  reduceTerminalGoalTranscriptLine = reduceCodexGoalTranscriptLine;
+
+  /** The transcript file backing this PTY session (see CliProvider). */
+  async resolveTerminalTranscriptFile(options: {
+    providerSessionId: string;
+    transcriptPath?: string | null;
+    userId?: string;
+  }): Promise<string | null> {
+    return resolveCodexTranscriptPath({
+      providerSessionId: options.providerSessionId,
+      transcriptPath: options.transcriptPath ?? null,
+      environment: await getAgentEnvironment(options.userId),
+    });
+  }
 
   /** Identity of the rollout file backing this session (see CliProvider). */
   async readTerminalTranscriptFingerprint(options: {

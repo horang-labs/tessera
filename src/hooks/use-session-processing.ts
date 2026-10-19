@@ -15,6 +15,8 @@ import {
   type SessionKindTarget,
 } from './use-session-kind-groups';
 import type { UnifiedSession } from '@/types/chat';
+import type { TerminalGoalIndicator } from '@/stores/terminal-goal-store';
+import { useAnyTerminalGoalIndicator } from './use-terminal-goal-indicator';
 
 export { resolveIsTerminalSession } from './use-session-kind-groups';
 
@@ -69,6 +71,8 @@ export function useAnySessionProcessing(
 interface SessionProcessingSummary {
   hasProcessingSession: boolean;
   hasTerminalProcessingSession: boolean;
+  /** Strongest `/goal` state among the PTY sessions (active wins over paused). */
+  terminalGoal: TerminalGoalIndicator;
 }
 
 /**
@@ -92,9 +96,12 @@ export function useSessionProcessingSummary(
     [terminalIds],
   ));
 
+  const terminalGoal = useAnyTerminalGoalIndicator(terminalIds);
+
   return {
     hasProcessingSession:
       hasTerminalTurnProcessing || hasGuiTurnInFlight || hasGuiWorkflowRunning,
     hasTerminalProcessingSession: hasTerminalTurnProcessing,
+    terminalGoal,
   };
 }

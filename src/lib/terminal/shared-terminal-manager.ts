@@ -96,3 +96,8 @@ export function bindTerminalSender(sendToConnection: SendToConnection): Terminal
 export function bindTerminalRuntimeSender(sendToUser: SendToUser): void {
   sharedState.sendToUser = sendToUser;
 }
+
+/** Push a user-scoped message through the same sender the runtime signals use. */
+export function sendTerminalUserMessage(userId: string, message: ServerTransportMessage): void {
+  sharedState.sendToUser?.(userId, message);
+}

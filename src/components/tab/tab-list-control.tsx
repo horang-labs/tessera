@@ -223,6 +223,7 @@ const TabListItem = memo(function TabListItem({
     hasUnread,
     isRunning,
     hasTerminalProcessingSession,
+    terminalGoal,
   } = useTabStatusIndicator(tab, isActive);
 
   return (
@@ -263,6 +264,7 @@ const TabListItem = memo(function TabListItem({
               placement="inline"
               size="lg"
               surface="sidebar"
+              goal={terminalGoal}
             />
           </span>
         ) : null}

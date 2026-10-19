@@ -1,0 +1,220 @@
+import {
+  isLiveTerminalGoal,
+  type TerminalGoalSnapshot,
+  type TerminalGoalStatus,
+} from '@/types/terminal-goal';
+
+/**
+ * Codex keeps the authoritative goal in `$CODEX_HOME/goals_1.sqlite`, but that
+ * WAL database is not safely readable from a Windows server across the WSL
+ * bridge. The rollout carries the same lifecycle (CLI 0.162):
+ *
+ * - `event_msg` / `thread_goal_updated` — set, pause, resume, budget/usage limits.
+ * - the `update_goal` call — the model marking it complete. That transition is
+ *   not echoed as a `thread_goal_updated` event, and the call's output carries
+ *   the goal (`{"goal":{...}}`) only when the model printed the result.
+ * - a user `<codex_internal_context source="user_goal">` message containing
+ *   `User cleared the goal.` — `/goal clear`, which has no event either.
+ */
+
+const GOAL_EVENT_MARKER = '"thread_goal_updated"';
+/** Turn endings: an errored or aborted turn leaves an active goal stalled. */
+const TURN_COMPLETE_MARKER = '"task_complete"';
+const TURN_ABORTED_MARKER = '"turn_aborted"';
+const GOAL_CLEARED_MARKER = 'User cleared the goal.';
+/** A goal object serialized inside a tool output string. */
+const GOAL_TOOL_OUTPUT_MARKER = '\\"goal\\":{';
+/** The model's own completion call, in a code-mode script or as a function call. */
+const GOAL_TOOL_CALL_MARKER = 'update_goal';
+/** Every line this reader acts on contains one of these (see CliProvider). */
+export const CODEX_GOAL_LINE_MARKERS: readonly string[] = [
+  GOAL_EVENT_MARKER,
+  GOAL_CLEARED_MARKER,
+  GOAL_TOOL_OUTPUT_MARKER,
+  GOAL_TOOL_CALL_MARKER,
+  TURN_COMPLETE_MARKER,
+  TURN_ABORTED_MARKER,
+];
+
+const STATUSES: ReadonlySet<string> = new Set<TerminalGoalStatus>([
+  'active',
+  'paused',
+  'blocked',
+  'usage_limited',
+  'budget_limited',
+  'complete',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/** Codex reports goal times in epoch seconds; Tessera keeps epoch ms. */
+function toEpochMs(value: unknown): number | undefined {
+  const n = readNumber(value);
+  if (n === undefined) return undefined;
+  return n < 1e12 ? n * 1000 : n;
+}
+
+function readTimestamp(value: unknown, fallback: number): number {
+  if (typeof value !== 'string') return fallback;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function snapshotFromGoal(goal: unknown, at: number): TerminalGoalSnapshot | undefined {
+  if (!isRecord(goal)) return undefined;
+  const objective = typeof goal.objective === 'string' ? goal.objective.trim() : '';
+  const status = typeof goal.status === 'string' ? goal.status : '';
+  if (!objective || !STATUSES.has(status)) return undefined;
+
+  const snapshot: TerminalGoalSnapshot = {
+    provider: 'codex',
+    objective,
+    status: status as TerminalGoalStatus,
+    setAt: toEpochMs(goal.createdAt) ?? at,
+    updatedAt: toEpochMs(goal.updatedAt) ?? at,
+  };
+  const elapsedSeconds = readNumber(goal.timeUsedSeconds);
+  const tokensUsed = readNumber(goal.tokensUsed);
+  const tokenBudget = readNumber(goal.tokenBudget);
+  if (elapsedSeconds !== undefined) snapshot.elapsedSeconds = elapsedSeconds;
+  if (tokensUsed !== undefined) snapshot.tokensUsed = tokensUsed;
+  if (tokenBudget !== undefined) snapshot.tokenBudget = tokenBudget;
+  return snapshot;
+}
+
+function textParts(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (!Array.isArray(value)) return [];
+  const parts: string[] = [];
+  for (const item of value) {
+    if (isRecord(item) && typeof item.text === 'string') parts.push(item.text);
+  }
+  return parts;
+}
+
+function goalFromToolOutput(output: unknown, at: number): TerminalGoalSnapshot | undefined {
+  for (const text of textParts(output)) {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('{') || !trimmed.includes('"goal"')) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (isRecord(parsed)) {
+        const snapshot = snapshotFromGoal(parsed.goal, at);
+        if (snapshot) return snapshot;
+      }
+    } catch {
+      // Not the update_goal result; tool output is free-form text.
+    }
+  }
+  return undefined;
+}
+
+/** `tools.update_goal({status:"complete"})` in an exec script. */
+const SCRIPT_COMPLETE_CALL = /\bupdate_goal\s*\(\s*\{[^}]*\bstatus\s*:\s*["']complete["']/;
+
+/** Whether this tool call is the model marking the goal complete. */
+function isGoalCompleteCall(payload: Record<string, unknown>): boolean {
+  if (payload.type === 'custom_tool_call') {
+    return typeof payload.input === 'string' && SCRIPT_COMPLETE_CALL.test(payload.input);
+  }
+  if (payload.type === 'function_call' && payload.name === 'update_goal') {
+    if (typeof payload.arguments !== 'string') return false;
+    try {
+      const args = JSON.parse(payload.arguments) as unknown;
+      return isRecord(args) && args.status === 'complete';
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function isGoalClearedMessage(payload: Record<string, unknown>): boolean {
+  if (payload.type !== 'message' || payload.role !== 'user') return false;
+  return textParts(payload.content).some((text) => (
+    text.includes('source="user_goal"') && text.includes(GOAL_CLEARED_MARKER)
+  ));
+}
+
+/**
+ * Folds one rollout line into the current goal.
+ * Returns `undefined` when the line says nothing about the goal, `null` when it
+ * clears the goal, and the next snapshot otherwise.
+ */
+export function reduceCodexGoalTranscriptLine(
+  current: TerminalGoalSnapshot | null,
+  line: string,
+  now = Date.now(),
+): TerminalGoalSnapshot | null | undefined {
+  if (
+    !line.includes(GOAL_EVENT_MARKER)
+    && !line.includes(GOAL_CLEARED_MARKER)
+    && !line.includes(GOAL_TOOL_OUTPUT_MARKER)
+    && !(current && line.includes(GOAL_TOOL_CALL_MARKER))
+    && !(current && (line.includes(TURN_COMPLETE_MARKER) || line.includes(TURN_ABORTED_MARKER)))
+  ) {
+    return undefined;
+  }
+
+  let entry: unknown;
+  try {
+    entry = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(entry) || !isRecord(entry.payload)) return undefined;
+  const payload = entry.payload;
+  const at = readTimestamp(entry.timestamp, now);
+
+  if (entry.type === 'event_msg' && payload.type === 'thread_goal_updated') {
+    return snapshotFromGoal(payload.goal, at);
+  }
+
+  // Codex continues an active goal after a clean turn, but not after one that
+  // failed or was interrupted: its TUI then reports "Goal stalled", and no
+  // Stop hook marks the end of that turn.
+  if (
+    entry.type === 'event_msg'
+    && current?.status === 'active'
+    && (
+      payload.type === 'turn_aborted'
+      || (payload.type === 'task_complete' && payload.error != null)
+    )
+  ) {
+    return { ...current, status: 'stalled', updatedAt: at };
+  }
+
+  if (entry.type !== 'response_item') return undefined;
+
+  if (isGoalClearedMessage(payload)) return null;
+
+  // The output of this call may say nothing (the model did not print it), so
+  // the call itself is the completion. A printed result refines the totals.
+  if (current && isLiveTerminalGoal(current) && isGoalCompleteCall(payload)) {
+    // Codex counts time while the goal is active; the token total is not
+    // reported, and the last one is from an earlier event.
+    const { tokensUsed: _staleTokens, ...rest } = current;
+    const activeSince = current.status === 'active' ? Math.max(0, (at - current.updatedAt) / 1000) : 0;
+    return {
+      ...rest,
+      status: 'complete',
+      updatedAt: at,
+      elapsedSeconds: Math.round((current.elapsedSeconds ?? 0) + activeSince),
+    };
+  }
+
+  if (payload.type === 'custom_tool_call_output' || payload.type === 'function_call_output') {
+    const snapshot = goalFromToolOutput(payload.output, at);
+    // A tool result for an older goal must not resurrect it.
+    if (!snapshot || (current && current.objective !== snapshot.objective)) return undefined;
+    return snapshot;
+  }
+
+  return undefined;
+}

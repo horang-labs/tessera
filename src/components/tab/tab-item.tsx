@@ -285,8 +285,11 @@ export const TabItem = memo(function TabItem({
         .sort()
         .join(',');
 
-  const { hasProcessingSession: isGenerating, hasTerminalProcessingSession } =
-    useSessionProcessingSummary(panelSessionIds ? panelSessionIds.split(',') : []);
+  const {
+    hasProcessingSession: isGenerating,
+    hasTerminalProcessingSession,
+    terminalGoal,
+  } = useSessionProcessingSummary(panelSessionIds ? panelSessionIds.split(',') : []);
 
   const isAwaitingUser = useAnySessionAwaitingUser(
     panelSessionIds ? panelSessionIds.split(',') : [],
@@ -323,7 +326,7 @@ export const TabItem = memo(function TabItem({
     statusKind === 'awaiting'
       ? t('status.inputRequired')
       : statusKind === 'processing'
-        ? t('status.processing')
+        ? terminalGoal === 'active' ? t('terminalGoal.indicatorActive') : t('status.processing')
         : statusKind === 'unread'
           ? t('status.unreadNotification')
           : statusKind === 'running'
@@ -617,6 +620,7 @@ export const TabItem = memo(function TabItem({
             placement="inline"
             size="lg"
             surface="sidebar"
+            goal={terminalGoal}
           />
         </span>
       )}

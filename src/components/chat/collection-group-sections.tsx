@@ -1,7 +1,7 @@
 'use client';
 
 import { createPortal } from 'react-dom';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import {
   Archive,
@@ -73,6 +73,8 @@ import {
   useIsSessionProcessing,
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
+import { useTerminalGoalIndicator } from '@/hooks/use-terminal-goal-indicator';
+import { GoalTitleTicker, useHasActiveGoalObjective } from './goal-title-ticker';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import {
   SIDEBAR_TREE_CHEVRON,
@@ -579,6 +581,9 @@ function SubSessionRow({
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
+  const goalIndicator = useTerminalGoalIndicator(sess.id);
+  const subSessionIds = useMemo(() => [sess.id], [sess.id]);
+  const hasGoalTicker = useHasActiveGoalObjective(subSessionIds);
   const isAwaitingUser = useIsSessionAwaitingUser(sess.id, sess.kind);
   const liveSession = useProjectViewSession(sess.id, task.projectViewId);
   const runtimePresentation = resolveSessionRuntimePresentation({
@@ -705,6 +710,7 @@ function SubSessionRow({
             sessionKind={liveSession?.kind ?? sess.kind}
             placement="corner"
             surface="sidebar"
+            goal={goalIndicator}
           />
         </span>
       ) : (
@@ -717,6 +723,7 @@ function SubSessionRow({
             sessionKind={liveSession?.kind ?? sess.kind}
             placement="inline"
             surface="sidebar"
+            goal={goalIndicator}
           />
         </span>
       )}
@@ -732,7 +739,14 @@ function SubSessionRow({
           className="min-w-0 flex-1 border-b border-(--accent) bg-transparent text-[0.8125rem] text-(--sidebar-text-active) outline-none"
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate">{sess.title}</span>
+        <>
+          {/* With a goal running the title keeps its own width and the goal
+              text takes whatever room is left. */}
+          <span className={cn('min-w-0 truncate', hasGoalTicker ? 'flex-initial' : 'flex-1')}>
+            {sess.title}
+          </span>
+          {hasGoalTicker && <GoalTitleTicker sessionIds={subSessionIds} variant="inline" />}
+        </>
       )}
 
       {!isRenaming && (
@@ -911,6 +925,7 @@ export function TaskItemRow({
   const {
     hasProcessingSession,
     hasTerminalProcessingSession,
+    terminalGoal,
   } = useSessionProcessingSummary(task.sessions);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
   const hasCanonicalUnreadSession = useAnyProjectViewSessionUnread(
@@ -1064,6 +1079,7 @@ export function TaskItemRow({
             sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
             placement="corner"
             surface="sidebar"
+            goal={terminalGoal}
           />
         )}
         {task.worktreeMissing && (
@@ -1171,6 +1187,7 @@ export function TaskItemRow({
                 sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                 placement="corner"
                 surface="sidebar"
+                goal={terminalGoal}
               />
             </span>
           ) : task.worktreeId || task.worktreeBranch ? (
@@ -1185,6 +1202,7 @@ export function TaskItemRow({
                 sessionKind={hasTerminalProcessingSession ? 'terminal' : undefined}
                 placement="inline"
                 surface="sidebar"
+                goal={terminalGoal}
               />
             </span>
           ) : null}
@@ -1202,9 +1220,10 @@ export function TaskItemRow({
               className="w-full border-b border-(--accent) bg-transparent text-[0.8125rem] font-medium text-(--sidebar-text-active) outline-none caret-(--accent)"
             />
           ) : (
+            <span className="flex min-w-0 items-center gap-2">
             <span
               className={cn(
-                'block truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
+                'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 (isGeneratingTitle || isPending) && 'title-generating'
               )}
               style={
@@ -1214,6 +1233,8 @@ export function TaskItemRow({
               }
             >
               {task.title}
+            </span>
+            <GoalTitleTicker sessionIds={taskSessionIds} variant="inline" />
             </span>
           )}
         </div>
@@ -1432,6 +1453,8 @@ export function ChatItemRow({
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
+  const goalIndicator = useTerminalGoalIndicator(session.id);
+  const chatSessionIds = useMemo(() => [session.id], [session.id]);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
@@ -1580,6 +1603,7 @@ export function ChatItemRow({
             sessionKind={liveSession?.kind ?? session.kind}
             placement="corner"
             surface="sidebar"
+            goal={goalIndicator}
           />
         </span>
 
@@ -1595,9 +1619,10 @@ export function ChatItemRow({
               className="w-full border-b border-(--accent) bg-transparent text-[0.8125rem] font-medium text-(--sidebar-text-active) outline-none caret-(--accent)"
             />
           ) : (
+            <span className="flex min-w-0 items-center gap-2">
             <span
               className={cn(
-                'block truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
+                'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 isGeneratingTitle && 'title-generating'
               )}
               style={
@@ -1607,6 +1632,8 @@ export function ChatItemRow({
               }
             >
               {session.title}
+            </span>
+            <GoalTitleTicker sessionIds={chatSessionIds} variant="inline" />
             </span>
           )}
         </div>

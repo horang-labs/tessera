@@ -156,6 +156,18 @@ export class ClaudeHookLifecycleTracker {
     state.turnEndedAt = now;
   }
 
+  /**
+   * Starts a turn that began without UserPromptSubmit — a `/goal` turn, or the
+   * evaluator sending Claude back to work after a Stop. Clears the tombstone so
+   * the turn's own tool and subagent traffic is tracked again.
+   */
+  reopenTurn(terminalId: string): void {
+    const state = this.getOrCreate(terminalId);
+    state.subagents.clear();
+    state.leadStopped = false;
+    state.turnEnded = false;
+  }
+
   hasWorkingSubagents(terminalId: string): boolean {
     const state = this.terminals.get(terminalId);
     return state ? rosterHasWorkingSubagent(state.subagents) : false;
@@ -203,4 +215,8 @@ export function mapClaudeHookLifecycle(
 
 export function claudeHookLifecycleHasWorkingSubagents(terminalId: string): boolean {
   return terminalHookLifecycle.hasWorkingSubagents(terminalId);
+}
+
+export function reopenClaudeHookTurn(terminalId: string): void {
+  terminalHookLifecycle.reopenTurn(terminalId);
 }

@@ -32,6 +32,8 @@ import styles from './header.module.css';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { setPanelTitleDragData } from '@/lib/dnd/panel-session-drag';
 import { MessageSearchBar } from './message-search-bar';
+import { TerminalGoalHistoryButton } from '@/components/terminal/terminal-goal-history';
+import { supportsTerminalGoal } from '@/lib/terminal/terminal-goal-support';
 import {
   CODEX_NATIVE_COMMAND_EVENT,
   type CodexNativeCommandEventDetail,
@@ -433,6 +435,9 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
               />
             ) : (
               <>
+              {session.kind === 'terminal' && supportsTerminalGoal(session.provider) && (
+                <TerminalGoalHistoryButton sessionId={sessionId} />
+              )}
               {canToggleTerminalView && (
                 <div
                   role="group"
