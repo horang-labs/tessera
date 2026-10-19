@@ -1,4 +1,4 @@
-import { invalidateGitPanelReads, gitReadKey, getGitReadGeneration, normalizeGitReadPath } from './git-read-cache';
+import { invalidateGitPanelReads, gitReadKey, getGitWorktreeReadGeneration, normalizeGitReadPath } from './git-read-cache';
 import { resolveGitEnvironment } from '@/lib/git/git-environment';
 import {
   isWindowsHostedWslFilesystemPath,
@@ -12,6 +12,10 @@ const DEBOUNCE_MS = 300;
 // boundary; completing wsl.exe does not mean its conhost teardown has drained.
 // Keeping two worktrees active allowed the next wave to outrun that teardown.
 const MAX_CONCURRENT_COMPUTES = 1;
+// Retries when a mutation invalidates a read nobody re-requested. Bounded so a
+// burst of mutations cannot pin the in-flight slot; a stale entry left behind
+// is rescheduled by the next list or panel read.
+const MAX_INVALIDATION_RETRIES = 3;
 
 type Listener = (
   workDir: string,
@@ -110,7 +114,9 @@ function cachedEntry(workDir: string, userId?: string): CacheEntry | undefined {
   const state = getState();
   const key = state.readKeys.get(scopeKey(workDir, userId));
   const entry = key ? state.entries.get(key) : undefined;
-  return entry?.generation === getGitReadGeneration() ? entry : undefined;
+  // Invalidation makes the snapshot stale, not absent. List refreshes must
+  // keep displaying it until the replacement computation is published.
+  return entry;
 }
 
 export function getCachedDiffStats(workDir: string, userId?: string): WorktreeDiffStats | null | undefined {
@@ -125,7 +131,8 @@ export function getCachedDiffStats(workDir: string, userId?: string): WorktreeDi
 export function isDiffStatsStale(workDir: string, now: number = Date.now(), userId?: string): boolean {
   const entry = cachedEntry(workDir, userId);
   if (!entry) return false;
-  return isDiffStatsEntryStale(entry.computedAt, now);
+  return entry.generation !== getGitWorktreeReadGeneration()
+    || isDiffStatsEntryStale(entry.computedAt, now);
 }
 
 /**
@@ -185,7 +192,7 @@ async function runCompute(
   const agentEnvironment = await resolveGitEnvironment(
     userId ? { userId } : { inferFromPaths: [workDir] },
   );
-  const key = gitReadKey(workDir, agentEnvironment, userId, 'diff-stats', [getGitReadGeneration()]);
+  const key = gitReadKey(workDir, agentEnvironment, userId, 'diff-stats');
   const state = getState();
   if (state.readKeys.size >= 256 && !state.readKeys.has(scopeKey(workDir, userId))) {
     state.readKeys.delete(state.readKeys.keys().next().value!);
@@ -215,27 +222,36 @@ async function runCompute(
       let nextUserIds = userIds;
       let nextBroadcastWorkDir = broadcastWorkDir;
       let stats: WorktreeDiffStats | null = null;
+      let invalidationRetries = 0;
 
       // A filesystem event or Stop flush can arrive while git is still being
       // queried. Keep one shared promise, but repeat the query until no newer
       // request remains so the final broadcast cannot expose stale counts.
       while (true) {
-        const generation = getGitReadGeneration();
+        const generation = getGitWorktreeReadGeneration();
         stats = await runWithComputeLimit(() => computeWorktreeDiffStats(workDir, agentEnvironment));
         const previousStats = state.entries.get(key)?.stats;
         // A refresh or mutation during this read invalidates its result.
-        if (generation === getGitReadGeneration() && !state.rerunUserIds.has(key)) {
+        if (generation === getGitWorktreeReadGeneration() && !state.rerunUserIds.has(key)) {
           if (state.entries.size >= 256 && !state.entries.has(key)) {
             state.entries.delete(state.entries.keys().next().value!);
           }
           state.entries.set(key, { stats, computedAt: Date.now(), generation });
         }
-        if (generation === getGitReadGeneration() && !state.rerunUserIds.has(key)) {
+        if (generation === getGitWorktreeReadGeneration() && !state.rerunUserIds.has(key)) {
           notifyListeners(nextBroadcastWorkDir, stats, nextUserIds, previousStats);
         }
 
         const queuedUserIds = state.rerunUserIds.get(key);
-        if (!queuedUserIds) return stats;
+        // A mutation can invalidate a running read without scheduling this
+        // checkout again. Retry it rather than silently losing the update.
+        if (!queuedUserIds) {
+          if (
+            generation !== getGitWorktreeReadGeneration()
+            && invalidationRetries++ < MAX_INVALIDATION_RETRIES
+          ) continue;
+          return stats;
+        }
         state.rerunUserIds.delete(key);
         nextUserIds = Array.from(queuedUserIds);
         nextBroadcastWorkDir = state.rerunBroadcastWorkDirs.get(key)
