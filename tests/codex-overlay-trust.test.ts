@@ -20,6 +20,33 @@ const EXPECTED_TRUSTED_HASHES = {
   stop: 'sha256:5af8ee0181c8ee533e4a53fc56e393ee95096c6c7699613d56438d98a198e5a1',
 } as const;
 
+test('Codex overlay keeps daemon state private while sharing account sessions', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-daemon-'));
+  const accountHome = path.join(root, 'account');
+  fs.mkdirSync(path.join(accountHome, 'app-server-daemon'), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.join(accountHome, 'sessions'));
+  fs.writeFileSync(path.join(accountHome, 'app-server-daemon', 'owner'), 'account daemon');
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousDataDir = process.env.TESSERA_DATA_DIR;
+  process.env.CODEX_HOME = accountHome;
+  process.env.TESSERA_DATA_DIR = path.join(root, 'data');
+  try {
+    const overlay = createCodexOverlay('terminal-daemon-test');
+    const daemonDir = path.join(overlay, 'app-server-daemon');
+    fs.mkdirSync(daemonDir, { recursive: true, mode: 0o700 });
+    assert.equal(fs.lstatSync(daemonDir).isDirectory(), true);
+    assert.equal(fs.existsSync(path.join(daemonDir, 'owner')), false);
+    assert.equal(fs.realpathSync(path.join(overlay, 'sessions')), path.join(accountHome, 'sessions'));
+    cleanupCodexOverlayForTerminal('terminal-daemon-test');
+    assert.equal(fs.readFileSync(path.join(accountHome, 'app-server-daemon', 'owner'), 'utf8'), 'account daemon');
+  } finally {
+    cleanupCodexOverlayForTerminal('terminal-daemon-test');
+    restoreEnv('CODEX_HOME', previousCodexHome);
+    restoreEnv('TESSERA_DATA_DIR', previousDataDir);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('Codex overlay pre-trusts exactly the lifecycle hooks it installs', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-codex-overlay-trust-'));
   const systemHome = path.join(root, 'system-codex-home');

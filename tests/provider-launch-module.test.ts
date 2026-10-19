@@ -354,7 +354,7 @@ test('persisted Claude and Codex selections reach the provider PTY argv', async 
   await launchDetached(manager, 'selected-claude');
 
   const codexShell = captured[0]?.args.join('\n') ?? '';
-  assert.match(codexShell, /exec 'codex' '--model' 'gpt-5\.6-sol'/);
+  assert.match(codexShell, /exec 'codex' '--config' 'features\.daemon_auto_start=false' '--model' 'gpt-5\.6-sol'/);
   assert.match(codexShell, /'--config' 'model_reasoning_effort="high"'/);
   assert.match(codexShell, /'--config' 'service_tier="fast"'/);
 
@@ -1065,7 +1065,7 @@ test('fresh and resumed launches preserve each provider wrapper contract', async
       provider: 'codex',
       state: { kind: 'terminal' },
       prompt,
-      expected: /exec 'codex' '--' '-leading-option\nsecond line'/,
+      expected: /exec 'codex' '--config' 'features\.daemon_auto_start=false' '--' '-leading-option\nsecond line'/,
     },
     {
       sessionId: 'contract-opencode-fresh',
@@ -1088,7 +1088,7 @@ test('fresh and resumed launches preserve each provider wrapper contract', async
       sessionId: 'contract-codex-resume',
       provider: 'codex',
       state: { kind: 'terminal', codexSessionId: 'codex-provider-resume' },
-      expected: /exec 'codex' 'resume' 'codex-provider-resume'/,
+      expected: /exec 'codex' '--config' 'features\.daemon_auto_start=false' 'resume' 'codex-provider-resume'/,
     },
     {
       sessionId: 'contract-opencode-resume',

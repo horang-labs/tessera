@@ -226,6 +226,8 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tessera-wsl-overlay-'));
   const codexHome = path.join(home, '.codex');
   fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
+  fs.mkdirSync(path.join(codexHome, 'app-server-daemon'), { mode: 0o700 });
+  fs.writeFileSync(path.join(codexHome, 'app-server-daemon', 'owner'), 'account daemon');
   fs.writeFileSync(path.join(codexHome, 'auth.json'), '{"token":"live"}');
   fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "gpt-5.4"\n\n[hooks.state."stale"]\nenabled = true\n');
   fs.writeFileSync(path.join(codexHome, 'hooks.json'), '{"user":"hooks"}');
@@ -247,6 +249,11 @@ test('WSL overlay create script mirrors the codex home with guest-native symlink
     const overlay = readWslOverlayReport(stdout, 'TESSERA_OVERLAY');
     assert.equal(overlay, path.join(home, '.tessera/codex-overlay/terminal-wsl-test'));
     assert.equal(readWslOverlayReport(stdout, 'TESSERA_SRC'), codexHome);
+    // Codex rejects a symlink at its private daemon state directory.
+    const daemonDir = path.join(overlay!, 'app-server-daemon');
+    fs.mkdirSync(daemonDir, { recursive: true, mode: 0o700 });
+    assert.equal(fs.lstatSync(daemonDir).isDirectory(), true);
+    assert.equal(fs.existsSync(path.join(daemonDir, 'owner')), false);
     // readlink -f 결과 — trust 키에 들어갈 canonical 경로.
     const hooksReal = readWslOverlayReport(stdout, 'TESSERA_HOOKS_REAL');
     assert.equal(hooksReal, fs.realpathSync(path.join(overlay!, 'hooks.json')));

@@ -145,7 +145,8 @@ export function buildWslCodexOverlayCreateScript(
     '    name="${entry##*/}"',
     // hooks.json/config.toml은 우리 파일로 대체. `-e`는 dangling 심링크와
     // 매치 실패로 남은 리터럴 글롭을 함께 거른다(호스트 statSync 스킵과 동일).
-    `    case "$name" in .|..|hooks.json|config.toml|skills|${CODEX_OVERLAY_MARKER}|${CODEX_TRUST_BASELINE_FILE}) continue ;; esac`,
+    // Daemon sockets/state belong to this CODEX_HOME; Codex rejects symlinks here.
+    `    case "$name" in .|..|hooks.json|config.toml|skills|app-server-daemon|${CODEX_OVERLAY_MARKER}|${CODEX_TRUST_BASELINE_FILE}) continue ;; esac`,
     '    [ -e "$entry" ] || continue',
     '    ln -s "$src/$name" "$overlay/$name" 2>/dev/null || true',
     '  done',
