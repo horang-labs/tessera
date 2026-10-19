@@ -192,6 +192,9 @@ export function createCodexOverlay(
       entry === 'hooks.json'
       || entry === CODEX_TRUST_BASELINE_FILE
       || entry === 'skills'
+      // Codex requires a real, private daemon directory (lstat rejects links).
+      // Sharing it would also reuse a server with another terminal's hooks/env.
+      || entry === 'app-server-daemon'
     ) continue;
     const source = path.join(systemHome, entry);
     const target = path.join(overlayDir, entry);

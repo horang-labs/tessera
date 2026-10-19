@@ -63,6 +63,7 @@
     "build:telemetry": "node scripts/with-posthog-telemetry-build.mjs npm run build",
     "start": "cross-env NODE_ENV=production tsx server.ts",
     "lint": "eslint .",
+    "test:codex-compat": "tsx scripts/compat/codex-smoke.ts",
     "test:unit": "tsx --test tests/*.test.ts tests/*.test.tsx",
     "test:contracts": "tsx --test tests/*.test.mjs",
     "test:non-e2e": "npm run test:unit && npm run test:contracts",

@@ -12,8 +12,14 @@ permissions:
   contents: read
 
 jobs:
+  codex-compat:
+    if: ${{ github.event.inputs.dist_tag_version == '' }}
+    uses: ./.github/workflows/codex-compat.yml
+
   publish:
     name: Publish to npm
+    if: ${{ !cancelled() && (needs.codex-compat.result == 'success' || github.event.inputs.dist_tag_version != '') }}
+    needs: codex-compat
     runs-on: ubuntu-latest
 
     steps:

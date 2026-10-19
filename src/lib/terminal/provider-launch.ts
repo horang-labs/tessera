@@ -103,7 +103,13 @@ export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput):
   }
 
   if (input.providerId === 'codex') {
-    const selectionArgs = buildCodexSelectionArgs(input);
+    // Tessera owns this PTY's lifetime and per-launch hooks/environment. A
+    // detached Codex daemon would outlive both the PTY and its overlay. Use a
+    // config override instead of --no-daemon so older CLIs can ignore the key.
+    const selectionArgs = [
+      '--config', 'features.daemon_auto_start=false',
+      ...buildCodexSelectionArgs(input),
+    ];
     // 신규는 세션식별 인자 없음(codex가 rollout id 자체 발급).
     // resume는 이전 훅에서 캡처한 codexResumeId 필요.
     if (input.resume && input.codexResumeId) {

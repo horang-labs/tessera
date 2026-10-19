@@ -1,0 +1,63 @@
+name: Codex CLI compatibility
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Exact Tessera revision being built
+        type: string
+        required: false
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tessera revision to check
+        type: string
+        required: false
+  pull_request:
+    paths:
+      - 'src/lib/terminal/**'
+      - 'src/lib/codex-home.ts'
+      - 'scripts/compat/**'
+      - '.github/workflows/codex-compat.yml'
+      - 'package*.json'
+  schedule:
+    - cron: '17 4 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Codex ${{ matrix.codex }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        codex: ['0.162.1', latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - name: Install isolated Codex candidate
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/codex-cli" --no-save --package-lock=false --no-audit --no-fund "@openai/codex@${{ matrix.codex }}"
+          echo "CODEX_COMPAT_JS=$RUNNER_TEMP/codex-cli/node_modules/@openai/codex/bin/codex.js" >> "$GITHUB_ENV"
+      - name: Exercise actual Codex startup and resume
+        run: npm run test:codex-compat
+      - name: Keep version, terminal output and result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-compat-${{ matrix.os }}-${{ matrix.codex }}
+          path: .tmp/codex-compat/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

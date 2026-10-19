@@ -41,8 +41,37 @@ function group(command: string): CodexHookGroup[] {
   return [{ hooks: [{ type: 'command', timeout: 10, command }] }];
 }
 
+// Native Codex runs hooks through its selected PowerShell. Execute in that
+// process: a nested powershell.exe adds another startup and stdin boundary,
+// which can exhaust the hook deadline on hosted Windows runners.
+// Read payload/identity at execution time; never embed credentials in argv.
+const WINDOWS_CODEX_HOOK = [
+  'try {',
+  '  $port = [int]$env:TESSERA_HOOK_PORT',
+  '  if ($port -lt 1 -or $port -gt 65535) { exit 0 }',
+  '  $session = [Uri]::EscapeDataString([string]$env:TESSERA_SESSION_ID)',
+  '  $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$port/__tessera/hook?session=$session")',
+  '  $request.Method = "POST"',
+  '  $request.Proxy = $null',
+  '  $request.Timeout = 3000',
+  '  $request.ReadWriteTimeout = 3000',
+  '  $request.ContentType = "application/json"',
+  '  $request.Headers.Add("X-Tessera-Pane-Token", [string]$env:TESSERA_PANE_TOKEN)',
+  '  $payload = New-Object System.IO.MemoryStream',
+  '  try { [Console]::OpenStandardInput().CopyTo($payload); $body = $payload.ToArray() } finally { $payload.Dispose() }',
+  '  $request.ContentLength = $body.Length',
+  '  $stream = $request.GetRequestStream()',
+  '  try { $stream.Write($body, 0, $body.Length) } finally { $stream.Dispose() }',
+  '  $response = $request.GetResponse()',
+  '  $response.Dispose()',
+  '} catch {}',
+  'exit 0',
+].join('\n');
+
 export function buildCodexHookSettings(style: HookCommandStyle = 'posix'): CodexHookSettings {
-  const command = buildHookCommand(style);
+  const command = style === 'windows-cmd'
+    ? `& ([ScriptBlock]::Create([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${Buffer.from(WINDOWS_CODEX_HOOK, 'utf16le').toString('base64')}'))))`
+    : buildHookCommand(style);
   const hooks = {} as CodexHookSettings['hooks'];
   for (const event of Object.keys(CODEX_HOOK_EVENT_LABEL) as CodexHookEventName[]) {
     hooks[event] = group(command);

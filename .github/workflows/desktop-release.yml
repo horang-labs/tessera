@@ -40,6 +40,12 @@ env:
   CSC_IDENTITY_AUTO_DISCOVERY: false
 
 jobs:
+  codex-compat:
+    if: ${{ inputs.artifact_run_id == '' }}
+    uses: ./.github/workflows/codex-compat.yml
+    with:
+      ref: ${{ inputs.tag }}
+
   validate:
     name: Validate release inputs
     runs-on: ubuntu-latest
@@ -59,7 +65,7 @@ jobs:
 
   build-windows:
     name: Build Windows x64
-    needs: validate
+    needs: [validate, codex-compat]
     if: ${{ inputs.artifact_run_id == '' && inputs.build_windows }}
     runs-on: windows-latest
 
@@ -112,7 +118,7 @@ jobs:
 
   build-macos:
     name: Build macOS ${{ matrix.arch }}
-    needs: validate
+    needs: [validate, codex-compat]
     if: ${{ inputs.artifact_run_id == '' && inputs.build_macos }}
     runs-on: ${{ matrix.runner }}
 
@@ -209,7 +215,7 @@ jobs:
 
   build-linux:
     name: Build Linux x64
-    needs: validate
+    needs: [validate, codex-compat]
     if: ${{ inputs.artifact_run_id == '' && inputs.build_linux }}
     runs-on: ubuntu-latest
 

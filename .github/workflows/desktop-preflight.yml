@@ -17,8 +17,14 @@ env:
   CSC_IDENTITY_AUTO_DISCOVERY: false
 
 jobs:
+  codex-compat:
+    uses: ./.github/workflows/codex-compat.yml
+    with:
+      ref: ${{ inputs.ref || github.ref }}
+
   build-windows:
     name: Build Windows x64
+    needs: codex-compat
     runs-on: windows-latest
 
     steps:
@@ -70,6 +76,7 @@ jobs:
 
   build-macos:
     name: Build macOS ${{ matrix.arch }}
+    needs: codex-compat
     runs-on: ${{ matrix.runner }}
 
     strategy:
@@ -165,6 +172,7 @@ jobs:
 
   build-linux:
     name: Build Linux x64
+    needs: codex-compat
     runs-on: ubuntu-latest
 
     steps:
