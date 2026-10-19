@@ -107,11 +107,6 @@ type ItemContextMenuHandler = (
   isSubSession?: boolean,
 ) => void;
 
-const TASK_TITLE_ACTION_MASK =
-  'linear-gradient(to right, #000 0%, #000 calc(100% - 4.75rem), rgba(0,0,0,0.35) calc(100% - 3.25rem), transparent calc(100% - 2.75rem), transparent 100%)';
-const TASK_TITLE_ACTION_MASK_WITH_STOP =
-  'linear-gradient(to right, #000 0%, #000 calc(100% - 5.75rem), rgba(0,0,0,0.35) calc(100% - 4.25rem), transparent calc(100% - 3rem), transparent 100%)';
-
 const COLLECTION_PROVIDER_MARK_CLASS = 'h-3.5 w-3.5 rounded-[3px]';
 const COLLECTION_PROVIDER_ICON_CLASS = 'h-2 w-2';
 
@@ -952,12 +947,6 @@ export function TaskItemRow({
     density === 'composite' && allowPanelSessionDnd && primarySessionId && !isRenaming && !isPending,
   );
   const canDrag = canCollectionDnd || canPanelSessionDnd;
-  const titleFadeStyle: React.CSSProperties | undefined = isHovered && !isRenaming
-    ? {
-        WebkitMaskImage: hasVisibleRuntimeSession ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
-        maskImage: hasVisibleRuntimeSession ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
-      }
-    : undefined;
 
   const handleArchive = useCallback(() => {
     void useTaskStore.getState().toggleTaskArchive(task.id, true);
@@ -1228,8 +1217,8 @@ export function TaskItemRow({
               )}
               style={
                 isGeneratingTitle || isPending
-                  ? { ...titleFadeStyle, ...getTitleGeneratingStyle(task.id) }
-                  : titleFadeStyle
+                  ? getTitleGeneratingStyle(task.id)
+                  : undefined
               }
             >
               {task.title}
@@ -1499,12 +1488,6 @@ export function ChatItemRow({
     getSidebarActionSurface({ isActive, isSelected }),
   );
   const canDrag = (!disableDnd || allowPanelSessionDnd) && !isRenaming;
-  const titleFadeStyle: React.CSSProperties | undefined = isHovered && !isRenaming
-    ? {
-        WebkitMaskImage: runtimePresentation.canStop ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
-        maskImage: runtimePresentation.canStop ? TASK_TITLE_ACTION_MASK_WITH_STOP : TASK_TITLE_ACTION_MASK,
-      }
-    : undefined;
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     event.preventDefault();
@@ -1627,8 +1610,8 @@ export function ChatItemRow({
               )}
               style={
                 isGeneratingTitle
-                  ? { ...titleFadeStyle, ...getTitleGeneratingStyle(session.id) }
-                  : titleFadeStyle
+                  ? getTitleGeneratingStyle(session.id)
+                  : undefined
               }
             >
               {session.title}
