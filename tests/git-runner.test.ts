@@ -11,6 +11,7 @@ import {
   DEFAULT_GIT_TIMEOUT_MS,
   GitCommandError,
 } from '@/lib/worktrees/git-runner';
+import { getGitReadGeneration, getGitWorktreeReadGeneration } from '@/lib/git/git-read-cache';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
 const execFileAsync = promisify(execFile);
@@ -295,6 +296,25 @@ test('a successful command reports its exit code and no truncation', async (t) =
     assert.equal(result.exitCode, 0);
     assert.equal(result.truncated, false);
     assert.equal(result.stoppedEarly, false);
+  });
+});
+
+test('a fetch invalidates ref reads but leaves working-tree reads such as diff stats valid', async (t) => {
+  if (SKIP_ON_WINDOWS) return t.skip('the local-spawn environment differs on Windows');
+
+  await withTempRepo(async (remoteDir) => {
+    await execFileAsync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-m', 'c'], { cwd: remoteDir });
+    await withTempRepo(async (repoDir) => {
+      const runGit = createGitRunner(LOCAL_ENVIRONMENT, { timeoutMs: 10_000 });
+      const refs = getGitReadGeneration();
+      const worktree = getGitWorktreeReadGeneration();
+      await runGit(['fetch', remoteDir, '+refs/heads/*:refs/remotes/origin/*'], { cwd: repoDir });
+      assert.ok(getGitReadGeneration() > refs, 'a fetch moves remote refs the panel reads');
+      assert.equal(getGitWorktreeReadGeneration(), worktree);
+
+      await runGit(['reset', '--hard', 'FETCH_HEAD'], { cwd: repoDir });
+      assert.ok(getGitWorktreeReadGeneration() > worktree, 'other mutations still invalidate working-tree reads');
+    });
   });
 });
 

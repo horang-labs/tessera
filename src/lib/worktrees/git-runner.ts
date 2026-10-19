@@ -13,7 +13,7 @@
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import { normalizeCwdForCliEnvironment, spawnCli } from '@/lib/cli/spawn-cli';
 import { isRunningInWsl } from '@/lib/cli/cli-exec';
-import { beginGitMutation } from '@/lib/git/git-read-cache';
+import { beginGitMutation, type GitMutationScope } from '@/lib/git/git-read-cache';
 import { getRuntimePlatform } from '@/lib/system/runtime-platform';
 import type { AgentEnvironment } from '@/lib/settings/types';
 
@@ -145,7 +145,9 @@ export function createGitRunner(
 ): GitRunner {
   return async (args, invocationOptions) => {
     const options = { ...runnerOptions, ...invocationOptions };
-    const finish = options.readOnly || isReadOnlyGitCommand(args) ? undefined : beginGitMutation();
+    const finish = options.readOnly || isReadOnlyGitCommand(args)
+      ? undefined
+      : beginGitMutation(gitMutationScope(args));
     try {
       return await runCommand('git', normalizeGitPathArgs(args, agentEnvironment), agentEnvironment, options);
     } finally {
@@ -191,6 +193,19 @@ function isReadOnlyGitCommand(args: string[]): boolean {
   if (verb === 'branch') return rest.includes('--show-current') || rest.some((arg) => arg.startsWith('--format='));
   if (verb === 'worktree') return rest[0] === 'list';
   return false;
+}
+
+/**
+ * Git refuses to fetch into a branch checked out in any linked worktree unless
+ * told `--update-head-ok`, so a plain fetch leaves every checkout's files and
+ * HEAD alone. Everything else is conservatively a full mutation.
+ */
+export function gitMutationScope(args: string[]): GitMutationScope {
+  let index = 0;
+  while (args[index] === '-C' || args[index] === '-c') index += 2;
+  const [verb, ...rest] = args.slice(index);
+  if (verb === 'fetch' && !rest.some((arg) => arg === '--update-head-ok' || arg === '-u')) return 'refs';
+  return 'all';
 }
 
 function normalizeGitPathArgs(args: string[], agentEnvironment: AgentEnvironment): string[] {

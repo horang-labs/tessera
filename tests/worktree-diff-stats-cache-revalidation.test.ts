@@ -1,4 +1,4 @@
-import { getGitReadGeneration } from '@/lib/git/git-read-cache';
+import { getGitWorktreeReadGeneration } from '@/lib/git/git-read-cache';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -27,7 +27,7 @@ function seedCacheEntry(workDir: string, computedAt: number): void {
   assert.ok(state, 'importing the cache module should create its global state');
   state.readKeys.set(JSON.stringify([workDir, null]), workDir);
   state.entries.set(workDir, {
-    generation: getGitReadGeneration(),
+    generation: getGitWorktreeReadGeneration(),
     stats: {
       added: 8,
       removed: 0,

@@ -9,12 +9,23 @@ interface Entry<T> {
 
 interface State {
   generation: number;
+  /** Bumped only by mutations that can change a checkout's files or HEAD. */
+  worktreeGeneration: number;
   mutations: number;
   panelGeneration: number;
 }
 const GLOBAL_KEY = Symbol.for('tessera.gitReadGeneration');
 const globalState = globalThis as unknown as { [GLOBAL_KEY]?: State };
-const state = globalState[GLOBAL_KEY] ??= { generation: 0, mutations: 0, panelGeneration: 0 };
+const state = globalState[GLOBAL_KEY] ??= { generation: 0, worktreeGeneration: 0, mutations: 0, panelGeneration: 0 };
+// Keep Next.js hot-reload state created by an older module shape usable.
+state.worktreeGeneration ??= 0;
+
+/**
+ * `refs` covers mutations that move only refs no checkout has as HEAD, such as
+ * `git fetch` updating `refs/remotes/*`. Panel reads (ahead/behind, branches)
+ * still see them; working-tree reads such as diff stats do not.
+ */
+export type GitMutationScope = 'all' | 'refs';
 
 export function invalidateGitPanelReads(): void {
   state.panelGeneration++;
@@ -28,17 +39,23 @@ export function getGitReadGeneration(): number {
   return state.generation;
 }
 
-/** Conservative across linked worktrees: fetch/config can affect sibling trees. */
-export function invalidateGitReads(): void {
-  state.generation++;
+/** Generation for reads of a checkout's files against its HEAD. */
+export function getGitWorktreeReadGeneration(): number {
+  return state.worktreeGeneration;
 }
 
-export function beginGitMutation(): () => void {
+/** Conservative across linked worktrees: fetch/config can affect sibling trees. */
+export function invalidateGitReads(scope: GitMutationScope = 'all'): void {
+  state.generation++;
+  if (scope === 'all') state.worktreeGeneration++;
+}
+
+export function beginGitMutation(scope: GitMutationScope = 'all'): () => void {
   state.mutations++;
-  invalidateGitReads();
+  invalidateGitReads(scope);
   return () => {
     state.mutations--;
-    invalidateGitReads();
+    invalidateGitReads(scope);
   };
 }
 
