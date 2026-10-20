@@ -775,6 +775,33 @@ body {
   font-style: normal !important;
 }
 
+/*
+ * Title of a session working toward a `/goal`: the goal color flowing through
+ * the text. Slower and in another hue than .title-generating, so the two never
+ * read as the same state.
+ */
+.goal-title {
+  /* A band of light (toward the text color) sweeping across goal-colored text. */
+  background: linear-gradient(
+    90deg,
+    var(--goal) 0%,
+    var(--goal) 32%,
+    color-mix(in srgb, var(--goal) 30%, var(--text-primary)) 50%,
+    var(--goal) 68%,
+    var(--goal) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: goal-title-flow 2.6s linear infinite;
+}
+
+@keyframes goal-title-flow {
+  from { background-position: 0% 0; }
+  to { background-position: -200% 0; }
+}
+
 @keyframes title-fade-in {
   0% { opacity: 0; transform: translateY(3px); }
   100% { opacity: 1; transform: translateY(0); }
@@ -965,6 +992,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .goal-orbit,
   .goal-target,
+  .goal-title,
   .goal-ended-unread,
   .goal-banner-sheen {
     animation: none;

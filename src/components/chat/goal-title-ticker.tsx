@@ -21,7 +21,8 @@ function useActiveGoalObjective(sessionIds: readonly string[]): string | null {
  * The goal a session is working toward, scrolling past beside its title.
  *
  * `inline` takes only the room the title leaves on its row, so the title
- * never gets shorter because of it; with no room left it hides itself.
+ * never gets shorter because of it. The row must wrap (`flex-wrap`): with
+ * less than a readable width left, the ticker moves under the title.
  * `line` sits on its own line under a multi-line title (Kanban cards).
  */
 export function GoalTitleTicker({
@@ -40,7 +41,13 @@ export function GoalTitleTicker({
   const seconds = Math.min(60, Math.max(8, objective.length / 5));
   return (
     <span
-      className={cn('goal-ticker', variant === 'inline' ? 'min-w-0 flex-1' : 'block', className)}
+      className={cn(
+        'goal-ticker',
+        // In a wrapping row: beside the title while at least this much room
+        // is left, else on its own line under it.
+        variant === 'inline' ? 'min-w-[6rem] flex-1 basis-[6rem]' : 'block',
+        className,
+      )}
       title={objective}
       aria-label={`${t('terminalGoal.label')}: ${objective}`}
       data-testid="goal-title-ticker"

@@ -55,7 +55,7 @@ import {
   useSessionProcessingSummary,
 } from '@/hooks/use-session-processing';
 import { useTerminalGoalIndicator } from '@/hooks/use-terminal-goal-indicator';
-import { GoalTitleTicker } from '@/components/chat/goal-title-ticker';
+import { GoalTitleTicker, useHasActiveGoalObjective } from '@/components/chat/goal-title-ticker';
 import { resolveSessionRuntimePresentation } from '@/lib/session/session-runtime-presentation';
 import { toLinkedWorktreeSession } from '@/lib/worktrees/linked-worktree-presentation';
 import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
@@ -179,6 +179,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const goalIndicator = useTerminalGoalIndicator(session.id);
   const cardSessionIds = useMemo(() => [session.id], [session.id]);
+  const hasActiveGoal = useHasActiveGoalObjective(cardSessionIds);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const isGeneratingTitle = useSessionStore((s) => s.generatingTitleIds.has(session.id));
   const isJustDropped = useBoardStore((s) => s.justDroppedId === session.id);
@@ -437,7 +438,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                   'text-[0.8125rem] leading-[1.45] line-clamp-2',
                   isGeneratingTitle
                     ? 'title-generating font-medium'
-                    : cn('font-medium', session.hasCustomTitle && 'title-fade-in'),
+                    : cn('font-medium', session.hasCustomTitle && 'title-fade-in', hasActiveGoal && 'goal-title'),
                   'text-(--text-primary)',
                 )}
                 style={isGeneratingTitle ? getTitleGeneratingStyle(session.id) : undefined}
@@ -692,6 +693,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
     terminalGoal,
   } = useSessionProcessingSummary(task.sessions);
   const taskGoalSessionIds = useMemo(() => task.sessions.map((s) => s.id), [task.sessions]);
+  const hasActiveGoal = useHasActiveGoalObjective(taskGoalSessionIds);
   const hasAwaitingUserSession = useAnySessionAwaitingUser(task.sessions);
   // task에 활성 세션이 하나라도 있으면 unread를 통째로 억제하던 `!isActive` 가드를
   // 제거한다. multi-session task에서 한 세션이 활성이면 다른 완료+안읽음 세션의 unread가
@@ -1060,7 +1062,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
               <div
                 className={cn(
                   'text-[0.8125rem] font-medium leading-[1.45] line-clamp-2',
-                  (isGeneratingTitle || isPending) && 'title-generating',
+                  isGeneratingTitle || isPending ? 'title-generating' : hasActiveGoal && 'goal-title',
                   'text-(--text-primary)',
                 )}
                 style={
