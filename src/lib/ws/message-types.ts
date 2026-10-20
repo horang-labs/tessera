@@ -334,6 +334,15 @@ export type AppServerMessage =
     }
   | {
       /**
+       * Sessions still marked by a goal they finished (achieved or impossible,
+       * not closed by the user), keyed by session id. Sent to each new
+       * connection; later changes arrive as `terminal_goal_history`.
+       */
+      type: 'terminal_goal_ended_snapshot';
+      goals: Record<string, TerminalGoalHistoryEntry>;
+    }
+  | {
+      /**
        * Live-only liveness tick for an in-flight tool call (Claude Code
        * `tool_progress` stdout messages). Deliberately NOT replay-transported
        * and NOT persisted to session history — heartbeats fire every 30s and

@@ -1790,6 +1790,8 @@ export interface I18nMessages {
     hintCodex: string;
     indicatorActive: string;
     indicatorPaused: string;
+    indicatorAchieved: string;
+    indicatorFailed: string;
     history: {
       title: string;
       open: string;

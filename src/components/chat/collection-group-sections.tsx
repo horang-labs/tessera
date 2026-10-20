@@ -734,14 +734,16 @@ function SubSessionRow({
           className="min-w-0 flex-1 border-b border-(--accent) bg-transparent text-[0.8125rem] text-(--sidebar-text-active) outline-none"
         />
       ) : (
-        <>
-          {/* With a goal running the title keeps its own width and the goal
-              text takes whatever room is left. */}
-          <span className={cn('min-w-0 truncate', hasGoalTicker ? 'flex-initial' : 'flex-1')}>
-            {sess.title}
+        hasGoalTicker ? (
+          // The title keeps its own width; the goal text takes the room left,
+          // or its own line under the title when that room is too narrow.
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
+            <span className="goal-title min-w-0 flex-initial truncate">{sess.title}</span>
+            <GoalTitleTicker sessionIds={subSessionIds} variant="inline" />
           </span>
-          {hasGoalTicker && <GoalTitleTicker sessionIds={subSessionIds} variant="inline" />}
-        </>
+        ) : (
+          <span className="min-w-0 flex-1 truncate">{sess.title}</span>
+        )
       )}
 
       {!isRenaming && (
@@ -906,6 +908,7 @@ export function TaskItemRow({
     getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
   );
   const taskSessionIds = task.sessions.map((session) => session.id);
+  const hasActiveGoal = useHasActiveGoalObjective(taskSessionIds);
   const resolvedTaskSessions = useProjectViewSessions(taskSessionIds, task.projectViewId);
   const resolvedTaskSessionsById = new Map(
     resolvedTaskSessions.map((session) => [session.id, session]),
@@ -1209,11 +1212,11 @@ export function TaskItemRow({
               className="w-full border-b border-(--accent) bg-transparent text-[0.8125rem] font-medium text-(--sidebar-text-active) outline-none caret-(--accent)"
             />
           ) : (
-            <span className="flex min-w-0 items-center gap-2">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2">
             <span
               className={cn(
                 'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
-                (isGeneratingTitle || isPending) && 'title-generating'
+                isGeneratingTitle || isPending ? 'title-generating' : hasActiveGoal && 'goal-title'
               )}
               style={
                 isGeneratingTitle || isPending
@@ -1444,6 +1447,7 @@ export function ChatItemRow({
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const goalIndicator = useTerminalGoalIndicator(session.id);
   const chatSessionIds = useMemo(() => [session.id], [session.id]);
+  const hasActiveGoal = useHasActiveGoalObjective(chatSessionIds);
   const isAwaitingUser = useIsSessionAwaitingUser(session.id, session.kind);
   const liveSession = useProjectViewSession(session.id);
   const liveIsRunning = liveSession?.isRunning ?? session.isRunning;
@@ -1602,11 +1606,11 @@ export function ChatItemRow({
               className="w-full border-b border-(--accent) bg-transparent text-[0.8125rem] font-medium text-(--sidebar-text-active) outline-none caret-(--accent)"
             />
           ) : (
-            <span className="flex min-w-0 items-center gap-2">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2">
             <span
               className={cn(
                 'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
-                isGeneratingTitle && 'title-generating'
+                isGeneratingTitle ? 'title-generating' : hasActiveGoal && 'goal-title'
               )}
               style={
                 isGeneratingTitle

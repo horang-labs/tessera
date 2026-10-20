@@ -1814,6 +1814,8 @@ export const ko: I18nMessages = {
     hintCodex: 'Codex가 목표 완료를 표시할 때까지 계속 작업해요.',
     indicatorActive: '목표를 향해 작업 중',
     indicatorPaused: '목표 일시정지',
+    indicatorAchieved: '목표 달성',
+    indicatorFailed: '목표 달성 불가',
     history: {
       title: '이전 목표',
       open: '목표 이력',

@@ -1810,6 +1810,8 @@ export const en: I18nMessages = {
     hintCodex: 'Codex keeps working until it marks this goal complete.',
     indicatorActive: 'Working toward a goal',
     indicatorPaused: 'Goal paused',
+    indicatorAchieved: 'Goal achieved',
+    indicatorFailed: 'Goal not achievable',
     history: {
       title: 'Previous goals',
       open: 'Goal history',

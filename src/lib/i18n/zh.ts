@@ -1807,6 +1807,8 @@ export const zh: I18nMessages = {
     hintCodex: 'Codex 会一直工作，直到将目标标记为完成。',
     indicatorActive: '正在朝目标工作',
     indicatorPaused: '目标已暂停',
+    indicatorAchieved: '目标已达成',
+    indicatorFailed: '目标无法达成',
     history: {
       title: '之前的目标',
       open: '目标历史',

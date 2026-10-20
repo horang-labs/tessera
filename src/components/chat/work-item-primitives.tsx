@@ -31,7 +31,11 @@ export function getWorktreeIconClass(status: WorkflowStatus): string {
   }
 }
 
-export type ItemGoalIndicator = 'active' | 'paused' | null;
+/**
+ * `achieved` / `failed`: the session finished a goal and still shows it (until
+ * the user closes it or sets another), so it does not read as a plain turn.
+ */
+export type ItemGoalIndicator = 'active' | 'paused' | 'achieved' | 'failed' | null;
 
 export function ItemStatusIndicator({
   goal = null,
@@ -88,6 +92,23 @@ export function ItemStatusIndicator({
           ringClass,
           isEnlarged ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]',
           'rounded-full bg-[#facc15] attention-dot-blink',
+        )}
+      />
+    );
+  }
+
+  if (status === 'goal-ended' || status === 'goal-ended-unread') {
+    return (
+      <span
+        {...statusProps}
+        data-goal={goal ?? undefined}
+        className={cn(
+          getPlacementClassName(placement, false, isEnlarged),
+          ringClass,
+          isEnlarged ? 'h-[0.8125rem] w-[0.8125rem]' : 'h-[8px] w-[8px]',
+          'goal-ended',
+          goal === 'failed' && 'goal-ended-failed',
+          status === 'goal-ended-unread' && 'goal-ended-unread',
         )}
       />
     );
@@ -384,7 +405,9 @@ type ItemStatus =
   | 'awaiting-user'
   | 'goal-processing'
   | 'processing'
+  | 'goal-ended-unread'
   | 'unread'
+  | 'goal-ended'
   | 'goal'
   | 'running';
 
@@ -406,8 +429,11 @@ export function resolveItemStatus({
 }): ItemStatus {
   if (isAwaitingUser) return 'awaiting-user';
   if (showsProcessing) return goal === 'active' ? 'goal-processing' : 'processing';
-  if (hasUnread) return 'unread';
-  if (goal) return 'goal';
+  const goalEnded = goal === 'achieved' || goal === 'failed';
+  // A finished goal keeps its own mark, read or unread, instead of the plain
+  // "turn finished" dot.
+  if (hasUnread) return goalEnded ? 'goal-ended-unread' : 'unread';
+  if (goal) return goalEnded ? 'goal-ended' : 'goal';
   return 'running';
 }
 
