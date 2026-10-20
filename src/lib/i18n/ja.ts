@@ -1807,6 +1807,8 @@ export const ja: I18nMessages = {
     hintCodex: 'Codex は目標を完了にするまで作業を続けます。',
     indicatorActive: '目標に向けて作業中',
     indicatorPaused: '目標を一時停止中',
+    indicatorAchieved: '目標を達成',
+    indicatorFailed: '目標は達成不可',
     history: {
       title: '以前の目標',
       open: '目標の履歴',

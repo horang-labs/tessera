@@ -21,6 +21,7 @@ import { installDiffStatsBroadcast } from '../git/worktree-diff-stats-broadcast'
 import { installGitPanelBroadcast } from '../git/git-panel-broadcast';
 import { bindTerminalRuntimeSender, terminalManager } from '../terminal/shared-terminal-manager';
 import { terminalGoalTracker } from '../terminal/terminal-goal-service';
+import { readEndedTerminalGoals } from '../terminal/terminal-goal-history';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
 import { getGeneratingTitleSessionIds } from './title-generation-state';
 import {
@@ -491,6 +492,10 @@ export class WebSocketServer {
     for (const message of terminalManager.getSessionStatesForUser(userId)) {
       this.sendToConnection(ws, userId, message);
     }
+    this.sendToConnection(ws, userId, {
+      type: 'terminal_goal_ended_snapshot',
+      goals: readEndedTerminalGoals(),
+    });
     for (const { target, goal } of terminalGoalTracker.getGoalsForUser(userId)) {
       this.sendToConnection(ws, userId, {
         type: 'terminal_goal',

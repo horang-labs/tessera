@@ -864,6 +864,23 @@ body {
   animation: none;
 }
 
+/* A goal the session finished: solid, so it reads as done next to the open ring. */
+.goal-ended {
+  border-radius: 9999px;
+  background: var(--goal);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--goal) 55%, white);
+}
+
+.goal-ended-failed {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--error);
+}
+
+/* Not read yet: the same mark asks for attention the way the unread dot does. */
+.goal-ended-unread {
+  animation: goal-target-pulse 2.4s ease-out infinite;
+}
+
 @keyframes goal-orbit {
   to { transform: rotate(360deg); }
 }
@@ -948,6 +965,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .goal-orbit,
   .goal-target,
+  .goal-ended-unread,
   .goal-banner-sheen {
     animation: none;
   }

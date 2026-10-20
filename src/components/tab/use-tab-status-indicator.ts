@@ -87,11 +87,15 @@ export function useTabStatusIndicator(tab: Tab, isActive: boolean) {
       ? t('status.inputRequired')
       : statusKind === 'processing'
         ? terminalGoal === 'active' ? t('terminalGoal.indicatorActive') : t('status.processing')
-        : statusKind === 'unread'
-          ? t('status.unreadNotification')
-          : statusKind === 'running'
-            ? t('status.sessionRunning')
-            : undefined;
+        : terminalGoal === 'achieved'
+          ? t('terminalGoal.indicatorAchieved')
+          : terminalGoal === 'failed'
+            ? t('terminalGoal.indicatorFailed')
+            : statusKind === 'unread'
+              ? t('status.unreadNotification')
+              : statusKind === 'running'
+                ? t('status.sessionRunning')
+                : undefined;
 
   return {
     statusKind,

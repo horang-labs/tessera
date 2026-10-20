@@ -233,7 +233,7 @@ function TerminalGoalStrip({
               type="button"
               className="rounded p-0.5 hover:bg-(--text-muted)/15"
               aria-label={t('terminalGoal.dismiss')}
-              onClick={() => dismiss(sessionId, goal.setAt)}
+              onClick={() => dismiss(sessionId, goal)}
               data-testid="terminal-goal-dismiss"
             >
               <X aria-hidden="true" className="h-3.5 w-3.5" />

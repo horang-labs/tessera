@@ -98,6 +98,8 @@ export interface TerminalGoalHistoryEntry {
   elapsedSeconds?: number;
   tokensUsed?: number;
   tokenBudget?: number;
+  /** When the user closed this goal's banner. Set only on achieved/impossible goals. */
+  dismissedAt?: number;
 }
 
 export const TERMINAL_GOAL_HISTORY_LIMIT = 10;
@@ -197,6 +199,8 @@ export function parseTerminalGoalHistory(value: unknown): TerminalGoalHistoryEnt
     if (elapsedSeconds !== undefined) entry.elapsedSeconds = elapsedSeconds;
     if (tokensUsed !== undefined) entry.tokensUsed = tokensUsed;
     if (tokenBudget !== undefined) entry.tokenBudget = tokenBudget;
+    const dismissedAt = optionalNumber(raw.dismissedAt);
+    if (dismissedAt !== undefined) entry.dismissedAt = dismissedAt;
     entries.push(entry);
   }
   return entries;
@@ -225,4 +229,50 @@ export function mergeTerminalGoalHistory(
     .slice(0, TERMINAL_GOAL_HISTORY_LIMIT);
   // Every added entry was older than the kept ten.
   return merged.some((entry) => added.includes(entry)) ? merged : null;
+}
+
+/**
+ * The goal the session most recently finished, while it still marks the
+ * session: achieved or judged impossible, and not closed by the user. A goal
+ * that was cleared or replaced is not shown — the user moved on from it.
+ */
+export function latestEndedTerminalGoal(
+  history: readonly TerminalGoalHistoryEntry[] | undefined,
+): TerminalGoalHistoryEntry | null {
+  const latest = history?.[0];
+  if (!latest || latest.dismissedAt !== undefined) return null;
+  return latest.ending === 'complete' || latest.ending === 'failed' ? latest : null;
+}
+
+/** An ended goal from the history, in the shape the banner draws. */
+export function terminalGoalSnapshotFromHistory(entry: TerminalGoalHistoryEntry): TerminalGoalSnapshot {
+  const snapshot: TerminalGoalSnapshot = {
+    provider: entry.provider,
+    objective: entry.objective,
+    status: entry.ending === 'failed' ? 'failed' : 'complete',
+    setAt: entry.setAt,
+    updatedAt: entry.endedAt,
+  };
+  if (entry.iterations !== undefined) snapshot.iterations = entry.iterations;
+  if (entry.lastReason) snapshot.lastReason = entry.lastReason;
+  if (entry.elapsedSeconds !== undefined) snapshot.elapsedSeconds = entry.elapsedSeconds;
+  if (entry.tokensUsed !== undefined) snapshot.tokensUsed = entry.tokensUsed;
+  if (entry.tokenBudget !== undefined) snapshot.tokenBudget = entry.tokenBudget;
+  return snapshot;
+}
+
+/** Marks the history entry for the goal set at `setAt` as closed by the user. */
+export function dismissTerminalGoalInHistory(
+  history: readonly TerminalGoalHistoryEntry[],
+  provider: TerminalGoalProvider,
+  setAt: number,
+  at: number,
+): TerminalGoalHistoryEntry[] | null {
+  let changed = false;
+  const next = history.map((entry) => {
+    if (entry.provider !== provider || entry.setAt !== setAt || entry.dismissedAt !== undefined) return entry;
+    changed = true;
+    return { ...entry, dismissedAt: at };
+  });
+  return changed ? next : null;
 }
