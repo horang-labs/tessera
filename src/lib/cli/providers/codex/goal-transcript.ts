@@ -21,6 +21,7 @@ const GOAL_EVENT_MARKER = '"thread_goal_updated"';
 /** Turn endings: an errored or aborted turn leaves an active goal stalled. */
 const TURN_COMPLETE_MARKER = '"task_complete"';
 const TURN_ABORTED_MARKER = '"turn_aborted"';
+const TURN_STARTED_MARKER = '"task_started"';
 const GOAL_CLEARED_MARKER = 'User cleared the goal.';
 /** A goal object serialized inside a tool output string. */
 const GOAL_TOOL_OUTPUT_MARKER = '\\"goal\\":{';
@@ -34,7 +35,35 @@ export const CODEX_GOAL_LINE_MARKERS: readonly string[] = [
   GOAL_TOOL_CALL_MARKER,
   TURN_COMPLETE_MARKER,
   TURN_ABORTED_MARKER,
+  TURN_STARTED_MARKER,
 ];
+
+/** A turn can fail without a Stop hook, even after its goal was achieved. */
+export function readCodexTurnBoundary(line: string): {
+  ended: boolean;
+  stateAt: number;
+  preview?: string;
+} | undefined {
+  if (![TURN_COMPLETE_MARKER, TURN_ABORTED_MARKER, TURN_STARTED_MARKER].some((marker) => line.includes(marker))) {
+    return undefined;
+  }
+  try {
+    const record = JSON.parse(line);
+    if (record.type !== 'event_msg') return undefined;
+    const payload = record.payload;
+    if (!payload || !['task_started', 'task_complete', 'turn_aborted'].includes(payload.type)) return undefined;
+    const stateAt = Date.parse(record.timestamp);
+    if (!Number.isFinite(stateAt)) return undefined;
+    const ended = payload.type === 'turn_aborted'
+      || (payload.type === 'task_complete' && payload.error != null);
+    const preview = typeof payload.error?.message === 'string' ? payload.error.message : undefined;
+    // Clean completions still use Stop (which may be held for a live goal).
+    // Either a clean completion or a new start supersedes an earlier failure.
+    return { ended, stateAt, ...(preview ? { preview } : {}) };
+  } catch {
+    return undefined;
+  }
+}
 
 const STATUSES: ReadonlySet<string> = new Set<TerminalGoalStatus>([
   'active',
