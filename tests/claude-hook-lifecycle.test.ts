@@ -58,7 +58,7 @@ test('a late TeammateIdle cannot move an already completed turn back to running'
   }), null);
 });
 
-test('an idle-but-alive teammate stays running until its SubagentStop drains the turn', () => {
+test('the last teammate becoming idle completes a stopped lead turn', () => {
   const tracker = new ClaudeHookLifecycleTracker();
   const terminalId = 'terminal-with-teammate';
 
@@ -72,11 +72,49 @@ test('an idle-but-alive teammate stays running until its SubagentStop drains the
 
   assert.deepEqual(tracker.apply(terminalId, 'TeammateIdle', {
     teammate_name: 'researcher',
-  }), { status: 'running' });
-  assert.deepEqual(tracker.apply(terminalId, 'SubagentStop', {
+  }), { status: 'completed' });
+  assert.equal(tracker.apply(terminalId, 'SubagentStop', {
     agent_id: 'aresearcher-123',
     background_tasks: [],
-  }), { status: 'completed' });
+  }), null);
+});
+
+test('a teammate becoming idle does not complete a working lead', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const id = 'working-lead';
+  tracker.apply(id, 'UserPromptSubmit', {});
+  tracker.apply(id, 'SubagentStart', { agent_id: 'areviewer-123' });
+  assert.deepEqual(tracker.apply(id, 'TeammateIdle', { teammate_name: 'reviewer' }),
+    { status: 'running' });
+  assert.deepEqual(tracker.apply(id, 'Stop', {}), { status: 'completed' });
+});
+
+test('a lead resuming tools after Stop stays running when its last teammate idles', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const id = 'resumed-lead';
+  tracker.apply(id, 'UserPromptSubmit', {});
+  tracker.apply(id, 'SubagentStart', { agent_id: 'areviewer-123' });
+  tracker.apply(id, 'Stop', {});
+  tracker.apply(id, 'PreToolUse', { tool_name: 'Bash' });
+  assert.deepEqual(tracker.apply(id, 'TeammateIdle', { teammate_name: 'reviewer' }),
+    { status: 'running' });
+  assert.deepEqual(tracker.apply(id, 'Stop', {}), { status: 'completed' });
+});
+
+test('idle notifications complete only after the last working teammate drains', () => {
+  const tracker = new ClaudeHookLifecycleTracker();
+  const id = 'two-teammates';
+  tracker.apply(id, 'UserPromptSubmit', {});
+  tracker.apply(id, 'SubagentStart', { agent_id: 'areviewer-123' });
+  tracker.apply(id, 'SubagentStart', { agent_id: 'awriter-456' });
+  tracker.apply(id, 'Stop', {});
+  for (const name of ['unknown', 'reviewer', 'reviewer']) {
+    assert.deepEqual(tracker.apply(id, 'TeammateIdle', { teammate_name: name }),
+      { status: 'running' });
+  }
+  assert.deepEqual(tracker.apply(id, 'TeammateIdle', { teammate_name: 'writer' }),
+    { status: 'completed' });
+  assert.equal(tracker.apply(id, 'TeammateIdle', { teammate_name: 'writer' }), null);
 });
 
 test('a long-lived background shell task does not keep the turn spinning after Stop', () => {
