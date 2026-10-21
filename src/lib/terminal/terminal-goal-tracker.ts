@@ -1,5 +1,6 @@
 import fsp from 'node:fs/promises';
 import logger from '@/lib/logger';
+import { readCodexTurnBoundary } from '@/lib/cli/providers/codex/goal-transcript';
 import {
   buildTerminalGoalHistoryEntry,
   isActiveTerminalGoal,
@@ -59,11 +60,8 @@ export interface TerminalGoalTrackerDeps {
    * without a UserPromptSubmit, so this is the only "turn started" signal.
    */
   onGoalStarted?(target: TerminalGoalTarget, goal: TerminalGoalSnapshot): void;
-  /**
-   * An active goal stalled: its turn ended in an error or interrupt, and the
-   * CLI fired no Stop for it. Called only when no Stop is already deferred.
-   */
-  onGoalStalled?(target: TerminalGoalTarget, goal: TerminalGoalSnapshot): void;
+  /** A failed/aborted Codex turn has no Stop, regardless of goal state. */
+  onTurnEnded?(target: TerminalGoalTarget, boundary: { stateAt: number; preview?: string }): void;
   /**
    * Goals the transcript just showed ending (achieved, impossible, cleared or
    * replaced by another), oldest first. A replay reports the ends it covers
@@ -371,6 +369,7 @@ export class TerminalGoalTracker {
     const startGoal = entry.goal;
     let goal = startGoal;
     const ended: TerminalGoalHistoryEntry[] = [];
+    let turnBoundary: ReturnType<typeof readCodexTurnBoundary>;
     try {
       let position = entry.offset;
       let pending: Buffer = Buffer.alloc(0);
@@ -400,6 +399,9 @@ export class TerminalGoalTracker {
         // Split on bytes, not characters: a chunk boundary can fall inside a
         // multi-byte character, and only whole lines are decoded.
         for (const line of goalLines(data.subarray(0, lastNewline), markers)) {
+          if (entry.target.providerId === 'codex') {
+            turnBoundary = readCodexTurnBoundary(line) ?? turnBoundary;
+          }
           const next = this.deps.reduceLine(entry.target.providerId, goal, line);
           if (next === undefined) continue;
           const ending = terminalGoalEnding(goal, next);
@@ -422,6 +424,10 @@ export class TerminalGoalTracker {
     // A prompt can resume a paused goal while this read is in flight. If the
     // transcript said nothing new, keep that newer state.
     if (goal === startGoal && entry.goal !== startGoal) return;
+    if (turnBoundary?.ended && this.deps.isLive(entry.target)) {
+      const { stateAt, preview } = turnBoundary;
+      this.deps.onTurnEnded?.(entry.target, { stateAt, ...(preview ? { preview } : {}) });
+    }
     this.setGoal(entry, goal);
   }
 
@@ -439,11 +445,6 @@ export class TerminalGoalTracker {
       && Date.now() - goal.updatedAt <= GOAL_START_RECENCY_MS
     ) {
       this.deps.onGoalStarted?.(entry.target, goal);
-    }
-    // A deferred Stop is released by evaluateHold; without one, the stall is
-    // the only sign the turn ended.
-    if (goal?.status === 'stalled' && isActiveTerminalGoal(previous) && !entry.hold) {
-      this.deps.onGoalStalled?.(entry.target, goal);
     }
   }
 
