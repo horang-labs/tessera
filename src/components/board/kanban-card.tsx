@@ -4,6 +4,9 @@ import { memo, useState, useCallback, useMemo, useRef } from 'react';
 import type React from 'react';
 import { GitBranch, MessageSquare, Plus, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getSessionTabGroupState } from '@/lib/workspace-tabs/session-tab-state';
+import { useSessionTabState } from '@/hooks/use-session-tab-state';
+import { SessionTabLabel } from '@/components/chat/session-tab-label';
 import { useI18n } from '@/lib/i18n';
 import { getTitleGeneratingStyle } from '@/lib/title-generating-style';
 import { setKanbanTaskDragData, setPanelSessionDragData } from '@/lib/dnd/panel-session-drag';
@@ -174,6 +177,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
   const { t } = useI18n();
   const currentProjectCollections = useCollectionStore((state) => state.collections);
   const collections = scopedCollections ?? currentProjectCollections;
+  const tabState = useSessionTabState(session.id);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
@@ -313,7 +317,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
         }}
         className={cn(
           // Base layout — flatter card, consistent with list view
-          'group/card relative w-full rounded-lg p-2.5 px-3',
+          'session-tab-surface group/card relative w-full rounded-lg p-2.5 px-3',
           'text-left select-none',
           dragEnabled ? 'cursor-grab' : 'cursor-default',
           'transition-all duration-150',
@@ -328,11 +332,11 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 'border',
                 'bg-(--board-card-bg)',
                 'border-(--board-card-border)',
-                !(isActive && !isSelected) && [
+                !(tabState === 'current' && !isSelected) && [
                   'hover:bg-(--board-card-hover-bg)',
                   'hover:border-(--board-card-hover-border)',
                 ],
-                isActive && !isSelected && [
+                tabState === 'current' && !isSelected && [
                   'bg-[color-mix(in_srgb,var(--accent)_8%,var(--board-card-bg))]',
                   'border-[color-mix(in_srgb,var(--accent)_26%,var(--board-card-border))]',
                   'ring-1 ring-inset ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]',
@@ -345,6 +349,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 isJustDropped && 'drop-flash',
               ],
         )}
+        data-session-tab-state={tabState}
         style={isDragging ? {
           backgroundColor: 'color-mix(in srgb, var(--accent) 4%, transparent)',
           borderColor: 'color-mix(in srgb, var(--accent) 30%, transparent)',
@@ -397,7 +402,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 <MessageSquare
                   className={cn(
                     'h-3.5 w-3.5',
-                    isActive && !isSelected ? 'text-(--text-primary) opacity-70' : 'text-(--text-secondary) opacity-75',
+                    tabState === 'current' && !isSelected ? 'text-(--text-primary) opacity-70' : 'text-(--text-secondary) opacity-75',
                   )}
                   data-testid={`kanban-chat-bubble-${session.id}`}
                 />
@@ -432,10 +437,10 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 testId="kanban-card-title-input"
               />
             ) : (
-              <div
+              <div data-session-tab-current={tabState === 'current'}
                 key={titleAnimationKey}
                 className={cn(
-                  'text-[0.8125rem] leading-[1.45] line-clamp-2',
+                  'session-tab-title text-[0.8125rem] leading-[1.45] line-clamp-2',
                   isGeneratingTitle
                     ? 'title-generating font-medium'
                     : cn('font-medium', session.hasCustomTitle && 'title-fade-in', hasActiveGoal && 'goal-title'),
@@ -453,7 +458,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
             <div className="flex items-center gap-2 flex-wrap min-w-0 mt-1.5">
               {timeStr && (
                 <span
-                  className={cn("text-[0.625rem] shrink-0 whitespace-nowrap", isActive && !isSelected ? 'text-(--text-primary) opacity-55' : 'text-(--text-muted) opacity-60')}
+                  className={cn("text-[0.625rem] shrink-0 whitespace-nowrap", tabState === 'current' && !isSelected ? 'text-(--text-primary) opacity-55' : 'text-(--text-muted) opacity-60')}
                   data-testid="kanban-card-time"
                 >
                   {timeStr}
@@ -463,11 +468,12 @@ export const KanbanChatCard = memo(function KanbanChatCard({
               <CollectionLabel
                 collectionId={session.collectionId}
                 projectId={session.projectDir}
-                isActive={isActive && !isSelected}
+                isActive={tabState === 'current' && !isSelected}
               />
               <DiffStatsBadge stats={session.diffStats} className="ml-auto" />
             </div>
           </div>
+          {!isRenaming && <SessionTabLabel state={tabState} />}
         </div>
 
         {/* Hover action buttons — aligned with the title's first line. */}
@@ -480,8 +486,8 @@ export const KanbanChatCard = memo(function KanbanChatCard({
           style={{
             background: (isHovered || menuAnchorRect) && !isRenaming
               ? `linear-gradient(to right, transparent, ${
-                  isActive && !isSelected
-                    ? 'color-mix(in srgb, var(--accent) 8%, var(--board-card-bg))'
+                  tabState === 'current' && !isSelected
+                    ? 'var(--session-tab-current-bg)'
                     : 'var(--board-card-hover-bg)'
                 } 40%)`
               : undefined,
@@ -514,7 +520,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
                 'p-0.5 rounded transition-all duration-150',
                 isConfirmingArchive
                   ? 'text-(--success) bg-[color-mix(in_srgb,var(--success)_10%,transparent)]'
-                  : isActive && !isSelected
+                  : tabState === 'current' && !isSelected
                     ? 'text-(--text-primary) opacity-60 hover:opacity-100'
                     : 'text-(--text-muted) hover:text-(--accent-light)',
                 'hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]',
@@ -531,7 +537,7 @@ export const KanbanChatCard = memo(function KanbanChatCard({
             onClick={handleMoreClick}
             size="compact"
             className={cn(
-              isActive && !isSelected
+              tabState === 'current' && !isSelected
                 ? 'text-(--text-primary) opacity-60 hover:opacity-100'
                 : 'text-(--text-muted) hover:text-(--accent-light)',
               'hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]',
@@ -639,7 +645,10 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
   const expanded = isMultiSession;
   const { visibleSessions, hiddenCount, showToggle, revealed, toggle } = useSubSessionCap(task.id, task.sessions);
   const subSessionReorder = useSubSessionReorder(task.id, task.sessions);
-  const isActive = task.sessions.some((s) => s.id === activeSessionId);
+  const taskTabState = useSessionTabState(task.sessions.map((session) => session.id));
+  const visibleTaskTabState = useSessionTabState(visibleSessions.map((session) => session.id));
+  const tabState = getSessionTabGroupState(taskTabState, visibleTaskTabState, expanded);
+  const isActive = tabState === 'current';
   const primarySessionId = task.sessions[0]?.id;
   const isGeneratingTitle = useSessionStore((state) =>
     primarySessionId ? state.generatingTitleIds.has(primarySessionId) : false,
@@ -891,7 +900,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
         }}
         className={cn(
           // Base layout — flatter card, consistent with list view
-          'group/card relative w-full rounded-lg p-2.5 px-3',
+          'session-tab-surface group/card relative w-full rounded-lg p-2.5 px-3',
           'text-left select-none',
           dragEnabled ? 'cursor-grab' : 'cursor-default',
           'transition-all duration-150',
@@ -910,12 +919,12 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 'bg-(--board-card-bg)',
                 'border-(--board-card-border)',
                 // Hover: subtle bg change (no lift)
-                !(isActive && !isSelected) && [
+                !(tabState === 'current' && !isSelected) && [
                   'hover:bg-(--board-card-hover-bg)',
                   'hover:border-(--board-card-hover-border)',
                 ],
                 // Active (when one of its sessions is active)
-                isActive && !isSelected && [
+                tabState === 'current' && !isSelected && [
                   'bg-[color-mix(in_srgb,var(--accent)_8%,var(--board-card-bg))]',
                   'border-[color-mix(in_srgb,var(--accent)_26%,var(--board-card-border))]',
                   'ring-1 ring-inset ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]',
@@ -929,6 +938,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 isJustDropped && 'drop-flash',
               ],
         )}
+        data-session-tab-state={tabState}
         style={isDragging ? {
           backgroundColor: 'color-mix(in srgb, var(--accent) 4%, transparent)',
           borderColor: 'color-mix(in srgb, var(--accent) 30%, transparent)',
@@ -1059,9 +1069,9 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
                 testId="kanban-task-title-input"
               />
             ) : (
-              <div
+              <div data-session-tab-current={tabState === 'current'}
                 className={cn(
-                  'text-[0.8125rem] font-medium leading-[1.45] line-clamp-2',
+                  'session-tab-title text-[0.8125rem] font-medium leading-[1.45] line-clamp-2',
                   isGeneratingTitle || isPending ? 'title-generating' : hasActiveGoal && 'goal-title',
                   'text-(--text-primary)',
                 )}
@@ -1100,6 +1110,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
               </span>
             </div>
           </div>
+          {!isRenaming && <SessionTabLabel state={tabState} grouped={expanded} />}
         </div>
 
         {/* Hover action buttons — aligned with the title's first line. Height is
@@ -1114,7 +1125,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
             background: isHovered && !isRenaming
               ? `linear-gradient(to right, transparent, ${
                   isActive
-                    ? 'color-mix(in srgb, var(--accent) 8%, var(--board-card-bg))'
+                    ? 'var(--session-tab-current-bg)'
                     : 'var(--board-card-hover-bg)'
                 } 40%)`
               : undefined,
@@ -1142,7 +1153,7 @@ export const KanbanTaskCard = memo(function KanbanTaskCard({
               'p-0.5 rounded transition-all duration-150',
               isConfirmingArchive
                 ? 'text-(--success) bg-[color-mix(in_srgb,var(--success)_10%,transparent)]'
-                : isActive
+                : tabState === 'current'
                   ? 'text-(--text-primary) opacity-60 hover:opacity-100'
                   : 'text-(--text-muted) hover:text-(--accent-light) hover:bg-[color-mix(in_srgb,var(--accent)_10%,transparent)]',
             )}
@@ -1292,6 +1303,7 @@ function KanbanSubSessionItem({
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const isProcessing = useIsSessionProcessing(session.id, session.kind);
   const goalIndicator = useTerminalGoalIndicator(session.id);
+  const tabState = useSessionTabState(session.id);
   const isSelected = useSelectionStore((s) => s.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((s) => s.settings.showProviderIcons);
   const liveSession = useProjectViewSession(session.id);
@@ -1392,16 +1404,17 @@ function KanbanSubSessionItem({
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         className={cn(
-          'relative flex items-center gap-1.5 px-2 py-1 my-px rounded',
+          'session-tab-surface relative flex items-center gap-1.5 px-2 py-1 my-px rounded',
           isRenaming ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
           reorder?.draggingSessionId === session.id && 'opacity-40',
           'text-[0.75rem] transition-colors duration-150',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--text-primary) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
-            : isActive
+            : tabState === 'current'
               ? 'bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-(--accent-light) font-medium'
               : 'text-(--text-secondary) hover:bg-(--sidebar-hover)',
         )}
+        data-session-tab-state={tabState}
         data-session-id={session.id}
         data-testid={`kanban-sub-session-${session.id}`}
         data-drop-position={reorder?.indicatorFor(session.id) ?? undefined}
@@ -1419,10 +1432,7 @@ function KanbanSubSessionItem({
           'absolute top-1/2 h-px w-[10px] bg-(--divider)',
           SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
         )} />
-        {isActive && <div className={cn(
-          'absolute top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-(--accent)',
-          SIDEBAR_TREE_WORKTREE_CHILD_CONNECTOR_OFFSET,
-        )} />}
+
 
         {showProviderIcons ? (
           <span className="relative flex shrink-0 items-center">
@@ -1470,13 +1480,15 @@ function KanbanSubSessionItem({
             testId="kanban-sub-session-title-input"
           />
         ) : (
-          <span
-            className={cn('flex-1 min-w-0 truncate', isGeneratingTitle && 'title-generating')}
+          <span data-session-tab-current={tabState === 'current'}
+            className={cn('session-tab-title flex-1 min-w-0 truncate', isGeneratingTitle && 'title-generating')}
             style={isGeneratingTitle ? getTitleGeneratingStyle(session.id) : undefined}
           >
             {isGeneratingTitle ? 'Generating title...' : displayTitle}
           </span>
         )}
+
+        {!isRenaming && <SessionTabLabel state={tabState} />}
 
         {canOpenMenu && isHovered && !isRenaming && (
           <OverflowMenuButton

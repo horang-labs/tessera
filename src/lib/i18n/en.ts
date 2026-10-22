@@ -1,6 +1,14 @@
 import { I18nMessages } from './types';
 
 export const en: I18nMessages = {
+  sessionTabs: {
+    containsCurrent: 'Contains the currently focused session',
+    current: 'Current',
+    open: 'Open',
+    currentDescription: 'Currently focused session',
+    openDescription: 'Open in a tab',
+    containsOpen: 'Contains a session open in a tab',
+  },
   settings: {
     title: 'Settings',
     sections: {

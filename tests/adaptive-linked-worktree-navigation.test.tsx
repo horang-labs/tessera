@@ -161,12 +161,12 @@ test('linked Worktree rows render standalone, composite, and expanded identities
 test('expanded Worktree child session titles retain the desktop row width until actions appear', () => {
   const markup = renderLinkedWorktree(['one', 'two']);
 
-  // The desktop quick actions are hover-only. They must overlay the row rather
-  // than reserve their full width, otherwise every child title is truncated
-  // while that space is visibly empty.
+  // Desktop quick actions are removed from layout until hover. Revealed
+  // actions then participate in flex layout so long titles truncate before
+  // the buttons instead of painting underneath them.
   assert.match(
     markup,
-    /data-testid="collection-subsession-one"[\s\S]*?class="[^"]*sm:absolute[^"]*"/,
+    /data-testid="collection-subsession-one"[\s\S]*?class="[^"]*flex shrink-0 items-center gap-0\.5[^"]*sm:hidden[^"]*"/,
   );
 });
 

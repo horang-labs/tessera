@@ -1,4 +1,12 @@
 export interface I18nMessages {
+  sessionTabs: {
+    containsCurrent: string;
+    current: string;
+    open: string;
+    currentDescription: string;
+    openDescription: string;
+    containsOpen: string;
+  };
   settings: {
     title: string;
     sections: {

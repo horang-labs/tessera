@@ -1141,3 +1141,52 @@ body {
     }
   }
 }
+
+/* Session tabs: reserve surface emphasis for the focused session. */
+:root {
+  --session-tab-current-bg: #d8e5ee;
+  --session-tab-current-fg: #183449;
+  --session-tab-current-border: #91adbf;
+  --session-tab-current-marker: #5a7d94;
+}
+
+.dark {
+  --session-tab-current-bg: #344d60;
+  --session-tab-current-fg: #ffffff;
+  --session-tab-current-border: #55758d;
+  --session-tab-current-marker: #badcf5;
+}
+
+.session-tab-label {
+  flex: none;
+  align-self: flex-start;
+  margin-block-start: 2px;
+  white-space: nowrap;
+  font-size: 0.625rem;
+  line-height: 1rem;
+  color: var(--text-secondary);
+}
+
+.session-tab-surface[data-session-tab-state='current'] {
+  background: var(--session-tab-current-bg);
+  border-color: var(--session-tab-current-border);
+  color: var(--session-tab-current-fg);
+  box-shadow: inset 0 0 0 1px var(--session-tab-current-border);
+}
+
+.session-tab-surface[data-session-tab-state='current']::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+  inset-inline-start: 0;
+  inset-block: 5px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--session-tab-current-marker);
+}
+
+.session-tab-title[data-session-tab-current='true'],
+.session-tab-label[data-state='current'] {
+  color: var(--session-tab-current-fg);
+  font-weight: 600;
+}

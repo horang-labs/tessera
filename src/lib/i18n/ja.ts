@@ -1,6 +1,14 @@
 import { I18nMessages } from './types';
 
 export const ja: I18nMessages = {
+  sessionTabs: {
+    containsCurrent: '現在表示中の子セッションがあります',
+    current: '選択中',
+    open: '開いている',
+    currentDescription: '現在表示中のセッション',
+    openDescription: 'タブで開いています',
+    containsOpen: 'タブで開いている子セッションがあります',
+  },
   settings: {
     title: '設定',
     sections: {
