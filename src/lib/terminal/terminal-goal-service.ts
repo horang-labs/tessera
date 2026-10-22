@@ -1,9 +1,10 @@
 import { cliProviderRegistry } from '@/lib/cli/providers/registry';
 import { reopenClaudeHookTurn } from '@/lib/cli/providers/claude-code/terminal-hook-lifecycle';
-import { reopenCodexHookTurn } from '@/lib/cli/providers/codex/terminal-hook-lifecycle';
+import { endCodexHookTurnFromTranscript, reopenCodexHookTurn } from '@/lib/cli/providers/codex/terminal-hook-lifecycle';
 import { sendTerminalUserMessage, terminalManager } from './shared-terminal-manager';
 import { appendTerminalGoalHistory } from './terminal-goal-history';
 import { TerminalGoalTracker, type TerminalGoalTarget } from './terminal-goal-tracker';
+import type { TerminalGoalSnapshot } from '@/types/terminal-goal';
 
 export { supportsTerminalGoal } from './terminal-goal-support';
 
@@ -18,8 +19,10 @@ export function reopenTerminalHookTurn(providerId: string, terminalId: string): 
  * running right away instead of waiting for a tool hook — Codex drops those
  * after a Stop until a new turn is opened.
  */
-function markGoalTurnRunning(target: TerminalGoalTarget): void {
-  reopenTerminalHookTurn(target.providerId, target.terminalId);
+function markGoalTurnRunning(target: TerminalGoalTarget, goal: TerminalGoalSnapshot): void {
+  // Use when Codex started the goal, not when a delayed bridge read saw it.
+  if (target.providerId === 'codex') reopenCodexHookTurn(target.terminalId, goal.updatedAt);
+  else reopenTerminalHookTurn(target.providerId, target.terminalId);
   if (terminalManager.getSessionStateForSession(target.sessionId, target.userId)?.status === 'running') {
     return;
   }
@@ -36,18 +39,25 @@ function markGoalTurnRunning(target: TerminalGoalTarget): void {
   }
 }
 
-/** A stalled goal's turn ended without a Stop hook; close it like one. */
-function completeStalledGoalTurn(target: TerminalGoalTarget): void {
-  if (terminalManager.getSessionStateForSession(target.sessionId, target.userId)?.status !== 'running') {
-    return;
-  }
+/** Reconcile a missing Stop using the lead rollout's authoritative ending. */
+function completeFailedCodexTurn(
+  target: TerminalGoalTarget,
+  boundary: { stateAt: number; preview?: string },
+): void {
+  const baseline = terminalManager.getSessionStateForSession(target.sessionId, target.userId);
+  if (
+    !baseline
+    || (baseline.status !== 'running' && baseline.status !== 'input_required')
+  ) return;
+  if (!endCodexHookTurnFromTranscript(target.terminalId, boundary.stateAt)) return;
   const message = {
     type: 'session_state',
     sessionId: target.sessionId,
     terminalId: target.terminalId,
     status: 'completed',
-    hookEvent: 'GoalStalled',
+    hookEvent: 'TurnFailed',
     stateAt: Date.now(),
+    ...(boundary.preview ? { preview: boundary.preview } : {}),
   } as const;
   if (terminalManager.recordSessionState(message, target.userId)) {
     sendTerminalUserMessage(target.userId, message);
@@ -82,7 +92,7 @@ function createTracker(): TerminalGoalTracker {
       });
     },
     onGoalStarted: markGoalTurnRunning,
-    onGoalStalled: completeStalledGoalTurn,
+    onTurnEnded: completeFailedCodexTurn,
     recordEndedGoals: (target, entries) => {
       const history = appendTerminalGoalHistory(target.sessionId, entries);
       if (!history) return;

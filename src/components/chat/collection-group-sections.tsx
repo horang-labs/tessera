@@ -755,7 +755,12 @@ function SubSessionRow({
         // carries them via onContextMenu), and the kebab itself is always
         // visible. Hover on touch is unreliable and, when it does fire on tap,
         // races the row's own onClick that opens the session.
-        <div className="flex shrink-0 items-center gap-0.5 sm:absolute sm:inset-y-0 sm:right-2 sm:z-10">
+        <div className={cn(
+          'flex shrink-0 items-center gap-0.5',
+          // Keep revealed actions in the flex layout so the title truncates
+          // before them instead of painting underneath the buttons.
+          !isHovered && 'sm:hidden',
+        )}>
           {runtimePresentation.canStop && onStopProcess && (
             <StopProcessButton
               telemetryControl="task.stop"

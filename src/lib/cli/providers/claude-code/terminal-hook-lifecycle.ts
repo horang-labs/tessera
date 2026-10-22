@@ -86,6 +86,8 @@ export class ClaudeHookLifecycleTracker {
       }
       // 진행 중 턴의 도구 활동. subagent 발 이벤트면 그 child가 살아있다는 증거다.
       if (agentId) upsertWorkingSubagent(state.subagents, agentId);
+      // lead가 자동 재개했으면 child 대기 전환은 다음 lead Stop까지 완료할 수 없다.
+      else if (event === 'PreToolUse') state.leadStopped = false;
       return { status: 'running' };
     }
 
@@ -111,11 +113,9 @@ export class ClaudeHookLifecycleTracker {
       const state = this.terminals.get(terminalId);
       if (!state || state.turnEnded) return null;
       const teammateName = readString(payload.teammate_name) || readString(payload.teammateName);
-      // idle 표시만 한다. TeammateIdle 자체는 완료 트리거가 아니다(살아있는 teammate가
-      // 곧 다시 활동할 수 있다) — 이후 SubagentStop이나 다음 Stop의 reconcile이 완료를
-      // 판정하며, 이 idle 표시가 그 판정에서 이 teammate를 빼 준다.
+      // 살아있는 팀원도 대기 중이면 연산 중이 아니다. lead가 끝났다면 마지막 대기 전환으로 완료한다.
       if (teammateName) markTeammateIdleByName(state.subagents, teammateName);
-      return { status: 'running' };
+      return this.resolveAfterChildDrain(state, now);
     }
 
     if (event === 'Stop' || event === 'StopFailure') {

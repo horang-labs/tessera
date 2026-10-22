@@ -13,6 +13,7 @@ export type CodexHookLifecycleStatus = 'running' | 'completed' | 'input_required
 
 interface CodexTerminalLifecycle {
   turnEnded: boolean;
+  startedAt: number;
 }
 
 const ROLLOUT_HEADER_MAX_BYTES = 64 * 1024;
@@ -118,7 +119,7 @@ export class CodexHookLifecycleTracker {
     }
 
     if (event === 'UserPromptSubmit') {
-      this.terminals.set(terminalId, { turnEnded: false });
+      this.terminals.set(terminalId, { turnEnded: false, startedAt: Date.now() });
       return { status: 'running' };
     }
 
@@ -130,13 +131,13 @@ export class CodexHookLifecycleTracker {
       // tool delivery after Stop may clear the tombstone, regardless of delay.
       if (state?.turnEnded) return null;
       if (!state) {
-        this.terminals.set(terminalId, { turnEnded: false });
+        this.terminals.set(terminalId, { turnEnded: false, startedAt: 0 });
       }
       return { status: 'running' };
     }
 
     if (event === 'Stop') {
-      this.terminals.set(terminalId, { turnEnded: true });
+      this.terminals.set(terminalId, { turnEnded: true, startedAt: this.terminals.get(terminalId)?.startedAt ?? 0 });
       return { status: 'completed' };
     }
 
@@ -148,8 +149,19 @@ export class CodexHookLifecycleTracker {
    * continuation. Those turns never emit UserPromptSubmit, so without this the
    * tombstone drops every hook of the turn.
    */
-  reopenTurn(terminalId: string): void {
-    this.terminals.set(terminalId, { turnEnded: false });
+  reopenTurn(terminalId: string, startedAt = Date.now()): void {
+    this.terminals.set(terminalId, {
+      turnEnded: false,
+      startedAt: Math.max(startedAt, this.terminals.get(terminalId)?.startedAt ?? 0),
+    });
+  }
+
+  /** Later same-turn tool deliveries do not supersede an authoritative end. */
+  endTurnFromTranscript(terminalId: string, endedAt: number): boolean {
+    const state = this.terminals.get(terminalId);
+    if (state?.turnEnded || endedAt < (state?.startedAt ?? 0)) return false;
+    this.terminals.set(terminalId, { turnEnded: true, startedAt: state?.startedAt ?? 0 });
+    return true;
   }
 }
 
@@ -172,6 +184,10 @@ export function mapCodexHookLifecycle(
   return terminalHookLifecycle.apply(terminalId, event, origin);
 }
 
-export function reopenCodexHookTurn(terminalId: string): void {
-  terminalHookLifecycle.reopenTurn(terminalId);
+export function reopenCodexHookTurn(terminalId: string, startedAt?: number): void {
+  terminalHookLifecycle.reopenTurn(terminalId, startedAt);
+}
+
+export function endCodexHookTurnFromTranscript(terminalId: string, endedAt: number): boolean {
+  return terminalHookLifecycle.endTurnFromTranscript(terminalId, endedAt);
 }
