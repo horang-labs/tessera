@@ -1,6 +1,14 @@
 import { I18nMessages } from './types';
 
 export const zh: I18nMessages = {
+  sessionTabs: {
+    containsCurrent: '包含当前聚焦的子会话',
+    current: '当前',
+    open: '已打开',
+    currentDescription: '当前聚焦的会话',
+    openDescription: '已在标签页中打开',
+    containsOpen: '包含已在标签页中打开的子会话',
+  },
   settings: {
     title: '设置',
     sections: {

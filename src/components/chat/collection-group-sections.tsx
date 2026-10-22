@@ -1,5 +1,8 @@
 'use client';
 
+import { getSessionTabGroupState } from '@/lib/workspace-tabs/session-tab-state';
+import { useSessionTabState } from '@/hooks/use-session-tab-state';
+import { SessionTabLabel } from './session-tab-label';
 import { createPortal } from 'react-dom';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
@@ -117,13 +120,8 @@ function getSidebarActionSurface({
   isActive: boolean;
   isSelected: boolean;
 }): string {
-  if (isSelected) {
-    return 'color-mix(in srgb, var(--accent) 8%, var(--board-bg))';
-  }
-
-  if (isActive) {
-    return 'color-mix(in srgb, var(--accent) 10%, var(--board-bg))';
-  }
+  if (isActive) return 'var(--session-tab-current-bg)';
+  if (isSelected) return 'color-mix(in srgb, var(--accent) 8%, var(--board-bg))';
 
   return 'var(--sidebar-hover)';
 }
@@ -573,6 +571,7 @@ function SubSessionRow({
   const [isHovered, setIsHovered] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
   const isActive = sess.id === activeSessionId;
+  const tabState = useSessionTabState(sess.id);
   const isSelected = useSelectionStore((state) => state.selectedIds.has(sess.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const isProcessing = useIsSessionProcessing(sess.id, sess.kind);
@@ -632,15 +631,16 @@ function SubSessionRow({
 
   return (
     <div
+      data-session-tab-state={tabState}
       className={cn(
-        'group/sub relative flex items-center rounded-md text-[0.8125rem] leading-snug transition-colors duration-150',
+        'session-tab-surface group/sub relative flex items-center rounded-md text-[0.8125rem] leading-snug transition-colors duration-150',
         SIDEBAR_TREE_ROW_GUTTER,
         SIDEBAR_TREE_ROW_SPACING,
         isRenaming ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
         reorder?.draggingSessionId === sess.id && 'opacity-40',
         isSelected
           ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
-          : isActive
+          : tabState === 'current'
             ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-(--sidebar-text-active) ring-1 ring-inset ring-[color-mix(in_srgb,var(--accent)_22%,transparent)]'
             : 'text-(--sidebar-text) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
       )}
@@ -738,13 +738,15 @@ function SubSessionRow({
           // The title keeps its own width; the goal text takes the room left,
           // or its own line under the title when that room is too narrow.
           <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
-            <span className="goal-title min-w-0 flex-initial truncate">{sess.title}</span>
+            <span data-session-tab-current={tabState === 'current'} className="session-tab-title goal-title min-w-0 flex-initial truncate">{sess.title}</span>
             <GoalTitleTicker sessionIds={subSessionIds} variant="inline" />
           </span>
         ) : (
-          <span className="min-w-0 flex-1 truncate">{sess.title}</span>
+          <span data-session-tab-current={tabState === 'current'} className="session-tab-title min-w-0 flex-1 truncate">{sess.title}</span>
         )
       )}
+
+      {!isRenaming && <SessionTabLabel state={tabState} />}
 
       {!isRenaming && (
         // Row actions.
@@ -891,6 +893,9 @@ export function TaskItemRow({
     activePanelWorktreeId,
     peekWorktreeId,
   });
+  const taskTabState = useSessionTabState(task.sessions.map((session) => session.id));
+  const visibleTaskTabState = useSessionTabState(visibleSessions.map((session) => session.id));
+  const tabState = getSessionTabGroupState(taskTabState, visibleTaskTabState, isExpanded);
   const isPending = task.isPending === true;
   const hasPreparationBadge = resolvePreparationBadge(
     task.preparationStatus ?? 'never_run',
@@ -905,7 +910,9 @@ export function TaskItemRow({
       : false,
   );
   const hoverActionFadeStyle = getSidebarHoverActionFadeStyle(
-    getSidebarActionSurface({ isActive: isTaskActive, isSelected }),
+    tabState !== 'current' && isTaskActive
+      ? 'color-mix(in srgb, var(--accent) 10%, var(--board-bg))'
+      : getSidebarActionSurface({ isActive: tabState === 'current', isSelected }),
   );
   const taskSessionIds = task.sessions.map((session) => session.id);
   const hasActiveGoal = useHasActiveGoalObjective(taskSessionIds);
@@ -1101,14 +1108,15 @@ export function TaskItemRow({
           setIsHovered(false);
           resetArchiveConfirm();
         }}
+        data-session-tab-state={tabState}
         className={cn(
-          'group/task relative flex select-none items-center rounded-md transition-all duration-150 max-sm:pr-14',
+          'session-tab-surface group/task relative flex select-none items-center rounded-md transition-all duration-150 max-sm:pr-14',
           SIDEBAR_TREE_ROW_GUTTER,
           SIDEBAR_TREE_ROW_SPACING,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
-            : isTaskActive
+            : tabState === 'current' || isTaskActive
               ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-(--sidebar-text-active) ring-1 ring-inset ring-[color-mix(in_srgb,var(--accent)_22%,transparent)]'
               : 'text-(--sidebar-text) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
           isDragging && 'cursor-grabbing opacity-35 scale-[0.97]',
@@ -1133,7 +1141,7 @@ export function TaskItemRow({
         data-session-range-id={density === 'composite' ? primarySessionId : undefined}
         data-worktree-id={task.worktreeId}
         data-linked-worktree-density={density}
-        aria-current={isTaskActive ? 'true' : undefined}
+        aria-current={isTaskActive || tabState === 'current' ? 'true' : undefined}
         data-testid={`collection-task-${task.id}`}
       >
         <span className={SIDEBAR_TREE_TWISTIE_SLOT}>
@@ -1213,9 +1221,9 @@ export function TaskItemRow({
             />
           ) : (
             <span className="flex min-w-0 flex-wrap items-center gap-x-2">
-            <span
+            <span data-session-tab-current={tabState === 'current'}
               className={cn(
-                'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
+                'session-tab-title block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 isGeneratingTitle || isPending ? 'title-generating' : hasActiveGoal && 'goal-title'
               )}
               style={
@@ -1230,6 +1238,8 @@ export function TaskItemRow({
             </span>
           )}
         </div>
+
+        {!isRenaming && <SessionTabLabel state={tabState} grouped={isExpanded} />}
 
         {/* Diff stats + worktree mark grouped tight on the trailing edge: a
             single gap to the title, minimal internal spacing, so the title keeps
@@ -1441,6 +1451,7 @@ export function ChatItemRow({
   allowPanelSessionDnd?: boolean;
 }) {
   const isActive = session.id === activeSessionId;
+  const tabState = useSessionTabState(session.id);
   const isSelected = useSelectionStore((state) => state.selectedIds.has(session.id));
   const showProviderIcons = useSettingsStore((state) => state.settings.showProviderIcons);
   const [isHovered, setIsHovered] = useState(false);
@@ -1489,7 +1500,7 @@ export function ChatItemRow({
     onRenameComplete,
   });
   const hoverActionFadeStyle = getSidebarHoverActionFadeStyle(
-    getSidebarActionSurface({ isActive, isSelected }),
+    getSidebarActionSurface({ isActive: tabState === 'current', isSelected }),
   );
   const canDrag = (!disableDnd || allowPanelSessionDnd) && !isRenaming;
   const handleStopProcess = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -1523,14 +1534,15 @@ export function ChatItemRow({
           setIsHovered(false);
           resetArchiveConfirm();
         }}
+        data-session-tab-state={tabState}
         className={cn(
-          'group/chat relative flex select-none items-center rounded-md transition-all duration-150 max-sm:pr-10',
+          'session-tab-surface group/chat relative flex select-none items-center rounded-md transition-all duration-150 max-sm:pr-10',
           SIDEBAR_TREE_ROW_GUTTER,
           SIDEBAR_TREE_ROW_SPACING,
           canDrag && 'cursor-grab',
           isSelected
             ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] text-(--sidebar-text-active) ring-1 ring-[color-mix(in_srgb,var(--accent)_18%,transparent)]'
-            : isActive
+            : tabState === 'current'
               ? 'bg-[color-mix(in_srgb,var(--accent)_10%,transparent)] text-(--sidebar-text-active) ring-1 ring-inset ring-[color-mix(in_srgb,var(--accent)_22%,transparent)]'
               : 'text-(--sidebar-text) hover:bg-(--sidebar-hover) hover:text-(--sidebar-text-active)',
           isDragging && 'cursor-grabbing opacity-35 scale-[0.97]',
@@ -1607,9 +1619,9 @@ export function ChatItemRow({
             />
           ) : (
             <span className="flex min-w-0 flex-wrap items-center gap-x-2">
-            <span
+            <span data-session-tab-current={tabState === 'current'}
               className={cn(
-                'block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
+                'session-tab-title block min-w-0 flex-initial truncate text-[0.8125rem] leading-snug text-(--sidebar-text-active)',
                 isGeneratingTitle ? 'title-generating' : hasActiveGoal && 'goal-title'
               )}
               style={
@@ -1624,6 +1636,8 @@ export function ChatItemRow({
             </span>
           )}
         </div>
+
+        {!isRenaming && <SessionTabLabel state={tabState} />}
 
         {/* Desktop retains the worktree diff. When a provider logo occupies the
             leading slot, keep chat identity on the trailing edge as well. */}

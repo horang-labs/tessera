@@ -1,6 +1,14 @@
 import { I18nMessages } from './types';
 
 export const ko: I18nMessages = {
+  sessionTabs: {
+    containsCurrent: '현재 보고 있는 하위 세션이 있음',
+    current: '현재',
+    open: '열림',
+    currentDescription: '현재 보고 있는 세션',
+    openDescription: '탭에서 열려 있음',
+    containsOpen: '하위 세션이 탭에서 열려 있음',
+  },
   settings: {
     title: '설정',
     sections: {
