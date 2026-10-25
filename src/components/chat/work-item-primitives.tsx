@@ -32,8 +32,9 @@ export function getWorktreeIconClass(status: WorkflowStatus): string {
 }
 
 /**
- * `achieved` / `failed`: the session finished a goal and still shows it (until
- * the user closes it or sets another), so it does not read as a plain turn.
+ * `achieved` / `failed`: the session finished a goal. It only colors the
+ * unread dot — the finished turn reads as a goal finishing, not a plain turn —
+ * and once read the session shows its ordinary dot.
  */
 export type ItemGoalIndicator = 'active' | 'paused' | 'achieved' | 'failed' | null;
 
@@ -61,6 +62,8 @@ export function ItemStatusIndicator({
   size?: ItemStatusSize;
   surface: ItemSurface;
 }) {
+  // A finished goal marks only the unread dot; once read it is a plain session.
+  if ((goal === 'achieved' || goal === 'failed') && !hasUnread) goal = null;
   if (!isProcessing && !isAwaitingUser && !hasUnread && !isRunning && !goal) {
     return null;
   }
@@ -97,7 +100,7 @@ export function ItemStatusIndicator({
     );
   }
 
-  if (status === 'goal-ended' || status === 'goal-ended-unread') {
+  if (status === 'goal-ended-unread') {
     return (
       <span
         {...statusProps}
@@ -105,10 +108,10 @@ export function ItemStatusIndicator({
         className={cn(
           getPlacementClassName(placement, false, isEnlarged),
           ringClass,
-          isEnlarged ? 'h-[0.8125rem] w-[0.8125rem]' : 'h-[8px] w-[8px]',
-          'goal-ended',
+          // Same size as the unread dot it stands in for.
+          isEnlarged ? 'h-[0.6875rem] w-[0.6875rem]' : 'h-[6px] w-[6px]',
+          'goal-ended goal-ended-unread',
           goal === 'failed' && 'goal-ended-failed',
-          status === 'goal-ended-unread' && 'goal-ended-unread',
         )}
       />
     );
@@ -122,7 +125,10 @@ export function ItemStatusIndicator({
         className={cn(
           getPlacementClassName(placement, status === 'goal-processing', isEnlarged),
           ringClass,
-          isEnlarged ? 'h-[0.8125rem] w-[0.8125rem]' : 'h-[8px] w-[8px]',
+          // Same sizes as the working spinner and the unread dot.
+          status === 'goal-processing'
+            ? isEnlarged ? 'h-[0.75rem] w-[0.75rem]' : 'h-[7px] w-[7px]'
+            : isEnlarged ? 'h-[0.6875rem] w-[0.6875rem]' : 'h-[6px] w-[6px]',
           status === 'goal-processing'
             ? 'goal-orbit'
             : cn('goal-target', goal === 'paused' && 'goal-target-paused'),
@@ -407,7 +413,6 @@ type ItemStatus =
   | 'processing'
   | 'goal-ended-unread'
   | 'unread'
-  | 'goal-ended'
   | 'goal'
   | 'running';
 
@@ -430,10 +435,10 @@ export function resolveItemStatus({
   if (isAwaitingUser) return 'awaiting-user';
   if (showsProcessing) return goal === 'active' ? 'goal-processing' : 'processing';
   const goalEnded = goal === 'achieved' || goal === 'failed';
-  // A finished goal keeps its own mark, read or unread, instead of the plain
-  // "turn finished" dot.
+  // A goal that just finished colors the unread dot instead of the plain
+  // "turn finished" one. Read, it leaves no mark.
   if (hasUnread) return goalEnded ? 'goal-ended-unread' : 'unread';
-  if (goal) return goalEnded ? 'goal-ended' : 'goal';
+  if (goal && !goalEnded) return 'goal';
   return 'running';
 }
 
