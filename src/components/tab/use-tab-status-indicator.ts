@@ -87,9 +87,9 @@ export function useTabStatusIndicator(tab: Tab, isActive: boolean) {
       ? t('status.inputRequired')
       : statusKind === 'processing'
         ? terminalGoal === 'active' ? t('terminalGoal.indicatorActive') : t('status.processing')
-        : terminalGoal === 'achieved'
+        : statusKind === 'unread' && terminalGoal === 'achieved'
           ? t('terminalGoal.indicatorAchieved')
-          : terminalGoal === 'failed'
+          : statusKind === 'unread' && terminalGoal === 'failed'
             ? t('terminalGoal.indicatorFailed')
             : statusKind === 'unread'
               ? t('status.unreadNotification')

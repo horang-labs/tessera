@@ -65,11 +65,12 @@ test('closing the banner in another window drops the mark here too', () => {
   assert.equal(selectTerminalGoalIndicator('s1')(state()), null);
 });
 
-test('status dot: a finished goal replaces the plain unread and idle dots', () => {
+test('status dot: a finished goal colors only the unread dot', () => {
   const base = { hasUnread: false, isAwaitingUser: false, showsProcessing: false };
   assert.equal(resolveItemStatus({ ...base, goal: 'achieved', hasUnread: true }), 'goal-ended-unread');
-  assert.equal(resolveItemStatus({ ...base, goal: 'achieved' }), 'goal-ended');
-  assert.equal(resolveItemStatus({ ...base, goal: 'failed' }), 'goal-ended');
+  assert.equal(resolveItemStatus({ ...base, goal: 'failed', hasUnread: true }), 'goal-ended-unread');
+  assert.equal(resolveItemStatus({ ...base, goal: 'achieved' }), 'running', 'read: the plain dot');
+  assert.equal(resolveItemStatus({ ...base, goal: 'paused' }), 'goal');
   assert.equal(resolveItemStatus({ ...base, goal: null, hasUnread: true }), 'unread');
   assert.equal(resolveItemStatus({ ...base, goal: 'achieved', showsProcessing: true }), 'processing',
     'a new plain turn spins like any other');
