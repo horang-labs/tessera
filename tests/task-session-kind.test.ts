@@ -119,3 +119,19 @@ test('sidebar trusts the linked Worktree projection regardless of visible child 
     'hidden-task',
   ]);
 });
+
+test('Running counts each live child session within a worktree', () => {
+  const sessions = [
+    terminalSession,
+    { ...terminalSession, id: 'second-running-session', kind: 'chat' as const },
+    { ...terminalSession, id: 'stopped-session', isRunning: false },
+  ];
+  const groups = buildCollectionGroups([], [task], sessions);
+
+  assert.equal(countRunningCollectionGroupItems(groups), 2);
+  assert.equal(countRunningCollectionGroupItems(filterCollectionGroupsByRunning(groups)), 2);
+  assert.deepEqual(getRunningCollectionGroupSessionIds(groups), [
+    terminalSession.id,
+    'second-running-session',
+  ]);
+});
