@@ -31,7 +31,9 @@ export function collectionGroupRunningItemCount(
 ): number {
   return group.chats.filter((session) =>
     resolveSessionRuntimePresentation(session).showRunning
-  ).length + group.tasks.filter(taskHasVisibleRuntimeSession).length;
+  ).length + group.tasks.reduce((count, task) => count + task.sessions.filter((session) =>
+    resolveSessionRuntimePresentation(session).showRunning
+  ).length, 0);
 }
 
 export function countRunningCollectionGroupItems(groups: CollectionGroupData[]): number {
