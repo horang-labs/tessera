@@ -15,7 +15,7 @@ test('Codex PTY starts with pre-trusted overlay hooks and no trust-bypass warnin
     }),
     {
       command: 'codex',
-      args: ['--config', 'features.daemon_auto_start=false'],
+      args: ['--no-daemon'],
     },
   );
 });
@@ -32,7 +32,7 @@ test('Codex PTY starts with the requested model and reasoning effort', () => {
     {
       command: 'codex',
       args: [
-        '--config', 'features.daemon_auto_start=false',
+        '--no-daemon',
         '--model', 'gpt-5.6-sol',
         '--config', 'model_reasoning_effort="high"',
       ],
@@ -50,7 +50,7 @@ test('Codex PTY starts with the requested fast service tier', () => {
     }),
     {
       command: 'codex',
-      args: ['--config', 'features.daemon_auto_start=false', '--config', 'service_tier="fast"'],
+      args: ['--no-daemon', '--config', 'service_tier="fast"'],
     },
   );
 });
@@ -121,7 +121,7 @@ test('Codex PTY resumes with pre-trusted overlay hooks and no trust-bypass warni
     }),
     {
       command: 'codex',
-      args: ['--config', 'features.daemon_auto_start=false', 'resume', 'thread_123'],
+      args: ['--no-daemon', 'resume', 'thread_123'],
     },
   );
 });
@@ -139,7 +139,7 @@ test('Codex PTY reapplies the persisted model and reasoning effort when it resum
     {
       command: 'codex',
       args: [
-        '--config', 'features.daemon_auto_start=false',
+        '--no-daemon',
         '--model', 'gpt-5.6-sol',
         '--config', 'model_reasoning_effort="xhigh"',
         'resume', 'thread_123',
@@ -160,7 +160,7 @@ test('Codex PTY explicitly disables fast mode when it resumes', () => {
     {
       command: 'codex',
       args: [
-        '--config', 'features.daemon_auto_start=false',
+        '--no-daemon',
         '--config', 'service_tier="default"',
         'resume', 'thread_123',
       ],
@@ -249,7 +249,7 @@ test('Codex theme restart resumes only the captured terminal rollout id', () => 
     }),
     {
       command: 'codex',
-      args: ['--config', 'features.daemon_auto_start=false', 'resume', '019c-rollout-id'],
+      args: ['--no-daemon', 'resume', '019c-rollout-id'],
     },
   );
 });

@@ -5,6 +5,11 @@ launch. Account history and authentication can be shared; daemon sockets and pro
 state cannot. Keep daemon state out of both overlay implementations and keep Codex
 in the PTY-owned runtime mode for fresh and resumed sessions.
 
+Use `--no-daemon` for both launches (supported by the 0.162.1 baseline).
+`features.daemon_auto_start=false` only disables automatic startup; it does not
+prevent attachment to an existing server and can trigger an incompatible shared
+feature settings prompt. Do not change shared daemon settings to isolate a PTY.
+
 The 0.162.1 regression escaped mocked launch tests: Codex rejected the overlay's
 `app-server-daemon` symlink and exited after Tessera had reported a successful spawn.
 Testing argument construction alone cannot detect a provider's new startup behavior.
