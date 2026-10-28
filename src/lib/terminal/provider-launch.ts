@@ -104,10 +104,12 @@ export function buildProviderTerminalLaunch(input: ProviderTerminalLaunchInput):
 
   if (input.providerId === 'codex') {
     // Tessera owns this PTY's lifetime and per-launch hooks/environment. A
-    // detached Codex daemon would outlive both the PTY and its overlay. Use a
-    // config override instead of --no-daemon so older CLIs can ignore the key.
+    // detached Codex daemon would outlive both the PTY and its overlay.
+    // Disabling daemon_auto_start still allows connecting to an existing server
+    // and can trigger a shared-feature compatibility prompt. --no-daemon bypasses
+    // that server entirely (supported by the 0.162.1 compatibility baseline).
     const selectionArgs = [
-      '--config', 'features.daemon_auto_start=false',
+      '--no-daemon',
       ...buildCodexSelectionArgs(input),
     ];
     // 신규는 세션식별 인자 없음(codex가 rollout id 자체 발급).
