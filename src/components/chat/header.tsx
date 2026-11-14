@@ -1,5 +1,7 @@
 'use client';
 
+import { ProviderLogoMark, getProviderBrand } from './provider-brand';
+import { SessionProjectBadge } from './session-project-badge';
 import { useState, useRef, useEffect, useCallback, useContext } from 'react';
 import {
   Archive,
@@ -27,7 +29,6 @@ import { useI18n } from '@/lib/i18n';
 import { TaskContextMenu } from './task-context-menu';
 import { wsClient } from '@/lib/ws/client';
 import { SINGLE_PANEL_CONTENT_SHELL } from './single-panel-shell';
-import { ProviderBadge } from './provider-brand';
 import styles from './header.module.css';
 import { ShortcutTooltip } from '@/components/keyboard/shortcut-tooltip';
 import { setPanelTitleDragData } from '@/lib/dnd/panel-session-drag';
@@ -342,12 +343,16 @@ export function Header({ sessionId, panelId, projectViewDir, isSinglePanel = fal
               className="group flex h-full min-w-0 flex-1 cursor-grab items-center gap-1.5 text-left active:cursor-grabbing max-sm:gap-1"
               data-testid="panel-title-drag-handle"
             >
-              <ProviderBadge
-                providerId={session.provider}
-                className={cn("h-5 rounded-md px-2 text-[10px] leading-none max-sm:px-1", isCompact && styles.provider)}
-                labelClassName="hidden"
-                fullLabel={!session.provider || session.provider === 'claude-code'}
-              />
+              <span className="inline-flex shrink-0 items-center gap-1">
+                <SessionProjectBadge session={session} />
+                <ProviderLogoMark
+                  providerId={session.provider}
+                  className="h-4 w-4 rounded"
+                  iconClassName="h-3 w-3"
+                  title={getProviderBrand(session.provider).displayName}
+                  aria-label={getProviderBrand(session.provider).displayName}
+                />
+              </span>
 
               {/* The mobile workspace tab already names this PTY session.
                   Peek has no tab, so it retains its only visible title. */}

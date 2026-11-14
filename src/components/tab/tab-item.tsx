@@ -1,5 +1,6 @@
 'use client';
 
+import { SessionProjectBadge } from '@/components/chat/session-project-badge';
 import { memo, useCallback, useRef, useState } from 'react';
 import { cva } from 'class-variance-authority';
 import { Columns2, X } from 'lucide-react';
@@ -608,9 +609,10 @@ export const TabItem = memo(function TabItem({
       aria-grabbed={isDragging || undefined}
       >
       {/* Leading indicator — same dots, colors and priority as the sidebar/board */}
+      <SessionProjectBadge session={session} className="mr-1.5">
       {statusKind && (
         <span
-          className="mr-1.5 flex shrink-0 items-center"
+          className="flex shrink-0 items-center"
           data-testid="tab-item-status"
           data-status={statusKind}
           aria-label={statusLabel}
@@ -628,6 +630,8 @@ export const TabItem = memo(function TabItem({
           />
         </span>
       )}
+
+      </SessionProjectBadge>
 
       {/* Title area — truncated with ellipsis (BR-UI-022) */}
       {isEditingTitle ? (
