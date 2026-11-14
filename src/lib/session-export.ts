@@ -149,7 +149,7 @@ function buildMarkdownFromHistoryEvents(events: SessionHistoryEvent[]): string |
 }
 
 function buildMarkdownFromNativeMessages(messages: NativeTranscriptMessage[]): string | null {
-  return joinTurns(messages.map((message) => formatTurn(message.role, message.text)));
+  return joinTurns(messages.map((message) => message.label ? `**${message.label}:**\n${message.text}\n` : formatTurn(message.role, message.text)));
 }
 
 /**
@@ -236,7 +236,7 @@ export async function exportSessionLog(
   const isPartialExport = Boolean(options.untilMessageId) || options.untilMessageIndex !== undefined;
   const exportPath = isPartialExport
     ? buildPartialExportPath(sessionId, options)
-    : path.join(EXPORT_DIR, `${shortId(sessionId)}.md`);
+    : path.join(EXPORT_DIR, `${shortId(sessionId)}-v2.md`);
   const historyPath = sessionHistory.getHistoryPath(sessionId);
   const events = await sessionHistory.readEvents(sessionId);
 
