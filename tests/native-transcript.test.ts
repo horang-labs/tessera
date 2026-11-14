@@ -174,3 +174,54 @@ test('a guest path on a mounted drive maps to the drive letter, not the share', 
     'C:\\Users\\work\\rollout.jsonl',
   );
 });
+
+test('claude export recovers human queued commands and applies dialogue extraction rules', () => {
+  const user = (content: unknown, extra = {}) => ({ type: 'user', message: { content }, ...extra });
+  const queue = (prompt: unknown, kind = 'human') => ({ type: 'attachment', attachment: { type: 'queued_command', origin: { kind }, delivery_id: 'delivery', prompt } });
+  const assistant = (text: string, model?: string) => ({ type: 'assistant', message: { model, content: [{ type: 'text', text }] } });
+  const records = [
+    user('시작'), queue('수정해줘'), queue('수정해줘'), user('수정해줘'),
+    queue('팀원 보고', 'agent'),
+    user('<system-reminder>숨김</system-reminder>계속'),
+    user('메타', { isMeta: true }), user('<task-notification>완료</task-notification>'),
+    user('Another Claude session sent a message: report'), user('[Request interrupted by user]'),
+    user([{ type: 'tool_result', content: 'output' }, { type: 'text', text: 'tool prose' }]),
+    user('<command-name>/goal</command-name><command-args>완료하기</command-args>'),
+    user('/login'), user('/번역'), user('<command-name>/compact</command-name><command-args></command-args>'),
+    user('요약', { isCompactSummary: true, isMeta: true }), user([{ type: 'image' }]),
+    assistant('No response requested.', '<synthetic>'), assistant('답변1'), assistant('답변2'),
+    { type: 'attachment', attachment: { type: 'queued_command', origin: { kind: 'human' } } },
+  ];
+  assert.deepEqual(parseClaudeNativeTranscript(records.map((record) => JSON.stringify(record)).join('\n')), [
+    { role: 'user', text: '시작' },
+    { role: 'user', text: '수정해줘', label: '사용자(작업 중 보냄)' },
+    { role: 'user', text: '계속' }, { role: 'user', text: '/goal 완료하기' },
+    { role: 'user', text: '/compact' }, { role: 'user', text: '요약', label: '대화 압축 요약' },
+    { role: 'user', text: '[이미지 첨부]' }, { role: 'assistant', text: '답변1\n\n답변2' },
+  ]);
+});
+
+test('codex export retains unrecorded follow-ups and images while excluding internal context', () => {
+  const records = [
+    codexMessageLine('user', '시작'), codexMessageLine('user', '작업 중 추가 지시'),
+    codexMessageLine('user', '<skill>internal</skill>'),
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_image', image_url: 'data:image/png;base64,hidden' }] } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', channel: 'analysis', content: [{ type: 'output_text', text: 'private reasoning' }] } }),
+    codexMessageLine('assistant', '완료'), codexMessageLine('user', '작업 중 추가 지시'),
+  ];
+  assert.deepEqual(parseCodexNativeTranscript(records.join('\n'), { knownUserPrompts: ['시작'] }), [
+    { role: 'user', text: '시작' }, { role: 'user', text: '작업 중 추가 지시' },
+    { role: 'user', text: '[이미지 첨부]' }, { role: 'assistant', text: '완료' },
+    { role: 'user', text: '작업 중 추가 지시' },
+  ]);
+});
+
+test('codex synthetic markers only filter prefixes and recorded prompts override them', () => {
+  const quoted = '이 <skill> 태그를 설명해줘';
+  const known = '<skill>사용자가 직접 입력한 예시</skill>';
+  assert.deepEqual(parseCodexNativeTranscript([
+    'null', codexMessageLine('user', quoted), codexMessageLine('user', known),
+  ].join('\n'), { knownUserPrompts: [known] }), [
+    { role: 'user', text: quoted }, { role: 'user', text: known },
+  ]);
+});

@@ -12,6 +12,7 @@
 export interface NativeTranscriptMessage {
   role: 'user' | 'assistant';
   text: string;
+  label?: '사용자(작업 중 보냄)' | '대화 압축 요약';
 }
 
 /**

@@ -18,15 +18,16 @@ interface CodexRolloutLine {
 /**
  * Codex replays instruction context as `user` turns inside its own transcript:
  * a rollout for a two-line chat also contains AGENTS.md and environment
- * preambles. Tessera's own `user_message` history is the reliable list of what
- * the person actually typed, so these markers are only the fallback for
- * sessions whose prompts were never recorded.
+ * preambles. Recorded prompts can override these markers, but are not an
+ * exhaustive allowlist: hooks can miss follow-up prompts sent during work.
  */
 const SYNTHETIC_USER_MARKERS = [
   '# AGENTS.md instructions',
   '<INSTRUCTIONS>',
   '<environment_context>',
   '<user_instructions>',
+  '<recommended_plugins>',
+  '<skill>',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,6 +41,10 @@ function extractText(content: unknown): string {
   const parts: string[] = [];
   for (const block of content) {
     if (!isRecord(block)) continue;
+    if (block.type === 'input_image') {
+      parts.push('[이미지 첨부]');
+      continue;
+    }
     if (block.type !== 'input_text' && block.type !== 'output_text' && block.type !== 'text') {
       continue;
     }
@@ -49,7 +54,7 @@ function extractText(content: unknown): string {
 }
 
 function looksSynthetic(text: string): boolean {
-  return SYNTHETIC_USER_MARKERS.some((marker) => text.includes(marker));
+  return SYNTHETIC_USER_MARKERS.some((marker) => text.trimStart().startsWith(marker));
 }
 
 export function parseCodexNativeTranscript(
@@ -74,18 +79,20 @@ export function parseCodexNativeTranscript(
       continue;
     }
 
-    if (entry.type !== 'response_item' || !isRecord(entry.payload)) continue;
+    if (!isRecord(entry) || entry.type !== 'response_item' || !isRecord(entry.payload)) continue;
     const payload = entry.payload;
     if (payload.type !== 'message') continue;
     // `developer` carries the system prompt and sandbox policy — never a turn.
     if (payload.role !== 'user' && payload.role !== 'assistant') continue;
+
+    if (payload.role === 'assistant' && payload.channel === 'analysis') continue;
 
     const text = extractText(payload.content).trim();
     if (!text) continue;
 
     if (payload.role === 'user') {
       const isKnownPrompt = knownPrompts.has(normalizePromptForComparison(text));
-      if (knownPrompts.size > 0 ? !isKnownPrompt : looksSynthetic(text)) continue;
+      if (!isKnownPrompt && looksSynthetic(text)) continue;
     }
 
     messages.push({ role: payload.role, text });
