@@ -602,6 +602,10 @@ export class WebSocketClient {
     return this.connectionGeneration;
   }
 
+  respondSessionOpen(openId: string, opened: boolean): boolean {
+    return this.sendRequest('session_open_result', { openId, opened });
+  }
+
   subscribeWorkspaceFiles(sessionId: string, subscriberId: string): boolean {
     return this.sendRequest('subscribe_workspace_files', { sessionId, subscriberId });
   }

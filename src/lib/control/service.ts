@@ -41,9 +41,11 @@ export type ControlErrorCode =
   | 'SESSION_NOT_FOUND'
   | 'SESSION_ARCHIVE_CONFLICT'
   | 'SESSION_DELETE_CONFLICT'
+  | 'SESSION_RENAME_CONFLICT'
   | 'SESSION_NOT_FRESH'
   | 'SESSION_RUNTIME_ALREADY_RUNNING'
   | 'SESSION_RUNTIME_NOT_RUNNING'
+  | 'UI_UNAVAILABLE'
   | 'WAIT_TIMEOUT'
   | 'WORKTREE_CREATE_FAILED'
   | 'WORKTREE_NOT_FOUND'
@@ -134,6 +136,74 @@ export interface PublicArchivedSessionDto {
 export interface ControlSessionSource {
   list(worktreeId: string): ControlSessionRecord[];
   get(sessionId: string, options?: { includeArchived?: boolean }): ControlSessionRecord | undefined;
+}
+
+/** Any non-deleted Session, chat or terminal, managed or not, archived or not. */
+export interface ControlSessionSearchRecord {
+  sessionId: string;
+  title: string;
+  projectId: string | null;
+  projectName: string | null;
+  worktreeId: string | null;
+  worktreeTitle: string | null;
+  branch: string | null;
+  provider: string;
+  kind: 'chat' | 'terminal';
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  providerSessionId: string | null;
+  /** Exactly as the CLI reported it, so it is already in the caller's path style. */
+  transcriptPath: string | null;
+}
+
+export type PublicSessionSearchResultDto = ControlSessionSearchRecord;
+
+export interface ControlSessionSearchRequest {
+  query: string;
+  projectId?: string;
+  includeArchived: boolean;
+  limit: number;
+}
+
+export const CONTROL_SESSION_SEARCH_DEFAULT_LIMIT = 20;
+export const CONTROL_SESSION_SEARCH_MAX_LIMIT = 100;
+
+export interface ControlSessionCatalog {
+  search(request: ControlSessionSearchRequest): {
+    sessions: ControlSessionSearchRecord[];
+    total: number;
+  };
+  get(sessionId: string): ControlSessionSearchRecord | undefined;
+}
+
+export interface ControlSessionOpenOutcome {
+  /** UI connections the request reached. */
+  deliveredClients: number;
+  /** UI connections that showed the Session on screen. */
+  openedClients: number;
+}
+
+export interface ControlSessionOpener {
+  open(sessionId: string): Promise<ControlSessionOpenOutcome>;
+}
+
+export interface PublicOpenedSessionDto {
+  sessionId: string;
+  opened: true;
+  openedClients: number;
+}
+
+/** Same limit the app's own rename enforces. */
+export const CONTROL_SESSION_TITLE_MAX_LENGTH = 100;
+
+export interface ControlSessionRenamer {
+  rename(sessionId: string, title: string): Promise<void>;
+}
+
+export interface PublicRenamedSessionDto {
+  sessionId: string;
+  title: string;
 }
 
 export const CONTROL_CODEX_SERVICE_TIERS = ['fast', 'default'] as const;
@@ -296,6 +366,21 @@ export interface ControlService {
     context: ControlCallerContext,
   ): Promise<{ sessions: PublicSessionDto[] }>;
   showSession(sessionId: string, context: ControlCallerContext): Promise<PublicSessionDto>;
+  searchSessions(
+    request: {
+      query: string;
+      selector?: ControlProjectSelector;
+      includeArchived: boolean;
+      limit?: number;
+    },
+    context: ControlCallerContext,
+  ): Promise<{ sessions: PublicSessionSearchResultDto[]; total: number; truncated: boolean }>;
+  openSession(sessionId: string, context: ControlCallerContext): Promise<PublicOpenedSessionDto>;
+  renameSession(
+    sessionId: string,
+    title: string,
+    context: ControlCallerContext,
+  ): Promise<PublicRenamedSessionDto>;
   deleteSession(sessionId: string, context: ControlCallerContext): Promise<PublicDeletedSessionDto>;
   archiveSession(sessionId: string, context: ControlCallerContext): Promise<PublicArchivedSessionDto>;
   createSession(
@@ -375,6 +460,9 @@ export function createControlService(options: {
   sessionMutator?: ControlSessionMutator;
   sessionObserver?: ControlSessionObserver;
   sessionController?: ControlSessionRuntimeController;
+  sessionCatalog?: ControlSessionCatalog;
+  sessionOpener?: ControlSessionOpener;
+  sessionRenamer?: ControlSessionRenamer;
 }): ControlService {
   const {
     appVersion,
@@ -386,6 +474,9 @@ export function createControlService(options: {
     sessionMutator,
     sessionObserver,
     sessionController,
+    sessionCatalog,
+    sessionOpener,
+    sessionRenamer,
   } = options;
 
   return {
@@ -544,6 +635,115 @@ export function createControlService(options: {
     async showSession(sessionId) {
       const support = requireSessionSupport(sessions, sessionMutator);
       return toPublicSession(requireSession(support.sessions, sessionId));
+    },
+
+    async searchSessions(request, context) {
+      if (!sessionCatalog) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot search Sessions.',
+          503,
+        );
+      }
+      const limit = request.limit ?? CONTROL_SESSION_SEARCH_DEFAULT_LIMIT;
+      if (!Number.isInteger(limit) || limit < 1 || limit > CONTROL_SESSION_SEARCH_MAX_LIMIT) {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          `The Session search limit must be an integer from 1 to ${CONTROL_SESSION_SEARCH_MAX_LIMIT}.`,
+          400,
+        );
+      }
+      if (request.query.length > 512 || /[\u0000-\u001f\u007f]/.test(request.query)) {
+        throw new ControlOperationError('INVALID_USAGE', 'The Session search query is invalid.', 400);
+      }
+      let projectId: string | undefined;
+      if (request.selector) {
+        projectId = resolveSelectedProjectId(request.selector, context);
+        if (!projects.get(projectId)) {
+          throw new ControlOperationError(
+            'PROJECT_NOT_FOUND',
+            'The requested Project does not exist.',
+            404,
+            { projectId },
+          );
+        }
+      }
+      const result = sessionCatalog.search({
+        query: request.query,
+        ...(projectId === undefined ? {} : { projectId }),
+        includeArchived: request.includeArchived,
+        limit,
+      });
+      return {
+        sessions: result.sessions.map((session) => ({ ...session })),
+        total: result.total,
+        truncated: result.total > result.sessions.length,
+      };
+    },
+
+    async openSession(sessionId) {
+      if (!sessionCatalog || !sessionOpener) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot open Sessions.',
+          503,
+        );
+      }
+      if (!sessionCatalog.get(sessionId)) {
+        throw new ControlOperationError(
+          'SESSION_NOT_FOUND',
+          'The requested Session does not exist.',
+          404,
+          { sessionId },
+        );
+      }
+      const outcome = await sessionOpener.open(sessionId);
+      if (outcome.openedClients === 0) {
+        throw new ControlOperationError(
+          'UI_UNAVAILABLE',
+          outcome.deliveredClients === 0
+            ? 'No Tessera window is connected to show the Session.'
+            : 'No visible Tessera window showed the Session.',
+          409,
+          { sessionId, deliveredClients: outcome.deliveredClients },
+        );
+      }
+      return { sessionId, opened: true, openedClients: outcome.openedClients };
+    },
+
+    async renameSession(sessionId, title) {
+      if (!sessionCatalog || !sessionRenamer) {
+        throw new ControlOperationError(
+          'INSTANCE_UNAVAILABLE',
+          'This Tessera runtime cannot rename Sessions.',
+          503,
+        );
+      }
+      const trimmed = title.trim();
+      if (!trimmed || /[\u0000-\u001f\u007f]/.test(trimmed)) {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          'A Session title must be a non-empty single line.',
+          400,
+        );
+      }
+      if (trimmed.length > CONTROL_SESSION_TITLE_MAX_LENGTH) {
+        throw new ControlOperationError(
+          'INVALID_USAGE',
+          `A Session title must be at most ${CONTROL_SESSION_TITLE_MAX_LENGTH} characters.`,
+          400,
+        );
+      }
+      if (!sessionCatalog.get(sessionId)) {
+        throw new ControlOperationError(
+          'SESSION_NOT_FOUND',
+          'The requested Session does not exist.',
+          404,
+          { sessionId },
+        );
+      }
+      await sessionRenamer.rename(sessionId, trimmed);
+      return { sessionId, title: trimmed };
     },
 
     async archiveSession(sessionId) {

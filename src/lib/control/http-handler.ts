@@ -31,6 +31,9 @@ export type ControlTelemetryOperation =
   | 'worktree_create'
   | 'session_list'
   | 'session_show'
+  | 'session_search'
+  | 'session_open'
+  | 'session_rename'
   | 'session_create'
   | 'session_launch'
   | 'session_start'
@@ -177,6 +180,14 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions` && request.method === 'GET') {
+        writeSuccess(response, await service.searchSessions(
+          readSessionSearchParams(requestUrl?.searchParams ?? new URLSearchParams()),
+          context,
+        ));
+        return true;
+      }
+
       if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions`) {
         requireMethod(request, 'POST');
         writeSuccess(response, await service.createSession(
@@ -285,6 +296,34 @@ export function createControlHttpHandler(options: {
         return true;
       }
 
+      const sessionOpenMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/open$`),
+      );
+      if (sessionOpenMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionOpenMatch[1], 'Session');
+        if (Object.keys(await readJsonObject(request)).length !== 0) {
+          throw new ControlOperationError('INVALID_USAGE', 'Session open does not accept fields.', 400);
+        }
+        writeSuccess(response, await service.openSession(sessionId, context));
+        return true;
+      }
+
+      const sessionRenameMatch = pathname.match(
+        new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/rename$`),
+      );
+      if (sessionRenameMatch) {
+        requireMethod(request, 'POST');
+        const sessionId = decodeControlId(sessionRenameMatch[1], 'Session');
+        const body = await readJsonObject(request);
+        rejectUnknownFields(body, ['title'], 'Session rename');
+        if (typeof body.title !== 'string') {
+          throw new ControlOperationError('INVALID_USAGE', 'A Session title is required.', 400);
+        }
+        writeSuccess(response, await service.renameSession(sessionId, body.title, context));
+        return true;
+      }
+
       const sessionDeleteMatch = pathname.match(
         new RegExp(`^${CONTROL_ROUTE_PREFIX}/sessions/([^/]+)/delete$`),
       );
@@ -372,6 +411,7 @@ export function classifyControlTelemetryOperation(
     if (method === 'POST') return 'worktree_create';
     return null;
   }
+  if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions` && method === 'GET') return 'session_search';
   if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions` && method === 'POST') return 'session_create';
   if (pathname === `${CONTROL_ROUTE_PREFIX}/sessions/launch` && method === 'POST') {
     return 'session_launch';
@@ -382,7 +422,7 @@ export function classifyControlTelemetryOperation(
   ) return 'session_list';
 
   const sessionOperation = new RegExp(
-    `^${CONTROL_ROUTE_PREFIX}/sessions/[^/]+/(start|read|wait|prompt|keys|stop|archive|delete)$`,
+    `^${CONTROL_ROUTE_PREFIX}/sessions/[^/]+/(start|read|wait|prompt|keys|stop|archive|delete|open|rename)$`,
   ).exec(pathname)?.[1];
   if (sessionOperation) {
     const expectedMethod = sessionOperation === 'read' ? 'GET' : 'POST';
@@ -396,6 +436,8 @@ export function classifyControlTelemetryOperation(
       stop: 'session_stop',
       archive: 'session_archive',
       delete: 'session_delete',
+      open: 'session_open',
+      rename: 'session_rename',
     }[sessionOperation] as ControlTelemetryOperation;
   }
 
@@ -409,6 +451,46 @@ export function classifyControlTelemetryOperation(
     return 'project_show';
   }
   return null;
+}
+
+function readSessionSearchParams(params: URLSearchParams): {
+  query: string;
+  selector?: { kind: 'current' } | { kind: 'project'; projectId: string };
+  includeArchived: boolean;
+  limit?: number;
+} {
+  const allowed = new Set(['query', 'current', 'projectId', 'archived', 'limit']);
+  for (const key of params.keys()) {
+    if (!allowed.has(key) || params.getAll(key).length !== 1) {
+      throw new ControlOperationError('INVALID_USAGE', 'The Session search request is invalid.', 400);
+    }
+  }
+  const current = params.get('current');
+  const projectId = params.get('projectId');
+  const archived = params.get('archived');
+  const limit = params.get('limit');
+  if ((current !== null && current !== '1') || (current === '1' && projectId !== null)) {
+    throw new ControlOperationError('INVALID_USAGE', 'At most one Project selector is allowed.', 400);
+  }
+  if (projectId !== null && !projectId.trim()) {
+    throw new ControlOperationError('INVALID_USAGE', 'A Project ID is required.', 400);
+  }
+  if (archived !== null && archived !== 'include' && archived !== 'exclude') {
+    throw new ControlOperationError('INVALID_USAGE', 'The archived filter is invalid.', 400);
+  }
+  if (limit !== null && !/^\d+$/.test(limit)) {
+    throw new ControlOperationError('INVALID_USAGE', 'The Session search limit is invalid.', 400);
+  }
+  return {
+    query: params.get('query') ?? '',
+    ...(current === '1'
+      ? { selector: { kind: 'current' as const } }
+      : projectId !== null
+        ? { selector: { kind: 'project' as const, projectId } }
+        : {}),
+    includeArchived: archived !== 'exclude',
+    ...(limit === null ? {} : { limit: Number(limit) }),
+  };
 }
 
 function requireMethod(request: IncomingMessage, expected: 'GET' | 'POST'): void {

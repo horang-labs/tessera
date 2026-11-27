@@ -260,9 +260,10 @@ export class WebSocketServer {
   }
 
   /**
-   * Send message to a specific user (broadcasts to all their connections)
+   * Send message to a specific user (broadcasts to all their connections).
+   * Returns how many open connections it was written to.
    */
-  sendToUser(userId: string, message: ServerTransportMessage): void {
+  sendToUser(userId: string, message: ServerTransportMessage): number {
     sessionHistory.recordTransportMessage(message);
 
     if (message.type === 'rate_limit_update') {
@@ -275,10 +276,11 @@ export class WebSocketServer {
 
     if (!wsSet || wsSet.size === 0) {
       logger.warn({ userId }, 'Cannot send to user, no connections');
-      return;
+      return 0;
     }
 
     const payload = JSON.stringify(message);
+    let sent = 0;
 
     for (const ws of wsSet) {
       if (ws.readyState !== WebSocket.OPEN) continue;
@@ -286,6 +288,7 @@ export class WebSocketServer {
       try {
         const startTime = Date.now();
         ws.send(payload);
+        sent += 1;
         this.recordDiagnosticSend(payload);
         const duration = Date.now() - startTime;
 
@@ -300,6 +303,7 @@ export class WebSocketServer {
           }, 'Failed to send message');
       }
     }
+    return sent;
   }
 
   /** Send a transport message only to the renderer connection that owns a terminal surface. */

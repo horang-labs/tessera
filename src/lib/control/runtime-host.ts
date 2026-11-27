@@ -4,6 +4,7 @@ import path from 'node:path';
 import { configureSharedProviderControlCliBridge } from '@/lib/terminal/shared-provider-launch-module';
 import { createControlCliBridgeFactory } from './cli-bridge';
 import { createDatabaseControlProjectSource } from './database-project-source';
+import { createDatabaseControlSessionCatalog } from './database-session-catalog';
 import { createDatabaseControlSessionSource } from './database-session-source';
 import { createDatabaseControlWorktreeSource } from './database-worktree-source';
 import { createControlHttpHandler } from './http-handler';
@@ -13,6 +14,8 @@ import { createControlService } from './service';
 import { createTerminalControlSessionController } from './session-controller';
 import { createDatabaseControlSessionMutator } from './session-mutator';
 import { createTerminalControlSessionObserver } from './session-observer';
+import { createWebSocketControlSessionOpener } from './session-opener';
+import { createDatabaseControlSessionRenamer } from './session-renamer';
 import { resolveControlUserId } from './user-context';
 import { createDatabaseControlWorktreeCreator } from './worktree-creator';
 import { SettingsManager } from '@/lib/settings/manager';
@@ -94,6 +97,13 @@ export async function startControlRuntimeHost(
           resolveUserId: requireUserId,
         }),
         sessionController: createTerminalControlSessionController({
+          resolveUserId: requireUserId,
+        }),
+        sessionCatalog: createDatabaseControlSessionCatalog(),
+        sessionOpener: createWebSocketControlSessionOpener({
+          resolveUserId: requireUserId,
+        }),
+        sessionRenamer: createDatabaseControlSessionRenamer({
           resolveUserId: requireUserId,
         }),
       }),

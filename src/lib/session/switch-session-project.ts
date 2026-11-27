@@ -1,6 +1,7 @@
 import { useBoardStore } from '@/stores/board-store';
 import { useTabStore } from '@/stores/tab-store';
 import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
+import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 /**
  * Move global navigation to the Session's representative origin Project before opening it.
@@ -12,6 +13,9 @@ import { ALL_PROJECTS_SENTINEL } from '@/lib/constants/project-strip';
  * All Projects mode already lists every project's sessions, so switching out of it would
  * narrow a view the user deliberately chose — that scope is left untouched.
  *
+ * A Project that is not listed in the strip (hidden) is left alone: the Session opens in
+ * the current scope.
+ *
  * Returns false when the switch was refused (unsaved peek file); callers should then
  * abort rather than open the session under the wrong project.
  */
@@ -22,6 +26,13 @@ export function switchToSessionProject(projectDir: string | null | undefined): b
   const current = boardStore.selectedProjectDir;
   // null = project selection has not initialized yet; leave it to chat-layout.
   if (current === null || current === ALL_PROJECTS_SENTINEL || current === projectDir) return true;
+
+  // A hidden Project has no strip entry, and chat-layout immediately falls back from a
+  // selection it cannot show — taking the just-opened tab with it. Open in the current
+  // scope instead, as the archive dashboard does.
+  if (!projectViewWorkspaceState.getLoadedProjectViews().some((p) => p.encodedDir === projectDir)) {
+    return true;
+  }
 
   boardStore.setSelectedProjectDir(projectDir);
   if (useBoardStore.getState().selectedProjectDir !== projectDir) return false;

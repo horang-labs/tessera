@@ -12,6 +12,8 @@ const chatLayout = read('../src/components/chat/chat-layout.tsx');
 const runningProcessPanel = read('../src/components/layout/running-process-panel.tsx');
 const notificationCenter = read('../src/components/notifications/notification-center.tsx');
 const toastContainer = read('../src/components/notifications/toast-container.tsx');
+const openSessionSurface = read('../src/lib/session/open-session-surface.ts');
+const sessionOpenRequestListener = read('../src/components/session/session-open-request-listener.tsx');
 const sessionNavigation = read('../src/hooks/use-session-navigation.ts');
 const sessionCrud = read('../src/hooks/use-session-crud.ts');
 const sessionResume = read('../src/hooks/use-session-resume.ts');
@@ -48,9 +50,12 @@ test('session-open surfaces activate the located panel instead of only activeSes
     chatLayout,
     runningProcessPanel,
     notificationCenter,
-    toastContainer,
+    openSessionSurface,
   ]) {
     assert.match(source, /activateSessionPanel\(/);
+  }
+  for (const source of [toastContainer, sessionOpenRequestListener]) {
+    assert.match(source, /openSessionSurface\(/);
   }
   assert.doesNotMatch(chatLayout, /if \(location !== null\) return/);
 });
@@ -58,7 +63,7 @@ test('session-open surfaces activate the located panel instead of only activeSes
 test('global session-open surfaces resolve one canonical origin Project', () => {
   assert.match(sessionNavigation, /projectViewWorkspaceState\.getCanonicalSessions\(\)/);
   assert.match(notificationCenter, /getSessionOriginProjectId\(session\)/);
-  assert.match(toastContainer, /getSessionOriginProjectId\(session\)/);
+  assert.match(openSessionSurface, /getSessionOriginProjectId\(session\)/);
 });
 
 test('List, Kanban, and notification navigation materialize before opening a surface', () => {
@@ -66,8 +71,8 @@ test('List, Kanban, and notification navigation materialize before opening a sur
   assert.notEqual(clickMaterialization, -1);
   assert.ok(clickMaterialization < clickHandlers.indexOf('if (onOpenSession)'));
 
-  for (const source of [notificationCenter, toastContainer]) {
-    const materialization = source.indexOf('await materializeSession(sessionId)');
+  for (const source of [notificationCenter, openSessionSurface]) {
+    const materialization = source.search(/await (navigation\.)?materializeSession\(sessionId\)/);
     assert.notEqual(materialization, -1);
     assert.ok(materialization < source.indexOf('switchToSessionProject(', materialization));
   }
@@ -130,9 +135,16 @@ test('passive panel history loading never requests session activation', () => {
 });
 
 test('notification toasts choose their surface before awaiting history', () => {
-  const openPreview = toastContainer.indexOf('tabStore.openPreview(sessionId)');
-  const loadHistory = toastContainer.indexOf('await viewSession(session)');
+  const openPreview = openSessionSurface.indexOf('tabStore.openPreview(sessionId)');
+  const loadHistory = openSessionSurface.indexOf('navigation.viewSession(session)');
   assert.notEqual(openPreview, -1);
   assert.notEqual(loadHistory, -1);
   assert.ok(openPreview < loadHistory);
+});
+
+test('opening a Session from a hidden Project keeps the current scope', () => {
+  const switchProject = read('../src/lib/session/switch-session-project.ts');
+  const loadedCheck = switchProject.indexOf('getLoadedProjectViews().some(');
+  assert.notEqual(loadedCheck, -1, 'chat-layout reverts a selection missing from the strip');
+  assert.ok(loadedCheck < switchProject.indexOf('setSelectedProjectDir(projectDir)'));
 });

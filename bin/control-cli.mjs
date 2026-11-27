@@ -150,6 +150,9 @@ export function controlUsage() {
   tessera worktree create (--current | --project <project-id>) [--mode <branch-off|checkout-branch>] -b <branch> [<start-point>] [--title <title>] [--json]
   tessera session list --worktree <worktree-id> [--json]
   tessera session show <session-id> [--json]
+  tessera session search [<query>...] [--current | --project <project-id>] [--active-only] [--limit <1-100>] [--json]
+  tessera session open <session-id> [--json]
+  tessera session rename <session-id> <title> [--json]
   tessera session create --worktree <worktree-id> --provider <provider-id> [--title <title>] [--model <model>] [--effort <level>] [--fast | --no-fast] [--json]
   tessera session start <session-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--allow-preparation-failure] [--json]
   tessera session launch --worktree <worktree-id> --provider <provider-id> (--prompt <text> | --prompt-file <path|-> | --no-prompt) [--title <title>] [--model <model>] [--effort <level>] [--fast | --no-fast] [--allow-preparation-failure] [--json]
@@ -232,6 +235,48 @@ function parseControlInvocation(argv, env) {
       kind: 'session-archive',
       requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(sessionId)}/archive`,
       requestBody: {},
+    };
+  }
+  if (commandArgs[0] === 'session' && commandArgs[1] === 'search') {
+    const search = parseSessionSearch(commandArgs.slice(2));
+    const params = new URLSearchParams();
+    if (search.query) params.set('query', search.query);
+    if (search.selector?.kind === 'current') params.set('current', '1');
+    if (search.selector?.kind === 'project') params.set('projectId', search.selector.projectId);
+    if (search.activeOnly) params.set('archived', 'exclude');
+    if (search.limit !== undefined) params.set('limit', String(search.limit));
+    const queryString = params.toString();
+    return {
+      descriptorPath,
+      kind: 'session-search',
+      requestPath: `/__tessera/control/v1/sessions${queryString ? `?${queryString}` : ''}`,
+    };
+  }
+  if (commandArgs[0] === 'session' && commandArgs[1] === 'open') {
+    const sessionId = commandArgs[2];
+    if (commandArgs.length !== 3 || !sessionId?.trim() || sessionId.startsWith('-')) {
+      throw new Error('Session open requires exactly one Session ID.');
+    }
+    return {
+      descriptorPath,
+      kind: 'session-open',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(sessionId)}/open`,
+      requestBody: {},
+    };
+  }
+  if (commandArgs[0] === 'session' && commandArgs[1] === 'rename') {
+    const sessionId = commandArgs[2];
+    const titleArgs = commandArgs[3] === '--' ? commandArgs.slice(4) : commandArgs.slice(3);
+    const title = titleArgs[0];
+    if (!sessionId?.trim() || sessionId.startsWith('-') || titleArgs.length !== 1
+      || !title.trim() || (commandArgs[3] !== '--' && title.startsWith('-'))) {
+      throw new Error('Session rename requires a Session ID and one quoted title; for a title starting with -, end the command with -- <title>.');
+    }
+    return {
+      descriptorPath,
+      kind: 'session-rename',
+      requestPath: `/__tessera/control/v1/sessions/${encodeURIComponent(sessionId)}/rename`,
+      requestBody: { title },
     };
   }
   if (commandArgs[0] === 'session' && commandArgs[1] === 'delete') {
@@ -524,6 +569,55 @@ function parseSessionWait(args) {
   }
   if (!condition) throw new Error('--for requires a supported Session condition.');
   return { condition, timeoutSeconds };
+}
+
+function parseSessionSearch(args) {
+  const words = [];
+  let selector;
+  let activeOnly = false;
+  let limit;
+  let positionalOnly = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (positionalOnly) {
+      words.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      positionalOnly = true;
+      continue;
+    }
+    if (arg === '--current' || arg === '--project') {
+      if (selector) throw new Error('At most one of --current and --project may be supplied.');
+      if (arg === '--current') {
+        selector = { kind: 'current' };
+        continue;
+      }
+      const value = args[index + 1];
+      if (!value || value.startsWith('-')) throw new Error('--project requires a Project ID.');
+      selector = { kind: 'project', projectId: value };
+      index += 1;
+      continue;
+    }
+    if (arg === '--active-only') {
+      if (activeOnly) throw new Error('--active-only may be supplied only once.');
+      activeOnly = true;
+      continue;
+    }
+    if (arg === '--limit') {
+      if (limit !== undefined) throw new Error('--limit may be supplied only once.');
+      const value = args[index + 1];
+      if (!value || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 100) {
+        throw new Error('--limit requires an integer from 1 to 100.');
+      }
+      limit = Number(value);
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('-')) throw new Error(`Unknown Session search option: ${arg}`);
+    words.push(arg);
+  }
+  return { query: words.join(' ').trim(), selector, activeOnly, limit };
 }
 
 function parseSessionPrompt(args) {
@@ -1128,6 +1222,29 @@ function validateSuccessData(kind, data) {
       || data.deleted !== true || data.worktreeRemoved !== false) return INVALID_SUCCESS_DATA;
     return { sessionId: data.sessionId, deleted: true, worktreeRemoved: false };
   }
+  if (kind === 'session-search') {
+    if (
+      !isRecord(data)
+      || !Array.isArray(data.sessions)
+      || !Number.isInteger(data.total)
+      || typeof data.truncated !== 'boolean'
+    ) return INVALID_SUCCESS_DATA;
+    const sessions = data.sessions.map(parseSessionSearchResult);
+    return sessions.some((session) => session === null)
+      ? INVALID_SUCCESS_DATA
+      : { sessions, total: data.total, truncated: data.truncated };
+  }
+  if (kind === 'session-open') {
+    if (!isRecord(data) || !isNonEmptyString(data.sessionId) || data.opened !== true
+      || !Number.isInteger(data.openedClients) || data.openedClients < 1) return INVALID_SUCCESS_DATA;
+    return { sessionId: data.sessionId, opened: true, openedClients: data.openedClients };
+  }
+  if (kind === 'session-rename') {
+    if (!isRecord(data) || !isNonEmptyString(data.sessionId) || !isNonEmptyString(data.title)) {
+      return INVALID_SUCCESS_DATA;
+    }
+    return { sessionId: data.sessionId, title: data.title };
+  }
   if (kind === 'session-list') {
     if (!isRecord(data) || !Array.isArray(data.sessions)) return INVALID_SUCCESS_DATA;
     const sessions = data.sessions.map(parsePublicSessionDto);
@@ -1171,6 +1288,26 @@ function parsePublicSessionDto(value) {
       ? {}
       : { reasoningEffort: value.reasoningEffort }),
     ...(value.serviceTier === undefined ? {} : { serviceTier: value.serviceTier }),
+  };
+}
+
+function parseSessionSearchResult(value) {
+  if (!isRecord(value)) return null;
+  const required = ['sessionId', 'title', 'provider', 'createdAt', 'updatedAt'];
+  const nullable = [
+    'projectId', 'projectName', 'worktreeId', 'worktreeTitle', 'branch',
+    'providerSessionId', 'transcriptPath',
+  ];
+  if (
+    !required.every((field) => typeof value[field] === 'string')
+    || !nullable.every((field) => value[field] === null || typeof value[field] === 'string')
+    || (value.kind !== 'chat' && value.kind !== 'terminal')
+    || typeof value.archived !== 'boolean'
+  ) return null;
+  return {
+    ...Object.fromEntries([...required, ...nullable].map((field) => [field, value[field]])),
+    kind: value.kind,
+    archived: value.archived,
   };
 }
 
@@ -1284,6 +1421,35 @@ function writeHumanSuccess(kind, data) {
   }
   if (kind === 'session-show' || kind === 'session-create') {
     process.stdout.write(`${data.sessionId}\n${data.title}\n${data.provider}\n`);
+    return;
+  }
+  if (kind === 'session-search') {
+    if (data.total === 0) {
+      process.stdout.write('No Sessions matched.\n');
+      return;
+    }
+    for (const session of data.sessions) {
+      process.stdout.write(`${[
+        session.sessionId,
+        session.title,
+        session.projectName ?? '',
+        session.branch ?? '',
+        session.provider,
+        session.archived ? 'archived' : 'active',
+        session.updatedAt,
+      ].join('\t')}\n`);
+    }
+    if (data.truncated) {
+      process.stdout.write(`(${data.sessions.length} of ${data.total} matches shown)\n`);
+    }
+    return;
+  }
+  if (kind === 'session-open') {
+    process.stdout.write(`Opened Session ${data.sessionId}\n`);
+    return;
+  }
+  if (kind === 'session-rename') {
+    process.stdout.write(`Renamed Session ${data.sessionId} to ${data.title}\n`);
     return;
   }
   if (kind === 'session-start' || kind === 'session-launch') {

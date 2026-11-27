@@ -29,6 +29,7 @@ import {
   TerminalSessionRuntimeNotRunningError,
 } from '../terminal/terminal-manager';
 import { workspaceFileWatchManager } from '../workspace-files/workspace-file-watch-manager';
+import { resolveSessionOpenResponse } from './session-open-requests';
 import type { ClientMessage, ServerTransportMessage } from './message-types';
 import type { CliProvider, ProviderMeta } from '../cli/providers/types';
 import { resolveSessionWorkspaceRoot } from '../session/session-workspace-root';
@@ -863,6 +864,12 @@ export async function routeClientTransportMessage({
         sessionId: message.sessionId,
         subscriberId: message.subscriberId,
       });
+      return;
+
+    case 'session_open_result':
+      if (typeof message.openId === 'string' && typeof message.opened === 'boolean') {
+        resolveSessionOpenResponse(userId, message.openId, message.opened);
+      }
       return;
 
       default:
