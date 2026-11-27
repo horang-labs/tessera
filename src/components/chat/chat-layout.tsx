@@ -69,6 +69,7 @@ import { projectViewWorkspaceState } from "@/lib/projects/project-view-workspace
 import { PHONE_VIEWPORT_BREAKPOINT } from "@/lib/viewport/phone-viewport";
 import { readUiStorageItem } from "@/lib/persistence/ui-storage";
 import { TAB_STORE_KEY } from "@/types/tab";
+import { SessionOpenRequestListener } from "@/components/session/session-open-request-listener";
 
 const SIDEBAR_RESIZE_HANDLE_WIDTH = 1;
 const GIT_PANEL_RESIZE_HANDLE_WIDTH = 1;
@@ -734,6 +735,7 @@ export function ChatLayout() {
       </GitPanelControllerProvider>
       <SettingsPanel />
       <ToastContainer />
+      <SessionOpenRequestListener />
       <UpdateNotifier />
       <SelectionActionBar />
     </KeyboardShortcutProvider>

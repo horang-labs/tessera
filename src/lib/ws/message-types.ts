@@ -145,7 +145,9 @@ export type ClientMessage =
     }
   | { type: 'terminal_close'; requestId: string; terminalId: string }
   | { type: 'subscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string }
-  | { type: 'unsubscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string };
+  | { type: 'unsubscribe_workspace_files'; requestId: string; sessionId: string; subscriberId: string }
+  /** A UI connection's answer to `session_open_request`. */
+  | { type: 'session_open_result'; requestId: string; openId: string; opened: boolean };
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions';
 
@@ -611,6 +613,8 @@ export type AppServerMessage =
       sessionId: string;
       isGenerating: boolean;
     }
+  /** The Tessera CLI asked the UI to show this Session; answer with `session_open_result`. */
+  | { type: 'session_open_request'; openId: string; sessionId: string }
   | {
       type: 'worktree_diff_stats';
       workDir: string;

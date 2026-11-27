@@ -6,20 +6,13 @@ import { CheckCircle, XCircle, AlertTriangle, Info, X } from 'lucide-react';
 import { useNotificationStore, type ActionToast } from '@/stores/notification-store';
 import { toast } from '@/stores/notification-store';
 import { useI18n } from '@/lib/i18n';
-import { useTabStore } from '@/stores/tab-store';
-import { useBoardStore } from '@/stores/board-store';
-import { useSettingsStore } from '@/stores/settings-store';
-import { getRenderedViewMode } from '@/lib/viewport/rendered-view-mode';
 import { ToastNotification, TOAST_DISMISS_TOUCH_TARGET } from './toast-notification';
 import { NotificationSound } from './notification-sound';
 import { useSessionNavigation } from '@/hooks/use-session-navigation';
 import { cn } from '@/lib/utils';
-import { activateSessionPanel } from '@/lib/session/focus-session-panel';
-import { switchToSessionProject } from '@/lib/session/switch-session-project';
+import { openSessionSurface } from '@/lib/session/open-session-surface';
 import { telemetryClickAttributes } from '@/lib/telemetry/ui-click';
-import { getSessionOriginProjectId } from '@/lib/projects/origin-project-representation';
 import { ANCHORED_VIEWPORT_MARGIN } from '@/lib/ui/anchored-viewport';
-import { projectViewWorkspaceState } from '@/lib/projects/project-view-workspace-state-client';
 
 const MAX_VISIBLE_TOASTS = 5;
 const ACTION_TOAST_DURATION = 3000;
@@ -115,44 +108,14 @@ export function ToastContainer() {
     markAsRead(notificationId);
     dismissToast(notificationId);
 
-    const session = await materializeSession(sessionId);
-    if (!session) {
+    const result = await openSessionSurface(sessionId, { materializeSession, viewSession });
+    if (result.status === 'not_found') {
       toast.error(t('errors.sessionNotFound'));
       return;
     }
-
-    projectViewWorkspaceState.markSessionRead(sessionId);
-
-    // Notified session may live in another project — bring that project into scope first,
-    // otherwise it opens in a tab belonging to the project currently on screen.
-    if (!switchToSessionProject(getSessionOriginProjectId(session))) return;
-
-    // Kanban peek mode: open the session in the board peek panel instead of a tab
-    const boardStore = useBoardStore.getState();
-    const peekMode = useSettingsStore.getState().settings.kanbanSessionOpenMode === 'peek';
-    // The rendered mode, not the stored one: a phone shows the list, so a peek
-    // opened here would have nothing rendering it and the tap would do nothing.
-    if (getRenderedViewMode() === 'board' && peekMode) {
-      boardStore.openSessionPeek(sessionId);
-      return;
-    }
-
-    // Tab-aware session focus: use findSessionLocation (same as sidebar click handler)
-    const tabStore = useTabStore.getState();
-    const location = tabStore.findSessionLocation(sessionId);
-
-    if (location) {
-      // Session already open — switch to correct tab and focus panel
-      activateSessionPanel(sessionId, { location });
-      return;
-    }
-
-    // Session not in any tab/panel: choose its surface synchronously, before
-    // history I/O. Completion of an older load must never overwrite a newer
-    // tab or panel selection.
-    tabStore.openPreview(sessionId);
+    if (result.status !== 'opened' || !result.historyLoad) return;
     try {
-      await viewSession(session);
+      await result.historyLoad;
     } catch {
       toast.error(t('errors.sessionLoadFailed'));
     }
